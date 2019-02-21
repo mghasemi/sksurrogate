@@ -597,15 +597,21 @@ class HDReal(object):
         self.bound_tuple = tuple(self.bound_tuple)
 
 
-from sklearn.base import clone, is_classifier
-from sklearn.metrics.scorer import check_scoring
-from sklearn.model_selection._search import BaseSearchCV, check_cv
-from sklearn.model_selection._validation import _fit_and_score
-
 try:
+    from sklearn.base import clone, is_classifier
+    from sklearn.metrics.scorer import check_scoring
+    from sklearn.model_selection._search import BaseSearchCV, check_cv
+    from sklearn.model_selection._validation import _fit_and_score
     from Optimithon import NumericDiff
 except:
     NumericDiff = type('NumericDiff', (object,), dict(Simple=lambda: 0., ))
+    clone = type('clone', (object,), dict())
+    is_classifier = type('is_classifier', (object,), dict())
+    check_scoring = type('check_scoring', (object,), dict())
+    BaseSearchCV = type('BaseSearchCV', (object,), dict())
+    check_cv = type('check_cv', (object,), dict())
+    _fit_and_score = type('_fit_and_score', (object,), dict())
+
 from numpy import inf
 
 
