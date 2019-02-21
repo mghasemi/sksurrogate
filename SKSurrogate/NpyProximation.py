@@ -348,7 +348,11 @@ class Regression(object):
         return aprx
 
 
-from sklearn.base import BaseEstimator, RegressorMixin
+try:
+    from sklearn.base import BaseEstimator, RegressorMixin
+except:
+    BaseEstimator = type('BaseEstimator', (object,), dict())
+    RegressorMixin = type('RegressorMixin', (object,), dict())
 
 
 class HilbertRegressor(BaseEstimator, RegressorMixin):

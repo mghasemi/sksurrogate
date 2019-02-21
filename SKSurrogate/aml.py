@@ -3,7 +3,11 @@ Optimized Pipeline Detector
 ===============================
 
 """
-from sklearn.base import BaseEstimator, TransformerMixin
+try:
+    from sklearn.base import BaseEstimator, TransformerMixin
+except:
+    BaseEstimator = type('BaseEstimator', (object,), dict())
+    TransformerMixin = type('TransformerMixin', (object,), dict())
 
 
 class StackingEstimator(BaseEstimator, TransformerMixin):

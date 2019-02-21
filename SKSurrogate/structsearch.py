@@ -598,21 +598,11 @@ class HDReal(object):
 
 
 try:
-    from sklearn.base import clone, is_classifier
-    from sklearn.metrics.scorer import check_scoring
-    from sklearn.model_selection._search import BaseSearchCV, check_cv
-    from sklearn.model_selection._validation import _fit_and_score
+    from sklearn.model_selection._search import BaseSearchCV
     from Optimithon import NumericDiff
 except:
     NumericDiff = type('NumericDiff', (object,), dict(Simple=lambda: 0., ))
-    clone = type('clone', (object,), dict())
-    is_classifier = type('is_classifier', (object,), dict())
-    check_scoring = type('check_scoring', (object,), dict())
     BaseSearchCV = type('BaseSearchCV', (object,), dict())
-    check_cv = type('check_cv', (object,), dict())
-    _fit_and_score = type('_fit_and_score', (object,), dict())
-
-from numpy import inf
 
 
 class SurrogateRandomCV(BaseSearchCV):
@@ -686,7 +676,7 @@ class SurrogateRandomCV(BaseSearchCV):
                  verbose=0, pre_dispatch='2*n_jobs', error_score='raise', return_train_score=True,
                  max_iter=50, min_evals=25, regressor=None, sampling=CompactSample, radius=None, contraction=.95,
                  search_sphere=False, optimizer='scipy', scipy_solver='SLSQP', task_name='optim_task', warm_start=True,
-                 Continue=False, max_itr_no_prog=inf, ineqs=(), init=None,
+                 Continue=False, max_itr_no_prog=10000, ineqs=(), init=None,
                  # Optimithon specific options
                  optimithon_t_method='Cauchy_x', optimithon_dd_method='BFGS', optimithon_ls_method='Backtrack',
                  optimithon_ls_bt_method='Armijo', optimithon_br_func='Carrol', optimithon_penalty=1.e6,
@@ -740,6 +730,10 @@ class SurrogateRandomCV(BaseSearchCV):
         """
         from random import uniform
         from numpy import array, unique, sqrt
+        from sklearn.base import clone, is_classifier
+        from sklearn.metrics.scorer import check_scoring
+        from sklearn.model_selection._search import check_cv
+        from sklearn.model_selection._validation import _fit_and_score
         radius_list = []
         self.scorer_ = check_scoring(self.estimator, scoring=self.scoring)
         target_classes = []

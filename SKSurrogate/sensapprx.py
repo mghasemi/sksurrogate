@@ -6,7 +6,11 @@ Sensitivity analysis of a dataset based on a fit, sklearn style.
 The core functionality is provided by `SALib <https://github.com/SALib/SALib>`_ .
 """
 
-from sklearn.base import BaseEstimator, TransformerMixin
+try:
+    from sklearn.base import BaseEstimator, TransformerMixin
+except:
+    BaseEstimator = type('BaseEstimator', (object,), dict())
+    TransformerMixin = type('TransformerMixin', (object,), dict())
 
 
 class SensAprx(BaseEstimator, TransformerMixin):
