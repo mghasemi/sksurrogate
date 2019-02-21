@@ -12,7 +12,11 @@ data manipulation.
 It also has built in capabilities to generate some typical plots and graph in machine learning.
 """
 
-from peewee import *
+try:
+    from peewee import *
+except:
+    Model = type('Model', (object,),  dict(Simple=lambda : 0.,))
+    SqliteDatabase = lambda x: None
 from datetime import datetime
 
 MLTRACK_DB = SqliteDatabase(None)
@@ -51,13 +55,16 @@ class Task(Model):
     This table keeps basic information about the task on hand, e.g., the task name, a brief description,
     target column, and columns to be ignored.
     """
-    task_id = IntegerField(primary_key=True, unique=True, null=False, default=1)
-    name = CharField(null=True)
-    description = TextField(null=True)
-    target = CharField(null=True)
-    ignore = CharField(null=True)
-    init_date = DateTimeField(default=datetime.now, null=True)
-    last_mod_date = DateTimeField(default=datetime.now, null=True)
+    try:
+        task_id = IntegerField(primary_key=True, unique=True, null=False, default=1)
+        name = CharField(null=True)
+        description = TextField(null=True)
+        target = CharField(null=True)
+        ignore = CharField(null=True)
+        init_date = DateTimeField(default=datetime.now, null=True)
+        last_mod_date = DateTimeField(default=datetime.now, null=True)
+    except:
+        pass
 
     class Meta:
         database = MLTRACK_DB
@@ -68,13 +75,16 @@ class MLModel(Model):
     The class to generate the 'mlmodel` table in the SQLite db-file.
     It stores the scikit-learn scheme of the model/pipeline, its parameters, etc.
     """
-    model_id = IntegerField(primary_key=True, unique=True, null=False)
-    task_id = ForeignKeyField(Task)
-    name = CharField(null=True)
-    model_str = TextField(null=True)
-    model_type = CharField(null=True)
-    parameters = BareField(null=True)
-    date_modified = DateTimeField(default=datetime.now, null=True)
+    try:
+        model_id = IntegerField(primary_key=True, unique=True, null=False)
+        task_id = ForeignKeyField(Task)
+        name = CharField(null=True)
+        model_str = TextField(null=True)
+        model_type = CharField(null=True)
+        parameters = BareField(null=True)
+        date_modified = DateTimeField(default=datetime.now, null=True)
+    except:
+        pass
 
     class Meta:
         database = MLTRACK_DB
@@ -85,20 +95,23 @@ class Metrics(Model):
     The class to generate the 'metrics` table in the SQLite db-file.
     This table stores the calculated metrics of each stored model.
     """
-    mwtrics_id = IntegerField(primary_key=True, unique=True, null=False)
-    model_id = ForeignKeyField(MLModel)
-    accuracy = FloatField(null=True)
-    auc = FloatField(null=True)
-    precision = FloatField(null=True)
-    recall = FloatField(null=True)
-    f1 = FloatField(null=True)
-    mcc = FloatField(null=True)
-    logloss = FloatField(null=True)
-    variance = FloatField(null=True)
-    max_error = FloatField(null=True)
-    mse = FloatField(null=True)
-    mae = FloatField(null=True)
-    r2 = FloatField(null=True)
+    try:
+        mwtrics_id = IntegerField(primary_key=True, unique=True, null=False)
+        model_id = ForeignKeyField(MLModel)
+        accuracy = FloatField(null=True)
+        auc = FloatField(null=True)
+        precision = FloatField(null=True)
+        recall = FloatField(null=True)
+        f1 = FloatField(null=True)
+        mcc = FloatField(null=True)
+        logloss = FloatField(null=True)
+        variance = FloatField(null=True)
+        max_error = FloatField(null=True)
+        mse = FloatField(null=True)
+        mae = FloatField(null=True)
+        r2 = FloatField(null=True)
+    except:
+        pass
 
     class Meta:
         database = MLTRACK_DB
@@ -109,10 +122,13 @@ class Saved(Model):
     The class to generate the 'saved` table in the SQLite db-file.
     It keeps the pickled version of a stored model that can be later recovered.
     """
-    pickle_id = IntegerField(primary_key=True, unique=True, null=False)
-    model_id = ForeignKeyField(MLModel)
-    pickle = BareField(null=True)
-    init_date = DateTimeField(default=datetime.now, null=True)
+    try:
+        pickle_id = IntegerField(primary_key=True, unique=True, null=False)
+        model_id = ForeignKeyField(MLModel)
+        pickle = BareField(null=True)
+        init_date = DateTimeField(default=datetime.now, null=True)
+    except:
+        pass
 
     class Meta:
         database = MLTRACK_DB
@@ -123,11 +139,14 @@ class Plots(Model):
     The class to generate the 'plots` table in the SQLite db-file.
     This table stores `matplotlib` plots associated to each model.
     """
-    plot_id = IntegerField(primary_key=True, unique=True, null=False)
-    model_id = ForeignKeyField(MLModel)
-    title = CharField(null=True)
-    plot = BareField(null=True)
-    init_date = DateTimeField(default=datetime.now, null=True)
+    try:
+        plot_id = IntegerField(primary_key=True, unique=True, null=False)
+        model_id = ForeignKeyField(MLModel)
+        title = CharField(null=True)
+        plot = BareField(null=True)
+        init_date = DateTimeField(default=datetime.now, null=True)
+    except:
+        pass
 
     class Meta:
         database = MLTRACK_DB

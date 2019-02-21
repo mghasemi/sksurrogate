@@ -3,8 +3,6 @@ Hilbert Space based regression
 ==================================
 """
 
-from __future__ import print_function
-
 Infinitesimal = 1e-7
 
 

@@ -120,7 +120,10 @@ class Words(object):
         return words
 
 
-from SKSurrogate.structsearch import Real, Integer, Categorical, HDReal, BoxSample
+try:
+    from .structsearch import Real, Integer, Categorical, HDReal, BoxSample
+except:
+    from SKSurrogate.structsearch import Real, Integer, Categorical, HDReal, BoxSample
 
 default_config = {
     # Classifiers

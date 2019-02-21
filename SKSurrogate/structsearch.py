@@ -173,7 +173,7 @@ class SphereSample(object):
         :param cntrctn: `float` customized contraction factor
         :return: `numpy.array` a new sample
         """
-        from random import uniform, randint, shuffle
+        from random import uniform, shuffle
         from numpy import sqrt, array
         flag = False
         n = len(centre)
@@ -597,14 +597,15 @@ class HDReal(object):
         self.bound_tuple = tuple(self.bound_tuple)
 
 
-from sklearn.model_selection._search import BaseSearchCV, check_cv
 from sklearn.base import clone, is_classifier
 from sklearn.metrics.scorer import check_scoring
+from sklearn.model_selection._search import BaseSearchCV, check_cv
 from sklearn.model_selection._validation import _fit_and_score
+
 try:
     from Optimithon import NumericDiff
 except:
-    NumericDiff = type('NumericDiff', (object,),  dict(Simple=lambda : 0.,))
+    NumericDiff = type('NumericDiff', (object,), dict(Simple=lambda: 0., ))
 from numpy import inf
 
 
