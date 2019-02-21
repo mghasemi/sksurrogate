@@ -599,10 +599,13 @@ class HDReal(object):
 
 try:
     from sklearn.model_selection._search import BaseSearchCV
+except:
+    BaseSearchCV = type('BaseSearchCV', (object,), dict())
+
+try:
     from Optimithon import NumericDiff
 except:
     NumericDiff = type('NumericDiff', (object,), dict(Simple=lambda: 0., ))
-    BaseSearchCV = type('BaseSearchCV', (object,), dict())
 
 
 class SurrogateRandomCV(BaseSearchCV):

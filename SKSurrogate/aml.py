@@ -125,13 +125,12 @@ class Words(object):
 
 
 try:
-    from .structsearch import Real, Integer, Categorical, HDReal, BoxSample
+    from .structsearch import Real, Integer, Categorical, HDReal
 except:
     Real = lambda a, b: None
     Integer = lambda a, b: None
     Categorical = lambda a: None
     HDReal = lambda a, b: None
-    BoxSample = type('BoxSample', (object,), dict(check_constraints=lambda: None, sample=lambda x: None))
 
 default_config = {
     # Classifiers
@@ -375,7 +374,7 @@ class AML(object):
             else:
                 self.config_types[alg] = 'transformer'
 
-    def add_surrogate(self, estimator, itrs, sampling=BoxSample, optim='L-BFGS-B'):
+    def add_surrogate(self, estimator, itrs, sampling=None, optim='L-BFGS-B'):
         """
         Adding a regressor for surrogate optimization procedure.
 
@@ -387,6 +386,9 @@ class AML(object):
         """
         if self.surrogates is None:
             self.surrogates = []
+        if sampling is None:
+            from .structsearch import BoxSample
+            sampling = BoxSample
         self.surrogates.append((estimator, itrs, sampling, optim))
 
     def _cast(self, n, X, y):
