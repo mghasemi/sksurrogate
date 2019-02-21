@@ -127,7 +127,11 @@ class Words(object):
 try:
     from .structsearch import Real, Integer, Categorical, HDReal, BoxSample
 except:
-    from SKSurrogate.structsearch import Real, Integer, Categorical, HDReal, BoxSample
+    Real = lambda a, b: None
+    Integer = lambda a, b: None
+    Categorical = lambda a: None
+    HDReal = lambda a, b: None
+    BoxSample = type('BoxSample', (object,), dict(check_constraints=lambda: None, sample=lambda x: None))
 
 default_config = {
     # Classifiers
