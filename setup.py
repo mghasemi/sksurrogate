@@ -17,6 +17,6 @@ setup(
     long_description=open('./readme.rst').read(),
     keywords=["Auto Machine Learning", "AutoML", "Optimization", "Surrogate Optimization", "Numerical",
               "Machine Learning", "Regression", "Random Search"],
-    install_requires=['numpy', 'scipy', 'pandas', 'matplotlib', 'scikit-learn', 'SALib', 'tqdm',
-                      'peewee', 'category_encoders']
+    install_requires=['numpy', 'scipy', 'pandas', 'matplotlib', 'scikit-learn', 'SALib', 'imbalanced-learn',
+                      'tqdm', 'peewee', 'category_encoders']
 )

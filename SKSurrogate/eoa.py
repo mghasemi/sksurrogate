@@ -10,14 +10,16 @@ class EOA(object):
     evolutionary optimization algorithm.
 
     :param population: The whole possible population as a list
-    :param fitness: The fitness evaluation. Accepts an OrderedDict of individuals with their corresponding fitness and updates their fitness
+    :param fitness: The fitness evaluation. Accepts an OrderedDict of individuals with their corresponding fitness and
+        updates their fitness
     :param init_pop: default=`UniformRand`; The python class that initiates the initial population
     :param recomb: default=`UniformCrossover`; The python class that defines how to combine parents to produce children
     :param mutation: default=`Mutation`; The python class that performs mutation on offspring population
     :param termination: default=`MaxGenTermination`; The python class that determines the termination criterion
     :param elitism: default=`Elites`; The python class that decides how to handel elitism
     :param num_parents: The size of initial parents population
-    :param parents_porp: default=0.1; The size of initial parents population given as a portion of whole population (only used if `num_parents` is not given)
+    :param parents_porp: default=0.1; The size of initial parents population given as a portion of whole population
+        (only used if `num_parents` is not given)
     :param elits_porp: default=0.2; The porportion of offspring to be replaced by elite parents
     :param mutation_prob: The probability that a component will be mutated (default: 0.05)
     :param kwargs:
@@ -44,7 +46,7 @@ class EOA(object):
         self.genes = kwargs.pop('genes', [])
         self.init_genes = kwargs.pop('init_genes', [])
         self.term_genes = kwargs.pop('term_genes', [])
-        if self.genes == []:
+        if not self.genes:
             self.find_genes()
         self.evals = OrderedDict([(_, None) for _ in self.population])
         self.parents = OrderedDict()
@@ -55,9 +57,9 @@ class EOA(object):
             for e in ind:
                 if e not in self.genes:
                     self.genes.append(e)
-        if self.init_genes == []:
+        if not self.init_genes:
             self.init_genes = self.genes
-        if self.term_genes == []:
+        if not self.term_genes:
             self.term_genes = self.genes
 
     def __call__(self, *args, **kwargs):
@@ -72,7 +74,7 @@ class EOA(object):
         except NameError:
             from tqdm import tqdm
         except ImportError:
-            pass
+            tqdm = None
         if tqdm is not None:
             pbar = tqdm(total=self.max_generations)
         self.parents = self.init_pop(self)
@@ -133,6 +135,7 @@ class UniformCrossover(object):
         self.fitnesses = []
         self.fmin = 0.
         self.fmax = 0.
+        self.kwargs = kwargs
 
     def scale(self, scrs):
         self.fmin = min(scrs)

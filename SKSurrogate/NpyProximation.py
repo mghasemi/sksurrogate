@@ -30,7 +30,7 @@ class Measure(object):
                    of tuples defining the domain's box. If None is given, it will be set to :math:`[-1, 1]^n`
     """
 
-    def __init__(self, density=None, domain=None, **kwargs):
+    def __init__(self, density=None, domain=None):
         from types import FunctionType
         # set the density
         if density is None:
@@ -144,9 +144,9 @@ class FunctionBasis(object):
             if (sum(o) <= deg) and (sum(o) > 0):
                 for ex in E:
                     if sum(ex) > 0:
-                        f_ = lambda x, o=o, ex=ex: prod(
-                            [sin(o[i] * x[i] / l) ** ex[i] * cos(o[i] * x[i] / l) ** (1 - ex[i]) if o[i] > 0 else 1. for
-                             i in range(n)])
+                        f_ = lambda x, o_=o, ex_=ex: prod(
+                            [sin(o_[i] * x[i] / l)** ex_[i] * cos(o_[i] * x[i] / l) ** (1 - ex_[i]) if o_[i] > 0 else 1.
+                             for i in range(n)])
                         B.append(f_)
         return B
 
@@ -174,7 +174,7 @@ class FunctionSpace(object):
             from numpy import array
             B = [lambda x: 1.]
             for i in range(self.dim):
-                B.append(lambda x, i=i: x[i] if type(x) is array else x)
+                B.append(lambda x, i_=i: x[i_] if type(x) is array else x)
             self.base = B
         else:
             self.base = basis
@@ -256,7 +256,7 @@ class FunctionSpace(object):
             D.append(cf)
         self.OrthBase = []
         for i in range(len(D)):
-            fn = lambda x, i=i: sum([D[i][j] * self.base[j](x) for j in range(len(D[i]))])
+            fn = lambda x, i_=i: sum([D[i_][_j] * self.base[_j](x) for _j in range(len(D[i_]))])
             self.OrthBase.append(fn)
 
     def Series(self, f):
@@ -284,9 +284,10 @@ class Regression(object):
         + if at initiation the parameter `deg=n` is set, then ``R.fit()`` returns the polynomial regression of
           degree `n`.
         + if a basis of functions provided by means of an `OrthSystem` object (``R.SetOrthSys(orth)``) then
-          calling ``R.fit()`` returns the best approximation that can be found using the basic functions of the `orth` object.
+          calling ``R.fit()`` returns the best approximation that can be found using the basic functions of
+          the `orth` object.
 
-    :param point: a list of points to be fitted or a callable to be approximated
+    :param points: a list of points to be fitted or a callable to be approximated
     :param dim: dimension of the domain
     """
 
@@ -300,7 +301,7 @@ class Regression(object):
             for p in points:
                 supp[tuple(p[:-1])] = 1.
             self.meas = Measure(supp)
-            self.f = lambda x: sum([p[-1] * (1 * (abs(x - array(p[:-1])) < 1.e-4)).min() for p in points])
+            self.f = lambda x: sum([p_[-1] * (1 * (abs(x - array(p_[:-1])) < 1.e-4)).min() for p_ in points])
         elif callable(points):
             if dim is None:
                 raise Error("The dimension can not be determined")
@@ -350,7 +351,7 @@ class Regression(object):
 
 try:
     from sklearn.base import BaseEstimator, RegressorMixin
-except:
+except ModuleNotFoundError:
     BaseEstimator = type('BaseEstimator', (object,), dict())
     RegressorMixin = type('RegressorMixin', (object,), dict())
 
@@ -364,7 +365,8 @@ class HilbertRegressor(BaseEstimator, RegressorMixin):
     :param base: list, default = None
         a list of function to form an orthogonal function basis
     :param meas: NpyProximation.Measure, default = None
-        the measure to form the :math:`L_2(\mu)` space. If `None` a discrete measure will be constructed based on `fit` inputs
+        the measure to form the :math:`L_2(\mu)` space. If `None` a discrete measure will be constructed based
+        on `fit` inputs
     :param fspace: NpyProximation.FunctionBasis, default = None
         the function subspace of :math:`L_2(\mu)`, if `None` it will be initiated according to `self.meas`
     """
@@ -374,6 +376,9 @@ class HilbertRegressor(BaseEstimator, RegressorMixin):
         self.meas = meas
         self.base = base
         self.fspace = fspace
+        self.Regressor = None
+        self.dim = 0
+        self.apprx = None
 
     def fit(self, X, y):
         """
