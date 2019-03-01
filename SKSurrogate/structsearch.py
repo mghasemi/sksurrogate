@@ -360,17 +360,17 @@ class SurrogateSearch(object):
         Fetches and sets the Optimithon's parameters
         :return: None
         """
+        self.optimizer = self.other.pop('optimizer', 'scipy')
+        self.scipy_solver = self.other.pop('scipy_solver', 'COBYLA')
+        self.optimithon_t_method = self.other.pop('optimithon_t_method', 'Cauchy_x')
+        self.optimithon_dd_method = self.other.pop('optimithon_dd_method', 'BFGS')
+        self.optimithon_ls_method = self.other.pop('optimithon_ls_method', 'Backtrack')
+        self.optimithon_ls_bt_method = self.other.pop('optimithon_ls_bt_method', 'Armijo')
+        self.optimithon_br_func = self.other.pop('optimithon_br_func', 'Carrol')
+        self.optimithon_penalty = self.other.pop('optimithon_penalty', 1.e6)
+        self.optimithon_max_iter = self.other.pop('optimithon_max_iter', 100)
         try:
             from Optimithon import NumericDiff
-            self.optimizer = self.other.pop('optimizer', 'scipy')
-            self.scipy_solver = self.other.pop('scipy_solver', 'COBYLA')
-            self.optimithon_t_method = self.other.pop('optimithon_t_method', 'Cauchy_x')
-            self.optimithon_dd_method = self.other.pop('optimithon_dd_method', 'BFGS')
-            self.optimithon_ls_method = self.other.pop('optimithon_ls_method', 'Backtrack')
-            self.optimithon_ls_bt_method = self.other.pop('optimithon_ls_bt_method', 'Armijo')
-            self.optimithon_br_func = self.other.pop('optimithon_br_func', 'Carrol')
-            self.optimithon_penalty = self.other.pop('optimithon_penalty', 1.e6)
-            self.optimithon_max_iter = self.other.pop('optimithon_max_iter', 100)
             self.optimithon_difftool = self.other.pop('optimithon_difftool', NumericDiff.Simple())
         except ModuleNotFoundError:
             pass
@@ -756,6 +756,7 @@ class SurrogateRandomCV(BaseSearchCV):
         from sklearn.metrics.scorer import check_scoring
         from sklearn.model_selection._search import check_cv
         from sklearn.model_selection._validation import _fit_and_score
+        # from lightgbm.sklearn import LightGBMError
         radius_list = []
         self.scorer_ = check_scoring(self.estimator, scoring=self.scoring)
         target_classes = []
@@ -820,6 +821,7 @@ class SurrogateRandomCV(BaseSearchCV):
             score = 0
             n_test = 0
             for train, test in cv_dat:
+                #if True:
                 try:
                     _score = _fit_and_score(estimator=cl, X=X, y=y, scorer=self.scorer_,
                                             train=train, test=test, verbose=self.verbose,
@@ -831,7 +833,10 @@ class SurrogateRandomCV(BaseSearchCV):
                     else:
                         score += _score
                         n_test += 1
-                except:
+                #else:
+                except ValueError:
+                    pass
+                except:# LightGBMError:
                     pass
             score /= float(max(n_test, 1))
             if is_classifier(self.estimator):

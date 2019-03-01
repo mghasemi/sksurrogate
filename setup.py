@@ -7,7 +7,7 @@ Description = "A python package that implements or wraps a few machine learning 
 
 setup(
     name='SKSurrogate',
-    version='0.0.1',
+    version='0.0.4',
     author='Mehdi Ghasemi',
     author_email='mehdi.ghasemi@gmail.com',
     packages=['SKSurrogate'],
@@ -18,5 +18,5 @@ setup(
     keywords=["Auto Machine Learning", "AutoML", "Optimization", "Surrogate Optimization", "Numerical",
               "Machine Learning", "Regression", "Random Search"],
     install_requires=['numpy', 'scipy', 'pandas', 'matplotlib', 'scikit-learn', 'SALib', 'imbalanced-learn',
-                      'tqdm', 'peewee', 'category_encoders']
+                      'eli5', 'tqdm', 'peewee', 'category_encoders']
 )

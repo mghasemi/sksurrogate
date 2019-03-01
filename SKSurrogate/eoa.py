@@ -140,10 +140,10 @@ class UniformCrossover(object):
     def scale(self, scrs):
         self.fmin = min(scrs)
         self.fmax = max(scrs)
-        l = self.fmax - self.fmin
-        if l == 0.:
-            l = 1.
-        self.fitnesses = [(_ - self.fmin) / l for _ in scrs]
+        lng = self.fmax - self.fmin
+        if lng == 0.:
+            lng = 1.
+        self.fitnesses = [(_ - self.fmin) / lng for _ in scrs]
 
     def select_idx(self):
         from random import uniform
@@ -234,23 +234,23 @@ class Mutation(object):
                 prb = uniform(0, 1.)
                 if prb <= ref.mutation_prob:
                     if idx == 0:
-                        l = len(ref.init_genes)
-                        rdx = randint(0, l)
-                        if rdx < l:
+                        lng = len(ref.init_genes)
+                        rdx = randint(0, lng)
+                        if rdx < lng:
                             me = ref.init_genes[rdx]
                         else:
                             me = ''
                     elif idx == length:
-                        l = len(ref.term_genes)
-                        rdx = randint(0, l)
-                        if rdx < l:
+                        lng = len(ref.term_genes)
+                        rdx = randint(0, lng)
+                        if rdx < lng:
                             me = ref.term_genes[rdx]
                         else:
                             me = ''
                     else:
-                        l = len(ref.genes)
-                        rdx = randint(0, l)
-                        if rdx < l:
+                        lng = len(ref.genes)
+                        rdx = randint(0, lng)
+                        if rdx < lng:
                             me = ref.genes[rdx]
                         else:
                             me = ''
@@ -282,8 +282,8 @@ class Words(object):
         self.repeat = repeat
 
     def _check_cons_repeat(self, o):
-        l = len(o)
-        for i in range(1, l):
+        lng = len(o)
+        for i in range(1, lng):
             if self.repeat:
                 return True
             if o[i - 1] == o[i]:

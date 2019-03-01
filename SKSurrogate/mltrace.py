@@ -14,8 +14,8 @@ It also has built in capabilities to generate some typical plots and graph in ma
 
 try:
     from peewee import *
-except:
-    Model = type('Model', (object,),  dict(Simple=lambda : 0.,))
+except ModuleNotFoundError:
+    Model = type('Model', (object,), dict(Simple=lambda: 0., ))
     SqliteDatabase = lambda x: None
 from datetime import datetime
 
@@ -274,7 +274,7 @@ class mltrack(object):
             res.parameters = dumps(mdl.get_params())
             res.date_modified = datetime.now()
             res.save()
-            ## TBM
+            # TBM
             Tskres = Task.select().where(Task.task_id == self.task_id)[0]
             Tskres.last_mod_date = datetime.now()
             Tskres.save()
@@ -289,7 +289,7 @@ class mltrack(object):
         :param target: the name of the target column to be predicted
         :return: None
         """
-        ## TBM
+        # TBM
         res = Task.select().where(Task.task_id == self.task_id)[0]
         res.target = target
         res.last_mod_date = datetime.now()
@@ -297,7 +297,7 @@ class mltrack(object):
         self.target = target
         clmns = list(source_df.columns)
         if target not in clmns:
-            raise BaseException("`%s` is not a part of data source." % (target))
+            raise BaseException("`%s` is not a part of data source." % target)
         source_df.to_sql('data', self.conn, if_exists="replace", index=False)
         clmns.remove(target)
         self.X = source_df[clmns].values
@@ -360,7 +360,7 @@ class mltrack(object):
         f_1 = None
         prs = None
         rcl = None
-        auc = None
+        aur = None
         mcc = None
         lgl = None
         vrn = None
@@ -393,7 +393,7 @@ class mltrack(object):
             r2 = sum([r2_score(y_tst, y_prd) for y_prd, y_tst in prds]) / n_
         Metrics.create(model_id=mdl_id, accuracy=acc, auc=aur, precision=prs, f1=f_1, recall=rcl, mcc=mcc, logloss=lgl,
                        variance=vrn, max_error=mxe, mse=mse, mae=mae, r2=r2)
-        ## TBM
+        # TBM
         res = Task.select().where(Task.task_id == self.task_id)[0]
         res.last_mod_date = datetime.now()
         res.save()
@@ -417,7 +417,6 @@ class mltrack(object):
         clss = detail[-1]
         module = import_module(module_str)
         params = loads(res[0].parameters)
-        # print(params)
         mdl = module.__getattribute__(clss)()
         mdl.set_params(**params)
         mdl.mltrack_id = id
@@ -580,7 +579,7 @@ class mltrack(object):
             meas = 'accuracy'
         if train_sizes is None:
             train_sizes = np.linspace(.1, 1.0, 5)
-        ax = plt.subplot(111)
+        plt.subplot(111)
         fig = plt.figure()
         plt.title(title)
         if ylim is None:
