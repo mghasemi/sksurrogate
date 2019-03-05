@@ -31,8 +31,8 @@ class SensAprx(BaseEstimator, TransformerMixin):
     :param probs: pre-calculated values associated to `domain` points
     """
 
-    def __init__(self, n_features_to_select=10, regressor=None, method='sobol', margin=.2, num_smpl=600, num_levels=6,
-                 grid_jump=1, num_resmpl=10, reduce=False, domain=None, probs=None):
+    def __init__(self, n_features_to_select=10, regressor=None, method='sobol', margin=.2, num_smpl=500, num_levels=5,
+                 grid_jump=1, num_resmpl=8, reduce=False, domain=None, probs=None):
         self.n_features_to_select = n_features_to_select
         self.regressor = regressor
         self.method = method

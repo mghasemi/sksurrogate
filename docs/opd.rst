@@ -131,19 +131,64 @@ The case of ``imblearn.base.SamplerMixin``, ``BaseSampler`` can only occur at th
 pipeline. The rest could be ``RegressorMixin``, ``ClassifierMixin`` or ``TransformerMixin``.
 
 Stacking
----------------------
+--------------------------
 If a non ``TransformerMixin`` occurs in the middle, then by ``StackingEstimator`` it will transform
 the data to append columns based on the outcome of ``RegressorMixin`` or ``ClassifierMixin``.
 
+Permutation Importance
+--------------------------
+If ``sklearn.pipeline.FeatureUnion`` is included within the config dictionary, in the scope of a
+pipeline two scenarios are plausible:
+
+    + **`FeatureUnion` is followed by a series of transformations:** in this case `FeatureUnion`
+        does exactly what is expected, i.e., gathers all the feature outputs of transformers;
+    + **`FeatureUnion` is followed by a mixture of transformations and estimators:** then
+        `SKSurrogate` uses ``eli5.sklearn.PermutationImportance`` to weight the features based on
+        the estimator and then selects top features via ``sklearn.feature_selection.SelectFromModel``.
+
+Not all transformers select a subset of of features (e.g., `Normalizer` or `StandardScaler`). If
+`FeatureUnion` is followed by such transformers, it does not have any effect on the outcome of the
+transformer. If the transformer selects a subset of features (`VarianceThreshold`, `skrebate.ReliefF`)
+then `FeatureUnion` collects the outcomes and returns the union. This is also true for
+`PermutationImportance`. The `FeatureUnion` affects the following transformers and estimators until
+it reaches the last step or a transformer which is not a feature selector. Subclasses of
+``sklearn.feature_selection.base.SelectorMixin`` are considered as feature selectors. Also, the
+following transformers are considered as feature selectors:
+
+    - `FactorAnalysis`
+    - `FastICA`
+    - `IncrementalPCA`
+    - `KernelPCA`
+    - `LatentDirichletAllocation`
+    - `MiniBatchDictionaryLearning`
+    - `MiniBatchSparsePCA`
+    - `NMF`
+    - `PCA`
+    - `SparsePCA`
+    - `TruncatedSVD`
+    - `VarianceThreshold`
+    - `LocallyLinearEmbedding`
+    - `Isomap`
+    - `MDS`
+    - `SpectralEmbedding`
+    - `TSNE`
+    - `sksurrogate.SensAprx`
+    - `skrebate.ReliefF`
+    - `skrebate.SURF`
+    - `skrebate.SURFstar`
+    - `skrebate.MultiSURF`
+    - `skrebate.MultiSURFstar`
+    - `skrebate.TuRF`
+
 imblearn pipelines
----------------------
+--------------------------
 If an ``imblearn`` sampler is included in the `config` dictionary, then
 ``imblearn.pipeline.Pipeline`` will be used instead of ``sklearn.pipeline.Pipeline`` which enables
 the Pipeline to use `imblearn <https://imbalanced-learn.readthedocs.io/en/stable/index.html>`_
 samples too.
 
 Categorical Variables
----------------------
+--------------------------
 In case there are fields in the data that need to be treated as categorical, one could provide a
 list of indices through `cat_cols`. Then, the data will be transformed via
 ``category_encoders.one_hot.OneHotEncoder`` before being passed to the pipelines.

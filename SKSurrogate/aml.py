@@ -491,86 +491,11 @@ class AML(object):
         for seq in Pop:
             if not self._validate_sequence(seq):
                 continue
-            idx = 0
-            ent_idx = 0
-            steps = []
-            config = {}
-            task_name = self.check_point + '_'.join(seq)
-            # for est in seq:
-            while ent_idx < n:
-                est = seq[ent_idx]
-                clss = self._get_class(est)
-                # mdl = clss()
-                pre = 'stp_%d' % idx
-                if self.config_types[est] in ['regressor', 'classifier'] and ent_idx < n - 1:
-                    mdl = clss()
-                    steps.append((pre, StackingEstimator(mdl, res=self.stack_res,
-                                                         probs=self.stack_probs,
-                                                         decision=self.stack_decision)))
-                    ent_idx += 1
-                elif est == 'sklearn.pipeline.FeatureUnion':
-                    self.config[est] = dict()
-                    int_idx = 1
-                    int_steps = []
-                    next_est = seq[ent_idx + int_idx]
-                    while ((self.config_types[next_est] in ['regressor', 'classifier']) or (
-                            next_est in self.known_feature_selectors)) and (ent_idx + int_idx < n - 1):
-                        int_pre = "int_%d" % int_idx
-                        if next_est in self.known_feature_selectors:
-                            int_mdl = self._get_class(next_est)()
-                            # set the parameter's dictionary
-                            for kw in self.config[next_est]:
-                                self.config[est][int_pre + '__' + kw] = self.config[next_est][kw]
-                        else:
-                            from eli5.sklearn import PermutationImportance
-                            from sklearn.feature_selection import SelectFromModel
-                            from numpy import inf
-                            int_est = self._get_class(next_est)()
-                            int_mdl = SelectFromModel(PermutationImportance(int_est, cv=3),
-                                                      threshold=-inf)
-                            self.config[est][int_pre + '__' + 'max_features'] = Integer(1, self.num_features)
-                            for kw in self.config[next_est]:
-                                self.config[est][int_pre + '__' + 'estimator__estimator__' + kw] = \
-                                    self.config[next_est][kw]
-                        int_steps.append((int_pre, int_mdl))
-                        int_idx += 1
-                        next_est = seq[ent_idx + int_idx]
-                    if int_steps != []:
-                        mdl = clss(int_steps)
-                        steps.append((pre, mdl))
-                    ent_idx += int_idx
-                else:
-                    mdl = clss()
-                    steps.append((pre, mdl))
-                    ent_idx += 1
-                for kw in self.config[est]:
-                    config[pre + '__' + kw] = self.config[est][kw]
-                idx += 1
-            ppln = Pipeline(steps)
+            best_mdl, best_scr = self.optimize_pipeline(seq, X, y)
+            self.models[seq] = (best_mdl, best_scr)
             if self.verbose > 0:
-                print("=" * 90)
-                print(seq)
-                print("-" * 90)
-            OPTIM = None
-            for srgt in self.surrogates:
-                OPTIM = SurrogateRandomCV(ppln,
-                                          params=config,
-                                          max_iter=srgt[1],
-                                          min_evals=self.min_random_evals,
-                                          scoring=self.scoring,
-                                          cv=self.cv,
-                                          verbose=max(self.verbose - 1, 0),
-                                          sampling=srgt[2],
-                                          regressor=srgt[0],
-                                          scipy_solver=srgt[3],
-                                          task_name=task_name,
-                                          Continue=True,
-                                          warm_start=True)
-                OPTIM.fit(X, y)
-            self.models[seq] = (OPTIM.best_estimator_, OPTIM.best_estimator_score)
-            if self.verbose > 0:
-                print("score:%f" % OPTIM.best_estimator_score)
-                print(OPTIM.best_estimator_)
+                print("score:%f" % best_scr)
+                print(best_mdl)
 
     def fit(self, X, y):
         """
@@ -663,90 +588,13 @@ class AML(object):
             from collections import OrderedDict
             fitted = OrderedDict([])
             for seq in ppl:
-                if not self._validate_sequence(seq):
-                    continue
-                n = len(seq)
-                idx = 0
-                ent_idx = 0
-                steps = []
-                config = {}
-                task_name = self.check_point + '_'.join(seq)
-                while ent_idx < n:
-                    est = seq[ent_idx]
-                    clss = self._get_class(est)
-                    # mdl = clss()
-                    pre = 'stp_%d' % idx
-                    if self.config_types[est] in ['regressor', 'classifier'] and ent_idx < n - 1:
-                        mdl = clss()
-                        steps.append((pre, StackingEstimator(mdl, res=self.stack_res,
-                                                             probs=self.stack_probs,
-                                                             decision=self.stack_decision)))
-                        ent_idx += 1
-                    elif est == 'sklearn.pipeline.FeatureUnion':
-                        self.config[est] = dict()
-                        int_idx = 1
-                        int_steps = []
-                        next_est = seq[ent_idx + int_idx]
-                        while ((self.config_types[next_est] in ['regressor', 'classifier']) or (
-                                next_est in self.known_feature_selectors)) and (ent_idx + int_idx < n - 1):
-                            int_pre = "int_%d" % int_idx
-                            if next_est in self.known_feature_selectors:
-                                int_mdl = self._get_class(next_est)()
-                                # set the parameter's dictionary
-                                for kw in self.config[next_est]:
-                                    self.config[est][int_pre + '__' + kw] = self.config[next_est][kw]
-                            else:
-                                from eli5.sklearn import PermutationImportance
-                                from sklearn.feature_selection import SelectFromModel
-                                from numpy import inf
-                                int_est = self._get_class(next_est)()
-                                int_mdl = SelectFromModel(PermutationImportance(int_est, cv=3),
-                                                          threshold=-inf)
-                                self.config[est][int_pre + '__' + 'max_features'] = Integer(1, self.num_features)
-                                for kw in self.config[next_est]:
-                                    self.config[est][int_pre + '__' + 'estimator__estimator__' + kw] = \
-                                        self.config[next_est][kw]
-                            int_steps.append((int_pre, int_mdl))
-                            int_idx += 1
-                            next_est = seq[ent_idx + int_idx]
-                        if int_steps != []:
-                            mdl = clss(int_steps)
-                            steps.append((pre, mdl))
-                        ent_idx += int_idx
-                    else:
-                        mdl = clss()
-                        steps.append((pre, mdl))
-                        ent_idx += 1
-                    for kw in self.config[est]:
-                        config[pre + '__' + kw] = self.config[est][kw]
-                    idx += 1
-                ppln = Pipeline(steps)
-                if self.verbose > 0:
-                    print("=" * 90)
-                    print(seq)
-                    print("-" * 90)
-                OPTIM = None
-                for srgt in self.surrogates:
-                    OPTIM = SurrogateRandomCV(ppln,
-                                              params=config,
-                                              max_iter=srgt[1],
-                                              min_evals=self.min_random_evals,
-                                              scoring=self.scoring,
-                                              cv=self.cv,
-                                              verbose=max(self.verbose - 1, 0),
-                                              sampling=srgt[2],
-                                              regressor=srgt[0],
-                                              scipy_solver=srgt[3],
-                                              task_name=task_name,
-                                              Continue=True,
-                                              warm_start=True)
-                    OPTIM.fit(X_, y_)
+                best_mdl, best_scr = self.optimize_pipeline(seq, X_, y_)
                 if seq not in self.models:
-                    self.models[seq] = (OPTIM.best_estimator_, OPTIM.best_estimator_score)
+                    self.models[seq] = (best_mdl, best_scr)
                 if self.verbose > 0:
-                    print("score:%f" % OPTIM.best_estimator_score)
-                    print(OPTIM.best_estimator_)
-                fitted[seq] = -OPTIM.best_estimator_score
+                    print("score:%f" % best_scr)
+                    print(best_mdl)
+                fitted[seq] = -best_scr
             return fitted
 
         num_parents = kwargs.pop('num_parents', 30)
@@ -766,3 +614,95 @@ class AML(object):
         """
         from collections import OrderedDict
         return OrderedDict(sorted(self.models.items(), key=lambda x: x[1][1])[:num])
+
+    def optimize_pipeline(self, seq, X, y):
+        """
+        Constructs and optimizes a pipeline according to the steps passed through `seq` which is a tuple of
+        estimators and transformers.
+
+        :param seq: the tuple of steps of the pipeline to be optimized
+        :param X: numpy array of training features
+        :param y: numpy array of training values
+        :return: the optimized pipeline and its score
+        """
+        from .structsearch import SurrogateRandomCV
+        if self.couldBfirst == []:
+            from sklearn.pipeline import Pipeline
+        else:
+            from imblearn.pipeline import Pipeline
+        OPTIM = None
+        n = len(seq)
+        idx = 0
+        ent_idx = 0
+        steps = []
+        config = {}
+        task_name = self.check_point + '_'.join(seq)
+        while ent_idx < n:
+            est = seq[ent_idx]
+            clss = self._get_class(est)
+            pre = 'stp_%d' % idx
+            if self.config_types[est] in ['regressor', 'classifier'] and ent_idx < n - 1:
+                mdl = clss()
+                steps.append((pre, StackingEstimator(mdl, res=self.stack_res,
+                                                     probs=self.stack_probs,
+                                                     decision=self.stack_decision)))
+                ent_idx += 1
+            elif est == 'sklearn.pipeline.FeatureUnion':
+                self.config[est] = dict()
+                int_idx = 1
+                int_steps = []
+                next_est = seq[ent_idx + int_idx]
+                while ((self.config_types[next_est] in ['regressor', 'classifier']) or (
+                        next_est in self.known_feature_selectors)) and (ent_idx + int_idx < n - 1):
+                    int_pre = "int_%d" % int_idx
+                    if next_est in self.known_feature_selectors:
+                        int_mdl = self._get_class(next_est)()
+                        # set the parameter's dictionary
+                        for kw in self.config[next_est]:
+                            self.config[est][int_pre + '__' + kw] = self.config[next_est][kw]
+                    else:
+                        from eli5.sklearn import PermutationImportance
+                        from sklearn.feature_selection import SelectFromModel
+                        from numpy import inf
+                        int_est = self._get_class(next_est)()
+                        int_mdl = SelectFromModel(PermutationImportance(int_est, cv=3),
+                                                  threshold=-inf)
+                        self.config[est][int_pre + '__' + 'max_features'] = Integer(1, self.num_features)
+                        for kw in self.config[next_est]:
+                            self.config[est][int_pre + '__' + 'estimator__estimator__' + kw] = \
+                                self.config[next_est][kw]
+                    int_steps.append((int_pre, int_mdl))
+                    int_idx += 1
+                    next_est = seq[ent_idx + int_idx]
+                if int_steps != []:
+                    mdl = clss(int_steps)
+                    steps.append((pre, mdl))
+                ent_idx += int_idx
+            else:
+                mdl = clss()
+                steps.append((pre, mdl))
+                ent_idx += 1
+            for kw in self.config[est]:
+                config[pre + '__' + kw] = self.config[est][kw]
+            idx += 1
+        ppln = Pipeline(steps)
+        if self.verbose > 0:
+            print("=" * 90)
+            print(seq)
+            print("-" * 90)
+        for srgt in self.surrogates:
+            OPTIM = SurrogateRandomCV(ppln,
+                                      params=config,
+                                      max_iter=srgt[1],
+                                      min_evals=self.min_random_evals,
+                                      scoring=self.scoring,
+                                      cv=self.cv,
+                                      verbose=max(self.verbose - 1, 0),
+                                      sampling=srgt[2],
+                                      regressor=srgt[0],
+                                      scipy_solver=srgt[3],
+                                      task_name=task_name,
+                                      Continue=True,
+                                      warm_start=True)
+            OPTIM.fit(X, y)
+        return OPTIM.best_estimator_, OPTIM.best_estimator_score
