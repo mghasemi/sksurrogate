@@ -113,6 +113,7 @@ class Words(object):
     def Generate(self, l):
         """
         Generates the set of legitimate words of length `l`
+
         :param l: int, the length of words
         :return: set of all legitimate words of length `l`
         """
@@ -316,9 +317,9 @@ class AML(object):
     :param cat_cols: default=None; The list of indices of categorical columns
     :param surrogates: default=None; A list of 4-tuples determining surrogates. The first entity of each pair is
         a scikit-learn regressor and the
-            2nd entity is the number of iterations that this surrogate needs to be estimated and optimized.
-            The 3rd is the sampling strategy and the
-            4th is the `scipy.optimize` solver
+        2nd entity is the number of iterations that this surrogate needs to be estimated and optimized.
+        The 3rd is the sampling strategy and the
+        4th is the `scipy.optimize` solver
     :param min_random_evals: default=15; Number of randomly sampled initial values for hyper parameters
     :param cv: default=`ShuffleSplit(n_splits=3, test_size=.25); The cross validation method
     :param check_point: default='./'; The path where the optimization results will be stored
@@ -380,6 +381,7 @@ class AML(object):
     def types(self):
         """
         Recognizes the type of each estimator to determine legitimate placement of each
+
         :return: None
         """
         from importlib import import_module
@@ -407,6 +409,7 @@ class AML(object):
     def _validate_sequence(self, seq):
         """
         Validates the structure of the building sequence
+
         :param seq: a sequence of (genes) estimators
         :return: True or False
         """
