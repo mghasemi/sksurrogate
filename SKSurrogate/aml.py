@@ -543,7 +543,7 @@ class AML(object):
         :param kwargs: `EOA` parameters
         :return: `self`
         """
-        from .structsearch import SurrogateRandomCV, BoxSample, CompactSample
+        from .structsearch import BoxSample, CompactSample
         from .eoa import EOA
         _X, _y = X, y
         if self.cat_cols is not None:
