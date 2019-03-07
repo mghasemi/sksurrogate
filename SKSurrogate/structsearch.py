@@ -632,7 +632,7 @@ class SurrogateRandomCV(BaseSearchCV):
 
     :param estimator: estimator object. A object of that type is instantiated for each search point. This object is
         assumed to implement the scikit-learn estimator api. Either estimator needs to provide a ``score`` function,
-            or ``scoring`` must be passed.
+        or ``scoring`` must be passed.
     :param params: dict Dictionary with parameters names (string) as keys and domains as lists of parameter ranges
         to try. Domains are either lists of categorical (string) values or 2 element lists specifying a min and max
         for integer or float parameters

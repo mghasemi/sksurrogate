@@ -137,6 +137,11 @@ except ModuleNotFoundError:
     Integer = lambda a, b: None
     Categorical = lambda a: None
     HDReal = lambda a, b: None
+except ImportError:
+    Real = lambda a, b: None
+    Integer = lambda a, b: None
+    Categorical = lambda a: None
+    HDReal = lambda a, b: None
 
 default_config = {
     # Classifiers
@@ -461,8 +466,7 @@ class AML(object):
         :param y: Observed values
         :return: None
         """
-        from .structsearch import SurrogateRandomCV, BoxSample, CompactSample
-        from importlib import import_module
+        from .structsearch import BoxSample, CompactSample
         if self.couldBfirst == []:
             from sklearn.pipeline import Pipeline
         else:
