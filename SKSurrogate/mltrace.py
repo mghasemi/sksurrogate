@@ -96,7 +96,7 @@ class Metrics(Model):
     This table stores the calculated metrics of each stored model.
     """
     try:
-        mwtrics_id = IntegerField(primary_key=True, unique=True, null=False)
+        metrics_id = IntegerField(primary_key=True, unique=True, null=False)
         model_id = ForeignKeyField(MLModel)
         accuracy = FloatField(null=True)
         auc = FloatField(null=True)

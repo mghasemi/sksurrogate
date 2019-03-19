@@ -607,7 +607,7 @@ class AML(object):
         num_parents = kwargs.pop('num_parents', 30)
         mutation_prob = kwargs.pop('mutation_prob', .1)
         _eoa = EOA(population=Pop, fitness=_eval, num_parents=num_parents, mutation_prob=mutation_prob,
-                   term_genes=self.couldBlast, init_genes=self.couldBfirst, **kwargs)
+                   term_genes=self.couldBlast, init_genes=self.couldBfirst, check_point=self.check_point, **kwargs)
         _eoa()
         self.best_estimator_ = list(self.get_top(1).items())[0][1][0]
         return self

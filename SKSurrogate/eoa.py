@@ -46,6 +46,8 @@ class EOA(object):
         self.genes = kwargs.pop('genes', [])
         self.init_genes = kwargs.pop('init_genes', [])
         self.term_genes = kwargs.pop('term_genes', [])
+        self.task_name = kwargs.pop('task_name', 'EOA')
+        self.check_point = kwargs.pop('check_point', './')
         if not self.genes:
             self.find_genes()
         self.evals = OrderedDict([(_, None) for _ in self.population])
@@ -62,7 +64,53 @@ class EOA(object):
         if not self.term_genes:
             self.term_genes = self.genes
 
+    def __save(self):
+        """
+        Logs state of the evolutionary optimization progress at each iteration
+        :return: None
+        """
+        from pickle import dumps
+        fl = open(self.check_point + self.task_name + '.eoa', 'wb')
+        info = dict(population_size=self.population_size, parents_porp=self.parents_porp, num_parents=self.num_parents,
+                    elits_porp=self.elits_porp, num_elites=self.num_elites, mutation_prob=self.mutation_prob,
+                    max_generations=self.max_generations, generation_num=self.generation_num, genes=self.genes,
+                    init_genes=self.init_genes, term_genes=self.term_genes, task_name=self.task_name,
+                    check_point=self.check_point, evals=self.evals, parents=self.parents, children=self.children)
+        fl.write(dumps(info))
+        fl.close()
+
+    def __load(self):
+        """
+        Loads previous information saved, if any
+        :return: None
+        """
+        from pickle import loads
+        try:
+            fl = open(self.check_point + self.task_name + '.eoa', 'rb')
+            info = loads(fl.read())
+            fl.close()
+            self.population_size = info['population_size']
+            self.parents_porp = info['parents_porp']
+            self.num_parents = info['num_parents']
+            self.elits_porp = info['elits_porp']
+            self.num_elites = info['num_elites']
+            self.mutation_prob = info['mutation_prob']
+            self.max_generations = info['max_generations']
+            self.generation_num = info['generation_num']
+            self.genes = info['genes']
+            self.init_genes = info['init_genes']
+            self.term_genes = info['term_genes']
+            self.task_name = info['task_name']
+            self.check_point = info['check_point']
+            self.evals = info['evals']
+            self.parents = info['parents']
+            self.children = info['children']
+        except FileNotFoundError:
+            pass
+
     def __call__(self, *args, **kwargs):
+        self.parents = self.init_pop(self)
+        self.__load()
         tqdm = None
         pbar = None
         try:
@@ -77,13 +125,18 @@ class EOA(object):
             tqdm = None
         if tqdm is not None:
             pbar = tqdm(total=self.max_generations)
-        self.parents = self.init_pop(self)
+        pbar.update(self.generation_num)
         while not self.termination(self):
+            self.__save()
             self.generation_num += 1
             self.parents = self.fitness(self.parents)
+            for _ in self.parents:
+                self.evals[_] = self.parents[_]
             self.recomb(self)
             self.mutation(self)
             self.children = self.fitness(self.children)
+            for _ in self.children:
+                self.evals[_] = self.children[_]
             self.elitism(self)
             self.parents = self.children
             if tqdm is not None:

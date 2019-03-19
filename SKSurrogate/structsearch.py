@@ -663,10 +663,6 @@ class SurrogateRandomCV(BaseSearchCV):
 
             - A string, giving an expression as a function of n_jobs,
               as in '2*n_jobs'
-    :param iid: boolean, default=True
-        If True, the data is assumed to be identically distributed across
-        the folds, and the loss minimized is the total loss per sample,
-        and not the mean loss across the folds.
     :param cv: int, cross-validation generator or an iterable, optional
         Determines the cross-validation splitting strategy.
         Possible inputs for cv are:
@@ -690,7 +686,7 @@ class SurrogateRandomCV(BaseSearchCV):
         Prints internal information about the progress of each iteration.
     """
 
-    def __init__(self, estimator, params, scoring=None, fit_params=None, n_jobs=1, iid=True, refit=True, cv=None,
+    def __init__(self, estimator, params, scoring=None, fit_params=None, n_jobs=1, refit=True, cv=None,
                  verbose=0, pre_dispatch='2*n_jobs', error_score='raise', return_train_score=True,
                  max_iter=50, min_evals=25, regressor=None, sampling=CompactSample, radius=None, contraction=.95,
                  search_sphere=False, optimizer='scipy', scipy_solver='SLSQP', task_name='optim_task', warm_start=True,
@@ -700,7 +696,7 @@ class SurrogateRandomCV(BaseSearchCV):
                  optimithon_ls_bt_method='Armijo', optimithon_br_func='Carrol', optimithon_penalty=1.e6,
                  optimithon_max_iter=100, optimithon_difftool=NumericDiff.Simple()):
         super(SurrogateRandomCV, self).__init__(estimator=estimator, scoring=scoring, fit_params=fit_params,
-                                                n_jobs=n_jobs, iid=iid, refit=refit, cv=cv, verbose=verbose,
+                                                n_jobs=n_jobs, refit=refit, cv=cv, verbose=verbose,
                                                 pre_dispatch=pre_dispatch, error_score=error_score,
                                                 return_train_score=return_train_score)
         self.params = params
@@ -821,19 +817,19 @@ class SurrogateRandomCV(BaseSearchCV):
             score = 0
             n_test = 0
             for train, test in cv_dat:
-                #if True:
                 try:
                     _score = _fit_and_score(estimator=cl, X=X, y=y, scorer=self.scorer_,
                                             train=train, test=test, verbose=self.verbose,
                                             parameters=cand_params, fit_params=self.fit_params,
                                             error_score=self.error_score)[0]
-                    if self.iid:
-                        score += _score * len(test)
-                        n_test += len(test)
-                    else:
-                        score += _score
-                        n_test += 1
-                #else:
+                    #if self.iid:
+                    #    score += _score * len(test)
+                    #    n_test += len(test)
+                    #else:
+                    #    score += _score
+                    #    n_test += 1
+                    score += _score
+                    n_test += 1
                 except ValueError:
                     pass
                 except:# LightGBMError:
