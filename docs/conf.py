@@ -52,9 +52,9 @@ master_doc = 'index'
 # General information about the project.
 project = u'SKSurrogate'
 #copyright = u'2018, Mehdi Ghasemi'
-copyright = u'2019, REBE, Government of Saskatchewan'
-# author = u'Mehdi Ghasemi'
-author = u'REBE, Government of Saskatchewan'
+copyright = u'2019, Mehdi Ghasemi'
+author = u'Mehdi Ghasemi'
+# author = u'REBE, Government of Saskatchewan'
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
@@ -149,8 +149,8 @@ latex_elements = {
 #  author, documentclass [howto, manual, or own class]).
 latex_documents = [
     (master_doc, 'SKSurrogate.tex', u'SKSurrogate Documentation',
-     # u'Mehdi Ghasemi',
-     u'REBE, Government of Saskatchewan',
+     u'Mehdi Ghasemi',
+     # u'REBE, Government of Saskatchewan',
      'manual'),
 ]
 
