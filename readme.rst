@@ -7,12 +7,12 @@ functions based on ``scikit-learn``. The main purpose of ``SKSurrogate`` is to f
 hyperparameter optimization for machine learning models and optimized pipeline design (AutoML).
 
 The version of the surrogate optimization implemented here heavily relies on regressors.
-A custome regressor based on Hilbert Space techniques is implemented, but all ``scikit-learn``
+A custom regressor based on Hilbert Space techniques is implemented, but all ``scikit-learn``
 regressors are accepted for optimization.
 
-Finding an optimized pipeline -based on a given list of transformers and estimators- is
-a time consuming task. A version of evolutionary optimization has ben implemented to reduce
-tis time in lieu of global optimality.
+Finding an optimized pipeline -based on a given list of transformers and estimators is
+a time-consuming task. A version of evolutionary optimization has been implemented to reduce
+its time in lieu of global optimality.
 
 Dependencies
 ----------------
