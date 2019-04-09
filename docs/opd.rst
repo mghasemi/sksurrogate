@@ -144,7 +144,8 @@ pipeline two scenarios are plausible:
         does exactly what is expected, i.e., gathers all the feature outputs of transformers;
     + **`FeatureUnion` is followed by a mixture of transformations and estimators:** then
         `SKSurrogate` uses ``eli5.sklearn.PermutationImportance`` to weight the features based on
-        the estimator and then selects top features via ``sklearn.feature_selection.SelectFromModel``.
+        the estimator and ``AML``'s scoring and then selects top features via
+        ``sklearn.feature_selection.SelectFromModel``.
 
 Not all transformers select a subset of of features (e.g., `Normalizer` or `StandardScaler`). If
 `FeatureUnion` is followed by such transformers, it does not have any effect on the outcome of the

@@ -970,9 +970,9 @@ class mltrack(object):
     def heatmap(self, corr_df=None, sort_by=None, ascending=False, font_size=3, cmap="gnuplot2", idx_col='feature',
                 ignore=()):
         """
-        Plots a heatmap from the values of the dataframe `df`
+        Plots a heatmap from the values of the dataframe `corr_df`
 
-        :param df: value container
+        :param corr_df: value container
         :param idx_col: the column whose values will be used as index
         :param sort_by: dataframe will be sorted descending by values of this column.
 
@@ -1083,7 +1083,7 @@ class mltrack(object):
         W = {'feature': features}
         for factor in weights:
             if factor == 'pearson':
-                Res = dict(self.data.corr(method='pearson')[self.target])
+                Res = dict(self.data.corr(method='pearson').fillna(0)[self.target])
                 W['pearson'] = [Res[v] for v in features]
             elif factor == 'variance':
                 Res = dict(self.data.var())
@@ -1129,6 +1129,7 @@ class mltrack(object):
                 W['info_gain'] = [Res[features.index(v)] for v in features]
         new_w_df = DataFrame(W)
         merged = weights_df.merge(new_w_df, on='feature')
+        merged.fillna(0.)
         merged.to_sql('weights', self.conn, if_exists="replace", index=False)
 
     def TopFeatures(self, num=10):

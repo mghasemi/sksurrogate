@@ -672,7 +672,7 @@ class AML(object):
                         from sklearn.feature_selection import SelectFromModel
                         from numpy import inf
                         int_est = self._get_class(next_est)()
-                        int_mdl = SelectFromModel(PermutationImportance(int_est, cv=3),
+                        int_mdl = SelectFromModel(PermutationImportance(int_est, scoring=self.scoring, cv=3),
                                                   threshold=-inf)
                         self.config[est][int_pre + '__' + 'max_features'] = Integer(1, self.num_features)
                         for kw in self.config[next_est]:
