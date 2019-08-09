@@ -1,4 +1,4 @@
-|Quality| |Doc| |Licence|
+|Quality| |Travis| |Doc| |Licence|
 
 |Logo|
 
@@ -66,3 +66,5 @@ MIT License
     :alt: Documentation Status
 .. |Licence| image:: https://img.shields.io/badge/license-MIT-blue.svg
    :target: https://github.com/mghasemi/sksurrogate/blob/master/License.txt
+.. |Travis| image:: https://travis-ci.org/mghasemi/sksurrogate.svg?branch=master
+    :target: https://travis-ci.org/mghasemi/sksurrogate
