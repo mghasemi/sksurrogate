@@ -5,4 +5,4 @@ install:
 # command to run tests
 script:
   - cd examples
-  - python examples/example02.py
+  - python example02.py
