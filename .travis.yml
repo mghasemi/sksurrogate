@@ -4,5 +4,5 @@ install:
   - pip install -r requirements.txt
 # command to run tests
 script:
-  - cd examples
-  - python example02.py
+  - python setup.py install
+  - python examples/example02.py
