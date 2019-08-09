@@ -1,4 +1,4 @@
-|Quality| |Doc|
+|Quality| |Doc| |Licence|
 
 |Logo|
 
@@ -64,3 +64,5 @@ MIT License
 .. |Doc| image:: https://readthedocs.org/projects/sksurrogate/badge/?version=latest
     :target: https://sksurrogate.readthedocs.io/en/latest/?badge=latest
     :alt: Documentation Status
+.. |Licence| image:: https://img.shields.io/badge/license-MIT-blue.svg
+   :target: https://github.com/mghasemi/sksurrogate/blob/master/License.txt
