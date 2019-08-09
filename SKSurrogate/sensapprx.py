@@ -9,8 +9,8 @@ The core functionality is provided by `SALib <https://github.com/SALib/SALib>`_ 
 try:
     from sklearn.base import BaseEstimator, TransformerMixin
 except ModuleNotFoundError:
-    BaseEstimator = type('BaseEstimator', (object,), dict())
-    TransformerMixin = type('TransformerMixin', (object,), dict())
+    BaseEstimator = type("BaseEstimator", (object,), dict())
+    TransformerMixin = type("TransformerMixin", (object,), dict())
 
 
 class SensAprx(BaseEstimator, TransformerMixin):
@@ -31,8 +31,20 @@ class SensAprx(BaseEstimator, TransformerMixin):
     :param probs: pre-calculated values associated to `domain` points
     """
 
-    def __init__(self, n_features_to_select=10, regressor=None, method='sobol', margin=.2, num_smpl=500, num_levels=5,
-                 grid_jump=1, num_resmpl=8, reduce=False, domain=None, probs=None):
+    def __init__(
+            self,
+            n_features_to_select=10,
+            regressor=None,
+            method="sobol",
+            margin=0.2,
+            num_smpl=500,
+            num_levels=5,
+            grid_jump=1,
+            num_resmpl=8,
+            reduce=False,
+            domain=None,
+            probs=None,
+    ):
         self.n_features_to_select = n_features_to_select
         self.regressor = regressor
         self.method = method
@@ -49,6 +61,7 @@ class SensAprx(BaseEstimator, TransformerMixin):
 
     def _avg_fucn(self, X, y):
         from numpy import unique, concatenate, array
+
         if self.reduce:
             x_ = unique(X, axis=0)
             self.domain = []
@@ -76,43 +89,63 @@ class SensAprx(BaseEstimator, TransformerMixin):
         :return: `self`
         """
         from numpy import argpartition
+
         N = len(X[0])
         if (self.domain is None) or (self.probs is None):
             self._avg_fucn(X, y)
         if self.regressor is None:
             from sklearn.svm import SVR
+
             self.regressor = SVR()
         self.regressor.fit(self.domain, self.probs)
-        bounds = [[min(self.domain[:, idx]) - self.margin, max(self.domain[:, idx]) + self.margin] for idx in range(N)]
-        problem = dict(num_vars=N, names=['x%d' % idx for idx in range(N)], bounds=bounds)
+        bounds = [
+            [
+                min(self.domain[:, idx]) - self.margin,
+                max(self.domain[:, idx]) + self.margin,
+            ]
+            for idx in range(N)
+        ]
+        problem = dict(
+            num_vars=N, names=["x%d" % idx for idx in range(N)], bounds=bounds
+        )
         res = []
-        if self.method == 'sobol':
+        if self.method == "sobol":
             from SALib.sample import saltelli
             from SALib.analyze import sobol
+
             param_values = saltelli.sample(problem, self.num_smpl)
             y_ = self.regressor.predict(param_values)
-            res = sobol.analyze(problem, y_)['ST']
+            res = sobol.analyze(problem, y_)["ST"]
             self.weights_ = res
-        elif self.method == 'morris':
+        elif self.method == "morris":
             from SALib.sample import morris as mrs
             from SALib.analyze import morris
-            param_values = mrs.sample(problem, self.num_smpl, num_levels=self.num_levels)
+
+            param_values = mrs.sample(
+                problem, self.num_smpl, num_levels=self.num_levels
+            )
             y_ = self.regressor.predict(param_values)
             res = morris.analyze(problem, param_values, y_, num_levels=self.num_levels)[
-                'mu_star']
+                "mu_star"
+            ]
             self.weights_ = res
-        elif self.method == 'delta-mmnt':
+        elif self.method == "delta-mmnt":
             from SALib.sample import latin
             from SALib.analyze import delta
+
             param_values = latin.sample(problem, self.num_smpl)
             y_ = self.regressor.predict(param_values)
-            res = delta.analyze(problem, param_values, y_, num_resamples=self.num_resmpl)['delta']
+            res = delta.analyze(
+                problem, param_values, y_, num_resamples=self.num_resmpl
+            )["delta"]
             self.weights_ = res
-        self.top_features_ = argpartition(res, -self.n_features_to_select)[-self.n_features_to_select:]
+        self.top_features_ = argpartition(res, -self.n_features_to_select)[
+                             -self.n_features_to_select:
+                             ]
         return self
 
     def transform(self, X):
-        return X[:, self.top_features_[:self.n_features_to_select]]
+        return X[:, self.top_features_[: self.n_features_to_select]]
 
     def fit_transform(self, X, y=None, **fit_params):
         """

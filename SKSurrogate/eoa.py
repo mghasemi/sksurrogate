@@ -28,26 +28,29 @@ class EOA(object):
     def __init__(self, population, fitness, **kwargs):
 
         from collections import OrderedDict
+
         self.population = population
-        self.init_pop = kwargs.pop('init_pop', UniformRand)(**kwargs)
+        self.init_pop = kwargs.pop("init_pop", UniformRand)(**kwargs)
         self.fitness = fitness
-        self.recomb = kwargs.pop('recomb', UniformCrossover)(**kwargs)
-        self.mutation = kwargs.pop('mutation', Mutation)(**kwargs)
-        self.termination = kwargs.pop('termination', MaxGenTermination)(**kwargs)
-        self.elitism = kwargs.pop('elitism', Elites)(**kwargs)
+        self.recomb = kwargs.pop("recomb", UniformCrossover)(**kwargs)
+        self.mutation = kwargs.pop("mutation", Mutation)(**kwargs)
+        self.termination = kwargs.pop("termination", MaxGenTermination)(**kwargs)
+        self.elitism = kwargs.pop("elitism", Elites)(**kwargs)
         self.population_size = len(self.population)
-        self.parents_porp = kwargs.pop('parents_porp', .1)
-        self.num_parents = kwargs.pop('num_parents', 2 * int(self.population_size * self.parents_porp / 2.))
-        self.elits_porp = kwargs.pop('elits_porp', .2)
+        self.parents_porp = kwargs.pop("parents_porp", 0.1)
+        self.num_parents = kwargs.pop(
+            "num_parents", 2 * int(self.population_size * self.parents_porp / 2.0)
+        )
+        self.elits_porp = kwargs.pop("elits_porp", 0.2)
         self.num_elites = int(self.elits_porp * self.num_parents)
-        self.mutation_prob = kwargs.pop('mutation_prob', .05)
-        self.max_generations = kwargs.pop('max_generation', 50)
+        self.mutation_prob = kwargs.pop("mutation_prob", 0.05)
+        self.max_generations = kwargs.pop("max_generation", 50)
         self.generation_num = 0
-        self.genes = kwargs.pop('genes', [])
-        self.init_genes = kwargs.pop('init_genes', [])
-        self.term_genes = kwargs.pop('term_genes', [])
-        self.task_name = kwargs.pop('task_name', 'EOA')
-        self.check_point = kwargs.pop('check_point', './')
+        self.genes = kwargs.pop("genes", [])
+        self.init_genes = kwargs.pop("init_genes", [])
+        self.term_genes = kwargs.pop("term_genes", [])
+        self.task_name = kwargs.pop("task_name", "EOA")
+        self.check_point = kwargs.pop("check_point", "./")
         if not self.genes:
             self.find_genes()
         self.evals = OrderedDict([(_, None) for _ in self.population])
@@ -70,12 +73,26 @@ class EOA(object):
         :return: None
         """
         from pickle import dumps
-        fl = open(self.check_point + self.task_name + '.eoa', 'wb')
-        info = dict(population_size=self.population_size, parents_porp=self.parents_porp, num_parents=self.num_parents,
-                    elits_porp=self.elits_porp, num_elites=self.num_elites, mutation_prob=self.mutation_prob,
-                    max_generations=self.max_generations, generation_num=self.generation_num, genes=self.genes,
-                    init_genes=self.init_genes, term_genes=self.term_genes, task_name=self.task_name,
-                    check_point=self.check_point, evals=self.evals, parents=self.parents, children=self.children)
+
+        fl = open(self.check_point + self.task_name + ".eoa", "wb")
+        info = dict(
+            population_size=self.population_size,
+            parents_porp=self.parents_porp,
+            num_parents=self.num_parents,
+            elits_porp=self.elits_porp,
+            num_elites=self.num_elites,
+            mutation_prob=self.mutation_prob,
+            max_generations=self.max_generations,
+            generation_num=self.generation_num,
+            genes=self.genes,
+            init_genes=self.init_genes,
+            term_genes=self.term_genes,
+            task_name=self.task_name,
+            check_point=self.check_point,
+            evals=self.evals,
+            parents=self.parents,
+            children=self.children,
+        )
         fl.write(dumps(info))
         fl.close()
 
@@ -85,26 +102,27 @@ class EOA(object):
         :return: None
         """
         from pickle import loads
+
         try:
-            fl = open(self.check_point + self.task_name + '.eoa', 'rb')
+            fl = open(self.check_point + self.task_name + ".eoa", "rb")
             info = loads(fl.read())
             fl.close()
-            self.population_size = info['population_size']
-            self.parents_porp = info['parents_porp']
-            self.num_parents = info['num_parents']
-            self.elits_porp = info['elits_porp']
-            self.num_elites = info['num_elites']
-            self.mutation_prob = info['mutation_prob']
-            self.max_generations = info['max_generations']
-            self.generation_num = info['generation_num']
-            self.genes = info['genes']
-            self.init_genes = info['init_genes']
-            self.term_genes = info['term_genes']
-            self.task_name = info['task_name']
-            self.check_point = info['check_point']
-            self.evals = info['evals']
-            self.parents = info['parents']
-            self.children = info['children']
+            self.population_size = info["population_size"]
+            self.parents_porp = info["parents_porp"]
+            self.num_parents = info["num_parents"]
+            self.elits_porp = info["elits_porp"]
+            self.num_elites = info["num_elites"]
+            self.mutation_prob = info["mutation_prob"]
+            self.max_generations = info["max_generations"]
+            self.generation_num = info["generation_num"]
+            self.genes = info["genes"]
+            self.init_genes = info["init_genes"]
+            self.term_genes = info["term_genes"]
+            self.task_name = info["task_name"]
+            self.check_point = info["check_point"]
+            self.evals = info["evals"]
+            self.parents = info["parents"]
+            self.children = info["children"]
         except FileNotFoundError:
             pass
 
@@ -115,9 +133,9 @@ class EOA(object):
         pbar = None
         try:
             ipy_str = str(type(get_ipython()))  # notebook environment
-            if 'zmqshell' in ipy_str:
+            if "zmqshell" in ipy_str:
                 from tqdm import tqdm_notebook as tqdm
-            if 'terminal' in ipy_str:
+            if "terminal" in ipy_str:
                 from tqdm import tqdm
         except NameError:
             from tqdm import tqdm
@@ -154,6 +172,7 @@ class UniformRand(object):
     def __call__(self, ref, *args, **kwargs):
         from collections import OrderedDict
         from random import randint
+
         cnt = 0
         indices = []
         while cnt < ref.num_parents:
@@ -162,7 +181,9 @@ class UniformRand(object):
                 # print(ref.population[idx])
                 indices.append(idx)
                 cnt += 1
-        return OrderedDict([(ref.population[i], ref.evals[ref.population[i]]) for i in indices])
+        return OrderedDict(
+            [(ref.population[i], ref.evals[ref.population[i]]) for i in indices]
+        )
 
 
 class MaxGenTermination(object):
@@ -186,22 +207,24 @@ class UniformCrossover(object):
 
     def __init__(self, **kwargs):
         self.fitnesses = []
-        self.fmin = 0.
-        self.fmax = 0.
+        self.fmin = 0.0
+        self.fmax = 0.0
         self.kwargs = kwargs
+        self.mated = False
 
     def scale(self, scrs):
         self.fmin = min(scrs)
         self.fmax = max(scrs)
         lng = self.fmax - self.fmin
-        if lng == 0.:
-            lng = 1.
+        if lng == 0.0:
+            lng = 1.0
         self.fitnesses = [(_ - self.fmin) / lng for _ in scrs]
 
     def select_idx(self):
         from random import uniform
+
         fsum = sum(self.fitnesses)
-        r = uniform(0., fsum)
+        r = uniform(0.0, fsum)
         idx = 0
         F = self.fitnesses[idx]
         while F < r:
@@ -219,6 +242,7 @@ class UniformCrossover(object):
 
     def mate(self, p1, p2):
         from random import randint
+
         l1 = len(p1)
         l2 = len(p2)
         if l1 == 1 and l2 == 1:
@@ -234,10 +258,12 @@ class UniformCrossover(object):
         c2r = list(p2)[cl2:]
         c1 = tuple(c1l + c2r)
         c2 = tuple(c2l + c1r)
+        self.mated = True
         return c1, c2
 
     def __call__(self, ref, *args, **kwargs):
         from collections import OrderedDict
+
         ref.parents = OrderedDict(sorted(ref.parents.items(), key=lambda x: x[1]))
         self.parents = list(ref.parents.keys())
         self.scale(list(ref.parents.values()))
@@ -255,28 +281,30 @@ class UniformCrossover(object):
 
 
 class Elites(object):
-
     def __init__(self, **kwargs):
         pass
 
     def __call__(self, ref, *args, **kwargs):
         from collections import OrderedDict
+
         children = ref.children
         parents = ref.parents
         dif_ = ref.num_elites + len(parents) - len(children)
         top_elites = list(parents.items())[-dif_:]
         top_children = list(children.items())[dif_:]
-        ref.children = OrderedDict(sorted(top_elites + top_children, key=lambda x: x[1]))
+        ref.children = OrderedDict(
+            sorted(top_elites + top_children, key=lambda x: x[1])
+        )
 
 
 class Mutation(object):
-
     def __init__(self, **kwargs):
         pass
 
     def __call__(self, ref, *args, **kwargs):
         from random import uniform, randint
         from collections import OrderedDict
+
         mchildren = []
         for chld in ref.children:
             mchld = []
@@ -284,7 +312,7 @@ class Mutation(object):
             length = len(chld) - 1
             for e in chld:
                 me = e
-                prb = uniform(0, 1.)
+                prb = uniform(0, 1.0)
                 if prb <= ref.mutation_prob:
                     if idx == 0:
                         lng = len(ref.init_genes)
@@ -292,22 +320,22 @@ class Mutation(object):
                         if rdx < lng:
                             me = ref.init_genes[rdx]
                         else:
-                            me = ''
+                            me = ""
                     elif idx == length:
                         lng = len(ref.term_genes)
                         rdx = randint(0, lng)
                         if rdx < lng:
                             me = ref.term_genes[rdx]
                         else:
-                            me = ''
+                            me = ""
                     else:
                         lng = len(ref.genes)
                         rdx = randint(0, lng)
                         if rdx < lng:
                             me = ref.genes[rdx]
                         else:
-                            me = ''
-                if me != '':
+                            me = ""
+                if me != "":
                     mchld.append(me)
                 idx += 1
             new_chld = tuple(mchld)
@@ -359,6 +387,7 @@ class Words(object):
         :return: set of all legitimate words of length `l`
         """
         from itertools import product
+
         words = []
         for o in product(self.letters, repeat=l):
             if self.last is not None:

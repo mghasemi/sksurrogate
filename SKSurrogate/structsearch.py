@@ -38,10 +38,10 @@ class CompactSample(object):
     """
 
     def __init__(self, **kwargs):
-        self.init_radius = kwargs.get('init_radius', 2.)
-        self.contraction = kwargs.get('contraction', .9)
-        self.ineqs = kwargs.pop('ineq', [])
-        self.bounds = kwargs.pop('bounds', None)
+        self.init_radius = kwargs.get("init_radius", 2.0)
+        self.contraction = kwargs.get("contraction", 0.9)
+        self.ineqs = kwargs.pop("ineq", [])
+        self.bounds = kwargs.pop("bounds", None)
         self.cntrctn = None
 
     def check_constraints(self, point):
@@ -52,7 +52,7 @@ class CompactSample(object):
         """
         n = len(point)
         for cns in self.ineqs:
-            if cns(point) < 0.:
+            if cns(point) < 0.0:
                 return False
         if self.bounds is not None:
             for i in range(n):
@@ -60,7 +60,7 @@ class CompactSample(object):
                     return False
         return True
 
-    def sample(self, centre, cntrctn=1.):
+    def sample(self, centre, cntrctn=1.0):
         """
         Samples a point out of a box centered at `centre`
 
@@ -70,12 +70,15 @@ class CompactSample(object):
         """
         from random import uniform
         from numpy import array
+
         self.cntrctn = cntrctn
         flag = False
         n = len(centre)
         candid = []
         while not flag:
-            candid = array([uniform(self.bounds[_][0], self.bounds[_][1]) for _ in range(n)])
+            candid = array(
+                [uniform(self.bounds[_][0], self.bounds[_][1]) for _ in range(n)]
+            )
             flag = self.check_constraints(candid)
         return candid
 
@@ -89,10 +92,10 @@ class BoxSample(object):
     """
 
     def __init__(self, **kwargs):
-        self.init_radius = kwargs.get('init_radius', 2.)
-        self.contraction = kwargs.get('contraction', .9)
-        self.ineqs = kwargs.pop('ineq', [])
-        self.bounds = kwargs.pop('bounds', None)
+        self.init_radius = kwargs.get("init_radius", 2.0)
+        self.contraction = kwargs.get("contraction", 0.9)
+        self.ineqs = kwargs.pop("ineq", [])
+        self.bounds = kwargs.pop("bounds", None)
 
     def check_constraints(self, point):
         """
@@ -102,7 +105,7 @@ class BoxSample(object):
         """
         n = len(point)
         for cns in self.ineqs:
-            if cns(point) < 0.:
+            if cns(point) < 0.0:
                 return False
         if self.bounds is not None:
             for i in range(n):
@@ -110,7 +113,7 @@ class BoxSample(object):
                     return False
         return True
 
-    def sample(self, centre, cntrctn=1.):
+    def sample(self, centre, cntrctn=1.0):
         """
         Samples a point out of a box centered at `centre`
 
@@ -120,6 +123,7 @@ class BoxSample(object):
         """
         from random import uniform
         from numpy import array
+
         flag = False
         n = len(centre)
         candid = []
@@ -141,10 +145,10 @@ class SphereSample(object):
     """
 
     def __init__(self, **kwargs):
-        self.init_radius = kwargs.get('init_radius', 2.)
-        self.contraction = kwargs.get('contraction', .9)
-        self.ineqs = kwargs.pop('ineq', [])
-        self.bounds = kwargs.pop('bounds', None)
+        self.init_radius = kwargs.get("init_radius", 2.0)
+        self.contraction = kwargs.get("contraction", 0.9)
+        self.ineqs = kwargs.pop("ineq", [])
+        self.bounds = kwargs.pop("bounds", None)
 
     def check_constraints(self, point):
         """
@@ -156,7 +160,7 @@ class SphereSample(object):
 
         n = len(point)
         for cns in self.ineqs:
-            if cns(point) < 0.:
+            if cns(point) < 0.0:
                 return False
         if self.bounds is not None:
             for i in range(n):
@@ -164,7 +168,7 @@ class SphereSample(object):
                     return False
         return True
 
-    def sample(self, centre, cntrctn=1.):
+    def sample(self, centre, cntrctn=1.0):
         """
         Samples a point out of an sphere centered at `centre`
 
@@ -174,6 +178,7 @@ class SphereSample(object):
         """
         from random import uniform, shuffle
         from numpy import sqrt, array
+
         flag = False
         n = len(centre)
         candid = []
@@ -182,7 +187,7 @@ class SphereSample(object):
             candid = []
             rng = list(range(n))
             shuffle(rng)
-            for i in range(n):
+            for _ in range(n):
                 if len(candid) > 0:
                     r = sqrt(radius ** 2 - sum([t ** 2 for t in candid]))
                 else:
@@ -225,27 +230,32 @@ class SurrogateSearch(object):
     def __init__(self, objective, **kwargs):
         from numpy import inf
         from scipy.special import binom
+
         self.objective = objective
-        self.ineqs = kwargs.pop('ineq', [])
-        self.bounds = kwargs.pop('bounds', None)
-        self.MaxIter = kwargs.pop('max_iter', 50)
-        self.radius = kwargs.pop('radius', 2.)
-        self.contraction = kwargs.pop('contraction', .9)
-        sampling = kwargs.pop('sampling', SphereSample)
-        self.Sampling = sampling(init_radius=self.radius, contraction=self.contraction, ineq=self.ineqs,
-                                 bounds=self.bounds)
+        self.ineqs = kwargs.pop("ineq", [])
+        self.bounds = kwargs.pop("bounds", None)
+        self.MaxIter = kwargs.pop("max_iter", 50)
+        self.radius = kwargs.pop("radius", 2.0)
+        self.contraction = kwargs.pop("contraction", 0.9)
+        sampling = kwargs.pop("sampling", SphereSample)
+        self.Sampling = sampling(
+            init_radius=self.radius,
+            contraction=self.contraction,
+            ineq=self.ineqs,
+            bounds=self.bounds,
+        )
         self.iteration = 0
-        self.verbose = kwargs.pop('verbose', False)
-        self.MaxIterNoProg = kwargs.pop('max_itr_no_prog', inf)
+        self.verbose = kwargs.pop("verbose", False)
+        self.MaxIterNoProg = kwargs.pop("max_itr_no_prog", inf)
         self.NumIterNoProg = 0
-        self.x0 = kwargs.pop('x0', None)
+        self.x0 = kwargs.pop("x0", None)
         self.evaluated = []
         self.NumFailedLocOptim = 0
         # init data storing protocol
-        self.TaskName = kwargs.pop('task_name', 'optim_task')
-        self.Continue = kwargs.pop('Continue', False)
-        self.warm_start = kwargs.pop('warm_start', False)
-        self.optimizer = kwargs.get('optimizer', 'scipy')
+        self.TaskName = kwargs.pop("task_name", "optim_task")
+        self.Continue = kwargs.pop("Continue", False)
+        self.warm_start = kwargs.pop("warm_start", False)
+        self.optimizer = kwargs.get("optimizer", "scipy")
         self.__load()
         if self.x0 is not None:
             val = self.objective(self.x0)
@@ -255,13 +265,14 @@ class SurrogateSearch(object):
             n_ = len(self.x0)
         else:
             n_ = 1
-        self.search_sphere = kwargs.pop('search_sphere', False)
-        poly_deg = kwargs.pop('deg', 3)
-        self.MinEvals = kwargs.pop('min_evals', binom(n_ + poly_deg, n_))
-        self.regressor = kwargs.pop('regressor', None)
-        self.scipy_solver = kwargs.get('scipy_solver', 'COBYLA')
+        self.search_sphere = kwargs.pop("search_sphere", False)
+        poly_deg = kwargs.pop("deg", 3)
+        self.MinEvals = kwargs.pop("min_evals", binom(n_ + poly_deg, n_))
+        self.regressor = kwargs.pop("regressor", None)
+        self.scipy_solver = kwargs.get("scipy_solver", "COBYLA")
         if self.regressor is None:
             from .NpyProximation import HilbertRegressor
+
             self.regressor = HilbertRegressor(deg=3)
             new_n_evals = binom(n_ + 3, n_)
             if self.MinEvals < new_n_evals:
@@ -274,11 +285,14 @@ class SurrogateSearch(object):
         :return: None
         """
         from pickle import dumps
-        fl = open(self.TaskName + '.pkl', 'wb')
-        data2store = dict(iteration=self.iteration,
-                          evaluated=self.evaluated,
-                          current=self.current,
-                          current_val=self.current_val)
+
+        fl = open(self.TaskName + ".pkl", "wb")
+        data2store = dict(
+            iteration=self.iteration,
+            evaluated=self.evaluated,
+            current=self.current,
+            current_val=self.current_val,
+        )
         fl.write(dumps(data2store))
         fl.close()
 
@@ -288,26 +302,27 @@ class SurrogateSearch(object):
         :return: None
         """
         from pickle import loads
+
         restored_data = {}
         try:
-            fl = open(self.TaskName + '.pkl', 'rb')
+            fl = open(self.TaskName + ".pkl", "rb")
             restored_data = loads(fl.read())
             fl.close()
         except FileNotFoundError:
             pass
         if self.Continue:
-            if 'iteration' in restored_data:
-                self.iteration = restored_data['iteration']
-            if 'evaluated' in restored_data:
-                self.evaluated = restored_data['evaluated']
-            if 'current' in restored_data:
-                self.current = restored_data['current']
+            if "iteration" in restored_data:
+                self.iteration = restored_data["iteration"]
+            if "evaluated" in restored_data:
+                self.evaluated = restored_data["evaluated"]
+            if "current" in restored_data:
+                self.current = restored_data["current"]
                 self.x0 = None
-            if 'current_val' in restored_data:
-                self.current_val = restored_data['current_val']
+            if "current_val" in restored_data:
+                self.current_val = restored_data["current_val"]
         if self.warm_start:
-            if 'evaluated' in restored_data:
-                self.evaluated = restored_data['evaluated']
+            if "evaluated" in restored_data:
+                self.evaluated = restored_data["evaluated"]
 
     def __round_optim(self, obj, x0, cns):
         """
@@ -318,35 +333,44 @@ class SurrogateSearch(object):
         :return: result of the optimization
         """
         res = None
-        if self.optimizer == 'scipy':
+        if self.optimizer == "scipy":
             from scipy.optimize import minimize
-            if (len(cns) > 0) and (self.scipy_solver not in ['COBYLA', 'SLSQP', 'L-BFGS-B']):
-                raise ValueError("%s does not support arbitrary constraints" % self.scipy_solver)
-            res = minimize(obj, x0, method=self.scipy_solver, constraints=cns, bounds=self.bounds)
+
+            if (len(cns) > 0) and (
+                    self.scipy_solver not in ["COBYLA", "SLSQP", "L-BFGS-B"]
+            ):
+                raise ValueError(
+                    "%s does not support arbitrary constraints" % self.scipy_solver
+                )
+            res = minimize(
+                obj, x0, method=self.scipy_solver, constraints=cns, bounds=self.bounds
+            )
         else:
             try:
                 from Optimithon import Base, QuasiNewton
                 from numpy import inf
-                cns_ = [_['fun'] for _ in cns]
+
+                cns_ = [_["fun"] for _ in cns]
                 if self.bounds is not None:
                     for i in range(len(self.bounds)):
                         if self.bounds[i][0] != -inf:
                             cns_.append(lambda x, i_=i: x[i_] - self.bounds[i_][0])
                         if self.bounds[i][1] != inf:
                             cns_.append(lambda x, i_=i: self.bounds[i_][1] - x[i_])
-                optm = Base(obj,
-                            ineq=cns_,
-                            x0=x0,
-                            br_func=self.optimithon_br_func,
-                            penalty=self.optimithon_penalty,
-                            method=QuasiNewton,
-                            t_method=self.optimithon_t_method,
-                            dd_method=self.optimithon_dd_method,
-                            ls_method=self.optimithon_ls_method,
-                            ls_bt_method=self.optimithon_ls_bt_method,
-                            max_iter=self.optimithon_max_iter,
-                            difftool=self.optimithon_difftool
-                            )
+                optm = Base(
+                    obj,
+                    ineq=cns_,
+                    x0=x0,
+                    br_func=self.optimithon_br_func,
+                    penalty=self.optimithon_penalty,
+                    method=QuasiNewton,
+                    t_method=self.optimithon_t_method,
+                    dd_method=self.optimithon_dd_method,
+                    ls_method=self.optimithon_ls_method,
+                    ls_bt_method=self.optimithon_ls_bt_method,
+                    max_iter=self.optimithon_max_iter,
+                    difftool=self.optimithon_difftool,
+                )
                 optm.Verbose = False
                 optm()
                 res = optm.solution
@@ -360,18 +384,23 @@ class SurrogateSearch(object):
         Fetches and sets the Optimithon's parameters
         :return: None
         """
-        self.optimizer = self.other.pop('optimizer', 'scipy')
-        self.scipy_solver = self.other.pop('scipy_solver', 'COBYLA')
-        self.optimithon_t_method = self.other.pop('optimithon_t_method', 'Cauchy_x')
-        self.optimithon_dd_method = self.other.pop('optimithon_dd_method', 'BFGS')
-        self.optimithon_ls_method = self.other.pop('optimithon_ls_method', 'Backtrack')
-        self.optimithon_ls_bt_method = self.other.pop('optimithon_ls_bt_method', 'Armijo')
-        self.optimithon_br_func = self.other.pop('optimithon_br_func', 'Carrol')
-        self.optimithon_penalty = self.other.pop('optimithon_penalty', 1.e6)
-        self.optimithon_max_iter = self.other.pop('optimithon_max_iter', 100)
+        self.optimizer = self.other.pop("optimizer", "scipy")
+        self.scipy_solver = self.other.pop("scipy_solver", "COBYLA")
+        self.optimithon_t_method = self.other.pop("optimithon_t_method", "Cauchy_x")
+        self.optimithon_dd_method = self.other.pop("optimithon_dd_method", "BFGS")
+        self.optimithon_ls_method = self.other.pop("optimithon_ls_method", "Backtrack")
+        self.optimithon_ls_bt_method = self.other.pop(
+            "optimithon_ls_bt_method", "Armijo"
+        )
+        self.optimithon_br_func = self.other.pop("optimithon_br_func", "Carrol")
+        self.optimithon_penalty = self.other.pop("optimithon_penalty", 1.0e6)
+        self.optimithon_max_iter = self.other.pop("optimithon_max_iter", 100)
         try:
             from Optimithon import NumericDiff
-            self.optimithon_difftool = self.other.pop('optimithon_difftool', NumericDiff.Simple())
+
+            self.optimithon_difftool = self.other.pop(
+                "optimithon_difftool", NumericDiff.Simple()
+            )
         except ModuleNotFoundError:
             pass
 
@@ -382,6 +411,7 @@ class SurrogateSearch(object):
         :return: None
         """
         from numpy import sqrt, array
+
         close_points = []
         X = []
         y = []
@@ -404,16 +434,21 @@ class SurrogateSearch(object):
 
         if n_close_points >= self.MinEvals:
             if self.verbose > 1:
-                print("Found enough number of points (%d) for approximation." % n_close_points)
+                print(
+                    "Found enough number of points (%d) for approximation."
+                    % n_close_points
+                )
             self.regressor.fit(array(X), array(y))
             apprx = lambda x: self.regressor.predict([x])[0]
             cns = []
             if self.search_sphere:
                 r = self.radius * (self.contraction ** int(self.NumFailedLocOptim / 2))
-                cns_f = lambda x, x_=x0, r_=r: r_ ** 2 - sum([(x[i] - x_[i]) ** 2 for i in range(n_)])
-                cns = [{'type': 'ineq', 'fun': cns_f}]
+                cns_f = lambda x, x_=x0, r_=r: r_ ** 2 - sum(
+                    [(x[i] - x_[i]) ** 2 for i in range(n_)]
+                )
+                cns = [{"type": "ineq", "fun": cns_f}]
             for inq in self.ineqs:
-                cns.append({'type': 'ineq', 'fun': inq})
+                cns.append({"type": "ineq", "fun": inq})
             min_res = self.__round_optim(apprx, x0, cns)
             x_0 = min_res.x
             if min_res.success:
@@ -424,8 +459,9 @@ class SurrogateSearch(object):
                     if self.verbose > 1:
                         print(
                             """Minimum point of the approximation: %s;\nThe objective's value: %f;\nThe surrogate\\
-                             value %f""" % (
-                                str(x_0), val, min_res.fun))
+                             value %f"""
+                            % (str(x_0), val, min_res.fun)
+                        )
                     if val < self.current_val:
                         self.NumIterNoProg = 0
                         if self.verbose > 0:
@@ -448,7 +484,10 @@ class SurrogateSearch(object):
             val = self.objective(x0)
             self.evaluated.append([x0, val])
             if self.verbose > 1:
-                print("""New point sampled: %s;\nThe objective's value: %f""" % (str(x0), val))
+                print(
+                    """New point sampled: %s;\nThe objective's value: %f"""
+                    % (str(x0), val)
+                )
             if val < self.current_val:
                 self.NumIterNoProg = 0
                 if self.verbose > 0:
@@ -470,15 +509,16 @@ class SurrogateSearch(object):
         pbar = None
         try:
             ipy_str = str(type(get_ipython()))  # notebook environment
-            if 'zmqshell' in ipy_str:
+            if "zmqshell" in ipy_str:
                 from tqdm import tqdm_notebook as tqdm
-            if 'terminal' in ipy_str:
+            if "terminal" in ipy_str:
                 from tqdm import tqdm
         except NameError:
             from tqdm import tqdm
         except ImportError:
             tqdm = None
         from math import log
+
         if tqdm is not None:
             if self.verbose > 0:
                 pbar = tqdm(total=self.MaxIter)
@@ -488,8 +528,11 @@ class SurrogateSearch(object):
             if self.verbose > 1:
                 print("Iteration # %d" % self.iteration)
                 print("----------" * 8)
-            new_point = self.Sampling.sample(self.current, cntrctn=self.contraction ** (
-                    self.NumFailedLocOptim + log(self.iteration + 1)))
+            new_point = self.Sampling.sample(
+                self.current,
+                cntrctn=self.contraction
+                        ** (self.NumFailedLocOptim + log(self.iteration + 1)),
+            )
             self.__iterate(new_point)
             if self.NumIterNoProg > self.MaxIterNoProg:
                 if self.verbose > 1:
@@ -510,18 +553,19 @@ class SurrogateSearch(object):
         from matplotlib import pyplot as plt
         from pickle import load
         from pandas import DataFrame
-        fl = open(self.TaskName + ".pkl", 'rb')
+
+        fl = open(self.TaskName + ".pkl", "rb")
         arr = load(fl)
         fl.close()
-        evals_dict = {'obj': [_[1] for _ in arr['evaluated']]}
-        n_ = len(arr['evaluated'][0][0])
+        evals_dict = {"obj": [_[1] for _ in arr["evaluated"]]}
+        n_ = len(arr["evaluated"][0][0])
         for i in range(n_):
-            evals_dict['v%d' % i] = [_[0][i] for _ in arr['evaluated']]
+            evals_dict["v%d" % i] = [_[0][i] for _ in arr["evaluated"]]
         df = DataFrame(evals_dict)
-        figr = df.plot('obj', kind='kde').get_figure()
-        b = evals_dict['obj']
+        figr = df.plot("obj", kind="kde").get_figure()
+        b = evals_dict["obj"]
         z = [min(b[:idx]) for idx in range(1, len(b))]
-        fig, ax = plt.subplots(1, 1)
+        _, ax = plt.subplots(1, 1)
         ax.set_xlabel("# Evaluations")
         ax.set_ylabel("Objective Value")
         ax.set_title("Objective's Progress")
@@ -541,10 +585,12 @@ class Real(object):
     :param a: the lower bound for the (closed) interval defined by instance (accepting '-numpy.inf')
     :param b: the upper bound for the (closed) interval defined by instance (accepting 'numpy.inf')
     """
-    VType = 'real'
+
+    VType = "real"
 
     def __init__(self, a=None, b=None, **kwargs):
         from numpy import inf
+
         self.lower = a if a is not None else -inf
         self.upper = b if b is not None else inf
         self.bound_tuple = (self.lower, self.upper)
@@ -560,10 +606,12 @@ class Integer(object):
     :param a: the lower bound for the integer interval defined by instance (accepting '-numpy.inf')
     :param b: the upper bound for the integer interval defined by instance (accepting 'numpy.inf')
     """
-    VType = 'integer'
+
+    VType = "integer"
 
     def __init__(self, a=None, b=None, **kwargs):
         from numpy import inf
+
         self.lower = int(a) - 0.49 if a is not None else -inf
         self.upper = int(b) + 0.49 if b is not None else inf
         self.bound_tuple = (self.lower, self.upper)
@@ -576,7 +624,8 @@ class Categorical(object):
 
     :param items: A list of possible values for a parameter
     """
-    VType = 'categorical'
+
+    VType = "categorical"
 
     def __init__(self, items, **kwargs):
         self.items = items
@@ -594,7 +643,8 @@ class HDReal(object):
     :param a: a tuple of lower bounds for each dimension
     :param b: a tuple of upper bounds for each dimension
     """
-    VType = 'hdreal'
+
+    VType = "hdreal"
 
     def __init__(self, a, b, **kwargs):
         self.n = len(a)
@@ -610,12 +660,12 @@ class HDReal(object):
 try:
     from sklearn.model_selection._search import BaseSearchCV
 except ModuleNotFoundError:
-    BaseSearchCV = type('BaseSearchCV', (object,), dict())
+    BaseSearchCV = type("BaseSearchCV", (object,), dict())
 
 try:
     from Optimithon import NumericDiff
 except ModuleNotFoundError:
-    NumericDiff = type('NumericDiff', (object,), dict(Simple=lambda: 0., ))
+    NumericDiff = type("NumericDiff", (object,), dict(Simple=lambda: 0.0))
 
 
 class SurrogateRandomCV(BaseSearchCV):
@@ -686,20 +736,57 @@ class SurrogateRandomCV(BaseSearchCV):
         Prints internal information about the progress of each iteration.
     """
 
-    def __init__(self, estimator, params, scoring=None, fit_params=None, n_jobs=1, refit=True, cv=None,
-                 verbose=0, pre_dispatch='2*n_jobs', error_score='raise', return_train_score=True,
-                 max_iter=50, min_evals=25, regressor=None, sampling=CompactSample, radius=None, contraction=.95,
-                 search_sphere=False, optimizer='scipy', scipy_solver='SLSQP', task_name='optim_task', warm_start=True,
-                 Continue=False, max_itr_no_prog=10000, ineqs=(), init=None,
-                 # Optimithon specific options
-                 optimithon_t_method='Cauchy_x', optimithon_dd_method='BFGS', optimithon_ls_method='Backtrack',
-                 optimithon_ls_bt_method='Armijo', optimithon_br_func='Carrol', optimithon_penalty=1.e6,
-                 optimithon_max_iter=100, optimithon_difftool=NumericDiff.Simple()):
-        super(SurrogateRandomCV, self).__init__(estimator=estimator, scoring=scoring, fit_params=fit_params,
-                                                n_jobs=n_jobs, refit=refit, cv=cv, verbose=verbose,
-                                                pre_dispatch=pre_dispatch, error_score=error_score,
-                                                return_train_score=return_train_score)
+    def __init__(
+            self,
+            estimator,
+            params,
+            scoring=None,
+            fit_params=None,
+            n_jobs=1,
+            refit=True,
+            cv=None,
+            verbose=0,
+            pre_dispatch="2*n_jobs",
+            error_score="raise",
+            return_train_score=True,
+            max_iter=50,
+            min_evals=25,
+            regressor=None,
+            sampling=CompactSample,
+            radius=None,
+            contraction=0.95,
+            search_sphere=False,
+            optimizer="scipy",
+            scipy_solver="SLSQP",
+            task_name="optim_task",
+            warm_start=True,
+            Continue=False,
+            max_itr_no_prog=10000,
+            ineqs=(),
+            init=None,
+            # Optimithon specific options
+            optimithon_t_method="Cauchy_x",
+            optimithon_dd_method="BFGS",
+            optimithon_ls_method="Backtrack",
+            optimithon_ls_bt_method="Armijo",
+            optimithon_br_func="Carrol",
+            optimithon_penalty=1.0e6,
+            optimithon_max_iter=100,
+            optimithon_difftool=NumericDiff.Simple(),
+    ):
+        super(SurrogateRandomCV, self).__init__(
+            estimator=estimator,
+            scoring=scoring,
+            n_jobs=n_jobs,
+            refit=refit,
+            cv=cv,
+            verbose=verbose,
+            pre_dispatch=pre_dispatch,
+            error_score=error_score,
+            return_train_score=return_train_score,
+        )
         self.params = params
+        self.fit_params = fit_params
         self.params_list = list(params.keys())
         self.max_iter = max_iter
         self.min_evals = min_evals
@@ -721,7 +808,8 @@ class SurrogateRandomCV(BaseSearchCV):
         self.scorer_ = {}
         self.x0 = ()
         self.best_estimator_ = None
-        self.best_estimator_score = 0.
+        self.best_estimator_score = 0.0
+        self.best_score_ = 0.
         # Optimithon specific options
         self.optimithon_t_method = optimithon_t_method
         self.optimithon_dd_method = optimithon_dd_method
@@ -752,6 +840,7 @@ class SurrogateRandomCV(BaseSearchCV):
         from sklearn.metrics.scorer import check_scoring
         from sklearn.model_selection._search import check_cv
         from sklearn.model_selection._validation import _fit_and_score
+
         # from lightgbm.sklearn import LightGBMError
         radius_list = []
         self.scorer_ = check_scoring(self.estimator, scoring=self.scoring)
@@ -766,10 +855,12 @@ class SurrogateRandomCV(BaseSearchCV):
         self.bounds = list(self.bounds)
         for param in self.params_list:
             param_num_range = self.params[param]
-            if param_num_range.VType != 'hdreal':
-                radius_list.append((param_num_range.upper - param_num_range.lower) / 2.)
+            if param_num_range.VType != "hdreal":
+                radius_list.append(
+                    (param_num_range.upper - param_num_range.lower) / 2.0
+                )
                 if param in self.init:
-                    if param_num_range.VType == 'categorical':
+                    if param_num_range.VType == "categorical":
                         x0_.append(param_num_range.items.index(self.init[param]))
                     else:
                         x0_.append(self.init[param])
@@ -778,14 +869,25 @@ class SurrogateRandomCV(BaseSearchCV):
                 self.bounds.append(param_num_range.bound_tuple)
             else:
                 for i in range(param_num_range.n):
-                    radius_list.append((param_num_range.bound_tuple[i][1] - param_num_range.bound_tuple[i][0]) / 2.)
+                    radius_list.append(
+                        (
+                                param_num_range.bound_tuple[i][1]
+                                - param_num_range.bound_tuple[i][0]
+                        )
+                        / 2.0
+                    )
                     if (param in self.init) and (i in self.init[param]):
                         x0_.append(self.init[param][i])
                     else:
-                        x0_.append(uniform(param_num_range.bound_tuple[i][0], param_num_range.bound_tuple[i][1]))
+                        x0_.append(
+                            uniform(
+                                param_num_range.bound_tuple[i][0],
+                                param_num_range.bound_tuple[i][1],
+                            )
+                        )
                 self.bounds = self.bounds + list(param_num_range.bound_tuple)
         if self.radius is None:
-            rds = 0.
+            rds = 0.0
             for r in radius_list:
                 rds += r ** 2
             self.radius = sqrt(rds)
@@ -798,11 +900,13 @@ class SurrogateRandomCV(BaseSearchCV):
             _idx = 0
             for _param in self.params_list:
                 _param_num_range = self.params[_param]
-                if _param_num_range.VType != 'hdreal':
-                    if _param_num_range.VType == 'integer':
+                if _param_num_range.VType != "hdreal":
+                    if _param_num_range.VType == "integer":
                         cand_params[_param] = int(round(x[_idx]))
-                    elif _param_num_range.VType == 'categorical':
-                        cand_params[_param] = _param_num_range.items[int(round(x[_idx]))]
+                    elif _param_num_range.VType == "categorical":
+                        cand_params[_param] = _param_num_range.items[
+                            int(round(x[_idx]))
+                        ]
                     else:
                         cand_params[_param] = x[_idx]
                     _idx += 1
@@ -818,61 +922,69 @@ class SurrogateRandomCV(BaseSearchCV):
             n_test = 0
             for train, test in cv_dat:
                 try:
-                    _score = _fit_and_score(estimator=cl, X=X, y=y, scorer=self.scorer_,
-                                            train=train, test=test, verbose=self.verbose,
-                                            parameters=cand_params, fit_params=self.fit_params,
-                                            error_score=self.error_score)[0]
-                    #if self.iid:
+                    _score = _fit_and_score(
+                        estimator=cl,
+                        X=X,
+                        y=y,
+                        scorer=self.scorer_,
+                        train=train,
+                        test=test,
+                        verbose=self.verbose,
+                        parameters=cand_params,
+                        fit_params=self.fit_params,
+                        error_score=self.error_score,
+                    )[0]
+                    # if self.iid:
                     #    score += _score * len(test)
                     #    n_test += len(test)
-                    #else:
+                    # else:
                     #    score += _score
                     #    n_test += 1
                     score += _score
                     n_test += 1
                 except ValueError:
                     pass
-                except:# LightGBMError:
+                except:  # LightGBMError:
                     pass
             score /= float(max(n_test, 1))
-            if is_classifier(self.estimator):
-                return - score
-            else:
-                return score
+            return -score
 
-        self.OPTIM = SurrogateSearch(obj, x0=self.x0,
-                                     max_iter=self.max_iter,
-                                     min_evals=self.min_evals,
-                                     ineqs=self.ineqs,
-                                     bounds=self.bounds,
-                                     verbose=self.verbose,
-                                     radius=self.radius,
-                                     regressor=self.regressor,
-                                     sampling=self.sampling,
-                                     search_sphere=self.search_sphere,
-                                     contraction=self.contraction,
-                                     max_itr_no_prog=self.max_itr_no_prog,
-                                     optimizer=self.optimizer,
-                                     scipy_solver=self.scipy_solver,
-                                     optimithon_dd_method=self.optimithon_dd_method,
-                                     optimithon_difftool=self.optimithon_difftool,
-                                     optimithon_t_method=self.optimithon_t_method,
-                                     optimithon_ls_method=self.optimithon_ls_method,
-                                     optimithon_ls_bt_method=self.optimithon_ls_bt_method,
-                                     optimithon_br_func=self.optimithon_br_func,
-                                     optimithon_penalty=self.optimithon_penalty,
-                                     task_name=self.task_name,
-                                     warm_start=self.warm_start,
-                                     Continue=self.Continue)
+        self.OPTIM = SurrogateSearch(
+            obj,
+            x0=self.x0,
+            max_iter=self.max_iter,
+            min_evals=self.min_evals,
+            ineqs=self.ineqs,
+            bounds=self.bounds,
+            verbose=self.verbose,
+            radius=self.radius,
+            regressor=self.regressor,
+            sampling=self.sampling,
+            search_sphere=self.search_sphere,
+            contraction=self.contraction,
+            max_itr_no_prog=self.max_itr_no_prog,
+            optimizer=self.optimizer,
+            scipy_solver=self.scipy_solver,
+            optimithon_dd_method=self.optimithon_dd_method,
+            optimithon_difftool=self.optimithon_difftool,
+            optimithon_t_method=self.optimithon_t_method,
+            optimithon_ls_method=self.optimithon_ls_method,
+            optimithon_ls_bt_method=self.optimithon_ls_bt_method,
+            optimithon_br_func=self.optimithon_br_func,
+            optimithon_penalty=self.optimithon_penalty,
+            task_name=self.task_name,
+            warm_start=self.warm_start,
+            Continue=self.Continue,
+        )
         x, scr = self.OPTIM()
         best_params_ = {}
         idx = 0
         for param in self.params_list:
             param_num_range = self.params[param]
-            if param_num_range.VType != 'hdreal':
-                if param_num_range.VType == 'integer':
+            if param_num_range.VType != "hdreal":
+                if param_num_range.VType == "integer":
                     best_params_[param] = int(round(x[idx]))
-                elif param_num_range.VType == 'categorical':
+                elif param_num_range.VType == "categorical":
                     best_params_[param] = param_num_range.items[int(round(x[idx]))]
                 else:
                     best_params_[param] = x[idx]
@@ -883,7 +995,7 @@ class SurrogateRandomCV(BaseSearchCV):
                     cls_dict[target_classes[i]] = x[idx]
                     idx += 1
                 best_params_[param] = cls_dict
-        self.best_estimator_ = clone(self.estimator).set_params(
-            **best_params_)
+        self.best_estimator_ = clone(self.estimator).set_params(**best_params_)
         self.best_estimator_score = scr
+        self.best_score_ = scr
         return self

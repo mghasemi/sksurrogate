@@ -104,7 +104,7 @@ class SynthBin(SynthBase):
         super(SynthBin, self).__init__(data=data, rv=rv)
 
     def get_val(self, x):
-        if x < .5:
+        if x < 0.5:
             return 0
         else:
             return 1
@@ -188,6 +188,7 @@ class SynthCat(SynthBase):
     def ret_val(self, X):
         return [self.get_val(x) for x in X]
 
+    @staticmethod
     def get_uniques(self, X):
         lst = unique(X)
         return lst
@@ -210,6 +211,7 @@ class SynthDate(SynthBase):
         dys = [(x - self.m_date).days for x in self.dates]
         return dys
 
+    @staticmethod
     def get_val(self, x):
         cndd = max(min(self.M, round(x)), self.m)
         cndd_date = self.m_date + timedelta(days=cndd)
@@ -225,48 +227,49 @@ class field(object):
     A generic class to handel simple constraints on columns.
     Accepts only one parameter which refers to a column in the DataFrame.
     """
+
     def __init__(self, fld):
         self.fld = fld
         self.op = None
         self.other = None
 
     def __eq__(self, val):
-        self.op = '=='
+        self.op = "=="
         self.other = val
         return self
 
     def __ne__(self, val):
-        self.op = '!='
+        self.op = "!="
         self.other = val
         return self
 
     def __gt__(self, val):
-        self.op = '>'
+        self.op = ">"
         self.other = val
         return self
 
     def __lt__(self, val):
-        self.op = '<'
+        self.op = "<"
         self.other = val
         return self
 
     def __ge__(self, val):
-        self.op = '>='
+        self.op = ">="
         self.other = val
         return self
 
     def __le__(self, val):
-        self.op = '<='
+        self.op = "<="
         self.other = val
         return self
 
     def isin(self, val):
-        self.op = 'in'
+        self.op = "in"
         self.other = val
         return self
 
     def notin(self, val):
-        self.op = 'nin'
+        self.op = "nin"
         self.other = val
         return self
 
@@ -281,7 +284,8 @@ class SynthData(object):
     :param distribution_type: default 'marginal'. Determines the type of distribution. If 'joint', then either a normal distribution is calculated based on provided data or will use `rv` if `rv` is not 'None'.
     :param rv: default 'None'. The joint distribution of variables. Only effective if `distribution_type` is 'joint'.
     """
-    def __init__(self, df, default_rv='uniform', distribution_type='marginal', rv=None):
+
+    def __init__(self, df, default_rv="uniform", distribution_type="marginal", rv=None):
         self.df = df
         self.default_rv = default_rv.lower()
         self.distribution_type = distribution_type.lower()
@@ -316,23 +320,26 @@ class SynthData(object):
             a, b = None, None
             frmt = "%Y-%m-%d"
             if clm in self.types:
-                if type(self.types[clm]) not in [SynthBin, SynthInt, SynthReal, SynthCat, SynthDate]:
+                if not isinstance(
+                    self.types[clm],
+                    (SynthBin, SynthInt, SynthReal, SynthCat, SynthDate),
+                ):
                     typ = self.types[clm].lower()
-                    if typ == 'bin':
+                    if typ == "bin":
                         SynthObj = SynthBin(data)
-                    elif typ == 'int':
+                    elif typ == "int":
                         if self.params[clm] is not None:
                             a = self.params[clm][0]
                             b = self.params[clm][1]
                         SynthObj = SynthInt(a=a, b=b, data=data)
-                    elif typ == 'real':
+                    elif typ == "real":
                         if self.params[clm] is not None:
                             a = self.params[clm][0]
                             b = self.params[clm][1]
                         SynthObj = SynthReal(a=a, b=b, data=data)
-                    elif typ == 'cat':
+                    elif typ == "cat":
                         SynthObj = SynthCat(data)
-                    elif typ == 'date':
+                    elif typ == "date":
                         if self.params[clm] is not None:
                             frmt = self.params[clm]
                         SynthObj = SynthDate(data, frmt=frmt)
@@ -353,6 +360,7 @@ class SynthData(object):
         """
         from scipy.stats import norm
         from scipy.stats import uniform
+
         v = self.tr_df[self.columns].values
         self.mean = v.mean(axis=0)
         self.var = v.var(axis=0)
@@ -361,13 +369,15 @@ class SynthData(object):
         self.synth = {}
         idx = 0
         # if the default distribution is set to `marginal`
-        if self.distribution_type == 'marginal':
+        if self.distribution_type == "marginal":
             self.rv = [None for i in range(self.m.shape[0])]
             for clm in self.columns:
                 if self.SynthObj[clm].rv is not None:
                     self.rv[idx] = self.SynthObj[clm].rv
-                elif self.default_rv == 'uniform':
-                    self.rv[idx] = uniform(loc=self.m[idx], scale=self.M[idx] - self.m[idx])
+                elif self.default_rv == "uniform":
+                    self.rv[idx] = uniform(
+                        loc=self.m[idx], scale=self.M[idx] - self.m[idx]
+                    )
                 else:
                     self.rv[idx] = norm(loc=self.mean[idx], scale=self.var[idx])
                 data = list(self.rv[idx].rvs(num))
@@ -379,6 +389,7 @@ class SynthData(object):
         else:
             if self.rv is None:
                 from scipy.stats import multivariate_normal
+
                 self.cov = cov(transpose(v))
                 self.rv = multivariate_normal(self.mean, self.cov, allow_singular=True)
             X = self.rv.rvs(num)
@@ -407,39 +418,39 @@ class SynthData(object):
         """
         t_df = df
         for cnd in self.const:
-            if type(cnd.other) is field:
-                if cnd.op == '==':
+            if isinstance(cnd.other, field):
+                if cnd.op == "==":
                     t_df = t_df[t_df[cnd.fld] == t_df[cnd.other.fld]]
-                elif cnd.op == '!=':
+                elif cnd.op == "!=":
                     t_df = t_df[t_df[cnd.fld] != t_df[cnd.other.fld]]
-                elif cnd.op == '>':
+                elif cnd.op == ">":
                     t_df = t_df[t_df[cnd.fld] > t_df[cnd.other.fld]]
-                elif cnd.op == '<':
+                elif cnd.op == "<":
                     t_df = t_df[t_df[cnd.fld] < t_df[cnd.other.fld]]
-                elif cnd.op == '>=':
+                elif cnd.op == ">=":
                     t_df = t_df[t_df[cnd.fld] >= t_df[cnd.other.fld]]
-                elif cnd.op == '<=':
+                elif cnd.op == "<=":
                     t_df = t_df[t_df[cnd.fld] <= t_df[cnd.other.fld]]
-                elif cnd.op == 'in':
+                elif cnd.op == "in":
                     t_df = t_df[t_df[cnd.fld].isin(t_df[cnd.other.fld])]
-                elif cnd.op == 'nin':
+                elif cnd.op == "nin":
                     t_df = t_df[~t_df[cnd.fld].isin(t_df[cnd.other.fld])]
             else:
-                if cnd.op == '==':
+                if cnd.op == "==":
                     t_df = t_df[t_df[cnd.fld] == cnd.other]
-                elif cnd.op == '!=':
+                elif cnd.op == "!=":
                     t_df = t_df[t_df[cnd.fld] != cnd.other]
-                elif cnd.op == '>':
+                elif cnd.op == ">":
                     t_df = t_df[t_df[cnd.fld] > cnd.other]
-                elif cnd.op == '<':
+                elif cnd.op == "<":
                     t_df = t_df[t_df[cnd.fld] < cnd.other]
-                elif cnd.op == '>=':
+                elif cnd.op == ">=":
                     t_df = t_df[t_df[cnd.fld] >= cnd.other]
-                elif cnd.op == '<=':
+                elif cnd.op == "<=":
                     t_df = t_df[t_df[cnd.fld] <= cnd.other]
-                elif cnd.op == 'in':
+                elif cnd.op == "in":
                     t_df = t_df[t_df[cnd.fld].isin(cnd.other)]
-                elif cnd.op == 'nin':
+                elif cnd.op == "nin":
                     t_df = t_df[~t_df[cnd.fld].isin(cnd.other)]
         return t_df
 

@@ -31,26 +31,28 @@ class Measure(object):
     """
 
     def __init__(self, density=None, domain=None):
-        from types import FunctionType
+
         # set the density
         if density is None:
-            self.density = lambda x: 1.
-        elif type(density) is FunctionType:
+            self.density = lambda x: 1.0
+        elif callable(density):
             self.density = density
-        elif type(density) is dict:
+        elif isinstance(density, dict):
             self.density = density  # lambda x: density[x] if x in density else 0.
         else:
-            raise Error("The `density` must be either a callable or a dictionary of real numbers.")
+            raise Error(
+                "The `density` must be either a callable or a dictionary of real numbers."
+            )
         # check and set the domain
         self.continuous = True
         self.dim = 0
-        if type(domain) is list:
+        if isinstance(domain, list):
             self.dim = len(domain)
             for intrvl in domain:
-                if (type(intrvl) not in [list, tuple]) or (len(intrvl) != 2):
+                if (not isinstance(intrvl, (list, tuple))) or (len(intrvl) != 2):
                     raise Error("`domain` should be a list of 2-tuples.")
             self.supp = domain
-        elif type(density) is dict:
+        elif isinstance(density, dict):
             self.supp = density.keys()
             self.continuous = False
         else:
@@ -64,15 +66,19 @@ class Measure(object):
         :return: the value of the integral
         """
         from types import FunctionType
-        m = 0.
-        if type(f) not in [dict, FunctionType]:
+
+        m = 0.0
+        if not isinstance(
+                f, (dict, FunctionType)
+        ):  # if type(f) not in [dict, FunctionType]:
             raise Error("The integrand must be a `function` or a `dict`")
-        if type(f) == dict:
-            fn = lambda x: f[x] if x in f else 0.
+        if isinstance(f, dict):
+            fn = lambda x: f[x] if x in f else 0.0
         else:
             fn = f
         if self.continuous:
             from scipy import integrate
+
             fw = lambda *x: fn(*x) * self.density(*x)
             m = integrate.nquad(fw, self.supp)[0]
         else:
@@ -91,9 +97,8 @@ class Measure(object):
         :param f: the function whose norm is desired.
         :return: :math:`\|f\|_{p, \mu}`
         """
-        from math import pow
         absfp = lambda *x: pow(abs(f(*x)), p)
-        return pow(self.integral(absfp), 1. / p)
+        return pow(self.integral(absfp), 1.0 / p)
 
 
 class FunctionBasis(object):
@@ -104,6 +109,7 @@ class FunctionBasis(object):
     def __init__(self):
         pass
 
+    @staticmethod
     def Poly(self, n, deg):
         """
         Returns a basis consisting of polynomials in `n` variables of degree at most `deg`.
@@ -114,13 +120,15 @@ class FunctionBasis(object):
         """
         from itertools import product
         from numpy import prod
+
         B = []
         for o in product(range(deg + 1), repeat=n):
             if sum(o) <= deg:
                 B.append(lambda x, e=o: prod([x[i] ** e[i] for i in range(n)]))
         return B
 
-    def Fourier(self, n, deg, l=1.):
+    @staticmethod
+    def Fourier(self, n, deg, l=1.0):
         """
         Returns the Fourier basis of degree `deg` in `n` variables with period `l`
 
@@ -132,7 +140,8 @@ class FunctionBasis(object):
 
         from numpy import sin, cos, prod
         from itertools import product
-        B = [lambda x: 1.]
+
+        B = [lambda x: 1.0]
         E = list(product([0, 1], repeat=n))
         RawCoefs = list(product(range(deg + 1), repeat=n))
         Coefs = set()
@@ -145,8 +154,14 @@ class FunctionBasis(object):
                 for ex in E:
                     if sum(ex) > 0:
                         f_ = lambda x, o_=o, ex_=ex: prod(
-                            [sin(o_[i] * x[i] / l)** ex_[i] * cos(o_[i] * x[i] / l) ** (1 - ex_[i]) if o_[i] > 0 else 1.
-                             for i in range(n)])
+                            [
+                                sin(o_[i] * x[i] / l) ** ex_[i]
+                                * cos(o_[i] * x[i] / l) ** (1 - ex_[i])
+                                if o_[i] > 0
+                                else 1.0
+                                for i in range(n)
+                            ]
+                        )
                         B.append(f_)
         return B
 
@@ -167,14 +182,15 @@ class FunctionSpace(object):
             self.measure = measure
         else:
             # default measure is set to be the Lebesgue measure on [0, 1]^dim
-            D = [(0., 1.) for _ in range(self.dim)]
+            D = [(0.0, 1.0) for _ in range(self.dim)]
             self.measure = Measure(domain=D)
         if basis is None:
             # default basis is linear
             from numpy import array
-            B = [lambda x: 1.]
+
+            B = [lambda x: 1.0]
             for i in range(self.dim):
-                B.append(lambda x, i_=i: x[i_] if type(x) is array else x)
+                B.append(lambda x, i_=i: x[i_] if isinstance(x, array) else x)
             self.base = B
         else:
             self.base = basis
@@ -208,8 +224,9 @@ class FunctionSpace(object):
 
     def GramMat(self):
         from numpy import array
+
         N = len(self.base)
-        cfs = array([[0.] * N] * N)
+        cfs = array([[0.0] * N] * N)
         for i in range(N):
             for j in range(i, N):
                 cf = self.inner(self.base[i], self.base[j])
@@ -219,16 +236,20 @@ class FunctionSpace(object):
 
     def minor_gram(self, i):
         from numpy import array
+
         if self.Gram is None:
             self.GramMat()
-        return array([[self.Gram[idx][jdx] for idx in range(i + 1)] for jdx in range(i + 1)])
+        return array(
+            [[self.Gram[idx][jdx] for idx in range(i + 1)] for jdx in range(i + 1)]
+        )
 
     def minor(self, i, j):
         from numpy import array, delete
         from numpy.linalg import det
+
         if j == 1:
-            return 1.
-        cfs = array([[0.] * j] * (j - 1))
+            return 1.0
+        cfs = array([[0.0] * j] * (j - 1))
         for jdx in range(j):
             for idx in range(j - 1):
                 cfs[idx][jdx] = self.Gram[idx][jdx]
@@ -244,19 +265,27 @@ class FunctionSpace(object):
         """
         from numpy.linalg import det
         from numpy import sqrt
+
         N = len(self.base)
-        GramDets = [1.] + [det(self.minor_gram(i)) for i in range(N)]
+        GramDets = [1.0] + [det(self.minor_gram(i)) for i in range(N)]
         B = []
         D = []
         for j in range(1, N + 1):
             j_ = j
-            cf = [(-1) ** (i + j - 1) * self.minor(i, j_) / sqrt(GramDets[j_ - 1] * GramDets[j_]) for i in range(j_)]
+            cf = [
+                (-1) ** (i + j - 1)
+                * self.minor(i, j_)
+                / sqrt(GramDets[j_ - 1] * GramDets[j_])
+                for i in range(j_)
+            ]
             # print(j_, cf, [self.base[i](2.) for i in range(j_)])
             B.append(lambda x: sum([cf[i] * self.base[i](x) for i in range(j_)]))
             D.append(cf)
         self.OrthBase = []
         for i in range(len(D)):
-            fn = lambda x, i_=i: sum([D[i_][_j] * self.base[_j](x) for _j in range(len(D[i_]))])
+            fn = lambda x, i_=i: sum(
+                [D[i_][_j] * self.base[_j](x) for _j in range(len(D[i_]))]
+            )
             self.OrthBase.append(fn)
 
     def Series(self, f):
@@ -293,22 +322,28 @@ class Regression(object):
 
     def __init__(self, points, dim=None):
         from numpy import array, ndarray
+
         self.Points = None
-        if type(points) in [list, array, ndarray]:
+        if isinstance(points, (list, array, ndarray)):
             self.Points = list(points)
             self.dim = len(points[0]) - 1
             supp = {}
             for p in points:
-                supp[tuple(p[:-1])] = 1.
+                supp[tuple(p[:-1])] = 1.0
             self.meas = Measure(supp)
-            self.f = lambda x: sum([p_[-1] * (1 * (abs(x - array(p_[:-1])) < 1.e-4)).min() for p_ in points])
+            self.f = lambda x: sum(
+                [
+                    p_[-1] * (1 * (abs(x - array(p_[:-1])) < 1.0e-4)).min()
+                    for p_ in points
+                ]
+            )
         elif callable(points):
             if dim is None:
                 raise Error("The dimension can not be determined")
             else:
                 self.dim = dim
             self.f = points
-            self.meas = Measure(domain=[(-1., 1.) for _ in range(self.dim)])
+            self.meas = Measure(domain=[(-1.0, 1.0) for _ in range(self.dim)])
         self.Orth = FunctionSpace(dim=self.dim, measure=self.meas)
         # self.Orth.FormBasis()
 
@@ -319,7 +354,8 @@ class Regression(object):
         :param meas: a measure.Measure object
         :return: None
         """
-        assert (isinstance(meas, Measure)), "SetMeasure accepts a NpyProximation.Measure object."
+        if not isinstance(meas, Measure):
+            raise AssertionError("SetMeasure accepts a NpyProximation.Measure object.")
         self.meas = meas
 
     def SetFuncSpc(self, sys):
@@ -333,7 +369,10 @@ class Regression(object):
             For technical reasons, the measure needs to be given via `SetMeasure` method. Otherwise, the Lebesque
             measure on :math:`[-1, 1]^n` is assumed.
         """
-        assert (self.dim == sys.dim), "Dimensions of points and the orthogonal system do not match."
+        if self.dim != sys.dim:
+            raise AssertionError(
+                "Dimensions of points and the orthogonal system do not match."
+            )
         sys.measure = self.meas
         self.Orth = sys
         self.Orth.FormBasis()
@@ -345,15 +384,20 @@ class Regression(object):
         :return: The fit.
         """
         coefs = self.Orth.Series(self.f)
-        aprx = lambda x: sum([coefs[i] * self.Orth.OrthBase[i](x) for i in range(len(self.Orth.OrthBase))])
+        aprx = lambda x: sum(
+            [
+                coefs[i] * self.Orth.OrthBase[i](x)
+                for i in range(len(self.Orth.OrthBase))
+            ]
+        )
         return aprx
 
 
 try:
     from sklearn.base import BaseEstimator, RegressorMixin
 except ModuleNotFoundError:
-    BaseEstimator = type('BaseEstimator', (object,), dict())
-    RegressorMixin = type('RegressorMixin', (object,), dict())
+    BaseEstimator = type("BaseEstimator", (object,), dict())
+    RegressorMixin = type("RegressorMixin", (object,), dict())
 
 
 class HilbertRegressor(BaseEstimator, RegressorMixin):
@@ -388,6 +432,7 @@ class HilbertRegressor(BaseEstimator, RegressorMixin):
         :return: `self`
         """
         from numpy import concatenate
+
         if len(X.shape) != 2:
             X = X.reshape(X.shape[0], 1)
         points = concatenate((X, y.reshape(y.shape[0], 1)), axis=1)
@@ -414,6 +459,7 @@ class HilbertRegressor(BaseEstimator, RegressorMixin):
         :return: Returns predicted values
         """
         from numpy import array
+
         if len(X.shape) != 2:
             X = X.reshape(X.shape[0], 1)
         return array([self.apprx(x) for x in X])
