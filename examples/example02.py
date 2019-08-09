@@ -24,8 +24,6 @@ config = {
         "with_std": Categorical([True, False]),
     },
     "sklearn.preprocessing.Normalizer": {"norm": Categorical(["l1", "l2", "max"])},
-    # Feature Selectors
-    # "sklearn.feature_selection.VarianceThreshold": {"threshold": Real(0.0, 0.1)},
 }
 import warnings
 
@@ -46,5 +44,5 @@ A = AML(
     verbose=2,
     scoring="neg_mean_squared_error",
 )
-A.eoa_fit(X, y, max_generation=12, num_parents=12)
+A.eoa_fit(X, y, max_generation=10, num_parents=10)
 print(A.get_top(5))
