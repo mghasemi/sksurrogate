@@ -23,7 +23,7 @@ config = {
         "with_mean": Categorical([True, False]),
         "with_std": Categorical([True, False]),
     },
-    "sklearn.preprocessing.Normalizer": {"norm": Categorical(["l1", "l2", "max"])},
+    #"sklearn.preprocessing.Normalizer": {"norm": Categorical(["l1", "l2", "max"])},
 }
 import warnings
 
@@ -44,5 +44,5 @@ A = AML(
     verbose=2,
     scoring="neg_mean_squared_error",
 )
-A.eoa_fit(X, y, max_generation=10, num_parents=10)
+A.eoa_fit(X, y, max_generation=5, num_parents=8)
 print(A.get_top(5))
