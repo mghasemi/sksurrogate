@@ -1,3 +1,5 @@
+|Quality| |Doc|
+
 |Logo|
 
 SKSurrogate
@@ -57,3 +59,8 @@ MIT License
     SOFTWARE.
 
 .. |Logo| image:: ./docs/images/funnel.png
+.. |Quality| image:: https://api.codacy.com/project/badge/Grade/9a4d3e663cb04128a06d47efc85f23da
+    :target: https://www.codacy.com/app/mghasemi/sksurrogate?utm_source=github.com&amp;utm_medium=referral&amp;utm_content=mghasemi/sksurrogate&amp;utm_campaign=Badge_Grade
+.. |Doc| image:: https://readthedocs.org/projects/sksurrogate/badge/?version=latest
+    :target: https://sksurrogate.readthedocs.io/en/latest/?badge=latest
+    :alt: Documentation Status
