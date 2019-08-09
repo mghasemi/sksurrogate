@@ -2,8 +2,6 @@
 
 import pandas as pd
 import numpy as np
-from sklearn.model_selection import RandomizedSearchCV
-from sklearn.kernel_ridge import KernelRidge
 from sklearn.gaussian_process.kernels import Matern, Sum, ExpSineSquared
 from SKSurrogate import *
 

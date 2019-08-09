@@ -110,7 +110,7 @@ class FunctionBasis(object):
         pass
 
     @staticmethod
-    def Poly(self, n, deg):
+    def Poly(n, deg):
         """
         Returns a basis consisting of polynomials in `n` variables of degree at most `deg`.
 
@@ -128,7 +128,7 @@ class FunctionBasis(object):
         return B
 
     @staticmethod
-    def Fourier(self, n, deg, l=1.0):
+    def Fourier(n, deg, l=1.0):
         """
         Returns the Fourier basis of degree `deg` in `n` variables with period `l`
 

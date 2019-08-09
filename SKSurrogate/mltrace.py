@@ -492,7 +492,7 @@ class mltrack(object):
         return mdl
 
     @staticmethod
-    def getBest(self, metric):
+    def getBest(metric):
         """
         Finds the model with the best metric.
 
@@ -607,7 +607,8 @@ class mltrack(object):
             self.conn,
         )
 
-    def LoadPlot(self, pid):
+    @staticmethod
+    def LoadPlot(pid):
         """
         Loads a `matplotlib` plot
 
@@ -907,7 +908,7 @@ class mltrack(object):
         x_ = X_test[0]
         try:
             mdl.predict([x_])
-        except NotFittedError as e:
+        except NotFittedError as _:
             mdl.fit(X_train, y_train)
 
         y_true = array(y_test)
@@ -958,7 +959,7 @@ class mltrack(object):
         return ax
 
     @staticmethod
-    def cumulative_gain_curve(self, y_true, y_score, pos_label=None):
+    def cumulative_gain_curve(y_true, y_score, pos_label=None):
         """
         This function generates the points necessary to plot the Cumulative Gain
         Note: This implementation is restricted to the binary classification task.

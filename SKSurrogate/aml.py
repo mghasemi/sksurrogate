@@ -594,7 +594,8 @@ class AML(object):
         self.best_estimator_score = list(self.get_top(1).items())[0][1][1]
         return self
 
-    def _get_class(self, library):
+    @staticmethod
+    def _get_class(library):
         """
         Takes a string that refers to a class in an accessible module and returns the associated class
 

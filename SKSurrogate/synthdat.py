@@ -71,7 +71,8 @@ class SynthBase(object):
         self.data = data
         self.rv = rv
 
-    def get_val(self, x):
+    @staticmethod
+    def get_val(x):
         """
         Coverts the value of `x` into numeric that can be handled by random distributions
         :param x: the value to be converted into numeric
@@ -189,7 +190,7 @@ class SynthCat(SynthBase):
         return [self.get_val(x) for x in X]
 
     @staticmethod
-    def get_uniques(self, X):
+    def get_uniques(X):
         lst = unique(X)
         return lst
 
@@ -211,7 +212,6 @@ class SynthDate(SynthBase):
         dys = [(x - self.m_date).days for x in self.dates]
         return dys
 
-    @staticmethod
     def get_val(self, x):
         cndd = max(min(self.M, round(x)), self.m)
         cndd_date = self.m_date + timedelta(days=cndd)
