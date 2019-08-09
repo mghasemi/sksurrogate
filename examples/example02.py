@@ -25,7 +25,7 @@ config = {
     },
     "sklearn.preprocessing.Normalizer": {"norm": Categorical(["l1", "l2", "max"])},
     # Feature Selectors
-    #"sklearn.feature_selection.VarianceThreshold": {"threshold": Real(0.0, 0.1)},
+    # "sklearn.feature_selection.VarianceThreshold": {"threshold": Real(0.0, 0.1)},
 }
 import warnings
 
