@@ -31,10 +31,9 @@ volume of the box or sphere tha tthe sample is selected from too.
 """
 
 
-class CompactSample(object):
+class BaseSample(object):
     """
-    Generates samples uniformly out of a box.
-
+    This is the base class for various sampling methods.
     """
 
     def __init__(self, **kwargs):
@@ -42,14 +41,15 @@ class CompactSample(object):
         self.contraction = kwargs.get("contraction", 0.9)
         self.ineqs = kwargs.pop("ineq", [])
         self.bounds = kwargs.pop("bounds", None)
-        self.cntrctn = None
 
     def check_constraints(self, point):
         """
         Checks constraints on the sample if provided
+
         :param point: the candidate to be checked
         :return: `boolean` True or False for if all constraints hold or not.
         """
+
         n = len(point)
         for cns in self.ineqs:
             if cns(point) < 0.0:
@@ -59,6 +59,20 @@ class CompactSample(object):
                 if (point[i] < self.bounds[i][0]) or (point[i] > self.bounds[i][1]):
                     return False
         return True
+
+    def sample(self, centre, cntrctn=1.0):
+        raise NotImplementedError("The method `sample` is not implemented")
+
+
+class CompactSample(BaseSample):
+    """
+    Generates samples uniformly out of a box.
+
+    """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.cntrctn = None
 
     def sample(self, centre, cntrctn=1.0):
         """
@@ -83,7 +97,7 @@ class CompactSample(object):
         return candid
 
 
-class BoxSample(object):
+class BoxSample(BaseSample):
     """
     Generates samples out of a box around a given center.
 
@@ -92,26 +106,8 @@ class BoxSample(object):
     """
 
     def __init__(self, **kwargs):
-        self.init_radius = kwargs.get("init_radius", 2.0)
-        self.contraction = kwargs.get("contraction", 0.9)
-        self.ineqs = kwargs.pop("ineq", [])
+        super().__init__(**kwargs)
         self.bounds = kwargs.pop("bounds", None)
-
-    def check_constraints(self, point):
-        """
-        Checks constraints on the sample if provided
-        :param point: the candidate to be checked
-        :return: `boolean` True or False for if all constraints hold or not.
-        """
-        n = len(point)
-        for cns in self.ineqs:
-            if cns(point) < 0.0:
-                return False
-        if self.bounds is not None:
-            for i in range(n):
-                if (point[i] < self.bounds[i][0]) or (point[i] > self.bounds[i][1]):
-                    return False
-        return True
 
     def sample(self, centre, cntrctn=1.0):
         """
@@ -136,7 +132,7 @@ class BoxSample(object):
         return candid
 
 
-class SphereSample(object):
+class SphereSample(BaseSample):
     """
     Generates samples out of an sphere around a given center.
 
@@ -145,28 +141,8 @@ class SphereSample(object):
     """
 
     def __init__(self, **kwargs):
-        self.init_radius = kwargs.get("init_radius", 2.0)
-        self.contraction = kwargs.get("contraction", 0.9)
-        self.ineqs = kwargs.pop("ineq", [])
+        super().__init__(**kwargs)
         self.bounds = kwargs.pop("bounds", None)
-
-    def check_constraints(self, point):
-        """
-        Checks constraints on the sample if provided
-
-        :param point: the candidate to be checked
-        :return: `boolean` True or False for if all constraints hold or not.
-        """
-
-        n = len(point)
-        for cns in self.ineqs:
-            if cns(point) < 0.0:
-                return False
-        if self.bounds is not None:
-            for i in range(n):
-                if (point[i] < self.bounds[i][0]) or (point[i] > self.bounds[i][1]):
-                    return False
-        return True
 
     def sample(self, centre, cntrctn=1.0):
         """
