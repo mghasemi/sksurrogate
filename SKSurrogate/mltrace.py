@@ -423,11 +423,11 @@ class mltrack(object):
             )
 
             vrn = (
-                    sum([explained_variance_score(y_tst, y_prd) for y_prd, y_tst in prds])
-                    / n_
+                sum([explained_variance_score(y_tst, y_prd) for y_prd, y_tst in prds])
+                / n_
             )
             mxe = (
-                    sum([median_absolute_error(y_tst, y_prd) for y_prd, y_tst in prds]) / n_
+                sum([median_absolute_error(y_tst, y_prd) for y_prd, y_tst in prds]) / n_
             )
             mse = sum([mean_squared_error(y_tst, y_prd) for y_prd, y_tst in prds]) / n_
             mae = sum([mean_absolute_error(y_tst, y_prd) for y_prd, y_tst in prds]) / n_
@@ -501,8 +501,8 @@ class mltrack(object):
         """
         res = (
             Metrics.select()
-                .order_by(Metrics.__dict__[metric].__dict__["field"].desc())
-                .dicts()
+            .order_by(Metrics.__dict__[metric].__dict__["field"].desc())
+            .dicts()
         )
         return res[0]
 
@@ -575,9 +575,9 @@ class mltrack(object):
 
         res = (
             Saved.select()
-                .where(Saved.model_id == mdl_id)
-                .order_by(Saved.init_date.desc())
-                .dicts()
+            .where(Saved.model_id == mdl_id)
+            .order_by(Saved.init_date.desc())
+            .dicts()
         )
         file = open("track_ml_tmp_mdl.joblib", "wb")
         file.write(res[0]["pickle"])
@@ -623,7 +623,7 @@ class mltrack(object):
         return fig
 
     def plot_learning_curve(
-            self, mdl, title, ylim=None, cv=None, n_jobs=1, train_sizes=None, **kwargs
+        self, mdl, title, ylim=None, cv=None, n_jobs=1, train_sizes=None, **kwargs
     ):
         """
         Generate a simple plot of the test and training learning curve.
@@ -727,6 +727,26 @@ class mltrack(object):
 
         return plt
 
+    def split_train(self, mdl):
+        from sklearn.model_selection import train_test_split
+
+        if self.X is None:
+            self.get_data()
+
+        X_train, X_test, y_train, y_test = train_test_split(
+            self.X, self.y, train_size=0.75
+        )
+
+        from sklearn.exceptions import NotFittedError
+
+        x_ = X_test[0]
+        try:
+            mdl.predict([x_])
+        except NotFittedError as _:
+            mdl.fit(X_train, y_train)
+
+        return mdl, X_train, X_test, y_train, y_test
+
     def plot_calibration_curve(self, mdl, name, fig_index=1, bins=10):
         """
         Plots calibration curves.
@@ -752,21 +772,8 @@ class mltrack(object):
 
         ax1.plot([0, 1], [0, 1], "k:", label="Perfectly calibrated")
 
-        if self.X is None:
-            self.get_data()
+        mdl, _, X_test, _, y_test = self.split_train(mdl)
 
-        X_train, X_test, y_train, y_test = train_test_split(
-            self.X, self.y, train_size=0.75
-        )
-
-        from sklearn.exceptions import NotFittedError
-
-        x_ = X_test[0]
-        try:
-            mdl.predict([x_])
-        except NotFittedError as e:
-            mdl.fit(X_train, y_train)
-        # y_pred = clf.predict(X_test)
         if hasattr(mdl, "predict_proba"):
             prob_pos = mdl.predict_proba(X_test)[:, 1]
         else:  # use decision function
@@ -818,20 +825,8 @@ class mltrack(object):
             mdl = self.LogModel(mdl)
         mdl_id = mdl.mltrack_id
 
-        if self.X is None:
-            self.get_data()
+        mdl, _, X_test, _, y_test = self.split_train(mdl)
 
-        X_train, X_test, y_train, y_test = train_test_split(
-            self.X, self.y, train_size=0.75
-        )
-
-        from sklearn.exceptions import NotFittedError
-
-        x_ = X_test[0]
-        try:
-            mdl.predict([x_])
-        except NotFittedError as e:
-            mdl.fit(X_train, y_train)
         _ = plt.subplot(111)
         fig = plt.figure(figsize=(8, 8))
         plt.title("ROC Curve")
@@ -857,12 +852,12 @@ class mltrack(object):
         return plt
 
     def plot_cumulative_gain(
-            self,
-            mdl,
-            title="Cumulative Gains Curve",
-            figsize=None,
-            title_fontsize="large",
-            text_fontsize="medium",
+        self,
+        mdl,
+        title="Cumulative Gains Curve",
+        figsize=None,
+        title_fontsize="large",
+        text_fontsize="medium",
     ):
         """
         Generates the Cumulative Gains Plot from labels and scores/probabilities
@@ -896,20 +891,7 @@ class mltrack(object):
             mdl = self.LogModel(mdl)
         mdl_id = mdl.mltrack_id
 
-        if self.X is None:
-            self.get_data()
-
-        X_train, X_test, y_train, y_test = train_test_split(
-            self.X, self.y, train_size=0.75
-        )
-
-        from sklearn.exceptions import NotFittedError
-
-        x_ = X_test[0]
-        try:
-            mdl.predict([x_])
-        except NotFittedError as _:
-            mdl.fit(X_train, y_train)
+        mdl, _, X_test, _, y_test = self.split_train(mdl)
 
         y_true = array(y_test)
         try:
@@ -976,26 +958,18 @@ class mltrack(object):
             ValueError: If `y_true` is not composed of 2 classes. The Cumulative Gain Chart is only relevant in
             binary classification.
         """
-        from numpy import (
-            asarray,
-            array_equal,
-            cumsum,
-            arange,
-            insert,
-            unique,
-            argsort,
-        )
+        from numpy import asarray, array_equal, cumsum, arange, insert, unique, argsort
 
         y_true, y_score = asarray(y_true), asarray(y_score)
 
         # ensure binary classification if pos_label is not specified
         classes = unique(y_true)
         if pos_label is None and not (
-                array_equal(classes, [0, 1])
-                or array_equal(classes, [-1, 1])
-                or array_equal(classes, [0])
-                or array_equal(classes, [-1])
-                or array_equal(classes, [1])
+            array_equal(classes, [0, 1])
+            or array_equal(classes, [-1, 1])
+            or array_equal(classes, [0])
+            or array_equal(classes, [-1])
+            or array_equal(classes, [1])
         ):
             raise ValueError("Data is not binary and pos_label is not specified")
         elif pos_label is None:
@@ -1019,12 +993,12 @@ class mltrack(object):
         return percentages, gains
 
     def plot_lift_curve(
-            self,
-            mdl,
-            title="Lift Curve",
-            figsize=None,
-            title_fontsize="large",
-            text_fontsize="medium",
+        self,
+        mdl,
+        title="Lift Curve",
+        figsize=None,
+        title_fontsize="large",
+        text_fontsize="medium",
     ):
         """
         Generates the Lift Curve from labels and scores/probabilities The lift curve is used to
@@ -1050,20 +1024,7 @@ class mltrack(object):
             mdl = self.LogModel(mdl)
         mdl_id = mdl.mltrack_id
 
-        if self.X is None:
-            self.get_data()
-
-        X_train, X_test, y_train, y_test = train_test_split(
-            self.X, self.y, train_size=0.75
-        )
-
-        from sklearn.exceptions import NotFittedError
-
-        x_ = X_test[0]
-        try:
-            mdl.predict([x_])
-        except NotFittedError as _:
-            mdl.fit(X_train, y_train)
+        mdl, _, X_test, _, y_test = self.split_train(mdl)
 
         y_true = array(y_test)
         try:
@@ -1117,14 +1078,14 @@ class mltrack(object):
         return ax
 
     def heatmap(
-            self,
-            corr_df=None,
-            sort_by=None,
-            ascending=False,
-            font_size=3,
-            cmap="gnuplot2",
-            idx_col="feature",
-            ignore=(),
+        self,
+        corr_df=None,
+        sort_by=None,
+        ascending=False,
+        font_size=3,
+        cmap="gnuplot2",
+        idx_col="feature",
+        ignore=(),
     ):
         """
         Plots a heatmap from the values of the dataframe `corr_df`
