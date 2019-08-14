@@ -1,4 +1,4 @@
-|Quality| |Travis| |Doc| |Licence|
+|Quality| |Travis| |Doc| |Binder| |Licence|
 
 |Logo|
 
@@ -67,4 +67,6 @@ MIT License
 .. |Licence| image:: https://img.shields.io/badge/license-MIT-blue.svg
    :target: https://github.com/mghasemi/sksurrogate/blob/master/License.txt
 .. |Travis| image:: https://travis-ci.org/mghasemi/sksurrogate.svg?branch=master
-    :target: https://travis-ci.org/mghasemi/sksurrogate
+   :target: https://travis-ci.org/mghasemi/sksurrogate
+.. |Binder| image:: https://mybinder.org/badge_logo.svg
+   :target: https://mybinder.org/v2/gh/mghasemi/sksurrogate/master?filepath=examples%2FClassification.ipynb
