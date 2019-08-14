@@ -423,11 +423,11 @@ class mltrack(object):
             )
 
             vrn = (
-                sum([explained_variance_score(y_tst, y_prd) for y_prd, y_tst in prds])
-                / n_
+                    sum([explained_variance_score(y_tst, y_prd) for y_prd, y_tst in prds])
+                    / n_
             )
             mxe = (
-                sum([median_absolute_error(y_tst, y_prd) for y_prd, y_tst in prds]) / n_
+                    sum([median_absolute_error(y_tst, y_prd) for y_prd, y_tst in prds]) / n_
             )
             mse = sum([mean_squared_error(y_tst, y_prd) for y_prd, y_tst in prds]) / n_
             mae = sum([mean_absolute_error(y_tst, y_prd) for y_prd, y_tst in prds]) / n_
@@ -501,8 +501,8 @@ class mltrack(object):
         """
         res = (
             Metrics.select()
-            .order_by(Metrics.__dict__[metric].__dict__["field"].desc())
-            .dicts()
+                .order_by(Metrics.__dict__[metric].__dict__["field"].desc())
+                .dicts()
         )
         return res[0]
 
@@ -575,9 +575,9 @@ class mltrack(object):
 
         res = (
             Saved.select()
-            .where(Saved.model_id == mdl_id)
-            .order_by(Saved.init_date.desc())
-            .dicts()
+                .where(Saved.model_id == mdl_id)
+                .order_by(Saved.init_date.desc())
+                .dicts()
         )
         file = open("track_ml_tmp_mdl.joblib", "wb")
         file.write(res[0]["pickle"])
@@ -623,7 +623,7 @@ class mltrack(object):
         return fig
 
     def plot_learning_curve(
-        self, mdl, title, ylim=None, cv=None, n_jobs=1, train_sizes=None, **kwargs
+            self, mdl, title, ylim=None, cv=None, n_jobs=1, train_sizes=None, **kwargs
     ):
         """
         Generate a simple plot of the test and training learning curve.
@@ -730,6 +730,10 @@ class mltrack(object):
     def split_train(self, mdl):
         from sklearn.model_selection import train_test_split
 
+        if "mltrack_id" not in mdl.__dict__:
+            mdl = self.LogModel(mdl)
+        mdl_id = mdl.mltrack_id
+
         if self.X is None:
             self.get_data()
 
@@ -745,7 +749,7 @@ class mltrack(object):
         except NotFittedError as _:
             mdl.fit(X_train, y_train)
 
-        return mdl, X_train, X_test, y_train, y_test
+        return mdl, mdl_id, X_train, X_test, y_train, y_test
 
     def plot_calibration_curve(self, mdl, name, fig_index=1, bins=10):
         """
@@ -760,11 +764,6 @@ class mltrack(object):
         """
         import matplotlib.pyplot as plt
         from sklearn.calibration import calibration_curve
-        from sklearn.model_selection import train_test_split
-
-        if "mltrack_id" not in mdl.__dict__:
-            mdl = self.LogModel(mdl)
-        mdl_id = mdl.mltrack_id
 
         fig = plt.figure(fig_index, figsize=(10, 10))
         ax1 = plt.subplot2grid((3, 1), (0, 0), rowspan=2)
@@ -772,7 +771,7 @@ class mltrack(object):
 
         ax1.plot([0, 1], [0, 1], "k:", label="Perfectly calibrated")
 
-        mdl, _, X_test, _, y_test = self.split_train(mdl)
+        mdl, mdl_id, _, X_test, _, y_test = self.split_train(mdl)
 
         if hasattr(mdl, "predict_proba"):
             prob_pos = mdl.predict_proba(X_test)[:, 1]
@@ -819,13 +818,8 @@ class mltrack(object):
         import matplotlib.pyplot as plt
         from numpy import arange
         from sklearn.metrics import roc_curve
-        from sklearn.model_selection import train_test_split
 
-        if "mltrack_id" not in mdl.__dict__:
-            mdl = self.LogModel(mdl)
-        mdl_id = mdl.mltrack_id
-
-        mdl, _, X_test, _, y_test = self.split_train(mdl)
+        mdl, mdl_id, _, X_test, _, y_test = self.split_train(mdl)
 
         _ = plt.subplot(111)
         fig = plt.figure(figsize=(8, 8))
@@ -852,12 +846,12 @@ class mltrack(object):
         return plt
 
     def plot_cumulative_gain(
-        self,
-        mdl,
-        title="Cumulative Gains Curve",
-        figsize=None,
-        title_fontsize="large",
-        text_fontsize="medium",
+            self,
+            mdl,
+            title="Cumulative Gains Curve",
+            figsize=None,
+            title_fontsize="large",
+            text_fontsize="medium",
     ):
         """
         Generates the Cumulative Gains Plot from labels and scores/probabilities
@@ -885,13 +879,8 @@ class mltrack(object):
         """
         from numpy import array, unique
         import matplotlib.pyplot as plt
-        from sklearn.model_selection import train_test_split
 
-        if "mltrack_id" not in mdl.__dict__:
-            mdl = self.LogModel(mdl)
-        mdl_id = mdl.mltrack_id
-
-        mdl, _, X_test, _, y_test = self.split_train(mdl)
+        mdl, mdl_id, _, X_test, _, y_test = self.split_train(mdl)
 
         y_true = array(y_test)
         try:
@@ -965,11 +954,11 @@ class mltrack(object):
         # ensure binary classification if pos_label is not specified
         classes = unique(y_true)
         if pos_label is None and not (
-            array_equal(classes, [0, 1])
-            or array_equal(classes, [-1, 1])
-            or array_equal(classes, [0])
-            or array_equal(classes, [-1])
-            or array_equal(classes, [1])
+                array_equal(classes, [0, 1])
+                or array_equal(classes, [-1, 1])
+                or array_equal(classes, [0])
+                or array_equal(classes, [-1])
+                or array_equal(classes, [1])
         ):
             raise ValueError("Data is not binary and pos_label is not specified")
         elif pos_label is None:
@@ -993,12 +982,12 @@ class mltrack(object):
         return percentages, gains
 
     def plot_lift_curve(
-        self,
-        mdl,
-        title="Lift Curve",
-        figsize=None,
-        title_fontsize="large",
-        text_fontsize="medium",
+            self,
+            mdl,
+            title="Lift Curve",
+            figsize=None,
+            title_fontsize="large",
+            text_fontsize="medium",
     ):
         """
         Generates the Lift Curve from labels and scores/probabilities The lift curve is used to
@@ -1018,13 +1007,8 @@ class mltrack(object):
         """
         import matplotlib.pyplot as plt
         from numpy import array, unique
-        from sklearn.model_selection import train_test_split
 
-        if "mltrack_id" not in mdl.__dict__:
-            mdl = self.LogModel(mdl)
-        mdl_id = mdl.mltrack_id
-
-        mdl, _, X_test, _, y_test = self.split_train(mdl)
+        mdl, mdl_id, _, X_test, _, y_test = self.split_train(mdl)
 
         y_true = array(y_test)
         try:
@@ -1078,14 +1062,14 @@ class mltrack(object):
         return ax
 
     def heatmap(
-        self,
-        corr_df=None,
-        sort_by=None,
-        ascending=False,
-        font_size=3,
-        cmap="gnuplot2",
-        idx_col="feature",
-        ignore=(),
+            self,
+            corr_df=None,
+            sort_by=None,
+            ascending=False,
+            font_size=3,
+            cmap="gnuplot2",
+            idx_col="feature",
+            ignore=(),
     ):
         """
         Plots a heatmap from the values of the dataframe `corr_df`
