@@ -16,7 +16,7 @@ from .NpyProximation import (
     Regression,
     HilbertRegressor,
 )
-from .sensapprx import SensAprx
+from .sensapprx import SensAprx, CorrelationThreshold
 from .aml import Words, StackingEstimator, AML
 from .eoa import EOA, UniformRand, MaxGenTermination, UniformCrossover, Elites, Mutation
 from .mltrace import np2df, mltrack

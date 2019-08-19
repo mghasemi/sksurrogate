@@ -32,18 +32,18 @@ class SensAprx(BaseEstimator, TransformerMixin):
     """
 
     def __init__(
-            self,
-            n_features_to_select=10,
-            regressor=None,
-            method="sobol",
-            margin=0.2,
-            num_smpl=500,
-            num_levels=5,
-            grid_jump=1,
-            num_resmpl=8,
-            reduce=False,
-            domain=None,
-            probs=None,
+        self,
+        n_features_to_select=10,
+        regressor=None,
+        method="sobol",
+        margin=0.2,
+        num_smpl=500,
+        num_levels=5,
+        grid_jump=1,
+        num_resmpl=8,
+        reduce=False,
+        domain=None,
+        probs=None,
     ):
         self.n_features_to_select = n_features_to_select
         self.regressor = regressor
@@ -140,12 +140,109 @@ class SensAprx(BaseEstimator, TransformerMixin):
             )["delta"]
             self.weights_ = res
         self.top_features_ = argpartition(res, -self.n_features_to_select)[
-                             -self.n_features_to_select:
-                             ]
+            -self.n_features_to_select :
+        ]
         return self
 
     def transform(self, X):
         return X[:, self.top_features_[: self.n_features_to_select]]
+
+    def fit_transform(self, X, y=None, **fit_params):
+        """
+        Fit to data, then transform it.
+
+        Fits transformer to X and y with optional parameters fit_params and returns a transformed version of X.
+
+        :param X: numpy array of shape [n_samples, n_features]; Training set.
+        :param y: numpy array of shape [n_samples]; Target values.
+        :return: Transformed array
+        """
+        self.fit(X, y)
+        return self.transform(X)
+
+
+class CorrelationThreshold(BaseEstimator, TransformerMixin):
+    """
+    Selects a minimal set of features based on a given (Pearson) correlation threshold.
+    The transformer omits the maximum number features with a high correlation and makes sure that the remaining
+    features are not correlated behind the given threshold.
+
+    :param threshold: the threshold for selecting correlated pairs.
+    """
+
+    def __init__(self, threshold=0.7):
+        self.threshold = threshold
+        self.indices = []
+
+    def _high_corr(self, crln):
+        pairs = []
+        nodes = set()
+        n = crln.shape[0]
+        for i in range(1, n):
+            for j in range(i):
+                if abs(crln[i, j]) >= self.threshold:
+                    pairs.append((i, j))
+                    nodes.add(i)
+                    nodes.add(j)
+        return pairs, nodes
+
+    @staticmethod
+    def _node_degrees(pairs):
+        nodes = set()
+        degs = {}
+        for p in pairs:
+            nodes.add(p[0])
+            nodes.add(p[1])
+            if p[0] not in degs:
+                degs[p[0]] = 1
+            else:
+                degs[p[0]] += 1
+            if p[1] not in degs:
+                degs[p[1]] = 1
+            else:
+                degs[p[1]] += 1
+        node_deg = [(k, degs[k]) for k in degs]
+        node_deg.sort(key=lambda x: -x[1])
+        return node_deg
+
+    def _minimal_selection(self, crln):
+        from copy import copy
+
+        pairs = copy(crln)
+        selection = []
+        while pairs != []:
+            temp_pairs = []
+            degs = self._node_degrees(pairs)
+            candid = degs[0][0]
+            selection.append(candid)
+            for p in pairs:
+                if candid not in p:
+                    temp_pairs.append(p)
+            pairs = temp_pairs
+        return set(selection)
+
+    def fit(self, X, y=None):
+        """
+        Finds the Pearson correlation among all features, selects the pairs with absolute value of correlation above
+        the given threshold and selects a minimal set of features with low correlation
+
+        :param X: Training data
+        :param y: Target values (default: `None`)
+        :return: `self`
+        """
+
+        from numpy import corrcoef
+
+        n = X.shape[1]
+        crln = corrcoef(X.transpose())
+        pairs, nodes = self._high_corr(crln)
+        sel_features = self._minimal_selection(pairs)
+        self.indices = list(set(range(n)).difference(nodes).union(sel_features))
+        self.indices.sort()
+        return self
+
+    def transform(self, X):
+        return X[:, self.indices]
 
     def fit_transform(self, X, y=None, **fit_params):
         """

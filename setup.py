@@ -7,7 +7,7 @@ Description = "A python package that implements or wraps a few machine learning 
 
 setup(
     name="SKSurrogate",
-    version="0.0.6",
+    version="0.0.82",
     author="Mehdi Ghasemi",
     author_email="mehdi.ghasemi@gmail.com",
     packages=["SKSurrogate"],

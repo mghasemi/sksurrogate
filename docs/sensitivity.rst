@@ -76,3 +76,37 @@ where :math:`g_{x_i}(x_i)` is the distribution of the values of :math:`x_i`.
         + It is easier to do sensitivity analysis on functions using SALib's ui, but if one
           prefers using scikit-learn's wrapper, then the function should be modified to resemble
           a scikit-learn regressor which simply ignores training data.
+
+
+================================================
+Eliminate features based on Pearson correlation
+================================================
+The Pearson correlation is widely used to eliminate some of highly correlated features to reduce the number
+of features. Surprisingly, there is no `scikit-learn` compatible code implementing feature selection according
+to a given correlation threshold (at the time publishing this library).
+
+Although, it sound like an easy task to do, it is not clear how to select a minimal set of features with low
+correlation and which ones can be safely excluded.
+
+`SKSurrogate.sensapprx.CorrelationThreshold` implements the following algorithm to select a minimal set of features
+with correlation below a given threshold:
+
+.. note::
+    **Input:** the set of all variables :math:`V`, a positive threshold :math:`t`
+
+    **Output** a subset :math:`W\subseteq V` where :math:`\forall a,b\in W\quad |corr(a,b)|<t`
+
+    set :math:`P:=` the set of all pairs :math:`(a, b)\in V\times V` where :math:`|corr(a, b)|\ge t`
+
+    set :math:`W:=\{v\in V:\forall x\in V |corr(v,x)|<t\}`
+
+    while :math:`P\neq\emptyset` do:
+        form the undirected graph :math:`G=G(V\setminus W, P)`
+        find a node :math:`w\in V\setminus W` with highest degree
+        update :math:`W:=W\cup\{w\}`
+        remove all pairs from :math:`P` involving :math:`w`
+
+    return :math:`W`
+
+The above procedure selects those features which has high (positive or negative) correlation with higher number of
+other features and omits the other features. Repeats this process until no more pair with high correlation remains.
