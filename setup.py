@@ -7,7 +7,7 @@ Description = "A python package that implements or wraps a few machine learning 
 
 setup(
     name="SKSurrogate",
-    version="0.0.82",
+    version="0.0.85",
     author="Mehdi Ghasemi",
     author_email="mehdi.ghasemi@gmail.com",
     packages=["SKSurrogate"],
@@ -33,6 +33,7 @@ setup(
         "scikit-learn",
         "SALib",
         "imbalanced-learn",
+        "joblib",
         "eli5",
         "skrebate",
         "tqdm",

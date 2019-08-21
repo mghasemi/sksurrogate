@@ -635,8 +635,11 @@ class HDReal(object):
 
 try:
     from sklearn.model_selection._search import BaseSearchCV
+    from joblib import Parallel, delayed
 except ModuleNotFoundError:
     BaseSearchCV = type("BaseSearchCV", (object,), dict())
+    Parallel = type("Parallel", (object,), dict())
+    delayed = type("delayed", (object,), dict())
 
 try:
     from Optimithon import NumericDiff
@@ -672,6 +675,7 @@ class SurrogateRandomCV(BaseSearchCV):
         ``n_points`` if you want to try more parameter settings in parallel.
     :param min_evals: int, default=25; Number of random evaluations before employing an approximation for the
         response surface.
+    :param n_jobs: int, default=-1; number of processes to run in parallel
     :param fit_params: dict, optional; Parameters to pass to the fit method.
     :param pre_dispatch: int, or string, optional;
         Controls the number of jobs that get dispatched during parallel
@@ -718,7 +722,7 @@ class SurrogateRandomCV(BaseSearchCV):
             params,
             scoring=None,
             fit_params=None,
-            n_jobs=1,
+            n_jobs=-1,
             refit=True,
             cv=None,
             verbose=0,
@@ -892,37 +896,52 @@ class SurrogateRandomCV(BaseSearchCV):
                         _cls_dict[target_classes[i_]] = x[_idx]
                         _idx += 1
                     cand_params[_param] = _cls_dict
-            cl = clone(self.estimator)
-            cl.set_params(**cand_params)
+            #cl = clone(self.estimator)
+            #cl.set_params(**cand_params)
             score = 0
             n_test = 0
-            for train, test in cv_dat:
+
+            def parallel_fit_score(cl, cand_params, X, y, scorer, train, test, verbose, fit_params, error_score):
+                cl.set_params(**cand_params)
                 try:
                     _score = _fit_and_score(
                         estimator=cl,
                         X=X,
                         y=y,
-                        scorer=self.scorer_,
+                        scorer=scorer,  #
                         train=train,
                         test=test,
-                        verbose=self.verbose,
+                        verbose=verbose,  #
                         parameters=cand_params,
-                        fit_params=self.fit_params,
-                        error_score=self.error_score,
+                        fit_params=fit_params,  #
+                        error_score=error_score,  #
                     )[0]
-                    # if self.iid:
-                    #    score += _score * len(test)
-                    #    n_test += len(test)
-                    # else:
-                    #    score += _score
-                    #    n_test += 1
-                    score += _score
-                    n_test += 1
+                    return _score
                 except ValueError:
                     pass
                 except:  # LightGBMError:
                     pass
-            score /= float(max(n_test, 1))
+                return None
+            scores = Parallel(n_jobs=self.n_jobs,
+                              verbose=self.verbose,
+                              pre_dispatch=self.pre_dispatch
+                              )(delayed(parallel_fit_score)(clone(self.estimator),
+                                                            cand_params=cand_params,
+                                                            X=X,
+                                                            y=y,
+                                                            scorer=self.scorer_,
+                                                            train=train,
+                                                            test=test,
+                                                            verbose=self.verbose,
+                                                            fit_params=self.fit_params,
+                                                            error_score=self.error_score
+                                                            )
+                                for train, test in cv_dat)
+            for sc in scores:
+                if sc is not None:
+                    score += sc
+                    n_test += 1
+            score = score/float(max(n_test, 1))
             return -score
 
         self.OPTIM = SurrogateSearch(
