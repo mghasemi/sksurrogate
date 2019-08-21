@@ -333,6 +333,7 @@ class AML(object):
     :param stack_probs: default=True; `StackingEstimator`s `probs`
     :param stack_decision: default=True; `StackingEstimator`s `decision`
     :param verbose: default=1; Level of output details
+    :param n_jobs: int, default=-1; number of processes to run in parallel
     """
 
     def __init__(
@@ -349,6 +350,7 @@ class AML(object):
             stack_probs=True,
             stack_decision=True,
             verbose=1,
+            n_jobs=-1
     ):
         from collections import OrderedDict
 
@@ -398,6 +400,7 @@ class AML(object):
         self.stack_decision = stack_decision
         self.verbose = verbose
         self.num_features = 2
+        self.n_jobs = n_jobs
         # TBD: check cv
         if cv is None:
             from sklearn.model_selection import ShuffleSplit
@@ -841,6 +844,7 @@ class AML(object):
                 task_name=task_name,
                 Continue=True,
                 warm_start=True,
+                n_jobs=self.n_jobs
             )
             OPTIM.fit(X, y)
         return OPTIM.best_estimator_, OPTIM.best_estimator_score
