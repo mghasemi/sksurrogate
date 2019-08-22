@@ -324,7 +324,7 @@ class Regression(object):
         from numpy import array, ndarray
 
         self.Points = None
-        if isinstance(points, (list, array, ndarray)):
+        if isinstance(points, (ndarray, list, array)):
             self.Points = list(points)
             self.dim = len(points[0]) - 1
             supp = {}
