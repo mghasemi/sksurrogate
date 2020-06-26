@@ -152,7 +152,7 @@ class FunctionBasis(object):
         for o in Coefs:
             if (sum(o) <= deg) and (sum(o) > 0):
                 for ex in E:
-                    if sum(ex) > 0:
+                    if sum(ex) >= 0:
                         f_ = lambda x, o_=o, ex_=ex: prod(
                             [
                                 sin(o_[i] * x[i] / l) ** ex_[i]

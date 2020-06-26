@@ -13,7 +13,7 @@ sensitivity of the model with respect to :math:`x_1,\dots,x_n`:
 
 Morris
 ===========================================
-Morris method facilitates a global sensitivity analysis by making a number of local changes at
+The **Morris** method facilitates a global sensitivity analysis by making a number of local changes at
 different points of the possible range of input values. The following quantities are usually
 measured regarding Morris method:
 
@@ -28,8 +28,8 @@ or whose effect is non-linear.
 
 Sobol
 ===========================================
-Sobol method (aka variance-based sensitivity analysis) works by decomposing the variance of
-the output of the model into fractions which can br attributed to inputs or sets of inputs.
+The **Sobol** method (aka variance-based sensitivity analysis) works by decomposing the variance of
+the output of the model into fractions which can be attributed to inputs or sets of inputs.
 The first-order indices are defined as:
 
 .. math::

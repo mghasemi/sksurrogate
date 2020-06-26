@@ -918,7 +918,10 @@ class SurrogateRandomCV(BaseSearchCV):
                     )[0]
                     return _score
                 except ValueError:
-                    pass
+                    if self.verbose > 1:
+                        print("Model evaluation error")
+                    else:
+                        pass
                 except:  # LightGBMError:
                     pass
                 return None

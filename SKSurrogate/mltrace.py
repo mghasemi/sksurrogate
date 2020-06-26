@@ -374,8 +374,11 @@ class mltrack(object):
             prds.append((mdl.predict(X_test), y_test))
             try:
                 prbs.append(mdl.predict_proba(X_test)[:, 1])
-            except:
-                prbs.append(mdl.decision_function(X_test))
+            except AttributeError:
+                try:
+                    prbs.append(mdl.decision_function(X_test))
+                except AttributeError:
+                    pass
         #######################################################
         acc = None
         f_1 = None
@@ -535,7 +538,6 @@ class mltrack(object):
         Lists all pickled models as a pandas DataFrame
 
         :return: a pandas DataFrame
-        :return:
         """
         from pandas import read_sql
 
@@ -1078,7 +1080,8 @@ class mltrack(object):
         :param idx_col: the column whose values will be used as index
         :param sort_by: dataframe will be sorted descending by values of this column.
 
-            If None, the first column is used :param font_size: font size, defalut 3
+            If None, the first column is used
+        :param font_size: font size, defalut 3
         :param cmap: color mapping. Must be one of the followings
 
             'viridis', 'plasma', 'inferno', 'magma', 'cividis', 'Greys', 'Purples',
