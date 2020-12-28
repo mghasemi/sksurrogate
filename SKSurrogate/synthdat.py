@@ -1,16 +1,16 @@
 """
 ***********************************
-synthdata Module
+``synthdata`` Module
 ***********************************
 This module provides basic framework for generating synthetic data resembling an existing dataset.
-One could determine types of each field and the possible values for each field. Then the `InspectData` class will
+One could determine types of each field and the possible values for each field. Then the ``InspectData`` class will
 produce data based on the given types. Moreover, one can associate marginal distributions to each field or a joint
 distribution for data generation. If no distribution is associated, then the data will be generated uniformly over
 the required ranges.
 
 Supported data types
 ***********************************
-The following data types are supporeted:
+The following data types are supported:
 
     + :`SynthBin`: Support for binary data, i.e., the data fields consisting of 0, 1 values;
     + :`SynthInt`: Support for integer valued data;
@@ -18,50 +18,58 @@ The following data types are supporeted:
     + :`SynthCat`: Support for categorical type of data, i.e., the discrete variables whose values are predetermined;
     + :`SynthDate`: Support for datetime data;
 
-Each of data types accept `data` that is a 1d `numpy.array` and `rv` which is a `scipy.stats` distribution implementing
-`rv.rvs` to generate samples.
-Among the above `SynthInt`, `SynthReal` accept two parameters `a` and `b` which are the lower and upper bounds of the
-sampling interval respectively. `SynthDate` accepts `frmt` which determines the date formatting for the input data.
+Each of these data types accept `data` that is a 1-d ``numpy.array`` and ``rv`` which is a `scipy.stats` distribution,
+implementing ``rv.rvs`` to generate samples.
+Among the above, ``SynthInt`` and ``SynthReal`` accept two parameters ``a`` and ``b`` which are the lower and upper
+bounds of the sampling interval respectively. ``SynthDate`` accepts ``frmt`` which determines the date formatting for
+the input data.
 
 Generating Synthetic Data
 ***********************************
-The `SynthData` class is responsible for generating synthetic data based on types, distributions and relations
-defined on the data. One initiates an instant as::
+The ``SynthData`` class is responsible for generating synthetic data based on types, distributions and relations
+defined on the data. One initiates an instance as::
 
     sd = SynthData(df, default_rv='uniform', distribution_type='marginal, rv=None)
 
-where `df` is the pandas dataframe that will be simulated. The rest of arguments are optional:
+where ``df`` is the pandas dataframe that will be synthesized. The rest of arguments are optional:
 
-    + `default_rv` determines the default distribution for those fields where no distribution is associated to. If the `distribution_type` is set to 'joint' this will be ignored.
-    + `distribution_type` determines if the distribution(s) calculated based on `df` are *marginals* or a single *joint* distribution.
-    + `rv` determines a predefined distribution for joint distribution.
+    + :``default_rv``: determines the default distribution for those fields where no distribution is associated to.
+        If the ``distribution_type`` is set to 'joint' this will be ignored.
+    + :``distribution_type``: determines if the distribution(s) calculated based on ``df`` are *marginals* or a
+        single *joint* distribution.
+    + :`rv`: determines a predefined distribution for joint distribution.
 
-To set the type of a column of `df` one should use `set_type` method. This method accepts a list of columns name, their
-type and a tuple of initiating parameters. Every column in the column's list will be given the same type. The type could
-be either an instance of `SynthBin`, `SynthInt`, `SynthReal`, `SynthCat`, `SynthDate`, or a string determining the type,
-e.g., 'bin', 'int', 'real', 'cat', 'date'. If no type is associated to a column, it is assumed to be of categorical type.
+To set the type of a column of ``df`` one should use ``set_type`` method. This method accepts a list of column names,
+their types and a tuple of initiating parameters. Every column in the columns' list will be given the same type.
+The type could be either an instance of ``SynthBin``, ``SynthInt``, ``SynthReal``, ``SynthCat``, ``SynthDate``,
+or a string determining the type, e.g., 'bin', 'int', 'real', 'cat', 'date'. If no type is associated to a column,
+it is assumed to be of categorical type.
 
-If it is required to impose a constraint on a column, on can use `where()` method. The statement to add a constraint
-would look like `sd.where(field('clmn1') > val1)` or `sd.where(field(clmn1) <= field(clmn2))`. The acceptable operators
-are `==`, `!=`, `>`, `<`, `>=`, `<=`, `in`, `nin`. The operators `in` and `nin` check membership of elements of 'clmn1'
-in 'val' which has to be an iterable or membership in the column 'clmn2', clearly `in` stands for belonging and `nin`
-stants for *not in*.
-
-The final command which generates the synthetic data is `sample(num)` where 'num' is the number of synthetic samples to
-be generated. This method will return a `pandas.DataFrame` containing synthetic data of size 'num'.
+The final command which generates the synthetic data is ``sample(num)`` where 'num' is the number of synthetic samples
+to be generated. This method will return a ``pandas.DataFrame`` containing synthetic data of size 'num'.
 
 Constraints
 ***********************************
 It is quite common that the values of some fields in a record depend on other fields. Simple constraints on the
-values of a field and relations between pairs can be handled using `field` objects.
+values of a field and relations between pairs can be handled using ``field`` objects.
+
+If it is required to impose a constraint on a column, on can use ``where()`` method. The statement to add a constraint
+would generally look like ``sd.where(field('clmn') > val)`` or ``sd.where(field(clmn1) <= field(clmn2))``.
+The acceptable operators are ``==``, ``!=``, ``>``, ``<``, ``>=``, ``<=``, ``in``, ``nin``.
+The operators ``in`` and ``nin`` check membership of elements of 'clmn' in 'val' which has to be an iterable or
+membership in the column 'clmn2'. The ``in`` stands for belonging and ``nin`` stands for *not in*.
+
+Code documentation
+***********************************
 """
 
 from datetime import datetime, timedelta
+
 from numpy import inf, array, unique, cov, transpose
 from pandas import DataFrame, concat
 
 
-## Synthetic data types
+# Synthetic data types
 class SynthBase(object):
     """
     The base class for various synthetic data types.
@@ -75,6 +83,7 @@ class SynthBase(object):
     def get_val(x):
         """
         Coverts the value of `x` into numeric that can be handled by random distributions
+
         :param x: the value to be converted into numeric
         :return: the corresponding numeric value
         """
@@ -83,13 +92,15 @@ class SynthBase(object):
     def set_val(self):
         """
         Generates the numeric translation of the given data.
-        :return:
+
+        :return: list of values
         """
         return [self.get_val(x) for x in self.data]
 
     def ret_val(self, X):
         """
         Similar to `set_val` but works on the data stored in `X`
+
         :param X: the data to be converted to numbers
         :return: translation of `X`
         """
@@ -221,10 +232,10 @@ class SynthDate(SynthBase):
         return [self.get_val(x) for x in X]
 
 
-## Constraints in data generation
+# Constraints in data generation
 class field(object):
     """
-    A generic class to handel simple constraints on columns.
+    A generic class to handle simple constraints on columns.
     Accepts only one parameter which refers to a column in the DataFrame.
     """
 
@@ -274,15 +285,19 @@ class field(object):
         return self
 
 
-## Synthetic data generator
+# Synthetic data generator
 class SynthData(object):
     """
     A class which takes a *real* `pandas.DataFrame` and produces *synthetic* data similar to the real data based on
     types and distributions provided by the user and/or extracted out of original data.
-    :param df: a `pandas.DataFrame` containing original data.
-    :param default_rv: default distribution of columns; default 'uniform'. Also could be 'normal'. Only effective if `distribution_type` is 'marginal', otherwise will be ignored.
-    :param distribution_type: default 'marginal'. Determines the type of distribution. If 'joint', then either a normal distribution is calculated based on provided data or will use `rv` if `rv` is not 'None'.
-    :param rv: default 'None'. The joint distribution of variables. Only effective if `distribution_type` is 'joint'.
+
+    :param df: a ``pandas.DataFrame`` containing original data.
+    :param default_rv: default distribution of columns; default 'uniform'. Also could be 'normal'.
+        Only effective if ``distribution_type`` is 'marginal', otherwise will be ignored.
+    :param distribution_type: default 'marginal'. Determines the type of distribution.
+        If 'joint', then either a normal distribution is calculated based on provided data or will
+        use ``rv`` if ``rv`` is not 'None'.
+    :param rv: default 'None'. The joint distribution of variables. Only effective if ``distribution_type`` is 'joint'.
     """
 
     def __init__(self, df, default_rv="uniform", distribution_type="marginal", rv=None):
@@ -298,13 +313,20 @@ class SynthData(object):
         self.synth = {}
         self.SynthObj = {}
         self.const = []
+        self.mean = 0
+        self.var = 0
+        self.m = 0
+        self.M = 0
 
     def set_type(self, clmns, typ, param=None):
         """
         Define the type of columns.
-        :param clmns: a *list* of 'df' columns
-        :param typ: the associated type, either an string ('bin', 'int', 'real', 'cat', 'date) or an instance of `SynthBin`, `SynthInt`, `SynthReal`, `SynthCat`, `SynthDate`.
-        :param param: parameters to be passed to synthetic data type if an string is given for 'typ'. It could be a couple (a, b) for 'int' and 'real' type and just the format for 'date'.
+
+        :param clmns: a *list* of ``df`` columns
+        :param typ: the associated type, either an string ('bin', 'int', 'real', 'cat', 'date) or an instance
+            of ``SynthBin``, ``SynthInt``, ``SynthReal``, ``SynthCat``, ``SynthDate``.
+        :param param: parameters to be passed to synthetic data type if an string is given for '`typ`'.
+            It could be a couple (a, b) for 'int' and 'real' type and just the format for 'date'.
         """
         for clmn in clmns:
             self.types[clmn] = typ
@@ -313,50 +335,53 @@ class SynthData(object):
     def transform(self):
         """
         *internal* to analyse and initialize data types and convert them to numerical values.
-        :return: `None`
+
+        :return: ``None``
         """
+        synth_obj = None
         for clm in self.columns:
             data = list(self.df[clm])
             a, b = None, None
             frmt = "%Y-%m-%d"
             if clm in self.types:
                 if not isinstance(
-                    self.types[clm],
-                    (SynthBin, SynthInt, SynthReal, SynthCat, SynthDate),
+                        self.types[clm],
+                        (SynthBin, SynthInt, SynthReal, SynthCat, SynthDate),
                 ):
                     typ = self.types[clm].lower()
                     if typ == "bin":
-                        SynthObj = SynthBin(data)
+                        synth_obj = SynthBin(data)
                     elif typ == "int":
                         if self.params[clm] is not None:
                             a = self.params[clm][0]
                             b = self.params[clm][1]
-                        SynthObj = SynthInt(a=a, b=b, data=data)
+                        synth_obj = SynthInt(a=a, b=b, data=data)
                     elif typ == "real":
                         if self.params[clm] is not None:
                             a = self.params[clm][0]
                             b = self.params[clm][1]
-                        SynthObj = SynthReal(a=a, b=b, data=data)
+                        synth_obj = SynthReal(a=a, b=b, data=data)
                     elif typ == "cat":
-                        SynthObj = SynthCat(data)
+                        synth_obj = SynthCat(data)
                     elif typ == "date":
                         if self.params[clm] is not None:
                             frmt = self.params[clm]
-                        SynthObj = SynthDate(data, frmt=frmt)
+                        synth_obj = SynthDate(data, frmt=frmt)
                 else:
-                    SynthObj = self.types[clm]
+                    synth_obj = self.types[clm]
             else:
-                SynthObj = SynthCat(data)
-            lst = SynthObj.set_val()
-            self.SynthObj[clm] = SynthObj
+                synth_obj = SynthCat(data)
+            lst = synth_obj.set_val()
+            self.SynthObj[clm] = synth_obj
             self.transformed[clm] = lst
             self.tr_df = DataFrame(self.transformed)
 
     def generate(self, num):
         """
-        *internal* Generate 'num' synthetic data records without considering constraints
+        *internal* Generate ``num`` synthetic data records without considering constraints
+
         :param num: number of samples
-        :return: `pandas.DataFrame`
+        :return: ``pandas.DataFrame``
         """
         from scipy.stats import norm
         from scipy.stats import uniform
@@ -404,15 +429,17 @@ class SynthData(object):
 
     def where(self, cns):
         """
-        Add a constraint of values of a column using `field` objects.
-        :param cns: the constraint like `field(clmn1) > val1` or `field(clmn1) <= field(clmn2)`.
-        :return: `None`
+        Add a constraint of values of a column using ``field`` objects.
+
+        :param cns: the constraint like ``field(clmn1) > val1`` or ``field(clmn1) <= field(clmn2)``.
+        :return: ``None``
         """
         self.const.append(cns)
 
     def filter(self, df):
         """
         Filter the 'df' to remove illegal records according to constraints
+
         :param df: the dataframe to be filtered
         :return: the filtered dataframe
         """
@@ -457,6 +484,7 @@ class SynthData(object):
     def sample(self, num):
         """
         Produces 'num' records of synthetic data following given types, distributions and constraints
+
         :param num: number of synthetic data records
         :return: a dataframe consisting of 'num' synthetic records.
         """

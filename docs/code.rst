@@ -18,3 +18,6 @@ Code Documentation
 
 .. automodule:: mltrace
    :members:
+
+.. automodule:: synthdat
+   :members:
