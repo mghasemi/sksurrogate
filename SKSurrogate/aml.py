@@ -421,7 +421,7 @@ class AML(object):
         :return: None
         """
         from importlib import import_module
-        from sklearn.feature_selection.base import SelectorMixin
+        from sklearn.feature_selection import SelectorMixin
 
         for alg in self.config:
             if alg != "sklearn.pipeline.FeatureUnion":

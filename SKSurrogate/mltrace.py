@@ -12,6 +12,8 @@ data manipulation.
 It also has built in capabilities to generate some typical plots and graph in machine learning.
 """
 
+import joblib
+
 try:
     from peewee import *
 except ModuleNotFoundError:
@@ -550,7 +552,6 @@ class mltrack(object):
         :param mdl: a logged model
         :return: None
         """
-        from sklearn.externals import joblib
 
         if "mltrack_id" not in mdl.__dict__:
             mdl = self.LogModel(mdl)
@@ -573,7 +574,6 @@ class mltrack(object):
         :param mdl_id: a valid `mltrack_id`
         :return: a fitted model
         """
-        from sklearn.externals import joblib
 
         res = (
             Saved.select()

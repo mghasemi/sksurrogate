@@ -317,6 +317,8 @@ class SynthData(object):
         self.var = 0
         self.m = 0
         self.M = 0
+        self.cov = None
+        self.synth_df = None
 
     def set_type(self, clmns, typ, param=None):
         """

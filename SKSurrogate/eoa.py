@@ -129,22 +129,17 @@ class EOA(object):
     def __call__(self, *args, **kwargs):
         self.parents = self.init_pop(self)
         self.__load()
-        tqdm = None
-        pbar = None
-        try:
-            ipy_str = str(type(get_ipython()))  # notebook environment
-            if "zmqshell" in ipy_str:
-                from tqdm import tqdm_notebook as tqdm
-            if "terminal" in ipy_str:
-                from tqdm import tqdm
-        except NameError:
-            from tqdm import tqdm
-        except ImportError:
-            tqdm = None
-        if tqdm is not None:
-            pbar = tqdm(total=self.max_generations)
-        pbar.update(self.generation_num)
+        #tqdm = None
+        #pbar = None
+        #try:
+        #    from tqdm import tqdm
+        #except ImportError:
+        #    tqdm = None
+        #if tqdm is not None:
+        #    pbar = tqdm(total=self.max_generations)
+        #pbar.update(self.generation_num)
         while not self.termination(self):
+            print("Generation {g} of {t}".format(g=self.generation_num, t=self.max_generations))
             self.__save()
             self.generation_num += 1
             self.parents = self.fitness(self.parents)
@@ -157,8 +152,8 @@ class EOA(object):
                 self.evals[_] = self.children[_]
             self.elitism(self)
             self.parents = self.children
-            if tqdm is not None:
-                pbar.update(1)
+            #if tqdm is not None:
+            #    pbar.update(1)
 
 
 class UniformRand(object):

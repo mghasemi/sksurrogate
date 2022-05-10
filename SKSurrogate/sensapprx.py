@@ -95,7 +95,6 @@ class SensAprx(BaseEstimator, TransformerMixin):
             self._avg_fucn(X, y)
         if self.regressor is None:
             from sklearn.svm import SVR
-
             self.regressor = SVR()
         self.regressor.fit(self.domain, self.probs)
         bounds = [

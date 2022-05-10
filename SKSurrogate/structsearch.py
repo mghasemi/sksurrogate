@@ -321,64 +321,15 @@ class SurrogateSearch(object):
             res = minimize(
                 obj, x0, method=self.scipy_solver, constraints=cns, bounds=self.bounds
             )
-        else:
-            try:
-                from Optimithon import Base, QuasiNewton
-                from numpy import inf
-
-                cns_ = [_["fun"] for _ in cns]
-                if self.bounds is not None:
-                    for i in range(len(self.bounds)):
-                        if self.bounds[i][0] != -inf:
-                            cns_.append(lambda x, i_=i: x[i_] - self.bounds[i_][0])
-                        if self.bounds[i][1] != inf:
-                            cns_.append(lambda x, i_=i: self.bounds[i_][1] - x[i_])
-                optm = Base(
-                    obj,
-                    ineq=cns_,
-                    x0=x0,
-                    br_func=self.optimithon_br_func,
-                    penalty=self.optimithon_penalty,
-                    method=QuasiNewton,
-                    t_method=self.optimithon_t_method,
-                    dd_method=self.optimithon_dd_method,
-                    ls_method=self.optimithon_ls_method,
-                    ls_bt_method=self.optimithon_ls_bt_method,
-                    max_iter=self.optimithon_max_iter,
-                    difftool=self.optimithon_difftool,
-                )
-                optm.Verbose = False
-                optm()
-                res = optm.solution
-                res.fun = res.objective
-            except ModuleNotFoundError:
-                pass
         return res
 
     def __optim_param(self):
         """
-        Fetches and sets the Optimithon's parameters
+        Fetches and sets the Optimization's parameters
         :return: None
         """
         self.optimizer = self.other.pop("optimizer", "scipy")
         self.scipy_solver = self.other.pop("scipy_solver", "COBYLA")
-        self.optimithon_t_method = self.other.pop("optimithon_t_method", "Cauchy_x")
-        self.optimithon_dd_method = self.other.pop("optimithon_dd_method", "BFGS")
-        self.optimithon_ls_method = self.other.pop("optimithon_ls_method", "Backtrack")
-        self.optimithon_ls_bt_method = self.other.pop(
-            "optimithon_ls_bt_method", "Armijo"
-        )
-        self.optimithon_br_func = self.other.pop("optimithon_br_func", "Carrol")
-        self.optimithon_penalty = self.other.pop("optimithon_penalty", 1.0e6)
-        self.optimithon_max_iter = self.other.pop("optimithon_max_iter", 100)
-        try:
-            from Optimithon import NumericDiff
-
-            self.optimithon_difftool = self.other.pop(
-                "optimithon_difftool", NumericDiff.Simple()
-            )
-        except ModuleNotFoundError:
-            pass
 
     def __iterate(self, x0):
         """
@@ -481,24 +432,18 @@ class SurrogateSearch(object):
         Runs the structured random search.
         :return: the best minimum point and value
         """
-        tqdm = None
         pbar = None
-        try:
-            ipy_str = str(type(get_ipython()))  # notebook environment
-            if "zmqshell" in ipy_str:
-                from tqdm import tqdm_notebook as tqdm
-            if "terminal" in ipy_str:
-                from tqdm import tqdm
-        except NameError:
-            from tqdm import tqdm
-        except ImportError:
-            tqdm = None
+        #try:
+        #    from tqdm import tqdm
+        #except ImportError:
+        #    tqdm = None
         from math import log
 
-        if tqdm is not None:
-            if self.verbose > 0:
-                pbar = tqdm(total=self.MaxIter)
-                pbar.update(self.iteration)
+        #if tqdm is not None:
+        if self.verbose > 0:
+            #pbar = tqdm(total=self.MaxIter)
+            #pbar.update(self.iteration)
+            print("Iteration {m} / {n}".format(m=self.iteration, n=self.MaxIter))
         self.__optim_param()
         while self.iteration <= self.MaxIter:
             if self.verbose > 1:
@@ -514,9 +459,10 @@ class SurrogateSearch(object):
                 if self.verbose > 1:
                     print("No progress in %d iterations." % self.NumIterNoProg)
                 break
-            if tqdm is not None:
-                if self.verbose > 0:
-                    pbar.update(1)  # update the progressbar
+            #if tqdm is not None:
+            if self.verbose > 0:
+                print("End of iteration.")
+                #pbar.update(1)  # update the progressbar
             self.__save()  # save the progress
         return self.current, self.current_val
 
@@ -641,11 +587,6 @@ except ModuleNotFoundError:
     Parallel = type("Parallel", (object,), dict())
     delayed = type("delayed", (object,), dict())
 
-try:
-    from Optimithon import NumericDiff
-except ModuleNotFoundError:
-    NumericDiff = type("NumericDiff", (object,), dict(Simple=lambda: 0.0))
-
 
 class SurrogateRandomCV(BaseSearchCV):
     """
@@ -744,15 +685,6 @@ class SurrogateRandomCV(BaseSearchCV):
             max_itr_no_prog=10000,
             ineqs=(),
             init=None,
-            # Optimithon specific options
-            optimithon_t_method="Cauchy_x",
-            optimithon_dd_method="BFGS",
-            optimithon_ls_method="Backtrack",
-            optimithon_ls_bt_method="Armijo",
-            optimithon_br_func="Carrol",
-            optimithon_penalty=1.0e6,
-            optimithon_max_iter=100,
-            optimithon_difftool=NumericDiff.Simple(),
     ):
         super(SurrogateRandomCV, self).__init__(
             estimator=estimator,
@@ -790,15 +722,6 @@ class SurrogateRandomCV(BaseSearchCV):
         self.best_estimator_ = None
         self.best_estimator_score = 0.0
         self.best_score_ = 0.
-        # Optimithon specific options
-        self.optimithon_t_method = optimithon_t_method
-        self.optimithon_dd_method = optimithon_dd_method
-        self.optimithon_ls_method = optimithon_ls_method
-        self.optimithon_ls_bt_method = optimithon_ls_bt_method
-        self.optimithon_br_func = optimithon_br_func
-        self.optimithon_penalty = optimithon_penalty
-        self.optimithon_max_iter = optimithon_max_iter
-        self.optimithon_difftool = optimithon_difftool
 
     def fit(self, X, y=None, groups=None, **fit_params):
         """
@@ -817,8 +740,8 @@ class SurrogateRandomCV(BaseSearchCV):
         from random import uniform
         from numpy import array, unique, sqrt
         from sklearn.base import clone, is_classifier
-        from sklearn.metrics.scorer import check_scoring
-        from sklearn.model_selection._search import check_cv
+        from sklearn.metrics import check_scoring
+        from sklearn.model_selection import check_cv
         from sklearn.model_selection._validation import _fit_and_score
 
         # from lightgbm.sklearn import LightGBMError
@@ -896,13 +819,13 @@ class SurrogateRandomCV(BaseSearchCV):
                         _cls_dict[target_classes[i_]] = x[_idx]
                         _idx += 1
                     cand_params[_param] = _cls_dict
-            #cl = clone(self.estimator)
-            #cl.set_params(**cand_params)
+            # cl = clone(self.estimator)
+            # cl.set_params(**cand_params)
             score = 0
             n_test = 0
 
-            def parallel_fit_score(cl, cand_params, X, y, scorer, train, test, verbose, fit_params, error_score):
-                cl.set_params(**cand_params)
+            def parallel_fit_score(cl, cand_params_, X, y, scorer, train, test, verbose, fit_params_, error_score):
+                cl.set_params(**cand_params_)
                 try:
                     _score = _fit_and_score(
                         estimator=cl,
@@ -912,31 +835,35 @@ class SurrogateRandomCV(BaseSearchCV):
                         train=train,
                         test=test,
                         verbose=verbose,  #
-                        parameters=cand_params,
-                        fit_params=fit_params,  #
+                        parameters=cand_params_,
+                        fit_params=fit_params_,  #
                         error_score=error_score,  #
-                    )[0]
-                    return _score
+                    )
+                    if _score['fit_error'] is None:
+                        return _score['test_scores']
+                    else:
+                        return 0.
                 except ValueError:
                     if self.verbose > 1:
                         print("Model evaluation error")
                     else:
                         pass
-                except:  # LightGBMError:
+                #except:  # LightGBMError:
                     pass
                 return None
+
             scores = Parallel(n_jobs=self.n_jobs,
                               verbose=self.verbose,
                               pre_dispatch=self.pre_dispatch
                               )(delayed(parallel_fit_score)(clone(self.estimator),
-                                                            cand_params=cand_params,
+                                                            cand_params_=cand_params,
                                                             X=X,
                                                             y=y,
                                                             scorer=self.scorer_,
                                                             train=train,
                                                             test=test,
                                                             verbose=self.verbose,
-                                                            fit_params=self.fit_params,
+                                                            fit_params_=self.fit_params,
                                                             error_score=self.error_score
                                                             )
                                 for train, test in cv_dat)
@@ -944,7 +871,7 @@ class SurrogateRandomCV(BaseSearchCV):
                 if sc is not None:
                     score += sc
                     n_test += 1
-            score = score/float(max(n_test, 1))
+            score = score / float(max(n_test, 1))
             return -score
 
         self.OPTIM = SurrogateSearch(
@@ -963,13 +890,6 @@ class SurrogateRandomCV(BaseSearchCV):
             max_itr_no_prog=self.max_itr_no_prog,
             optimizer=self.optimizer,
             scipy_solver=self.scipy_solver,
-            optimithon_dd_method=self.optimithon_dd_method,
-            optimithon_difftool=self.optimithon_difftool,
-            optimithon_t_method=self.optimithon_t_method,
-            optimithon_ls_method=self.optimithon_ls_method,
-            optimithon_ls_bt_method=self.optimithon_ls_bt_method,
-            optimithon_br_func=self.optimithon_br_func,
-            optimithon_penalty=self.optimithon_penalty,
             task_name=self.task_name,
             warm_start=self.warm_start,
             Continue=self.Continue,
