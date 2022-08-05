@@ -274,9 +274,9 @@ class mltrack(object):
         from pickle import dumps
 
         if name is not None:
-            mdl.mltrack_name = name
+            setattr(mdl, 'mltrack_name', name)
         else:
-            mdl.mltrack_name = name if name is not None else str(mdl).split("(")[0]
+            setattr(mdl, 'mltrack_name', name if name is not None else str(mdl).split("(")[0])
         if "mltrack_id" not in mdl.__dict__:
             MLModel.create(
                 task_id=self.task_id,

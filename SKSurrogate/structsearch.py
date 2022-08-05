@@ -839,7 +839,15 @@ class SurrogateRandomCV(BaseSearchCV):
                         fit_params=fit_params_,  #
                         error_score=error_score,  #
                     )
-                    if _score['fit_error'] is None:
+                    ky = 'fit_error'
+                    vl = None
+                    if 'fit_error' in _score:
+                        ky = 'fit_error'
+                        vl = None
+                    elif 'fit_failed' in _score:
+                        ky = 'fit_failed'
+                        vl = False
+                    if _score[ky] is vl:
                         return _score['test_scores']
                     else:
                         return 0.
