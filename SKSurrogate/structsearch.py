@@ -19,26 +19,34 @@ round of iteration SRS replaces :math:`f` by a surrogate :math:`\hat{f}_i` that 
 analytical properties which make its optimization an easier task to overcome. Then by solving the above
 optimization problem with :math:`f` replaced by :math:`\hat{f}` one gets a more informed candidate
 :math:`x_i` for the next iteration. If a certain number of iterations do not result in a better candidate,
-the method returns back to random sampling to collect more information about :math:`f`. The surrogate
-function :math:`\hat{f}_i` can be found in many different ways such as (non)linear regression, Gaussian
+the method returns to random sampling to collect more information about :math:`f`. The surrogate
+function :math:`\hat{f}_i` can be found in many ways such as (non)linear regression, Gaussian
 process regression, etc. and  `SurrogateSearch` do not have a preference. But by default it uses a polynomial
-regression of degree 3 if no regressor is provided. Any regressor following the architecture of `sciki-learn`
+regression of degree 3 if no regressor is provided. Any regressor following the architecture of `scikit-learn`
 is acceptable. Note that regressors usually require a minimum number of data points to function properly.
 
 There are various ways for sampling a random point in feasible space which affects the performance of SRS.
 `SurrogateSearch` implements two methods: `BoxSample` and `SphereSample`. One can choose whether to shrink the
-volume of the box or sphere tha tthe sample is selected from too.
+volume of the box or sphere that the sample is selected from too.
 """
 
 
 class BaseSample(object):
     """
     This is the base class for various sampling methods.
+
+    :param init_radius: **optional** (default=2.); positive real number indicating the initial radius of the local
+        search ball.
+    :param contraction: **optional** (default=.0); the contraction factor which must be a positive real less than 1.
+    :param ineq: **optional**; a list of functions whose positivity region will be the acceptable condition.
+    :param bounds: **optional**; the list of (ordered) tuples determining the bound of each component.
     """
 
     def __init__(self, **kwargs):
         self.init_radius = kwargs.get("init_radius", 2.0)
         self.contraction = kwargs.get("contraction", 0.9)
+        if self.contraction >= 1:
+            raise "`contraction` factor must be between 0. and 1."
         self.ineqs = kwargs.pop("ineq", [])
         self.bounds = kwargs.pop("bounds", None)
 
@@ -190,7 +198,7 @@ class SurrogateSearch(object):
     :param sampling: the sampling method either `BoxSample` or `SphereSample` (default `SphereSample`)
     :param search_sphere: `boolean` whether to fit the surrogate function on a neighbourhood of current candidate or
         over all sampled points (default: False)
-    :param deg: `int` degree of polynomial regressor if one chooses to fitt polynomial surrogates (default: 3)
+    :param deg: `int` degree of polynomial regressor if one chooses to fit polynomial surrogates (default: 3)
     :param min_evals: `int` minimum number of samples before fitting a surrogate (default will be calculated as if the
         surrogate is a polynomial of degree 3)
     :param regressor: a regressor (scikit-learn style) to find a surrogate
@@ -433,16 +441,16 @@ class SurrogateSearch(object):
         :return: the best minimum point and value
         """
         pbar = None
-        #try:
+        # try:
         #    from tqdm import tqdm
-        #except ImportError:
+        # except ImportError:
         #    tqdm = None
         from math import log
 
-        #if tqdm is not None:
+        # if tqdm is not None:
         if self.verbose > 0:
-            #pbar = tqdm(total=self.MaxIter)
-            #pbar.update(self.iteration)
+            # pbar = tqdm(total=self.MaxIter)
+            # pbar.update(self.iteration)
             print("Iteration {m} / {n}".format(m=self.iteration, n=self.MaxIter))
         self.__optim_param()
         while self.iteration <= self.MaxIter:
@@ -459,10 +467,10 @@ class SurrogateSearch(object):
                 if self.verbose > 1:
                     print("No progress in %d iterations." % self.NumIterNoProg)
                 break
-            #if tqdm is not None:
+            # if tqdm is not None:
             if self.verbose > 0:
                 print("End of iteration.")
-                #pbar.update(1)  # update the progressbar
+                # pbar.update(1)  # update the progressbar
             self.__save()  # save the progress
         return self.current, self.current_val
 
@@ -600,13 +608,13 @@ class SurrogateRandomCV(BaseSearchCV):
     distributions. The number of parameter settings that are tried is
     given by `max_iter`.
 
-    :param estimator: estimator object. A object of that type is instantiated for each search point. This object is
+    :param estimator: estimator object. An object of that type is instantiated for each search point. This object is
         assumed to implement the scikit-learn estimator api. Either estimator needs to provide a ``score`` function,
         or ``scoring`` must be passed.
     :param params: dict Dictionary with parameters names (string) as keys and domains as lists of parameter ranges
         to try. Domains are either lists of categorical (string) values or 2 element lists specifying a min and max
         for integer or float parameters
-    :param scoring: string, callable or None, default=None
+    :param scoring: string, callable or `None`, default=None
         A string (see model evaluation documentation) or a scorer callable
         object / function with signature ``scorer(estimator, X, y)``. If
         ``None``, the ``score`` method of the estimator is used.
@@ -856,7 +864,7 @@ class SurrogateRandomCV(BaseSearchCV):
                         print("Model evaluation error")
                     else:
                         pass
-                #except:  # LightGBMError:
+                    # except:  # LightGBMError:
                     pass
                 return None
 

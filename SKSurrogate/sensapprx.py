@@ -21,7 +21,7 @@ class SensAprx(BaseEstimator, TransformerMixin):
     :param regressor: a sklearn style regressor to fit the data for sensitivity analysis
     :param method: `str` the sensitivity analysis method; defalt 'sobol', other options are 'morris' and 'delta-mmnt'
     :param margin: domain margine, default: .2
-    :param num_smpl: number of samples to perform the analysis, default: 1000
+    :param num_smpl: number of samples to perform the analysis, default: 512
     :param num_levels: number of levels for morris analysis, default: 6
     :param grid_jump: grid jump for morris analysis, default: 1
     :param num_resmpl: number of resamples for moment independent analysis, default: 10
@@ -37,8 +37,8 @@ class SensAprx(BaseEstimator, TransformerMixin):
         regressor=None,
         method="sobol",
         margin=0.2,
-        num_smpl=500,
-        num_levels=5,
+        num_smpl=512,
+        num_levels=6,
         grid_jump=1,
         num_resmpl=8,
         reduce=False,

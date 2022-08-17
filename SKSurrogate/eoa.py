@@ -6,7 +6,7 @@ Evolutionary Optimization Algorithm
 
 class EOA(object):
     """
-    This is a base class acting as an umbrella to process an
+    This is a base class acting as an umbrella to perform an
     evolutionary optimization algorithm.
 
     :param population: The whole possible population as a list

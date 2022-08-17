@@ -321,7 +321,7 @@ class AML(object):
     :param length: default=5; Maximum number of objects in generated pipelines
     :param scoring: default='accuracy'; The scoring method to be optimized. Must follow the sklearn scoring signature
     :param cat_cols: default=None; The list of indices of categorical columns
-    :param surrogates: default=None; A list of 4-tuples determining surrogates. The first entity of each pair is
+    :param surrogates: default=None; A list of 4-tuples determining surrogates. The first entity of each tuple is
         a scikit-learn regressor and the
         2nd entity is the number of iterations that this surrogate needs to be estimated and optimized.
         The 3rd is the sampling strategy and the
@@ -416,7 +416,7 @@ class AML(object):
 
     def types(self):
         """
-        Recognizes the type of each estimator to determine legitimate placement of each
+        Recognizes the type of each estimator to determine proper placement of each
 
         :return: None
         """
@@ -453,9 +453,11 @@ class AML(object):
         :param seq: a sequence of (genes) estimators
         :return: True or False
         """
+        # Check the validity of the final estimator
         if self.config_types[seq[-1]] not in ["regressor", "classifier"]:
             return False
         n = len(seq) - 1
+        # The second to last estimator can't be `FeatureUnion`
         if seq[n - 1] == "sklearn.pipeline.FeatureUnion":
             return False
         flag = False
@@ -500,7 +502,7 @@ class AML(object):
 
     def _cast(self, n, X, y):
         """
-        Evaluates and optimizes all legitimate combinations of length `n`
+        Evaluates and optimizes all acceptable combinations of length `n`
 
         :param n: The length of pipelines
         :param X: Training data
@@ -509,10 +511,10 @@ class AML(object):
         """
         from .structsearch import BoxSample, CompactSample
 
-        if self.couldBfirst == []:
-            from sklearn.pipeline import Pipeline
-        else:
-            from imblearn.pipeline import Pipeline
+        # if self.couldBfirst == []:
+        #    from sklearn.pipeline import Pipeline
+        # else:
+        #    from imblearn.pipeline import Pipeline
         from sklearn.model_selection import RandomizedSearchCV
 
         if self.surrogates is None:
@@ -644,10 +646,10 @@ class AML(object):
                     Pop.append(cnddt)
 
         def _eval(ppl):
-            if self.couldBfirst == []:
-                from sklearn.pipeline import Pipeline
-            else:
-                from imblearn.pipeline import Pipeline
+            # if self.couldBfirst == []:
+            #    from sklearn.pipeline import Pipeline
+            # else:
+            #    from imblearn.pipeline import Pipeline
             from sklearn.model_selection import RandomizedSearchCV
 
             if self.surrogates is None:
@@ -781,6 +783,7 @@ class AML(object):
                 int_idx = 1
                 int_steps = []
                 next_est = seq[ent_idx + int_idx]
+                # Find the rest of the sequence before the last or the next feature selector
                 while (
                         (self.config_types[next_est] in ["regressor", "classifier"])
                         or (next_est in self.known_feature_selectors)
