@@ -9,6 +9,14 @@ from category_encoders.ordinal import OrdinalEncoder
 
 
 class DateTime2Num(TransformerMixin, BaseEstimator):
+    """
+    Converts a date range data to numeric (float) between `lower` and `upper`.
+
+    :param cols: default: `None`; column names for transformation.
+    :param unit: default: 'day`; the time unit.
+    :param lower: default: `0.0`; the lower bound of the transformation range.
+    :param upper: default: `2.0`; the upper bound of the transformation range.
+    """
     def __init__(self, cols=None, unit='day', lower=0., upper=2.):
         if unit not in ['day', 'hour', 'minute', 'second']:
             raise ValueError("`unit` must be either 'day', 'hour', 'minute', or 'second'.")
@@ -30,6 +38,12 @@ class DateTime2Num(TransformerMixin, BaseEstimator):
             self.scale = numpy.timedelta64(1, 'D')
 
     def fit(self, X):
+        """
+        Fits and calculates the transformation parameters for date range transformation.
+
+        :param X: Input data
+        :return: `self`
+        """
         if self.cols is None:
             return self
         n_length = self.upper - self.lower
@@ -41,8 +55,15 @@ class DateTime2Num(TransformerMixin, BaseEstimator):
             trans_coef = n_length / t_length
             intercept = self.lower
             self.coefs[clmn] = (trans_coef, intercept, min_date)
+        return self
 
     def transform(self, X):
+        """
+        Apply the calculated parameters to transform the datetime columns.
+
+        :param X: the input data
+        :return: transformed data
+        """
         if self.cols is None:
             return X
         TX = X
@@ -54,6 +75,9 @@ class DateTime2Num(TransformerMixin, BaseEstimator):
         return TX
 
     def fit_transform(self, X, y=None, **fit_params):
+        """
+        Fits and transforms the input data.
+        """
         self.fit(X)
         return self.transform(X)
 

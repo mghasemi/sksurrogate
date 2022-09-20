@@ -70,6 +70,7 @@ class EOA(object):
     def __save(self):
         """
         Logs state of the evolutionary optimization progress at each iteration
+
         :return: None
         """
         from pickle import dumps
@@ -99,6 +100,7 @@ class EOA(object):
     def __load(self):
         """
         Loads previous information saved, if any
+
         :return: None
         """
         from pickle import loads

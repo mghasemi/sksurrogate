@@ -185,13 +185,15 @@ class mltrack(object):
     This class instantiates an object that tracks the ML activities and store them upon request.
 
     :param task: 'str' the task name
-    :param task_is: the id of an existing task, if the name is not provided.
+    :param task_id: the id of an existing task, if the name is not provided.
     :param db_name: a file name for the SQLite database
     :param cv: the default cross validation method, must be a valid cv based on `sklearn.model_selection`;
             default: `ShuffleSplit(n_splits=3, test_size=.25)`
+    :param encode: whether to preprocess the data automatically or not;
+            default: `False`
     """
 
-    def __init__(self, task, task_id=None, db_name="mltrack.db", cv=None):
+    def __init__(self, task, task_id=None, db_name="mltrack.db", cv=None, encode=False):
         self.db_name = db_name
         tables = [Task, MLModel, Metrics, Saved, Plots, Data, Weights]
         for tbl in tables:
@@ -215,6 +217,7 @@ class mltrack(object):
         else:
             self.cv = cv
         self.X, self.y = None, None
+        self.encode = encode
         self.Updated, self.Loaded, self.Recovered = [], [], []
 
     def UpdateTask(self, data):
@@ -316,6 +319,12 @@ class mltrack(object):
         res.last_mod_date = datetime.now()
         res.save()
         self.target = target
+        if self.encode:
+            # TODO: Input parameters for DataPreprocess
+            from .DataProcess import DataPreprocess
+            encoder = DataPreprocess(source_df)
+            encoder.encode()
+            source_df = encoder.transformed_df
         clmns = list(source_df.columns)
         if target not in clmns:
             raise BaseException("`%s` is not a part of data source." % target)
@@ -352,7 +361,7 @@ class mltrack(object):
 
     def LogMetrics(self, mdl, cv=None):
         """
-        Logs metrics of an already logged model using a cross validation methpd
+        Logs metrics of an already logged model using a cross validation method
 
         :param mdl: the model to be measured
         :param cv: cross validation method
@@ -506,8 +515,8 @@ class mltrack(object):
         """
         res = (
             Metrics.select()
-                .order_by(Metrics.__dict__[metric].__dict__["field"].desc())
-                .dicts()
+            .order_by(Metrics.__dict__[metric].__dict__["field"].desc())
+            .dicts()
         )
         return res[0]
 
@@ -577,9 +586,9 @@ class mltrack(object):
 
         res = (
             Saved.select()
-                .where(Saved.model_id == mdl_id)
-                .order_by(Saved.init_date.desc())
-                .dicts()
+            .where(Saved.model_id == mdl_id)
+            .order_by(Saved.init_date.desc())
+            .dicts()
         )
         file = open("track_ml_tmp_mdl.joblib", "wb")
         file.write(res[0]["pickle"])
