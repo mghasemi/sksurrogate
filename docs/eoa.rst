@@ -137,7 +137,7 @@ and length of individuals::
     gen = EOA(population=Pop, fitness=sfit, num_parents=100, mutation_prob=.1, term_genes=['1', '2'])
     # run the EOA
     gen()
-    3 get the most fit individual found and print
+    # get the most fit individual found and print
     best = next(reversed(tst.children))
     print(best, tst.children[best])
 

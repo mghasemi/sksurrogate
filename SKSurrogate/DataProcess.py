@@ -1,3 +1,18 @@
+"""
+DataProcess: A DataFrame preprocessing module for ML
+===========================================================
+
+The module is designed to do some preprocessing task on a given DataFrame.
+Currently, the module detects types of columns data e.g., numerical (integer, float), categorical, boolean, ordinal,
+datetime, and labels.
+
+The module performs ordinal encoding, one hot encoding, date range to float transformation, label encoding, and
+missing data imputation.
+
+To Do
+----------
+Processing of Text and Image data.
+"""
 import numpy
 import pandas
 from sklearn.base import BaseEstimator, TransformerMixin
@@ -17,6 +32,7 @@ class DateTime2Num(TransformerMixin, BaseEstimator):
     :param lower: default: `0.0`; the lower bound of the transformation range.
     :param upper: default: `2.0`; the upper bound of the transformation range.
     """
+
     def __init__(self, cols=None, unit='day', lower=0., upper=2.):
         if unit not in ['day', 'hour', 'minute', 'second']:
             raise ValueError("`unit` must be either 'day', 'hour', 'minute', or 'second'.")
