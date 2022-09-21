@@ -43,6 +43,10 @@ The `AML` class accepts a set of estimators and transformers, dictionaries of th
 can be changed, and searches the space of possible pipelines either exhaustively or according to an
 evolutionary set up to find an optimum pipeline.
 
+Think of machine learning pipelines as Lego blocks with each stud representing a step in the pipeline.
+The following diagram summarizes the whole evolutionary process implemented to detect the optimal
+pipeline:
+
 .. image:: ./images/lego.png
 	:height: 400px
 

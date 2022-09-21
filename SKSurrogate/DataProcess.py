@@ -12,6 +12,9 @@ missing data imputation.
 To Do
 ----------
 Processing of Text and Image data.
+
+Code
+----------
 """
 import numpy
 import pandas
@@ -93,12 +96,30 @@ class DateTime2Num(TransformerMixin, BaseEstimator):
     def fit_transform(self, X, y=None, **fit_params):
         """
         Fits and transforms the input data.
+
+        :param X: input data;
+        :param y: target field; not required, but included to comply with scikit-learn's signature
+        :param fit_params: included to comply with scikit-learn's signature
+        :return: transformed DataFrame
         """
         self.fit(X)
         return self.transform(X)
 
 
 class DataPreprocess(object):
+    """
+    This class performs a few reprocessing task on the input DataFrame to provide a ML ready dataset.
+
+    :param df: the input raw DataFrame
+    :param bin_threshold: float between 0. and 1.; when the proportion of unique values to the total number of entities
+        falls below this number fo two valued columns, the type is deduced to be binary
+    :param cat_threshold: when the proportion of unique values to the total number of entities
+        falls below this number fo discrete columns, the type is deduced to be categorical or ordinal
+    :param force_threshold: boolean, indicate whether to force the deduction based on the provided thresholds or not
+    :param imputer: the imputer object; default `IterativeImputer` for missing values imputation
+    :param force_impute: boolean; default `True` to indicate the desire for missing value imputation
+    """
+
     def __init__(self, df, bin_threshold=.1, cat_threshold=.1, force_threshold=False, imputer=None, force_impute=True):
         self.df = df
         self.bin_threshold = bin_threshold
@@ -129,31 +150,67 @@ class DataPreprocess(object):
             self.imputer = imputer
 
     def is_float(self, clmn):
+        """
+        Determines if the type of the data for the column `clmn` is float or not
+
+        :param clmn: the name of the column
+        :return: boolean
+        """
         if self.types[clmn] == 'float64':
             return True
         return False
 
     def is_int(self, clmn):
+        """
+        Determines if the type of the data for the column `clmn` is integer or not
+
+        :param clmn: the name of the column
+        :return: boolean
+        """
         if self.types[clmn] == 'int64':
             return True
         return False
 
     def is_object(self, clmn):
+        """
+        Determines if the type of the data for the column `clmn` is object (e.g., string, blob, etc.) or not
+
+        :param clmn: the name of the column
+        :return: boolean
+        """
         if self.types[clmn] == 'object':
             return True
         return False
 
     def is_datetime(self, clmn):
+        """
+        Determines if the type of the data for the column `clmn` is datetime or not
+
+        :param clmn: the name of the column
+        :return: boolean
+        """
         if 'datetime64' in self.types[clmn]:
             return True
         return False
 
     def is_obsolete(self, clmn):
+        """
+        Determines if the column is worth to be included in the analysis or not
+
+        :param clmn: the name of the column
+        :return: boolean; `True` if includes more than 1 value, `False` otherwise
+        """
         if len(self.uniques[clmn]) < 2:
             return True
         return False
 
     def is_bin(self, clmn):
+        """
+        Determines if the type of the data for the column `clmn` is binary or not
+
+        :param clmn: the name of the column
+        :return: boolean
+        """
         ratio = len(self.uniques[clmn]) / len(self.values[clmn])
         if self.force_threshold and (len(self.uniques[clmn]) == 2) and (ratio <= self.bin_threshold):
             return True
@@ -162,6 +219,12 @@ class DataPreprocess(object):
         return False
 
     def is_categorical(self, clmn):
+        """
+        Determines if the type of the data for the column `clmn` is categorical or not
+
+        :param clmn: the name of the column
+        :return: boolean
+        """
         ratio = len(self.uniques[clmn]) / len(self.values[clmn])
         if self.force_threshold and (ratio <= self.cat_threshold):
             return True
@@ -171,11 +234,22 @@ class DataPreprocess(object):
             return False
 
     def is_label(self, clmn):
+        """
+        Determines if the type of the data for the column `clmn` is label or not
+
+        :param clmn: the name of the column
+        :return: boolean
+        """
         if (self.types[clmn] == 'object') and not self.is_categorical(clmn):
             return True
         return False
 
     def deduce_types(self):
+        """
+        Deduces the type of all columns.
+
+        :return: `None`
+        """
         for clmn in self.columns:
             if self.is_label(clmn):
                 self.deduced_types['label'].append(clmn)
@@ -204,11 +278,23 @@ class DataPreprocess(object):
         self.types_deduced = True
 
     def transform_label_bin(self, clmn):
+        """
+        Transforms the determined label and binary columns.
+
+        :param clmn: the column's name
+        :return: `None`
+        """
         lbls = numpy.sort(self.uniques[clmn])
         self.transforms[clmn] = {_: lbls[_] for _ in range(lbls.shape[0])}
         self.mapping[clmn] = {lbls[_]: _ for _ in range(lbls.shape[0])}
 
     def encode(self):
+        """
+        Transforms the whole input DataFrame based on the deduced types and does missing data imputation if desired.
+        The resulted DataFrame will be stored in `transformed_df`
+
+        :return: Transformed and encoded dataframe
+        """
         if not self.types_deduced:
             self.deduce_types()
         self.steps = []
@@ -240,3 +326,4 @@ class DataPreprocess(object):
                 else:
                     self.transformed_df[clmn] = self.transformed_df.apply(lambda x: round(x[clmn], 0), axis=1)
         self.encoded = True
+        return self.transformed_df

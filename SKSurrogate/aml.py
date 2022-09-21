@@ -29,6 +29,12 @@ class StackingEstimator(BaseEstimator, TransformerMixin):
         self.decision = decision
 
     def set_params(self, **params):
+        """
+        Sets the sklearn related parameters for the estimator
+
+        :param params: parameters to be bassed to the estimator
+        :return: `self`
+        """
         self.estimator.set_params(**params)
         return self
 

@@ -28,7 +28,6 @@ Dependencies
     - `scikit-learn <https://scikit-learn.org/stable/>`_,
     - `ELI5 <https://github.com/TeamHG-Memex/eli5>`_,
     - `SALib <https://github.com/SALib/SALib>`_,
-    - `tqdm <https://github.com/tqdm/tqdm>`_,
     - `peewee <https://github.com/coleifer/peewee>`_.
 
 Download
