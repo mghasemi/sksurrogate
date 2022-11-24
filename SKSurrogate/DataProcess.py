@@ -18,10 +18,13 @@ Code
 """
 import numpy
 import pandas
+import pandas as pd
+from copy import copy
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.pipeline import Pipeline
 from sklearn.experimental import enable_iterative_imputer
 from sklearn.impute import IterativeImputer
+from sklearn.feature_extraction.text import TfidfVectorizer
 from category_encoders.one_hot import OneHotEncoder
 from category_encoders.ordinal import OrdinalEncoder
 
@@ -120,8 +123,9 @@ class DataPreprocess(object):
     :param force_impute: boolean; default `True` to indicate the desire for missing value imputation
     """
 
-    def __init__(self, df, bin_threshold=.1, cat_threshold=.1, force_threshold=False, imputer=None, force_impute=True):
-        self.df = df
+    def __init__(self, df, bin_threshold=.1, cat_threshold=.1, force_threshold=False, imputer=None, force_impute=True,
+                 text_processor=None):
+        self.df = copy(df)
         self.bin_threshold = bin_threshold
         self.cat_threshold = cat_threshold
         self.force_threshold = force_threshold
@@ -131,7 +135,7 @@ class DataPreprocess(object):
         self.types = dict()
         self.transforms = dict()
         self.mapping = dict()
-        self.deduced_types = dict(float64=[], int64=[], datetime64=[], other=[],
+        self.deduced_types = dict(float64=[], int64=[], datetime64=[], other=[], text=[],
                                   binary=[], categorical=[], label=[], obsolete=[])
         self.pivot_types = dict()
         self.processed_frame = dict()
@@ -148,6 +152,11 @@ class DataPreprocess(object):
             self.imputer = IterativeImputer()
         else:
             self.imputer = imputer
+        if text_processor is None:
+            self.txt_prcsr = TfidfVectorizer(sublinear_tf=True, max_features=1600, min_df=5, norm='l2',
+                                             ngram_range=(1, 3), stop_words='english')
+        else:
+            self.txt_prcsr = text_processor
 
     def is_float(self, clmn):
         """
@@ -190,6 +199,19 @@ class DataPreprocess(object):
         :return: boolean
         """
         if 'datetime64' in self.types[clmn]:
+            return True
+        return False
+
+    def is_text(self, clmn):
+        """
+        Determine if the type of the data for the column `clmn` is string/text or not. A string column is of type
+        `pandas.StringDtype()`.
+
+        :param clmn: the name of the column
+        :return: boolean
+        """
+        if 'string' in self.types[clmn]:
+            self.df[clmn].fillna("", inplace=True)
             return True
         return False
 
@@ -244,6 +266,12 @@ class DataPreprocess(object):
             return True
         return False
 
+    def set_type(self, clmn, typ):
+        if typ not in self.deduced_types:
+            raise "Unknown type."
+        self.deduced_types[typ].append(clmn)
+        self.pivot_types[clmn] = typ
+
     def deduce_types(self):
         """
         Deduces the type of all columns.
@@ -251,9 +279,14 @@ class DataPreprocess(object):
         :return: `None`
         """
         for clmn in self.columns:
+            if clmn in self.pivot_types:
+                continue
             if self.is_label(clmn):
                 self.deduced_types['label'].append(clmn)
                 self.pivot_types[clmn] = 'label'
+            elif self.is_text(clmn):
+                self.deduced_types['text'].append(clmn)
+                self.pivot_types[clmn] = 'text'
             elif self.is_bin(clmn):
                 self.deduced_types['binary'].append(clmn)
                 self.pivot_types[clmn] = 'binary'
@@ -298,6 +331,11 @@ class DataPreprocess(object):
         if not self.types_deduced:
             self.deduce_types()
         self.steps = []
+        txt_clmn_df = None
+        org_df = copy(self.df)
+        if self.deduced_types['text']:
+            txt_clmn_df = self.df[self.deduced_types['text']]
+            org_df.drop(self.deduced_types['text'], axis=1, inplace=True)
         ohe = OneHotEncoder(cols=self.deduced_types['categorical'], drop_invariant=True, handle_missing='return_nan',
                             handle_unknown='return_nan')
         ordinal_columns = self.deduced_types['binary'] + self.deduced_types['label']
@@ -313,17 +351,29 @@ class DataPreprocess(object):
         self.steps.append(('Date2Num', dtn))
         self.steps.append(('Impute', self.imputer))
         trans = Pipeline(self.steps)
-        self.transformed_df = pandas.DataFrame(trans.fit_transform(self.df), columns=oe.feature_names)
+        self.transformed_df = pandas.DataFrame(trans.fit_transform(org_df), columns=oe.feature_names)
         for clmn in ohe.feature_names:
             if clmn not in self.columns:
                 if self.force_impute:
-                    self.transformed_df[clmn] = self.transformed_df.apply(lambda x: int(round(x[clmn], 0)), axis=1)
+                    self.transformed_df[clmn] = self.transformed_df.apply(
+                        lambda x: int(round(x[clmn], 0)) if not pd.isna(x[clmn]) else x[clmn], axis=1)
                 else:
-                    self.transformed_df[clmn] = self.transformed_df.apply(lambda x: round(x[clmn], 0), axis=1)
+                    self.transformed_df[clmn] = self.transformed_df.apply(
+                        lambda x: round(x[clmn], 0) if not pd.isna(x[clmn]) else x[clmn], axis=1)
             elif clmn in self.deduced_types['categorical'] + ordinal_columns:
                 if self.force_impute:
-                    self.transformed_df[clmn] = self.transformed_df.apply(lambda x: int(round(x[clmn], 0)), axis=1)
+                    self.transformed_df[clmn] = self.transformed_df.apply(
+                        lambda x: int(round(x[clmn], 0)) if not pd.isna(x[clmn]) else x[clmn], axis=1)
                 else:
-                    self.transformed_df[clmn] = self.transformed_df.apply(lambda x: round(x[clmn], 0), axis=1)
+                    self.transformed_df[clmn] = self.transformed_df.apply(
+                        lambda x: round(x[clmn], 0) if not pd.isna(x[clmn]) else x[clmn], axis=1)
+        for clmn in self.deduced_types['text']:
+            txt_array = txt_clmn_df[clmn].values
+            processed_txt = self.txt_prcsr.fit_transform(txt_array)
+            length = processed_txt.shape[1]
+            clmn_names = ["%s_%d" % (clmn, _) for _ in range(length)]
+            # self.transformed_df.drop([clmn], axis=1, inplace=True)
+            self.transformed_df = pandas.concat(
+                [self.transformed_df, pandas.DataFrame(processed_txt.toarray(), columns=clmn_names)], axis=1)
         self.encoded = True
         return self.transformed_df

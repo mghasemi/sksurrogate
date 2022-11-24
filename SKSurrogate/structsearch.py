@@ -868,21 +868,24 @@ class SurrogateRandomCV(BaseSearchCV):
                     pass
                 return None
 
-            scores = Parallel(n_jobs=self.n_jobs,
-                              verbose=self.verbose,
-                              pre_dispatch=self.pre_dispatch
-                              )(delayed(parallel_fit_score)(clone(self.estimator),
-                                                            cand_params_=cand_params,
-                                                            X=X,
-                                                            y=y,
-                                                            scorer=self.scorer_,
-                                                            train=train,
-                                                            test=test,
-                                                            verbose=self.verbose,
-                                                            fit_params_=self.fit_params,
-                                                            error_score=self.error_score
-                                                            )
-                                for train, test in cv_dat)
+            try:
+                scores = Parallel(n_jobs=self.n_jobs,
+                                  verbose=self.verbose,
+                                  pre_dispatch=self.pre_dispatch
+                                  )(delayed(parallel_fit_score)(clone(self.estimator),
+                                                                cand_params_=cand_params,
+                                                                X=X,
+                                                                y=y,
+                                                                scorer=self.scorer_,
+                                                                train=train,
+                                                                test=test,
+                                                                verbose=self.verbose,
+                                                                fit_params_=self.fit_params,
+                                                                error_score=self.error_score
+                                                                )
+                                    for train, test in cv_dat)
+            except:
+                scores = (0, )
             for sc in scores:
                 if sc is not None:
                     score += sc

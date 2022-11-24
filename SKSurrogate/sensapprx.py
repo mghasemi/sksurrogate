@@ -90,6 +90,8 @@ class SensAprx(BaseEstimator, TransformerMixin):
         """
         from numpy import argpartition
 
+        self.n_features_to_select = min(self.n_features_to_select, X.shape[1])
+
         N = len(X[0])
         if (self.domain is None) or (self.probs is None):
             self._avg_fucn(X, y)
@@ -139,7 +141,7 @@ class SensAprx(BaseEstimator, TransformerMixin):
             )["delta"]
             self.weights_ = res
         self.top_features_ = argpartition(res, -self.n_features_to_select)[
-            -self.n_features_to_select :
+            -self.n_features_to_select:
         ]
         return self
 

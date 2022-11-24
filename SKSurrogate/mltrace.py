@@ -12,6 +12,7 @@ data manipulation.
 It also has built in capabilities to generate some typical plots and graph in machine learning.
 """
 
+import numpy
 import joblib
 
 try:
@@ -417,15 +418,25 @@ class mltrack(object):
             )
 
             acc = sum([accuracy_score(y_tst, y_prd) for y_prd, y_tst in prds]) / n_
-            f_1 = sum([f1_score(y_tst, y_prd) for y_prd, y_tst in prds]) / n_
-            prs = sum([precision_score(y_tst, y_prd) for y_prd, y_tst in prds]) / n_
-            rcl = sum([recall_score(y_tst, y_prd) for y_prd, y_tst in prds]) / n_
+            f_1 = sum([f1_score(y_tst, y_prd, average='weighted') for y_prd, y_tst in prds]) / n_
+            prs = sum([precision_score(y_tst, y_prd, average='weighted') for y_prd, y_tst in prds]) / n_
+            rcl = sum([recall_score(y_tst, y_prd, average='weighted') for y_prd, y_tst in prds]) / n_
             mcc = sum([matthews_corrcoef(y_tst, y_prd) for y_prd, y_tst in prds]) / n_
-            lgl = sum([log_loss(y_tst, y_prd) for y_prd, y_tst in prds]) / n_
+            lgl = 0
+            n_drops = 0
+            for y_prd, y_tst in prds:
+                try:
+                    lgl += log_loss(y_tst, y_prd, labels=numpy.unique(y_tst))
+                except ValueError:
+                    n_drops += 1
+            lgl = lgl / max(n_ - n_drops, 1)
             aur = 0.0
-            for i in range(int(n_)):
-                fpr, tpr, _ = roc_curve(prds[i][1], prbs[i])
-                aur += auc(fpr, tpr)
+            try:
+                for i in range(int(n_)):
+                    fpr, tpr, _ = roc_curve(prds[i][1], prbs[i])
+                    aur += auc(fpr, tpr)
+            except ValueError:
+                aur = 0
             aur /= n_
         elif mdl_type == "regressor":
             from sklearn.metrics import (
