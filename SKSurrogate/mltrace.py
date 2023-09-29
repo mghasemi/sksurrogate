@@ -1092,6 +1092,7 @@ class mltrack(object):
             cmap="gnuplot2",
             idx_col="feature",
             ignore=(),
+            figsize=(12, 16)
     ):
         """
         Plots a heatmap from the values of the dataframe `corr_df`
@@ -1133,6 +1134,7 @@ class mltrack(object):
         from numpy import arange, amin, amax
         from pandas import read_sql
 
+        plt.figure(figsize=figsize)
         ax = plt.gca()
         idx_col = idx_col
         if corr_df is None:
@@ -1298,6 +1300,16 @@ class mltrack(object):
         merged = weights_df.merge(new_w_df, on="feature")
         merged.fillna(0.0)
         merged.to_sql("weights", self.conn, if_exists="replace", index=False)
+        return merged
+
+    def RetrieveWeights(self):
+        """
+        Obtains the previously calculated weights for features and returns the corresponding DataFrame.
+        :return: A DataFrame containing all of previously calculated feature wights.
+        """
+        from pandas import read_sql
+        weights_df = read_sql("SELECT * FROM weights", self.conn)
+        return weights_df
 
     def TopFeatures(self, num=10):
         """

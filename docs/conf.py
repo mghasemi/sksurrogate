@@ -52,7 +52,7 @@ master_doc = 'index'
 # General information about the project.
 project = u'SKSurrogate'
 #copyright = u'2018, Mehdi Ghasemi'
-copyright = u'2022, Mehdi Ghasemi'
+copyright = u'2023, Mehdi Ghasemi'
 author = u'Mehdi Ghasemi'
 # author = u'Mehdi Ghasemi'
 

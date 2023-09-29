@@ -4,22 +4,26 @@ DataProcess: A DataFrame preprocessing module for ML
 
 The module is designed to do some preprocessing task on a given DataFrame.
 Currently, the module detects types of columns data e.g., numerical (integer, float), categorical, boolean, ordinal,
-datetime, and labels.
+datetime, and labels. To impose a text column, the type of the column should be declared before passing the DataFrame.
+This can be done by a simple code such as `df.astype({'txt_column':pandas.StringDtype()})`
 
 The module performs ordinal encoding, one hot encoding, date range to float transformation, label encoding, and
 missing data imputation.
 
 To Do
 ----------
-Processing of Text and Image data.
+Processing of Image data.
 
 Code
 ----------
 """
+import numpy as np
+
 import numpy
 import pandas
 import pandas as pd
 from copy import copy
+import re
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.pipeline import Pipeline
 from sklearn.experimental import enable_iterative_imputer
@@ -157,6 +161,14 @@ class DataPreprocess(object):
                                              ngram_range=(1, 3), stop_words='english')
         else:
             self.txt_prcsr = text_processor
+
+    @staticmethod
+    def numeric(val, typ='float64'):
+        trans_val = re.sub(r"[^\d\.]", "", str(val))
+        if typ == 'float64':
+            return np.float(trans_val)
+        elif typ == 'int64':
+            return np.int(trans_val)
 
     def is_float(self, clmn):
         """
@@ -333,6 +345,10 @@ class DataPreprocess(object):
         self.steps = []
         txt_clmn_df = None
         org_df = copy(self.df)
+        for clmn in self.deduced_types['int64']:
+            org_df[clmn] = org_df.apply(lambda x: self.numeric(x[clmn], 'int64'), axis=1)
+        for clmn in self.deduced_types['float64']:
+            org_df[clmn] = org_df.apply(lambda x: self.numeric(x[clmn]), axis=1)
         if self.deduced_types['text']:
             txt_clmn_df = self.df[self.deduced_types['text']]
             org_df.drop(self.deduced_types['text'], axis=1, inplace=True)

@@ -16,6 +16,7 @@ Welcome to SKSurrogate's documentation!
    sensitivity
    eoa
    opd
+   dataproc
    mltrace
    code
 
