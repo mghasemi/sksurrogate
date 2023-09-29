@@ -28,7 +28,6 @@ Dependencies
     - `scikit-learn <https://scikit-learn.org/stable/>`_,
     - `ELI5 <https://github.com/TeamHG-Memex/eli5>`_,
     - `SALib <https://github.com/SALib/SALib>`_,
-    - `tqdm <https://github.com/tqdm/tqdm>`_,
     - `peewee <https://github.com/coleifer/peewee>`_.
 
 Download
@@ -54,7 +53,7 @@ This code is distributed under `MIT license <https://en.wikipedia.org/wiki/MIT_L
 MIT License
 -----------------------------
 
-    Copyright (c) 2020 Mehdi Ghasemi
+    Copyright (c) 2022 Mehdi Ghasemi
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to deal

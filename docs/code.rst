@@ -19,5 +19,8 @@ Code Documentation
 .. automodule:: mltrace
    :members:
 
+.. automodule:: DataProcess
+    :members:
+
 .. automodule:: synthdat
    :members:

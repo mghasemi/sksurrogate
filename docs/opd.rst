@@ -33,7 +33,7 @@ deal with the elements of
 .. math::
     \tilde{\mathbb{U}}=\{P(\tilde{x}_P) : P\in\mathbb{U}\},
 
-that are already optimized wit hrespect to their hyperparameters. This reduces the optimized
+that are already optimized with respect to their hyperparameters. This reduces the optimized
 pipeline detection to searching :math:`\tilde{\mathbb{U}}` to find an optimum pipeline. This is
 still a very heavy task to accomplish given the number of elements in :math:`\mathbb{U}` and the
 computational intensity of a surrogate optimization. Fortunately, the format of the elements of
@@ -42,6 +42,13 @@ computational intensity of a surrogate optimization. Fortunately, the format of 
 The `AML` class accepts a set of estimators and transformers, dictionaries of their parameters that
 can be changed, and searches the space of possible pipelines either exhaustively or according to an
 evolutionary set up to find an optimum pipeline.
+
+Think of machine learning pipelines as Lego blocks with each stud representing a step in the pipeline.
+The following diagram summarizes the whole evolutionary process implemented to detect the optimal
+pipeline:
+
+.. image:: ./images/lego.png
+	:height: 400px
 
 **Example 1:** The following is a classification based on
 `sk-rebate <https://github.com/EpistasisLab/scikit-rebate/tree/master/data>`_ data::

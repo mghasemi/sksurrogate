@@ -29,6 +29,12 @@ class StackingEstimator(BaseEstimator, TransformerMixin):
         self.decision = decision
 
     def set_params(self, **params):
+        """
+        Sets the sklearn related parameters for the estimator
+
+        :param params: parameters to be bassed to the estimator
+        :return: `self`
+        """
         self.estimator.set_params(**params)
         return self
 
@@ -151,163 +157,164 @@ except ImportError:
     Integer = lambda a, b: None
     Categorical = lambda a: None
     HDReal = lambda a, b: None
+    default_config = {
+        # Classifiers
+        "sklearn.naive_bayes.BernoulliNB": {
+            "alpha": Real(10.0e-5, 100.0),
+            "fit_prior": Categorical([True, False]),
+        },
+        "sklearn.naive_bayes.GaussianNB": {"var_smoothing": Real(1.0e-9, 2.0e-1)},
+        "sklearn.tree.DecisionTreeClassifier": {
+            "criterion": Categorical(["gini", "entropy"]),
+            "splitter": Categorical(["best", "random"]),
+            "min_samples_split": Integer(2, 10),
+            "min_samples_leaf": Integer(1, 10),
+            "class_weight": HDReal((1.0e-5, 1.0e-5), (20.0, 20.0)),
+        },
+        "sklearn.linear_model.LogisticRegression": {
+            "penalty": Categorical(["l1", "l2"]),
+            "C": Real(1.0e-6, 10.0),
+            "class_weight": HDReal((1.0e-5, 1.0e-5), (20.0, 20.0))
+            # 'dual': Categorical([True, False])
+        },
+        "sklearn.svm.SVC": {
+            "C": Real(1e-6, 20.0),
+            "gamma": Real(1e-6, 10.0),
+            "tol": Real(1e-6, 10.0),
+            "class_weight": HDReal((1.0e-5, 1.0e-5), (20.0, 20.0)),
+        },
+        "sklearn.ensemble.RandomForestClassifier": {
+            "n_estimators": Integer(10, 200),
+            "criterion": Categorical(["gini", "entropy"]),
+            "min_samples_split": Integer(2, 10),
+            "min_samples_leaf": Integer(1, 10),
+            "class_weight": HDReal((1.0e-5, 1.0e-5), (20.0, 20.0)),
+        },
+        "sklearn.ensemble.GradientBoostingClassifier": {
+            "loss": Categorical(["deviance", "exponential"]),
+            "learning_rate": Real(1.0e-6, 1.0 - 1.0e-6),
+            "n_estimators": Integer(10, 500),
+            "subsample": Real(1.0e-6, 1.0),
+            "criterion": Categorical(["friedman_mse", "mse", "mae"]),
+            # "min_samples_split": Integer(2, 20),
+            # "min_samples_leaf": Integer(1, 20),
+            # "min_weight_fraction_leaf": Real(0., .5),
+            # "max_depth": Integer(2, 20),
+            # "min_impurity_decrease": Real(0., 10.),
+            # "min_impurity_split": Real(0., 10.),
+            # "max_features": Categorical(['auto', 'sqrt', 'log2', None]),
+            "tol": Real(1.0e-6, 0.1),
+        },
+        "lightgbm.LGBMClassifier": {
+            "boosting_type": Categorical(["gbdt", "dart", "goss", "rf"]),
+            "num_leaves": Integer(2, 100),
+            "learning_rate": Real(1.0e-7, 1.0 - 1.0e-6),
+            "n_estimators": Integer(5, 250),
+            "min_split_gain": Real(0.0, 1.0),
+            # "min_child_weight": Real(1.e-6, 1.),
+            # "min_child_samples": Integer(5, 200),
+            "subsample": Real(1.0e-6, 1.0),
+            # "subsample_freq": Integer(0, 10),
+            # "colsample_bytree": Real(1.e-5, 1.),
+            # "class_weight": HDReal((1.e-5, 1.e-5), (20., 20.)),
+            # "reg_alpha": Real(0., 10.),
+            # "reg_lambda": Real(0., 10.),
+            "importance_type": Categorical(["split", "gain"]),
+        },
+        "xgboost.XGBClassifier": {
+            "n_estimators": Integer(50, 400),
+            "max_depth": Integer(2, 20),
+            "max_leaves": Integer(0, 200),
+            "learning_rate": Real(1.0e-5, 1.0),
+            "objective": Categorical(
+                ["binary:logistic", "binary:logitraw", "binary:hinge"]
+            ),
+            "booster": Categorical(["gbtree", "gblinear", "dart"]),
+            "gamma": Real(0.0, 100.0),
+            # 'min_child_weight': Real(0., 100.),
+            # 'max_delta_step': Real(0., 100.),
+            "subsample": Real(1.0e-6, 1.0),
+            # 'colsample_bytree': Real(1.e-6, 1.),
+            # 'colsample_bylevel': Real(1.e-6, 1.),
+            # 'reg_alpha': Real(0., 10.),
+            # 'reg_lambda': Real(0., 10.),
+            # 'scale_pos_weight': Real(1.e-5, 1.e3),
+            # 'base_score': Real(1.e-5, .9999)
+        },
+        # 'sklearn.discriminant_analysis.QuadraticDiscriminantAnalysis': {
+        #    'tol': Real(1.e-5, 2.)
+        # },
+        # Feature Selectors
+        "sklearn.feature_selection.VarianceThreshold": {"threshold": Real(0.0, 0.3)},
+        "sklearn.decomposition.PCA": {
+            # 'svd_solver': Categorical(['randomized']),
+            "iterated_power": Integer(1, 11),
+            "n_components": Integer(2, 30),
+        },
+        "sklearn.decomposition.TruncatedSVD": {
+            "n_components": Integer(2, 30),
+            "algorithm": Categorical(["randomized", "arpack"]),
+        },
+        # Preprocesssors
+        "sklearn.preprocessing.StandardScaler": {
+            "with_mean": Categorical([True, False]),
+            "with_std": Categorical([True, False]),
+        },
+        "sklearn.preprocessing.Normalizer": {"norm": Categorical(["l1", "l2", "max"])},
+        # Transformers
+        # 'sklearn.preprocessing.PowerTransformer': {
+        #    'method': Categorical(['yeo-johnson', 'box-cox']),
+        #    'standardize': Categorical([True, False])
+        # },
+        "sklearn.kernel_approximation.Nystroem": {
+            "kernel": Categorical(["rbf", "poly", "sigmoid"]),
+            "gamma": Real(1.0e-2, 10.0),
+            "n_components": Integer(10, 100),
+        },
+        "sklearn.kernel_approximation.RBFSampler": {
+            "gamma": Real(1.0e-3, 10.0),
+            "n_components": Integer(10, 100),
+        },
+        "sklearn.kernel_approximation.AdditiveChi2Sampler": {"sample_steps": Integer(1, 3)},
+        "sklearn.kernel_approximation.SkewedChi2Sampler": {
+            "skewedness": Real(0.1, 5.0),
+            "n_components": Integer(10, 100),
+        },
+        # Sensitivity Analysis
+        "sksurrogate.SensAprx": {
+            "n_features_to_select": Integer(2, 30),
+            "method": Categorical(["sobol", "morris", "delta-mmnt"]),
+            # 'regressor': Categorical([None, regressor])
+        },
+        # Manifold Learning
+        # 'sklearn.manifold.Isomap': {
+        #    'n_neighbors': Integer(2, 12),
+        #    'n_components': Integer(1, 10),
+        # },
+        # 'sklearn.manifold.LocallyLinearEmbedding': {
+        #    'n_neighbors': Integer(2, 12),
+        #    'n_components': Integer(1, 10),
+        #    'reg ': Real(1.e-5, .2),
+        #    'method': Categorical(['standard', 'ltsa'])
+        # },
+        # 'sklearn.manifold.MDS': {
+        #    'n_components': Integer(1, 10),
+        #    'n_init': Integer(2, 8),
+        # },
+        # 'sklearn.manifold.SpectralEmbedding': {
+        #    'n_components': Integer(1, 10),
+        #    'affinity': Categorical(['nearest_neighbors', 'rbf', 'precomputed'])
+        # },
+        # 'sklearn.manifold.TSNE': {
+        #    'n_components': Integer(1, 10),
+        #    'perplexity': Real(5., 50.),
+        #    'early_exaggeration': Real(5., 25.),
+        #    'learning_rate ': Real(10., 500.)
+        # },
+        # Sampler
+        "imblearn.over_sampling.SMOTE": {"k_neighbors": Integer(3, 10)},
+    }
 
-default_config = {
-    # Classifiers
-    "sklearn.naive_bayes.BernoulliNB": {
-        "alpha": Real(10.0e-5, 100.0),
-        "fit_prior": Categorical([True, False]),
-    },
-    "sklearn.naive_bayes.GaussianNB": {"var_smoothing": Real(1.0e-9, 2.0e-1)},
-    "sklearn.tree.DecisionTreeClassifier": {
-        "criterion": Categorical(["gini", "entropy"]),
-        "splitter": Categorical(["best", "random"]),
-        "min_samples_split": Integer(2, 10),
-        "min_samples_leaf": Integer(1, 10),
-        "class_weight": HDReal((1.0e-5, 1.0e-5), (20.0, 20.0)),
-    },
-    "sklearn.linear_model.LogisticRegression": {
-        "penalty": Categorical(["l1", "l2"]),
-        "C": Real(1.0e-6, 10.0),
-        "class_weight": HDReal((1.0e-5, 1.0e-5), (20.0, 20.0))
-        # 'dual': Categorical([True, False])
-    },
-    "sklearn.svm.SVC": {
-        "C": Real(1e-6, 20.0),
-        "gamma": Real(1e-6, 10.0),
-        "tol": Real(1e-6, 10.0),
-        "class_weight": HDReal((1.0e-5, 1.0e-5), (20.0, 20.0)),
-    },
-    "sklearn.ensemble.RandomForestClassifier": {
-        "n_estimators": Integer(10, 200),
-        "criterion": Categorical(["gini", "entropy"]),
-        "min_samples_split": Integer(2, 10),
-        "min_samples_leaf": Integer(1, 10),
-        "class_weight": HDReal((1.0e-5, 1.0e-5), (20.0, 20.0)),
-    },
-    "sklearn.ensemble.GradientBoostingClassifier": {
-        "loss": Categorical(["deviance", "exponential"]),
-        "learning_rate": Real(1.0e-6, 1.0 - 1.0e-6),
-        "n_estimators": Integer(10, 500),
-        "subsample": Real(1.0e-6, 1.0),
-        "criterion": Categorical(["friedman_mse", "mse", "mae"]),
-        # "min_samples_split": Integer(2, 20),
-        # "min_samples_leaf": Integer(1, 20),
-        # "min_weight_fraction_leaf": Real(0., .5),
-        # "max_depth": Integer(2, 20),
-        # "min_impurity_decrease": Real(0., 10.),
-        # "min_impurity_split": Real(0., 10.),
-        # "max_features": Categorical(['auto', 'sqrt', 'log2', None]),
-        "tol": Real(1.0e-6, 0.1),
-    },
-    "lightgbm.LGBMClassifier": {
-        "boosting_type": Categorical(["gbdt", "dart", "goss", "rf"]),
-        "num_leaves": Integer(2, 100),
-        "learning_rate": Real(1.0e-7, 1.0 - 1.0e-6),
-        "n_estimators": Integer(5, 250),
-        "min_split_gain": Real(0.0, 1.0),
-        # "min_child_weight": Real(1.e-6, 1.),
-        # "min_child_samples": Integer(5, 200),
-        "subsample": Real(1.0e-6, 1.0),
-        # "subsample_freq": Integer(0, 10),
-        # "colsample_bytree": Real(1.e-5, 1.),
-        # "class_weight": HDReal((1.e-5, 1.e-5), (20., 20.)),
-        # "reg_alpha": Real(0., 10.),
-        # "reg_lambda": Real(0., 10.),
-        "importance_type": Categorical(["split", "gain"]),
-    },
-    "xgboost.XGBClassifier": {
-        "max_depth": Integer(2, 20),
-        "learning_rate": Real(1.0e-5, 1.0),
-        "n_estimators": Integer(50, 400),
-        "objective": Categorical(
-            ["binary:logistic", "binary:logitraw", "binary:hinge"]
-        ),
-        "booster": Categorical(["gbtree", "gblinear", "dart"]),
-        "gamma": Real(0.0, 100.0),
-        # 'min_child_weight': Real(0., 100.),
-        # 'max_delta_step': Real(0., 100.),
-        "subsample": Real(1.0e-6, 1.0),
-        # 'colsample_bytree': Real(1.e-6, 1.),
-        # 'colsample_bylevel': Real(1.e-6, 1.),
-        # 'reg_alpha': Real(0., 10.),
-        # 'reg_lambda': Real(0., 10.),
-        # 'scale_pos_weight': Real(1.e-5, 1.e3),
-        # 'base_score': Real(1.e-5, .9999)
-    },
-    # 'sklearn.discriminant_analysis.QuadraticDiscriminantAnalysis': {
-    #    'tol': Real(1.e-5, 2.)
-    # },
-    # Feature Selectors
-    "sklearn.feature_selection.VarianceThreshold": {"threshold": Real(0.0, 0.3)},
-    "sklearn.decomposition.PCA": {
-        # 'svd_solver': Categorical(['randomized']),
-        "iterated_power": Integer(1, 11),
-        "n_components": Integer(2, 30),
-    },
-    "sklearn.decomposition.TruncatedSVD": {
-        "n_components": Integer(2, 30),
-        "algorithm": Categorical(["randomized", "arpack"]),
-    },
-    # Preprocesssors
-    "sklearn.preprocessing.StandardScaler": {
-        "with_mean": Categorical([True, False]),
-        "with_std": Categorical([True, False]),
-    },
-    "sklearn.preprocessing.Normalizer": {"norm": Categorical(["l1", "l2", "max"])},
-    # Transformers
-    # 'sklearn.preprocessing.PowerTransformer': {
-    #    'method': Categorical(['yeo-johnson', 'box-cox']),
-    #    'standardize': Categorical([True, False])
-    # },
-    "sklearn.kernel_approximation.Nystroem": {
-        "kernel": Categorical(["rbf", "poly", "sigmoid"]),
-        "gamma": Real(1.0e-2, 10.0),
-        "n_components": Integer(10, 100),
-    },
-    "sklearn.kernel_approximation.RBFSampler": {
-        "gamma": Real(1.0e-3, 10.0),
-        "n_components": Integer(10, 100),
-    },
-    "sklearn.kernel_approximation.AdditiveChi2Sampler": {"sample_steps": Integer(1, 3)},
-    "sklearn.kernel_approximation.SkewedChi2Sampler": {
-        "skewedness": Real(0.1, 5.0),
-        "n_components": Integer(10, 100),
-    },
-    # Sensitivity Analysis
-    "sksurrogate.SensAprx": {
-        "n_features_to_select": Integer(2, 30),
-        "method": Categorical(["sobol", "morris", "delta-mmnt"]),
-        # 'regressor': Categorical([None, regressor])
-    },
-    # Manifold Learning
-    # 'sklearn.manifold.Isomap': {
-    #    'n_neighbors': Integer(2, 12),
-    #    'n_components': Integer(1, 10),
-    # },
-    # 'sklearn.manifold.LocallyLinearEmbedding': {
-    #    'n_neighbors': Integer(2, 12),
-    #    'n_components': Integer(1, 10),
-    #    'reg ': Real(1.e-5, .2),
-    #    'method': Categorical(['standard', 'ltsa'])
-    # },
-    # 'sklearn.manifold.MDS': {
-    #    'n_components': Integer(1, 10),
-    #    'n_init': Integer(2, 8),
-    # },
-    # 'sklearn.manifold.SpectralEmbedding': {
-    #    'n_components': Integer(1, 10),
-    #    'affinity': Categorical(['nearest_neighbors', 'rbf', 'precomputed'])
-    # },
-    # 'sklearn.manifold.TSNE': {
-    #    'n_components': Integer(1, 10),
-    #    'perplexity': Real(5., 50.),
-    #    'early_exaggeration': Real(5., 25.),
-    #    'learning_rate ': Real(10., 500.)
-    # },
-    # Sampler
-    "imblearn.over_sampling.SMOTE": {"k_neighbors": Integer(3, 10)},
-}
 
 
 class AML(object):
@@ -321,7 +328,7 @@ class AML(object):
     :param length: default=5; Maximum number of objects in generated pipelines
     :param scoring: default='accuracy'; The scoring method to be optimized. Must follow the sklearn scoring signature
     :param cat_cols: default=None; The list of indices of categorical columns
-    :param surrogates: default=None; A list of 4-tuples determining surrogates. The first entity of each pair is
+    :param surrogates: default=None; A list of 4-tuples determining surrogates. The first entity of each tuple is
         a scikit-learn regressor and the
         2nd entity is the number of iterations that this surrogate needs to be estimated and optimized.
         The 3rd is the sampling strategy and the
@@ -416,12 +423,12 @@ class AML(object):
 
     def types(self):
         """
-        Recognizes the type of each estimator to determine legitimate placement of each
+        Recognizes the type of each estimator to determine proper placement of each
 
         :return: None
         """
         from importlib import import_module
-        from sklearn.feature_selection.base import SelectorMixin
+        from sklearn.feature_selection import SelectorMixin
 
         for alg in self.config:
             if alg != "sklearn.pipeline.FeatureUnion":
@@ -453,9 +460,11 @@ class AML(object):
         :param seq: a sequence of (genes) estimators
         :return: True or False
         """
+        # Check the validity of the final estimator
         if self.config_types[seq[-1]] not in ["regressor", "classifier"]:
             return False
         n = len(seq) - 1
+        # The second to last estimator can't be `FeatureUnion`
         if seq[n - 1] == "sklearn.pipeline.FeatureUnion":
             return False
         flag = False
@@ -500,7 +509,7 @@ class AML(object):
 
     def _cast(self, n, X, y):
         """
-        Evaluates and optimizes all legitimate combinations of length `n`
+        Evaluates and optimizes all acceptable combinations of length `n`
 
         :param n: The length of pipelines
         :param X: Training data
@@ -509,10 +518,10 @@ class AML(object):
         """
         from .structsearch import BoxSample, CompactSample
 
-        if self.couldBfirst == []:
-            from sklearn.pipeline import Pipeline
-        else:
-            from imblearn.pipeline import Pipeline
+        # if self.couldBfirst == []:
+        #    from sklearn.pipeline import Pipeline
+        # else:
+        #    from imblearn.pipeline import Pipeline
         from sklearn.model_selection import RandomizedSearchCV
 
         if self.surrogates is None:
@@ -644,10 +653,10 @@ class AML(object):
                     Pop.append(cnddt)
 
         def _eval(ppl):
-            if self.couldBfirst == []:
-                from sklearn.pipeline import Pipeline
-            else:
-                from imblearn.pipeline import Pipeline
+            # if self.couldBfirst == []:
+            #    from sklearn.pipeline import Pipeline
+            # else:
+            #    from imblearn.pipeline import Pipeline
             from sklearn.model_selection import RandomizedSearchCV
 
             if self.surrogates is None:
@@ -781,6 +790,7 @@ class AML(object):
                 int_idx = 1
                 int_steps = []
                 next_est = seq[ent_idx + int_idx]
+                # Find the rest of the sequence before the last or the next feature selector
                 while (
                         (self.config_types[next_est] in ["regressor", "classifier"])
                         or (next_est in self.known_feature_selectors)
