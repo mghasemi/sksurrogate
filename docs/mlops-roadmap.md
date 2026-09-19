@@ -64,7 +64,7 @@ Dependencies: none.
 
 ## Phase 2: Explicit Evaluation Protocols
 
-Status: in progress
+Status: complete
 
 Goal: prevent optimistic evaluation and support reliable model comparison.
 
@@ -96,20 +96,20 @@ Dependencies: Phase 1.
 
 ## Phase 3: Trial Scheduling and Resource Governance
 
-Status: not started
+Status: complete
 
 Goal: make AutoML runs predictable and safe to execute.
 
 Tasks:
 
-- [ ] Add per-trial wall-clock timeouts.
-- [ ] Add per-trial memory and CPU controls where the platform permits.
-- [ ] Add fit-count, generation-count, and global budget enforcement.
-- [ ] Add early stopping when no improvement is observed.
-- [ ] Add trial pruning based on intermediate or partial CV results.
-- [ ] Record cancellation reason, resource usage, and termination status.
-- [ ] Ensure interrupted runs leave recoverable checkpoints.
-- [ ] Add a run summary with budget consumption.
+- [x] Add per-trial wall-clock timeouts.
+- [x] Add per-trial memory and CPU controls where the platform permits.
+- [x] Add fit-count, generation-count, and global budget enforcement.
+- [x] Add early stopping when no improvement is observed.
+- [x] Add trial pruning based on intermediate or partial CV results.
+- [x] Record cancellation reason, resource usage, and termination status.
+- [x] Ensure interrupted runs leave recoverable checkpoints.
+- [x] Add a run summary with budget consumption.
 
 Acceptance criteria:
 
@@ -122,7 +122,7 @@ Dependencies: Phase 2.
 
 ## Phase 4: Search Space and Failure Management
 
-Status: not started
+Status: in progress
 
 Goal: prevent invalid configurations before expensive fitting and make failures actionable.
 

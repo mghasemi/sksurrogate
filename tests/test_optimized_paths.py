@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import warnings
 
 import matplotlib
 
@@ -415,6 +416,29 @@ class TestOptimizedPaths(unittest.TestCase):
         automl.set_params(verbose=0)
         self.assertIsNone(automl.best_estimator_)
 
+    def test_aml_records_budget_termination_summary(self):
+        X = np.array([[0.0], [1.0], [2.0], [3.0]], dtype=float)
+        y = np.array([0, 1, 0, 1], dtype=int)
+        automl = AML(
+            config={
+                "sklearn.linear_model.LogisticRegression": {
+                    "C": Real(0.1, 1.0),
+                }
+            },
+            length=1,
+            cv=2,
+            random_state=0,
+            time_limit=0.0,
+            max_evals=1,
+            verbose=0,
+        )
+
+        automl.fit(X, y)
+
+        self.assertEqual(automl.termination_reason, "time_limit")
+        self.assertEqual(automl.summary_["termination_reason"], "time_limit")
+        self.assertIn("budget", automl.summary_)
+
     def test_surrogate_search_evaluation_budget(self):
         evaluations = []
 
@@ -459,6 +483,89 @@ class TestOptimizedPaths(unittest.TestCase):
         self.assertIn("duration", search.cv_results_)
         self.assertIn("error", search.cv_results_)
         self.assertTrue(search.pareto_frontier())
+
+    def test_surrogate_search_records_budget_termination_reason(self):
+        search = SurrogateSearch(
+            lambda z: (z[0] - 2.5) ** 2,
+            x0=[0.0],
+            bounds=[(0.0, 5.0)],
+            max_iter=25,
+            min_evals=2,
+            time_limit=0.0,
+            random_state=0,
+        )
+
+        search()
+
+        self.assertEqual(search.termination_reason, "time_limit")
+        self.assertEqual(search.summary_["termination_reason"], "time_limit")
+        self.assertIn("budget", search.summary_)
+
+    def test_surrogate_search_reports_no_progress_early_stop(self):
+        def objective(point):
+            return 1.0 if point[0] < 0.0 else 0.0
+
+        search = SurrogateSearch(
+            objective,
+            x0=[0.0],
+            bounds=[(-1.0, 1.0)],
+            max_iter=5,
+            min_evals=2,
+            max_itr_no_prog=0,
+            random_state=0,
+        )
+
+        search()
+
+        self.assertEqual(search.termination_reason, "max_iter_no_progress")
+        self.assertEqual(search.summary_["termination_reason"], "max_iter_no_progress")
+        self.assertIn("budget", search.summary_)
+
+    def test_aml_cpu_limit_caps_parallelism(self):
+        automl = AML(config={}, n_jobs=-1, cpu_limit=1, verbose=0)
+        self.assertEqual(automl.n_jobs, 1)
+        self.assertEqual(automl.cpu_limit, 1)
+
+    def test_aml_memory_limit_is_recorded(self):
+        automl = AML(config={}, memory_limit="512MiB", verbose=0)
+        self.assertEqual(automl.memory_limit, "512MiB")
+        self.assertIn("memory_limit", automl.get_params())
+
+    def test_surrogate_cv_prunes_unpromising_partial_trials(self):
+        from sklearn.base import BaseEstimator, ClassifierMixin
+
+        class AlwaysZeroClassifier(BaseEstimator, ClassifierMixin):
+            _estimator_type = "classifier"
+
+            def __init__(self, alpha=0.0):
+                self.alpha = alpha
+
+            def fit(self, X, y):
+                self.n_features_in_ = X.shape[1]
+                return self
+
+            def score(self, X, y):
+                return 0.0
+
+        X = np.array([[0.0], [1.0], [2.0], [3.0]], dtype=float)
+        y = np.array([0, 1, 0, 1], dtype=int)
+
+        search = SurrogateRandomCV(
+            AlwaysZeroClassifier(),
+            {"alpha": Real(0.0, 1.0)},
+            cv=2,
+            n_jobs=1,
+            max_iter=1,
+            min_evals=1,
+            prune_threshold=0.0,
+            min_partial_folds=1,
+            refit=False,
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            search.fit(X, y)
+
+        self.assertIn("pruned", [item["status"] for item in search.evaluation_history_])
 
 
 if __name__ == "__main__":

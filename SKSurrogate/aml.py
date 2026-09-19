@@ -398,6 +398,8 @@ class AML(object):
     :param stack_decision: default=True; `StackingEstimator`s `decision`
     :param verbose: default=1; Level of output details
     :param n_jobs: int, default=-1; number of processes to run in parallel
+    :param cpu_limit: Optional maximum CPU parallelism to respect for each surrogate search.
+    :param memory_limit: Optional memory limit descriptor carried in the summary metadata.
     :param random_state: Optional seed for the default CV and evolutionary search.
     :param time_limit: Optional wall-clock limit in seconds for each surrogate search.
     :param max_evals: Optional maximum objective evaluations for each surrogate search.
@@ -421,6 +423,8 @@ class AML(object):
             random_state=None,
             time_limit=None,
             max_evals=None,
+            cpu_limit=None,
+            memory_limit=None,
     ):
         from collections import OrderedDict
 
@@ -471,10 +475,13 @@ class AML(object):
         self.stack_decision = stack_decision
         self.verbose = verbose
         self.num_features = 2
+        self.cpu_limit = cpu_limit
+        self.memory_limit = memory_limit
         self.n_jobs = n_jobs
         self.random_state = random_state
         self.time_limit = time_limit
         self.max_evals = max_evals
+        self._apply_resource_limits()
         # TBD: check cv
         if cv is None:
             self.cv = 3
@@ -486,6 +493,18 @@ class AML(object):
         self.evaluation_history_ = []
         self.best_estimator_ = None
         self.best_estimator_score = 0.0
+        self.termination_reason = None
+        self.summary_ = {}
+
+    def _apply_resource_limits(self):
+        """Clamp the effective parallelism to the configured CPU budget."""
+        if self.cpu_limit is None:
+            return
+        limit = int(self.cpu_limit)
+        if limit < 1:
+            raise ValueError("cpu_limit must be a positive integer")
+        if self.n_jobs == -1 or self.n_jobs > limit:
+            self.n_jobs = limit
 
     def types(self):
         """
@@ -668,6 +687,8 @@ class AML(object):
 
         self.models.clear()
         self.evaluation_history_.clear()
+        self.termination_reason = None
+        self.summary_ = {}
         _X, _y = X, y
         if self.cat_cols is not None:
             from category_encoders.one_hot import OneHotEncoder
@@ -726,6 +747,8 @@ class AML(object):
 
         self.models.clear()
         self.evaluation_history_.clear()
+        self.termination_reason = None
+        self.summary_ = {}
         _X, _y = X, y
         if self.cat_cols is not None:
             from category_encoders.one_hot import OneHotEncoder
@@ -873,6 +896,8 @@ class AML(object):
             "stack_decision": self.stack_decision,
             "verbose": self.verbose,
             "n_jobs": self.n_jobs,
+            "cpu_limit": self.cpu_limit,
+            "memory_limit": self.memory_limit,
             "random_state": self.random_state,
             "time_limit": self.time_limit,
             "max_evals": self.max_evals,
@@ -886,8 +911,11 @@ class AML(object):
             raise ValueError("Invalid AML parameters: %s" % ", ".join(invalid))
         for key, value in params.items():
             setattr(self, key, value)
+        self._apply_resource_limits()
         self.best_estimator_ = None
         self.evaluation_history_ = []
+        self.termination_reason = None
+        self.summary_ = {}
         return self
 
     def optimize_pipeline(self, seq, X, y):
@@ -1004,6 +1032,21 @@ class AML(object):
             )
             ppln.fit(X, y)
             score = float(scores.mean())
+            self.termination_reason = "completed"
+            self.summary_ = {
+                "termination_reason": "completed",
+                "status": "completed",
+                "budget": {
+                    "time_limit": self.time_limit,
+                    "max_evals": self.max_evals,
+                    "cpu_limit": self.cpu_limit,
+                    "memory_limit": self.memory_limit,
+                    "elapsed_seconds": 0.0,
+                    "iterations": 0,
+                    "evaluations": 0,
+                },
+                "current_value": None,
+            }
             return ppln, score
         for srgt in surrogates:
             OPTIM = SurrogateRandomCV(
@@ -1026,6 +1069,11 @@ class AML(object):
                 random_state=self.random_state,
             )
             OPTIM.fit(X, y)
+            if getattr(OPTIM, "summary_", None):
+                self.termination_reason = getattr(
+                    OPTIM, "termination_reason", self.termination_reason
+                )
+                self.summary_ = dict(OPTIM.summary_)
         if OPTIM is None:
             raise RuntimeError("No surrogate search was executed")
         return OPTIM.best_estimator_, OPTIM.best_estimator_score

@@ -205,6 +205,7 @@ class SurrogateSearch(object):
     :param Continue: `boolean` continues the progress from where it has been interrupted (default: False)
     :param warm_start: `boolean` use data from the previous attempts, but starts from the first iteration
         (default: False)
+    :param cpu_limit: Optional cap on the parallelism consumed by any internal worker pool.
     :param verbose: `boolean` whether to report the progress on commandline or not (default: False)
     """
 
@@ -221,6 +222,10 @@ class SurrogateSearch(object):
         self.MaxIter = kwargs.pop("max_iter", 50)
         self.time_limit = kwargs.pop("time_limit", None)
         self.max_evals = kwargs.pop("max_evals", None)
+        self.cpu_limit = kwargs.pop("cpu_limit", None)
+        self.memory_limit = kwargs.pop("memory_limit", None)
+        self.prune_threshold = kwargs.pop("prune_threshold", None)
+        self.min_partial_folds = kwargs.pop("min_partial_folds", 1)
         self.radius = kwargs.pop("radius", 2.0)
         self.contraction = kwargs.pop("contraction", 0.9)
         sampling = kwargs.pop("sampling", SphereSample)
@@ -257,6 +262,8 @@ class SurrogateSearch(object):
         self.MinEvals = kwargs.pop("min_evals", binom(n_ + poly_deg, n_))
         self.regressor = kwargs.pop("regressor", None)
         self.scipy_solver = kwargs.get("scipy_solver", "COBYLA")
+        self.termination_reason = None
+        self.summary_ = {}
         if self.regressor is None:
             from .NpyProximation import HilbertRegressor
 
@@ -348,7 +355,7 @@ class SurrogateSearch(object):
         :param x0: init point for the iteration
         :return: None
         """
-        from numpy import sqrt, array
+        from numpy import sqrt, array, isfinite
 
         close_points = []
         X = []
@@ -356,6 +363,8 @@ class SurrogateSearch(object):
         n_close_points = 0
         n_ = len(x0)
         for p in self.evaluated:
+            if not isfinite(p[1]):
+                continue
             if self.search_sphere:
                 cur = p[0] - x0
                 distance = sqrt(sum([t ** 2 for t in cur]))
@@ -377,7 +386,7 @@ class SurrogateSearch(object):
                     % n_close_points
                 )
             self.regressor.fit(array(X), array(y))
-            apprx = lambda x: self.regressor.predict([x])[0]
+            apprx = lambda x: self.regressor.predict(array([x]))[0]
             cns = []
             if self.search_sphere:
                 r = self.radius * (self.contraction ** int(self.NumFailedLocOptim / 2))
@@ -452,6 +461,8 @@ class SurrogateSearch(object):
         from time import monotonic
 
         started = monotonic()
+        self.termination_reason = None
+        self.summary_ = {}
         # if tqdm is not None:
         if self.verbose > 0:
             # pbar = tqdm(total=self.MaxIter)
@@ -460,8 +471,10 @@ class SurrogateSearch(object):
         self.__optim_param()
         while self.iteration <= self.MaxIter:
             if self.time_limit is not None and monotonic() - started >= self.time_limit:
+                self.termination_reason = "time_limit"
                 break
             if self.max_evals is not None and len(self.evaluated) >= self.max_evals:
+                self.termination_reason = "max_evals"
                 break
             if self.verbose > 1:
                 print("Iteration # %d" % self.iteration)
@@ -475,12 +488,30 @@ class SurrogateSearch(object):
             if self.NumIterNoProg > self.MaxIterNoProg:
                 if self.verbose > 1:
                     print("No progress in %d iterations." % self.NumIterNoProg)
+                self.termination_reason = "max_iter_no_progress"
                 break
             # if tqdm is not None:
             if self.verbose > 0:
                 print("End of iteration.")
                 # pbar.update(1)  # update the progressbar
             self.__save()  # save the progress
+        if self.termination_reason is None:
+            self.termination_reason = "max_iter" if self.iteration >= self.MaxIter else "completed"
+        elapsed = monotonic() - started
+        self.summary_ = {
+            "termination_reason": self.termination_reason,
+            "status": "terminated" if self.termination_reason != "completed" else "completed",
+            "budget": {
+                "time_limit": self.time_limit,
+                "max_evals": self.max_evals,
+                "cpu_limit": self.cpu_limit,
+                "memory_limit": self.memory_limit,
+                "elapsed_seconds": elapsed,
+                "iterations": self.iteration,
+                "evaluations": len(self.evaluated),
+            },
+            "current_value": getattr(self, "current_val", None),
+        }
         return self.current, self.current_val
 
     def progress(self):
@@ -705,6 +736,10 @@ class SurrogateRandomCV(BaseSearchCV):
             time_limit=None,
             max_evals=None,
             random_state=None,
+            cpu_limit=None,
+            memory_limit=None,
+            prune_threshold=None,
+            min_partial_folds=1,
     ):
         super(SurrogateRandomCV, self).__init__(
             estimator=estimator,
@@ -735,8 +770,18 @@ class SurrogateRandomCV(BaseSearchCV):
         self.max_itr_no_prog = max_itr_no_prog
         self.time_limit = time_limit
         self.max_evals = max_evals
+        self.cpu_limit = cpu_limit
+        self.memory_limit = memory_limit
+        self.prune_threshold = prune_threshold
+        self.min_partial_folds = min_partial_folds
         self.random_state = random_state
         self.bounds = []
+        if self.cpu_limit is not None:
+            limit = int(self.cpu_limit)
+            if limit < 1:
+                raise ValueError("cpu_limit must be a positive integer")
+            if self.n_jobs == -1 or self.n_jobs > limit:
+                self.n_jobs = limit
         self.ineqs = ineqs
         self.init = init if init is not None else {}
         self.OPTIM = None
@@ -747,6 +792,8 @@ class SurrogateRandomCV(BaseSearchCV):
         self.best_score_ = 0.
         self.evaluation_history_ = []
         self.cv_results_ = {}
+        self.termination_reason = None
+        self.summary_ = {}
 
     def fit(self, X, y=None, groups=None, **fit_params):
         """
@@ -915,6 +962,23 @@ class SurrogateRandomCV(BaseSearchCV):
                     score += sc
                     n_test += 1
             score = score / float(max(n_test, 1))
+            if (
+                    self.prune_threshold is not None
+                    and n_test >= self.min_partial_folds
+                    and score <= self.prune_threshold
+            ):
+                self.evaluation_history_.append(
+                    {
+                        "params": cand_params.copy(),
+                        "score": None,
+                        "status": "pruned",
+                        "duration": perf_counter() - started,
+                        "fold_duration": sum(durations),
+                        "error": "; ".join(errors) if errors else None,
+                        "partial_folds": n_test,
+                    }
+                )
+                return float("inf")
             self.evaluation_history_.append(
                 {
                     "params": cand_params.copy(),
@@ -923,6 +987,7 @@ class SurrogateRandomCV(BaseSearchCV):
                     "duration": perf_counter() - started,
                     "fold_duration": sum(durations),
                     "error": "; ".join(errors) if errors else None,
+                    "partial_folds": n_test,
                 }
             )
             return -score
@@ -949,6 +1014,10 @@ class SurrogateRandomCV(BaseSearchCV):
             task_name=self.task_name,
             warm_start=self.warm_start,
             Continue=self.Continue,
+            cpu_limit=self.cpu_limit,
+            memory_limit=self.memory_limit,
+            prune_threshold=self.prune_threshold,
+            min_partial_folds=self.min_partial_folds,
         )
         x, scr = self.OPTIM()
         best_params_ = {}
@@ -972,6 +1041,8 @@ class SurrogateRandomCV(BaseSearchCV):
         self.best_estimator_ = clone(self.estimator).set_params(**best_params_)
         self.best_estimator_score = scr
         self.best_score_ = scr
+        self.termination_reason = getattr(self.OPTIM, "termination_reason", None)
+        self.summary_ = getattr(self.OPTIM, "summary_", {})
         self.cv_results_ = {
             "params": [item["params"] for item in self.evaluation_history_],
             "mean_test_score": [item["score"] for item in self.evaluation_history_],
