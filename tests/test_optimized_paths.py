@@ -12,12 +12,12 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import ShuffleSplit
 from sklearn.model_selection import KFold
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import LinearRegression, LogisticRegression
 
 from SKSurrogate import AML, DataPreprocess, StackingEstimator, mltrack, np2df
 from SKSurrogate.eoa import UniformRand
 from SKSurrogate.sensapprx import SensAprx
-from SKSurrogate.structsearch import SurrogateSearch
+from SKSurrogate.structsearch import Real, SurrogateRandomCV, SurrogateSearch
 
 
 class TestOptimizedPaths(unittest.TestCase):
@@ -70,6 +70,10 @@ class TestOptimizedPaths(unittest.TestCase):
         with tempfile.NamedTemporaryFile(suffix=".db") as database:
             tracker = mltrack("test", db_name=database.name, cv=cv)
             tracker.RegisterData(frame, "target")
+            tracker.UpdateMetadata({"dataset": {"rows": 80}, "seed": 2})
+            metadata = tracker.GetMetadata()
+            self.assertEqual(metadata["dataset"]["rows"], 80)
+            self.assertEqual(metadata["seed"], 2)
             model = tracker.LogModel(RandomForestClassifier(n_estimators=5, random_state=2), "rf")
             metrics = tracker.LogMetrics(model)
             tracker.plot_roc_curve(model, "rf")
@@ -126,6 +130,31 @@ class TestOptimizedPaths(unittest.TestCase):
             )
             search()
         self.assertLessEqual(len(evaluations), 3)
+
+    def test_surrogate_trial_metadata_and_frontier(self):
+        X, y = make_classification(
+            n_samples=30,
+            n_features=4,
+            n_informative=2,
+            n_redundant=0,
+            random_state=4,
+        )
+        search = SurrogateRandomCV(
+            LogisticRegression(max_iter=100),
+            {"C": Real(0.1, 1.0)},
+            cv=3,
+            n_jobs=1,
+            max_iter=1,
+            min_evals=2,
+            max_evals=1,
+            refit=False,
+        )
+        search.fit(X, y)
+
+        self.assertEqual(len(search.cv_results_["params"]), len(search.evaluation_history_))
+        self.assertIn("duration", search.cv_results_)
+        self.assertIn("error", search.cv_results_)
+        self.assertTrue(search.pareto_frontier())
 
 
 if __name__ == "__main__":

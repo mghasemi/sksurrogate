@@ -3,11 +3,8 @@ Optimized Pipeline Detector
 ===============================
 
 """
-try:
-    from sklearn.base import BaseEstimator, TransformerMixin
-except ModuleNotFoundError:
-    BaseEstimator = type("BaseEstimator", (object,), dict())
-    TransformerMixin = type("TransformerMixin", (object,), dict())
+from sklearn.base import BaseEstimator, TransformerMixin
+from typing import Any
 
 
 class StackingEstimator(BaseEstimator, TransformerMixin):
@@ -427,6 +424,7 @@ class AML(object):
     ):
         from collections import OrderedDict
 
+        self.config: dict = {}
         if config is None:
             self.config = default_config
         else:
@@ -638,6 +636,9 @@ class AML(object):
                 (GPR, 50, BoxSample, "L-BFGS-B"),
             ]
             self.min_random_evals = 10
+        surrogates = self.surrogates
+        if surrogates is None:
+            raise RuntimeError("No surrogate regressors are configured")
         Pop = []
         candidates = self.words.Generate(n)
         for cnddt in candidates:
@@ -655,7 +656,7 @@ class AML(object):
                 print("score:%f" % best_scr)
                 print(best_mdl)
 
-    def fit(self, X, y):
+    def fit(self, X: Any, y: Any):
         """
         Generates and optimizes all legitimate pipelines. The best pipeline can be retrieved from `self.best_estimator_`
 
@@ -663,6 +664,8 @@ class AML(object):
         :param y: Corresponding observations
         :return: `self`
         """
+        import numpy as np
+
         self.models.clear()
         self.evaluation_history_.clear()
         _X, _y = X, y
@@ -676,7 +679,7 @@ class AML(object):
             _X = enc.transform(X)
 
         X_, y_ = _X, _y
-        self.num_features = len(X_[0])
+        self.num_features = np.asarray(X_).shape[1]
         for l in range(1, self.length + 1):
             self._cast(l, X_, y_)
         self.best_estimator_ = list(self.get_top(1).items())[0][1][0]
@@ -708,7 +711,7 @@ class AML(object):
                 estimator.set_params(random_state=self.random_state)
         return estimator
 
-    def eoa_fit(self, X, y, **kwargs):
+    def eoa_fit(self, X: Any, y: Any, **kwargs):
         """
         Applies evolutionary optimization methods to find an optimum pipeline
 
@@ -717,6 +720,7 @@ class AML(object):
         :param kwargs: `EOA` parameters
         :return: `self`
         """
+        import numpy as np
         from .structsearch import BoxSample, CompactSample
         from .eoa import EOA
 
@@ -732,7 +736,7 @@ class AML(object):
             enc.fit(X)
             _X = enc.transform(X)
         X_, y_ = _X, _y
-        self.num_features = len(X_[0])
+        self.num_features = np.asarray(X_).shape[1]
         Pop = []
         for l in range(1, self.length + 1):
             candidates = self.words.Generate(l)
@@ -897,6 +901,9 @@ class AML(object):
         :return: the optimized pipeline and its score
         """
         from .structsearch import SurrogateRandomCV
+        surrogates = self.surrogates
+        if surrogates is None:
+            raise RuntimeError("No surrogate regressors are configured")
 
         if self.couldBfirst == []:
             from sklearn.pipeline import Pipeline
@@ -955,7 +962,7 @@ class AML(object):
 
                         int_est = self._new_estimator(self._get_class(next_est))
                         int_mdl = SelectFromModel(
-                            PermutationImportance(int_est, scoring=self.scoring, cv=3),
+                            PermutationImportance(int_est, scoring=self.scoring, cv=3),  # type: ignore[arg-type]
                             threshold=-inf,
                         )
                         self.config[est][int_pre + "__" + "max_features"] = Integer(
@@ -984,7 +991,21 @@ class AML(object):
             print("=" * 90)
             print(seq)
             print("-" * 90)
-        for srgt in self.surrogates:
+        if not config:
+            from sklearn.model_selection import cross_val_score
+
+            scores = cross_val_score(
+                ppln,
+                X,
+                y,
+                scoring=self.scoring,
+                cv=self.cv,
+                n_jobs=self.n_jobs,
+            )
+            ppln.fit(X, y)
+            score = float(scores.mean())
+            return ppln, score
+        for srgt in surrogates:
             OPTIM = SurrogateRandomCV(
                 ppln,
                 params=config,
@@ -1005,4 +1026,6 @@ class AML(object):
                 random_state=self.random_state,
             )
             OPTIM.fit(X, y)
+        if OPTIM is None:
+            raise RuntimeError("No surrogate search was executed")
         return OPTIM.best_estimator_, OPTIM.best_estimator_score

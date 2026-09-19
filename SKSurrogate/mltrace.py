@@ -14,12 +14,18 @@ It also has built in capabilities to generate some typical plots and graph in ma
 
 import numpy
 import joblib
-
-try:
-    from peewee import *
-except ModuleNotFoundError:
-    Model = type("Model", (object,), dict(Simple=lambda: 0.0))
-    SqliteDatabase = lambda x: None
+from typing import Any
+from peewee import (
+    BareField,
+    CharField,
+    DateTimeField,
+    FloatField,
+    ForeignKeyField,
+    IntegerField,
+    Model,
+    SqliteDatabase,
+    TextField,
+)
 from datetime import datetime
 
 MLTRACK_DB = SqliteDatabase(None)
@@ -68,6 +74,22 @@ class Task(Model):
         ignore = CharField(null=True)
         init_date = DateTimeField(default=datetime.now, null=True)
         last_mod_date = DateTimeField(default=datetime.now, null=True)
+    except:
+        pass
+
+    class Meta:
+        database = MLTRACK_DB
+
+
+class TaskMetadata(Model):
+    """Versioned key/value metadata associated with a tracked task."""
+
+    try:
+        metadata_id = IntegerField(primary_key=True, unique=True, null=False)
+        task_id = ForeignKeyField(Task)
+        key = CharField(null=False)
+        value = TextField(null=True)
+        date_modified = DateTimeField(default=datetime.now, null=True)
     except:
         pass
 
@@ -196,7 +218,7 @@ class mltrack(object):
 
     def __init__(self, task, task_id=None, db_name="mltrack.db", cv=None, encode=False):
         self.db_name = db_name
-        tables = [Task, MLModel, Metrics, Saved, Plots, Data, Weights]
+        tables = [Task, TaskMetadata, MLModel, Metrics, Saved, Plots, Data, Weights]
         for tbl in tables:
             tbl._meta.database.init(self.db_name)
         MLTRACK_DB.create_tables(tables)
@@ -217,10 +239,51 @@ class mltrack(object):
             self.cv = ShuffleSplit(n_splits=3, test_size=0.25)
         else:
             self.cv = cv
-        self.X, self.y = None, None
+        self.X: Any = None
+        self.y: Any = None
         self.encode = encode
         self.Updated, self.Loaded, self.Recovered = [], [], []
         self._split_cache = {}
+        self._register_environment_metadata()
+
+    def _register_environment_metadata(self):
+        """Record interpreter and core dependency versions for reproducibility."""
+        import importlib.metadata
+        import platform
+
+        metadata = {
+            "python_version": platform.python_version(),
+            "numpy_version": importlib.metadata.version("numpy"),
+            "pandas_version": importlib.metadata.version("pandas"),
+            "scikit_learn_version": importlib.metadata.version("scikit-learn"),
+            "sksurrogate_version": importlib.metadata.version("SKSurrogate"),
+        }
+        self.UpdateMetadata(metadata)
+
+    def UpdateMetadata(self, metadata):
+        """Create or replace JSON-serializable task metadata values."""
+        import json
+
+        for key, value in metadata.items():
+            record = TaskMetadata.select().where(
+                (TaskMetadata.task_id == self.task_id) & (TaskMetadata.key == key)
+            )
+            serialized = json.dumps(value, sort_keys=True, default=str)
+            if len(record) == 0:
+                TaskMetadata.create(task_id=self.task_id, key=key, value=serialized)
+            else:
+                record[0].value = serialized
+                record[0].date_modified = datetime.now()
+                record[0].save()
+
+    def GetMetadata(self):
+        """Return task metadata decoded into a dictionary."""
+        import json
+
+        return {
+            record.key: json.loads(record.value or "null")
+            for record in TaskMetadata.select().where(TaskMetadata.task_id == self.task_id)
+        }
 
     def UpdateTask(self, data):
         """
@@ -304,7 +367,7 @@ class mltrack(object):
             Tskres.save()
         return mdl
 
-    def RegisterData(self, source_df, target):
+    def RegisterData(self, source_df: Any, target):
         """
         Registers a pandas DataFrame into the SQLite database.
         Upon a call, it also sets `self.X` and `self.y` which are numpy arrays.
@@ -372,6 +435,10 @@ class mltrack(object):
             self.cv = cv
         if self.X is None:
             self.get_data()
+        X_data = self.X
+        y_data = self.y
+        if X_data is None or y_data is None:
+            raise RuntimeError("No registered data is available")
         if "mltrack_id" not in mdl.__dict__:
             mdl = self.LogModel(mdl)
         mdl_id = mdl.mltrack_id
@@ -387,9 +454,9 @@ class mltrack(object):
         prds = []
         prbs = []
         scores = []
-        for train_idx, test_idx in self.cv.split(self.X, self.y):
-            X_train, y_train = self.X[train_idx], self.y[train_idx]
-            X_test, y_test = self.X[test_idx], self.y[test_idx]
+        for train_idx, test_idx in self.cv.split(X_data, y_data):
+            X_train, y_train = X_data[train_idx], y_data[train_idx]
+            X_test, y_test = X_data[test_idx], y_data[test_idx]
             mdl.fit(X_train, y_train)
             prds.append((mdl.predict(X_test), y_test))
             try:
@@ -434,7 +501,7 @@ class mltrack(object):
             mcc = sum([matthews_corrcoef(y_tst, y_prd) for y_prd, y_tst in prds]) / n_
             if len(prbs) == len(prds):
                 lgl = sum(
-                    log_loss(y_tst, probabilities, labels=numpy.unique(self.y))
+                    log_loss(y_tst, probabilities, labels=numpy.unique(y_data))
                     for probabilities, (_, y_tst) in zip(prbs, prds)
                 ) / n_
             aur = None
@@ -695,6 +762,10 @@ class mltrack(object):
 
         if self.X is None:
             self.get_data()
+        X_data = self.X
+        y_data = self.y
+        if X_data is None or y_data is None:
+            raise RuntimeError("No registered data is available")
 
         if "mltrack_id" not in mdl.__dict__:
             mdl = self.LogModel(mdl)
@@ -713,15 +784,17 @@ class mltrack(object):
         plt.ylim(*ylim)
         plt.xlabel("Training size")
         plt.ylabel("Score (%s)" % (meas))
-        train_sizes, train_scores, test_scores = learning_curve(
+        learning_result = learning_curve(
             mdl,
-            self.X,
-            self.y,
+            X_data,
+            y_data,
             cv=self.cv,
             n_jobs=n_jobs,
             train_sizes=train_sizes,
             scoring=meas,
+            return_times=False,
         )
+        train_sizes, train_scores, test_scores = learning_result[:3]
         xlbls = np.array(
             [str(round(_ * 100, 1)) + " %" for _ in train_sizes / len(self.y)]
         )
@@ -824,7 +897,7 @@ class mltrack(object):
         ax2.hist(prob_pos, range=(0, 1), bins=bins, label=name, histtype="step", lw=2)
 
         ax1.set_ylabel("Fraction of positives")
-        ax1.set_ylim([-0.05, 1.05])
+        ax1.set_ylim((-0.05, 1.05))
         ax1.legend(loc="lower right")
         ax1.set_title("Calibration plots  (reliability curve)")
 
@@ -868,7 +941,7 @@ class mltrack(object):
         fpr, tpr, _ = roc_curve(y_test, y_score)
         plt.plot(fpr, tpr, linewidth=2, label=label)
         plt.plot([0, 1], [0, 1], "k--")
-        plt.axis([-0.005, 1, 0, 1.005])
+        plt.axis((-0.005, 1, 0, 1.005))
         plt.xticks(arange(0, 1, 0.05), rotation=90)
         plt.xlabel("False Positive Rate")
         plt.ylabel("True Positive Rate (Recall)")
@@ -947,8 +1020,8 @@ class mltrack(object):
         ax.plot(percentages, gains1, lw=3, label="Class {}".format(classes[0]))
         ax.plot(percentages, gains2, lw=3, label="Class {}".format(classes[1]))
 
-        ax.set_xlim([0.0, 1.0])
-        ax.set_ylim([0.0, 1.0])
+        ax.set_xlim((0.0, 1.0))
+        ax.set_ylim((0.0, 1.0))
 
         ax.plot([0, 1], [0, 1], "k--", lw=2, label="Baseline")
 
@@ -1007,7 +1080,7 @@ class mltrack(object):
         y_true = y_true[sorted_indices]
         gains = cumsum(y_true)
 
-        percentages = arange(start=1, stop=len(y_true) + 1)
+        percentages = numpy.arange(1, int(len(y_true) + 1), dtype=int)
 
         gains = gains / float(sum(y_true))
         percentages = percentages / float(len(y_true))
@@ -1274,6 +1347,8 @@ class mltrack(object):
                 SF.fit(X, y)
                 domain = SF.domain
                 probs = SF.probs
+                if SF.weights_ is None:
+                    raise RuntimeError("Sensitivity analysis did not produce weights")
                 W["sobol"] = [SF.weights_[features.index(v)] for v in features]
             elif factor == "morris":
                 from .sensapprx import SensAprx
@@ -1289,6 +1364,8 @@ class mltrack(object):
                 SF.fit(X, y)
                 domain = SF.domain
                 probs = SF.probs
+                if SF.weights_ is None:
+                    raise RuntimeError("Sensitivity analysis did not produce weights")
                 W["morris"] = [SF.weights_[features.index(v)] for v in features]
             elif factor == "delta-mmnt":
                 from .sensapprx import SensAprx
@@ -1304,6 +1381,8 @@ class mltrack(object):
                 SF.fit(X, y)
                 domain = SF.domain
                 probs = SF.probs
+                if SF.weights_ is None:
+                    raise RuntimeError("Sensitivity analysis did not produce weights")
                 W["delta_mmnt"] = [SF.weights_[features.index(v)] for v in features]
             elif factor == "info-gain":
                 from sklearn.feature_selection import mutual_info_classif

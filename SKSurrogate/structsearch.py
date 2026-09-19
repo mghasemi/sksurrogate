@@ -824,6 +824,9 @@ class SurrogateRandomCV(BaseSearchCV):
         cv_dat = list(cv.split(X, y, groups))
 
         def obj(x):
+            from time import perf_counter
+
+            started = perf_counter()
             cand_params = {}
             _idx = 0
             for _param in self.params_list:
@@ -850,6 +853,7 @@ class SurrogateRandomCV(BaseSearchCV):
             n_test = 0
 
             def parallel_fit_score(cl, cand_params_, X, y, scorer, train, test, verbose, fit_params_, error_score):
+                fold_started = perf_counter()
                 cl.set_params(**cand_params_)
                 try:
                     _score = _fit_and_score(
@@ -862,28 +866,28 @@ class SurrogateRandomCV(BaseSearchCV):
                         verbose=verbose,  #
                         parameters=cand_params_,
                         fit_params=fit_params_,  #
+                        score_params={},
                         error_score=error_score,  #
                     )
-                    ky = 'fit_error'
-                    vl = None
-                    if 'fit_error' in _score:
-                        ky = 'fit_error'
-                        vl = None
-                    elif 'fit_failed' in _score:
-                        ky = 'fit_failed'
-                        vl = False
-                    if _score[ky] is vl:
-                        return _score['test_scores']
-                    else:
-                        return 0.
-                except ValueError:
+                    if _score.get("fit_error") is not None:
+                        return {
+                            "score": None,
+                            "error": repr(_score["fit_error"]),
+                            "duration": perf_counter() - fold_started,
+                        }
+                    return {
+                        "score": _score["test_scores"],
+                        "error": None,
+                        "duration": perf_counter() - fold_started,
+                    }
+                except Exception as exc:
                     if self.verbose > 1:
                         print("Model evaluation error")
-                    else:
-                        pass
-                    # except:  # LightGBMError:
-                    pass
-                return None
+                    return {
+                        "score": None,
+                        "error": repr(exc),
+                        "duration": perf_counter() - fold_started,
+                    }
 
             try:
                 scores = Parallel(n_jobs=self.n_jobs,
@@ -902,8 +906,11 @@ class SurrogateRandomCV(BaseSearchCV):
                                                                 )
                                     for train, test in cv_dat)
             except:
-                scores = (0, )
-            for sc in scores:
+                scores = ({"score": None, "error": "parallel evaluation failed", "duration": 0.0},)
+            errors = [result["error"] for result in scores if result["error"] is not None]
+            durations = [result["duration"] for result in scores]
+            for result in scores:
+                sc = result["score"]
                 if sc is not None:
                     score += sc
                     n_test += 1
@@ -913,6 +920,9 @@ class SurrogateRandomCV(BaseSearchCV):
                     "params": cand_params.copy(),
                     "score": -score if n_test else None,
                     "status": "complete" if n_test else "failed",
+                    "duration": perf_counter() - started,
+                    "fold_duration": sum(durations),
+                    "error": "; ".join(errors) if errors else None,
                 }
             )
             return -score
@@ -966,5 +976,36 @@ class SurrogateRandomCV(BaseSearchCV):
             "params": [item["params"] for item in self.evaluation_history_],
             "mean_test_score": [item["score"] for item in self.evaluation_history_],
             "status": [item["status"] for item in self.evaluation_history_],
+            "duration": [item["duration"] for item in self.evaluation_history_],
+            "error": [item["error"] for item in self.evaluation_history_],
         }
         return self
+
+    def pareto_frontier(self, score_key="score", cost_key="duration"):
+        """Return trials not dominated on score and evaluation cost.
+
+        Scores are maximized and costs are minimized. Failed trials and trials
+        missing either metric are excluded. The returned records are copies and
+        remain safe to inspect after subsequent searches.
+        """
+        valid = [
+            item for item in self.evaluation_history_
+            if item.get("status") == "complete"
+            and item.get(score_key) is not None
+            and item.get(cost_key) is not None
+        ]
+        frontier = []
+        for candidate in valid:
+            dominated = any(
+                other is not candidate
+                and other[score_key] >= candidate[score_key]
+                and other[cost_key] <= candidate[cost_key]
+                and (
+                    other[score_key] > candidate[score_key]
+                    or other[cost_key] < candidate[cost_key]
+                )
+                for other in valid
+            )
+            if not dominated:
+                frontier.append(candidate.copy())
+        return frontier
