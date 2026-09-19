@@ -346,9 +346,11 @@ class DataPreprocess(object):
         txt_clmn_df = None
         org_df = copy(self.df)
         for clmn in self.deduced_types['int64']:
-            org_df[clmn] = org_df.apply(lambda x: self.numeric(x[clmn], 'int64'), axis=1)
+            values = org_df[clmn].astype(str).str.replace(r"[^\d\.]", "", regex=True)
+            org_df[clmn] = pandas.to_numeric(values, errors='coerce')
         for clmn in self.deduced_types['float64']:
-            org_df[clmn] = org_df.apply(lambda x: self.numeric(x[clmn]), axis=1)
+            values = org_df[clmn].astype(str).str.replace(r"[^\d\.]", "", regex=True)
+            org_df[clmn] = pandas.to_numeric(values, errors='coerce')
         if self.deduced_types['text']:
             txt_clmn_df = self.df[self.deduced_types['text']]
             org_df.drop(self.deduced_types['text'], axis=1, inplace=True)
@@ -368,21 +370,11 @@ class DataPreprocess(object):
         self.steps.append(('Impute', self.imputer))
         trans = Pipeline(self.steps)
         self.transformed_df = pandas.DataFrame(trans.fit_transform(org_df), columns=oe.get_feature_names_out())
-        for clmn in ohe.get_feature_names_out():
-            if clmn not in self.columns:
-                if self.force_impute:
-                    self.transformed_df[clmn] = self.transformed_df.apply(
-                        lambda x: int(round(x[clmn], 0)) if not pd.isna(x[clmn]) else x[clmn], axis=1)
-                else:
-                    self.transformed_df[clmn] = self.transformed_df.apply(
-                        lambda x: round(x[clmn], 0) if not pd.isna(x[clmn]) else x[clmn], axis=1)
-            elif clmn in self.deduced_types['categorical'] + ordinal_columns:
-                if self.force_impute:
-                    self.transformed_df[clmn] = self.transformed_df.apply(
-                        lambda x: int(round(x[clmn], 0)) if not pd.isna(x[clmn]) else x[clmn], axis=1)
-                else:
-                    self.transformed_df[clmn] = self.transformed_df.apply(
-                        lambda x: round(x[clmn], 0) if not pd.isna(x[clmn]) else x[clmn], axis=1)
+        encoded_columns = set(ohe.get_feature_names_out())
+        rounded_columns = encoded_columns.union(ordinal_columns)
+        for clmn in self.transformed_df.columns.intersection(rounded_columns):
+            rounded = self.transformed_df[clmn].round(0)
+            self.transformed_df[clmn] = rounded.astype(int) if self.force_impute else rounded
         for clmn in self.deduced_types['text']:
             txt_array = txt_clmn_df[clmn].values
             processed_txt = self.txt_prcsr.fit_transform(txt_array)

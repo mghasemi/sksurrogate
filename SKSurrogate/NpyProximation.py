@@ -223,10 +223,10 @@ class FunctionSpace(object):
         return lambda x: a * g(x) / b
 
     def GramMat(self):
-        from numpy import array
+        from numpy import zeros
 
         N = len(self.base)
-        cfs = array([[0.0] * N] * N)
+        cfs = zeros((N, N))
         for i in range(N):
             for j in range(i, N):
                 cf = self.inner(self.base[i], self.base[j])
@@ -235,25 +235,17 @@ class FunctionSpace(object):
         self.Gram = cfs
 
     def minor_gram(self, i):
-        from numpy import array
-
         if self.Gram is None:
             self.GramMat()
-        return array(
-            [[self.Gram[idx][jdx] for idx in range(i + 1)] for jdx in range(i + 1)]
-        )
+        return self.Gram[:i + 1, :i + 1]
 
     def minor(self, i, j):
-        from numpy import array, delete
+        from numpy import delete
         from numpy.linalg import det
 
         if j == 1:
             return 1.0
-        cfs = array([[0.0] * j] * (j - 1))
-        for jdx in range(j):
-            for idx in range(j - 1):
-                cfs[idx][jdx] = self.Gram[idx][jdx]
-        return det(delete(cfs, i, 1))
+        return det(delete(self.Gram[:j - 1, :j], i, axis=1))
 
     def FormBasis(self):
         """

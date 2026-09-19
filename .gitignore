@@ -29,6 +29,7 @@ htmlcov/
 # SKSurrogate optimization checkpoints and serialized results
 *.eoa
 *.pkl
+*.db
 
 # OS metadata
 .DS_Store

@@ -133,8 +133,7 @@ class BoxSample(BaseSample):
         candid = []
         radius = self.init_radius * cntrctn
         while not flag:
-            candid = [uniform(-radius, radius) for _ in range(n)]
-            candid = array([candid[i] for i in range(n)]) + centre
+            candid = array([uniform(-radius, radius) for _ in range(n)]) + centre
             flag = self.check_constraints(candid)
             radius = radius * self.contraction
         return candid
@@ -161,23 +160,21 @@ class SphereSample(BaseSample):
         :return: `numpy.array` a new sample
         """
         from random import uniform, shuffle
-        from numpy import sqrt, array
+        from numpy import array, empty, sqrt
 
         flag = False
         n = len(centre)
         candid = []
         radius = self.init_radius * cntrctn
         while not flag:
-            candid = []
             rng = list(range(n))
             shuffle(rng)
-            for _ in range(n):
-                if len(candid) > 0:
-                    r = sqrt(radius ** 2 - sum([t ** 2 for t in candid]))
-                else:
-                    r = radius
-                candid.append(uniform(-r, r))
-            candid = array([candid[i] for i in rng]) + centre
+            candid = empty(n)
+            for idx in range(n):
+                remaining = radius ** 2 - sum(candid[:idx] ** 2)
+                r = sqrt(max(remaining, 0.0))
+                candid[idx] = uniform(-r, r)
+            candid = candid[rng] + centre
             flag = self.check_constraints(candid)
             radius = radius * self.contraction
         return candid

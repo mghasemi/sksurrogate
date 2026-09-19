@@ -2,6 +2,15 @@
 A machine learning progress tracker
 =========================================
 
+Runnable example
+----------------
+
+The complete workflow below is available as a small, self-contained example. It uses a
+temporary SQLite database and a synthetic dataset, so it can be run without downloading
+data or leaving project artifacts behind::
+
+    .venv/bin/python examples/example03_mltrace.py
+
 When exploring for reasonable methods to model a problem, usually the search quickly results in
 a large number of candidates and it becomes very difficult to keep track of all models and their
 performance measures. There are various existing solutions, usually forcing to follow a particular

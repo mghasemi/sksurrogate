@@ -1,28 +1,43 @@
-"""
-Evolutionary Optimization Algorithm
-===========================================
+"""Configurable evolutionary optimization operators.
+
+The :class:`EOA` coordinator evolves a supplied population of tuple-like
+individuals. Fitness values are maximized by the built-in crossover and
+elitism operators.
 """
 
 
 class EOA(object):
-    """
-    This is a base class acting as an umbrella to perform an
-    evolutionary optimization algorithm.
+    """Coordinate population initialization, evolution, and checkpointing.
 
-    :param population: The whole possible population as a list
-    :param fitness: The fitness evaluation. Accepts an OrderedDict of individuals with their corresponding fitness and
-        updates their fitness
-    :param init_pop: default=`UniformRand`; The python class that initiates the initial population
-    :param recomb: default=`UniformCrossover`; The python class that defines how to combine parents to produce children
-    :param mutation: default=`Mutation`; The python class that performs mutation on offspring population
-    :param termination: default=`MaxGenTermination`; The python class that determines the termination criterion
-    :param elitism: default=`Elites`; The python class that decides how to handel elitism
-    :param num_parents: The size of initial parents population
-    :param parents_porp: default=0.1; The size of initial parents population given as a portion of whole population
-        (only used if `num_parents` is not given)
-    :param elits_porp: default=0.2; The porportion of offspring to be replaced by elite parents
-    :param mutation_prob: The probability that a component will be mutated (default: 0.05)
-    :param kwargs:
+    ``fitness`` receives an ``OrderedDict`` of individuals and must return an
+    ``OrderedDict`` with numeric fitness values. Larger values are considered
+    better. Operators are classes; they are instantiated with the remaining
+    keyword arguments and called with this ``EOA`` instance.
+
+    :param population: Complete collection of possible individuals.
+    :param fitness: Callback that evaluates an ``OrderedDict`` of individuals.
+    :param init_pop: Parent initializer class; defaults to ``UniformRand``.
+    :param recomb: Recombination class; defaults to ``UniformCrossover``.
+    :param mutation: Mutation class; defaults to ``Mutation``.
+    :param termination: Termination class; defaults to ``MaxGenTermination``.
+    :param elitism: Elitism class; defaults to ``Elites``.
+    :param num_parents: Number of parents selected each generation. If omitted,
+        it is derived from ``parents_porp``.
+    :param parents_porp: Parent proportion used when ``num_parents`` is omitted;
+        defaults to ``0.1``.
+    :param elits_porp: Proportion used to calculate the elite count; defaults to
+        ``0.2``.
+    :param mutation_prob: Probability of changing each individual element;
+        defaults to ``0.05``.
+    :param max_generation: Maximum generation count for the default termination
+        operator; defaults to ``50``.
+    :param genes: Complete gene list used by ``Mutation``. Inferred from the
+        population when omitted.
+    :param init_genes: Genes allowed in the first position during mutation.
+    :param term_genes: Genes allowed in the last position during mutation.
+    :param task_name: Checkpoint filename prefix; defaults to ``"EOA"``.
+    :param check_point: Directory prefix for checkpoints; defaults to ``"./"``.
+        The directory must already exist.
     """
 
     def __init__(self, population, fitness, **kwargs):
@@ -58,6 +73,7 @@ class EOA(object):
         self.children = OrderedDict()
 
     def find_genes(self):
+        """Infer mutation genes and positional gene lists from the population."""
         for ind in self.population:
             for e in ind:
                 if e not in self.genes:
@@ -68,11 +84,7 @@ class EOA(object):
             self.term_genes = self.genes
 
     def __save(self):
-        """
-        Logs state of the evolutionary optimization progress at each iteration
-
-        :return: None
-        """
+        """Serialize the current optimizer state to the ``.eoa`` checkpoint."""
         from pickle import dumps
 
         fl = open(self.check_point + self.task_name + ".eoa", "wb")
@@ -98,11 +110,7 @@ class EOA(object):
         fl.close()
 
     def __load(self):
-        """
-        Loads previous information saved, if any
-
-        :return: None
-        """
+        """Restore a matching checkpoint when one exists."""
         from pickle import loads
 
         try:
@@ -129,6 +137,12 @@ class EOA(object):
             pass
 
     def __call__(self, *args, **kwargs):
+        """Run generations until the configured termination operator returns true.
+
+        The method mutates ``parents``, ``children``, ``evals`` and
+        ``generation_num`` in place. It returns ``None``; inspect ``evals`` or
+        ``children`` after the run to retrieve results.
+        """
         self.parents = self.init_pop(self)
         self.__load()
         #tqdm = None
@@ -159,47 +173,41 @@ class EOA(object):
 
 
 class UniformRand(object):
-    """
-    Initial population initiation.
-    """
+    """Select distinct initial parents uniformly from the population."""
 
     def __init__(self, **kwargs):
         pass
 
     def __call__(self, ref, *args, **kwargs):
+        """Return an ``OrderedDict`` containing ``ref.num_parents`` individuals."""
         from collections import OrderedDict
-        from random import randint
+        from random import sample
 
-        cnt = 0
-        indices = []
-        while cnt < ref.num_parents:
-            idx = randint(0, ref.population_size - 1)
-            if idx not in indices:
-                # print(ref.population[idx])
-                indices.append(idx)
-                cnt += 1
+        indices = sample(range(ref.population_size), ref.num_parents)
         return OrderedDict(
             [(ref.population[i], ref.evals[ref.population[i]]) for i in indices]
         )
 
 
 class MaxGenTermination(object):
-    """
-    Termination condition: Whether the maximum number of generations has been reached or not
-    """
+    """Stop when ``ref.generation_num`` reaches ``ref.max_generations``."""
 
     def __init__(self, **kwargs):
         pass
 
     def __call__(self, ref, *args, **kwargs):
+        """Return ``True`` when the configured generation limit is reached."""
         if ref.generation_num < ref.max_generations:
             return False
         return True
 
 
 class UniformCrossover(object):
-    """
-    Recombination procedure.
+    """Select fitness-weighted parent pairs and create tuple children.
+
+    The operator expects numeric parent fitness values and writes the
+    resulting children to ``ref.children``. Higher fitness receives greater
+    selection weight.
     """
 
     def __init__(self, **kwargs):
@@ -210,6 +218,7 @@ class UniformCrossover(object):
         self.mated = False
 
     def scale(self, scrs):
+        """Normalize fitness values into non-negative mating weights."""
         self.fmin = min(scrs)
         self.fmax = max(scrs)
         lng = self.fmax - self.fmin
@@ -218,6 +227,7 @@ class UniformCrossover(object):
         self.fitnesses = [(_ - self.fmin) / lng for _ in scrs]
 
     def select_idx(self):
+        """Select a parent index using the current mating weights."""
         from random import uniform
 
         fsum = sum(self.fitnesses)
@@ -230,6 +240,7 @@ class UniformCrossover(object):
         return idx
 
     def pair(self):
+        """Remove and return one fitness-weighted pair from the parent pool."""
         p1 = self.parents.pop(-1)
         self.fitnesses.pop(-1)
         idx = self.select_idx()
@@ -238,6 +249,7 @@ class UniformCrossover(object):
         return p1, p2
 
     def mate(self, p1, p2):
+        """Exchange tuple suffixes from two parents and return two children."""
         from random import randint
 
         l1 = len(p1)
@@ -259,6 +271,7 @@ class UniformCrossover(object):
         return c1, c2
 
     def __call__(self, ref, *args, **kwargs):
+        """Populate ``ref.children`` with recombined individuals."""
         from collections import OrderedDict
 
         ref.parents = OrderedDict(sorted(ref.parents.items(), key=lambda x: x[1]))
@@ -278,10 +291,13 @@ class UniformCrossover(object):
 
 
 class Elites(object):
+    """Preserve the highest-fitness parents among the next generation."""
+
     def __init__(self, **kwargs):
         pass
 
     def __call__(self, ref, *args, **kwargs):
+        """Merge elite parents into ``ref.children`` in fitness order."""
         from collections import OrderedDict
 
         children = ref.children
@@ -295,10 +311,13 @@ class Elites(object):
 
 
 class Mutation(object):
+    """Mutate child genes using the configured per-element probability."""
+
     def __init__(self, **kwargs):
         pass
 
     def __call__(self, ref, *args, **kwargs):
+        """Replace genes in ``ref.children`` and remove empty mutations."""
         from random import uniform, randint
         from collections import OrderedDict
 

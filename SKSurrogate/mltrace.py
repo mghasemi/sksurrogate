@@ -220,6 +220,7 @@ class mltrack(object):
         self.X, self.y = None, None
         self.encode = encode
         self.Updated, self.Loaded, self.Recovered = [], [], []
+        self._split_cache = {}
 
     def UpdateTask(self, data):
         """
@@ -282,16 +283,14 @@ class mltrack(object):
         else:
             setattr(mdl, 'mltrack_name', name if name is not None else str(mdl).split("(")[0])
         if "mltrack_id" not in mdl.__dict__:
-            MLModel.create(
+            model = MLModel.create(
                 task_id=self.task_id,
                 name=mdl.mltrack_name,
                 model_str=str(mdl),
                 model_type=str(type(mdl)).split("'")[1],
                 parameters=dumps(mdl.get_params()),
             )
-            mdl.mltrack_id = (
-                MLModel.select(MLModel.model_id).order_by(MLModel.model_id.desc()).get()
-            )
+            mdl.mltrack_id = model.model_id
         else:
             res = MLModel.select().where(MLModel.model_id == mdl.mltrack_id)[0]
             res.name = mdl.mltrack_name
@@ -320,6 +319,7 @@ class mltrack(object):
         res.last_mod_date = datetime.now()
         res.save()
         self.target = target
+        self._split_cache.clear()
         if self.encode:
             # TODO: Input parameters for DataPreprocess
             from .DataProcess import DataPreprocess
@@ -375,20 +375,30 @@ class mltrack(object):
         if "mltrack_id" not in mdl.__dict__:
             mdl = self.LogModel(mdl)
         mdl_id = mdl.mltrack_id
-        mdl_type = mdl._estimator_type
+        from sklearn.base import is_classifier, is_regressor
+
+        if is_classifier(mdl):
+            mdl_type = "classifier"
+        elif is_regressor(mdl):
+            mdl_type = "regressor"
+        else:
+            raise TypeError("mdl must be a scikit-learn classifier or regressor")
         #######################################################
         prds = []
         prbs = []
+        scores = []
         for train_idx, test_idx in self.cv.split(self.X, self.y):
             X_train, y_train = self.X[train_idx], self.y[train_idx]
             X_test, y_test = self.X[test_idx], self.y[test_idx]
             mdl.fit(X_train, y_train)
             prds.append((mdl.predict(X_test), y_test))
             try:
-                prbs.append(mdl.predict_proba(X_test)[:, 1])
+                probabilities = mdl.predict_proba(X_test)
+                prbs.append(probabilities)
+                scores.append(probabilities[:, 1])
             except AttributeError:
                 try:
-                    prbs.append(mdl.decision_function(X_test))
+                    scores.append(mdl.decision_function(X_test))
                 except AttributeError:
                     pass
         #######################################################
@@ -404,7 +414,7 @@ class mltrack(object):
         mse = None
         mae = None
         r2 = None
-        n_ = float(len(prbs))
+        n_ = float(len(prds))
         if mdl_type == "classifier":
             from sklearn.metrics import (
                 accuracy_score,
@@ -422,22 +432,21 @@ class mltrack(object):
             prs = sum([precision_score(y_tst, y_prd, average='weighted') for y_prd, y_tst in prds]) / n_
             rcl = sum([recall_score(y_tst, y_prd, average='weighted') for y_prd, y_tst in prds]) / n_
             mcc = sum([matthews_corrcoef(y_tst, y_prd) for y_prd, y_tst in prds]) / n_
-            lgl = 0
-            n_drops = 0
-            for y_prd, y_tst in prds:
+            if len(prbs) == len(prds):
+                lgl = sum(
+                    log_loss(y_tst, probabilities, labels=numpy.unique(self.y))
+                    for probabilities, (_, y_tst) in zip(prbs, prds)
+                ) / n_
+            aur = None
+            if len(scores) == len(prds):
+                aur = 0.0
                 try:
-                    lgl += log_loss(y_tst, y_prd, labels=numpy.unique(y_tst))
+                    for i in range(int(n_)):
+                        fpr, tpr, _ = roc_curve(prds[i][1], scores[i])
+                        aur += auc(fpr, tpr)
                 except ValueError:
-                    n_drops += 1
-            lgl = lgl / max(n_ - n_drops, 1)
-            aur = 0.0
-            try:
-                for i in range(int(n_)):
-                    fpr, tpr, _ = roc_curve(prds[i][1], prbs[i])
-                    aur += auc(fpr, tpr)
-            except ValueError:
-                aur = 0
-            aur /= n_
+                    aur = 0
+                aur /= n_
         elif mdl_type == "regressor":
             from sklearn.metrics import (
                 explained_variance_score,
@@ -696,8 +705,8 @@ class mltrack(object):
             meas = "accuracy"
         if train_sizes is None:
             train_sizes = np.linspace(0.1, 1.0, 5)
-        plt.subplot(111)
         fig = plt.figure()
+        plt.subplot(111)
         plt.title(title)
         if ylim is None:
             ylim = (-0.05, 1.05)
@@ -756,6 +765,9 @@ class mltrack(object):
             mdl = self.LogModel(mdl)
         mdl_id = mdl.mltrack_id
 
+        if mdl_id in self._split_cache:
+            return self._split_cache[mdl_id]
+
         if self.X is None:
             self.get_data()
 
@@ -771,7 +783,9 @@ class mltrack(object):
         except NotFittedError as _:
             mdl.fit(X_train, y_train)
 
-        return mdl, mdl_id, X_train, X_test, y_train, y_test
+        result = mdl, mdl_id, X_train, X_test, y_train, y_test
+        self._split_cache[mdl_id] = result
+        return result
 
     def plot_calibration_curve(self, mdl, name, fig_index=1, bins=10):
         """
@@ -1205,7 +1219,7 @@ class mltrack(object):
             ``sensapprx.SensAprx``
         :return: None
         """
-        from pandas import DataFrame, read_sql
+        from pandas import DataFrame, read_sql, to_numeric
 
         self.data = read_sql("SELECT * FROM data", self.conn)
         features = list(self.data.columns)
@@ -1298,7 +1312,9 @@ class mltrack(object):
                 W["info_gain"] = [Res[features.index(v)] for v in features]
         new_w_df = DataFrame(W)
         merged = weights_df.merge(new_w_df, on="feature")
-        merged.fillna(0.0)
+        for column in merged.columns:
+            if column != "feature":
+                merged[column] = to_numeric(merged[column], errors="coerce").fillna(0.0)
         merged.to_sql("weights", self.conn, if_exists="replace", index=False)
         return merged
 

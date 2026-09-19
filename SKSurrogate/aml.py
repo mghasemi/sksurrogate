@@ -35,7 +35,14 @@ class StackingEstimator(BaseEstimator, TransformerMixin):
         :param params: parameters to be bassed to the estimator
         :return: `self`
         """
-        self.estimator.set_params(**params)
+        estimator_params = {}
+        for key, value in params.items():
+            if key.startswith("estimator__"):
+                estimator_params[key[len("estimator__"):]] = value
+            elif key in {"estimator", "res", "probs", "decision"}:
+                setattr(self, key, value)
+        if estimator_params:
+            self.estimator.set_params(**estimator_params)
         return self
 
     def fit(self, X, y=None, **fit_params):
@@ -65,27 +72,20 @@ class StackingEstimator(BaseEstimator, TransformerMixin):
         from sklearn.utils import check_array
 
         X = check_array(X)
-        X_transformed = np.copy(X)
+        features = [X]
         # add class probabilities as a synthetic feature
         if self.probs and hasattr(self.estimator, "predict_proba"):
-            X_transformed = np.hstack((X, (self.estimator.predict_proba(X))))
+            features.append(self.estimator.predict_proba(X))
 
         # add class decision_function as a synthetic feature
         if self.decision and hasattr(self.estimator, "decision_function"):
-            X_transformed = np.hstack(
-                (
-                    X_transformed,
-                    np.reshape(self.estimator.decision_function(X), (-1, 1)),
-                )
-            )
+            features.append(np.reshape(self.estimator.decision_function(X), (-1, 1)))
 
         # add class prediction as a synthetic feature
         if self.res:
-            X_transformed = np.hstack(
-                (X_transformed, np.reshape(self.estimator.predict(X), (-1, 1)))
-            )
+            features.append(np.reshape(self.estimator.predict(X), (-1, 1)))
 
-        return X_transformed
+        return np.hstack(features)
 
 
 class Words(object):

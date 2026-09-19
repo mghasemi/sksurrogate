@@ -2,6 +2,7 @@
 
 import pandas as pd
 import numpy as np
+from pathlib import Path
 from sklearn.gaussian_process.kernels import Matern, Sum, ExpSineSquared
 from SKSurrogate import *
 
@@ -29,6 +30,9 @@ import warnings
 
 warnings.filterwarnings("ignore", category=Warning)
 
+checkpoint_dir = Path(__file__).resolve().parents[1] / "example02-checkpoints"
+checkpoint_dir.mkdir(exist_ok=True)
+
 df = pd.read_csv(
     "https://archive.ics.uci.edu/ml/machine-learning-databases/00291/airfoil_self_noise.dat",
     sep="\t",
@@ -40,7 +44,7 @@ y = df["level"].values
 A = AML(
     config=config,
     length=3,
-    check_point="./",
+    check_point=str(Path(__file__).resolve().parents[1] / "example02-checkpoints") + "/",
     verbose=2,
     scoring="neg_mean_squared_error",
 )

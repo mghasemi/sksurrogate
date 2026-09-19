@@ -60,22 +60,13 @@ class SensAprx(BaseEstimator, TransformerMixin):
         self.top_features_ = []
 
     def _avg_fucn(self, X, y):
-        from numpy import unique, concatenate, array
+        from numpy import bincount, unique
 
         if self.reduce:
-            x_ = unique(X, axis=0)
-            self.domain = []
-            self.probs = []
-            data_space = concatenate((X, y.reshape(y.shape[0], 1)), axis=1)
-            for row in x_:
-                X_temp = data_space
-                for idx in range(row.shape[0]):
-                    X_temp = X_temp[X_temp[:, idx] == row[idx]]
-                y_p = sum(X_temp[:, -1]) / float(len(X_temp))
-                self.domain.append(row)
-                self.probs.append(y_p)
-            self.domain = array(self.domain)
-            self.probs = array(self.probs)
+            self.domain, inverse = unique(X, axis=0, return_inverse=True)
+            sums = bincount(inverse, weights=y)
+            counts = bincount(inverse)
+            self.probs = sums / counts
         else:
             self.domain = X
             self.probs = y
