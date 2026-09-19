@@ -38,13 +38,19 @@ class EOA(object):
     :param task_name: Checkpoint filename prefix; defaults to ``"EOA"``.
     :param check_point: Directory prefix for checkpoints; defaults to ``"./"``.
         The directory must already exist.
+    :param random_state: Optional seed for reproducible built-in operators.
     """
+    CHECKPOINT_VERSION = 1
+
 
     def __init__(self, population, fitness, **kwargs):
 
         from collections import OrderedDict
+        import random
 
         self.population = population
+        self.random_state = kwargs.pop("random_state", None)
+        self.rng = random.Random(self.random_state)
         self.init_pop = kwargs.pop("init_pop", UniformRand)(**kwargs)
         self.fitness = fitness
         self.recomb = kwargs.pop("recomb", UniformCrossover)(**kwargs)
@@ -89,6 +95,7 @@ class EOA(object):
 
         fl = open(self.check_point + self.task_name + ".eoa", "wb")
         info = dict(
+            checkpoint_version=self.CHECKPOINT_VERSION,
             population_size=self.population_size,
             parents_porp=self.parents_porp,
             num_parents=self.num_parents,
@@ -102,6 +109,8 @@ class EOA(object):
             term_genes=self.term_genes,
             task_name=self.task_name,
             check_point=self.check_point,
+            random_state=self.random_state,
+            rng_state=self.rng.getstate(),
             evals=self.evals,
             parents=self.parents,
             children=self.children,
@@ -117,6 +126,8 @@ class EOA(object):
             fl = open(self.check_point + self.task_name + ".eoa", "rb")
             info = loads(fl.read())
             fl.close()
+            if info.get("checkpoint_version", self.CHECKPOINT_VERSION) != self.CHECKPOINT_VERSION:
+                raise ValueError("Unsupported EOA checkpoint version")
             self.population_size = info["population_size"]
             self.parents_porp = info["parents_porp"]
             self.num_parents = info["num_parents"]
@@ -130,6 +141,9 @@ class EOA(object):
             self.term_genes = info["term_genes"]
             self.task_name = info["task_name"]
             self.check_point = info["check_point"]
+            self.random_state = info.get("random_state", self.random_state)
+            if "rng_state" in info:
+                self.rng.setstate(info["rng_state"])
             self.evals = info["evals"]
             self.parents = info["parents"]
             self.children = info["children"]
@@ -181,9 +195,10 @@ class UniformRand(object):
     def __call__(self, ref, *args, **kwargs):
         """Return an ``OrderedDict`` containing ``ref.num_parents`` individuals."""
         from collections import OrderedDict
-        from random import sample
+        import random
 
-        indices = sample(range(ref.population_size), ref.num_parents)
+        rng = getattr(ref, "rng", random)
+        indices = rng.sample(range(ref.population_size), ref.num_parents)
         return OrderedDict(
             [(ref.population[i], ref.evals[ref.population[i]]) for i in indices]
         )
@@ -228,10 +243,8 @@ class UniformCrossover(object):
 
     def select_idx(self):
         """Select a parent index using the current mating weights."""
-        from random import uniform
-
         fsum = sum(self.fitnesses)
-        r = uniform(0.0, fsum)
+        r = self.rng.uniform(0.0, fsum)
         idx = 0
         F = self.fitnesses[idx]
         while F < r:
@@ -250,15 +263,13 @@ class UniformCrossover(object):
 
     def mate(self, p1, p2):
         """Exchange tuple suffixes from two parents and return two children."""
-        from random import randint
-
         l1 = len(p1)
         l2 = len(p2)
         if l1 == 1 and l2 == 1:
             c1 = (p1[0], p2[0])
             c2 = (p2[0], p1[0])
             return c1, c2
-        r = randint(1, max(l1, l2))
+        r = self.rng.randint(1, max(l1, l2))
         cl1 = max(0, l1 - r)
         cl2 = max(0, l2 - r)
         c1l = list(p1)[:cl1]
@@ -274,6 +285,7 @@ class UniformCrossover(object):
         """Populate ``ref.children`` with recombined individuals."""
         from collections import OrderedDict
 
+        self.rng = ref.rng
         ref.parents = OrderedDict(sorted(ref.parents.items(), key=lambda x: x[1]))
         self.parents = list(ref.parents.keys())
         self.scale(list(ref.parents.values()))
@@ -318,9 +330,9 @@ class Mutation(object):
 
     def __call__(self, ref, *args, **kwargs):
         """Replace genes in ``ref.children`` and remove empty mutations."""
-        from random import uniform, randint
         from collections import OrderedDict
 
+        rng = ref.rng
         mchildren = []
         for chld in ref.children:
             mchld = []
@@ -328,25 +340,25 @@ class Mutation(object):
             length = len(chld) - 1
             for e in chld:
                 me = e
-                prb = uniform(0, 1.0)
+                prb = rng.uniform(0, 1.0)
                 if prb <= ref.mutation_prob:
                     if idx == 0:
                         lng = len(ref.init_genes)
-                        rdx = randint(0, lng)
+                        rdx = rng.randint(0, lng)
                         if rdx < lng:
                             me = ref.init_genes[rdx]
                         else:
                             me = ""
                     elif idx == length:
                         lng = len(ref.term_genes)
-                        rdx = randint(0, lng)
+                        rdx = rng.randint(0, lng)
                         if rdx < lng:
                             me = ref.term_genes[rdx]
                         else:
                             me = ""
                     else:
                         lng = len(ref.genes)
-                        rdx = randint(0, lng)
+                        rdx = rng.randint(0, lng)
                         if rdx < lng:
                             me = ref.genes[rdx]
                         else:

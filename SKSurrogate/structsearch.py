@@ -43,12 +43,15 @@ class BaseSample(object):
     """
 
     def __init__(self, **kwargs):
+        import random
+
         self.init_radius = kwargs.get("init_radius", 2.0)
         self.contraction = kwargs.get("contraction", 0.9)
         if self.contraction >= 1:
             raise "`contraction` factor must be between 0. and 1."
         self.ineqs = kwargs.pop("ineq", [])
         self.bounds = kwargs.pop("bounds", None)
+        self.rng = kwargs.get("rng", random)
 
     def check_constraints(self, point):
         """
@@ -90,7 +93,6 @@ class CompactSample(BaseSample):
         :param cntrctn: `float` customized contraction factor
         :return: `numpy.array` a new sample
         """
-        from random import uniform
         from numpy import array
 
         self.cntrctn = cntrctn
@@ -99,7 +101,7 @@ class CompactSample(BaseSample):
         candid = []
         while not flag:
             candid = array(
-                [uniform(self.bounds[_][0], self.bounds[_][1]) for _ in range(n)]
+                [self.rng.uniform(self.bounds[_][0], self.bounds[_][1]) for _ in range(n)]
             )
             flag = self.check_constraints(candid)
         return candid
@@ -125,7 +127,6 @@ class BoxSample(BaseSample):
         :param cntrctn: `float` customized contraction factor
         :return: `numpy.array` a new sample
         """
-        from random import uniform
         from numpy import array
 
         flag = False
@@ -133,7 +134,7 @@ class BoxSample(BaseSample):
         candid = []
         radius = self.init_radius * cntrctn
         while not flag:
-            candid = array([uniform(-radius, radius) for _ in range(n)]) + centre
+            candid = array([self.rng.uniform(-radius, radius) for _ in range(n)]) + centre
             flag = self.check_constraints(candid)
             radius = radius * self.contraction
         return candid
@@ -159,8 +160,7 @@ class SphereSample(BaseSample):
         :param cntrctn: `float` customized contraction factor
         :return: `numpy.array` a new sample
         """
-        from random import uniform, shuffle
-        from numpy import array, empty, sqrt
+        from numpy import empty, sqrt
 
         flag = False
         n = len(centre)
@@ -168,12 +168,12 @@ class SphereSample(BaseSample):
         radius = self.init_radius * cntrctn
         while not flag:
             rng = list(range(n))
-            shuffle(rng)
+            self.rng.shuffle(rng)
             candid = empty(n)
             for idx in range(n):
                 remaining = radius ** 2 - sum(candid[:idx] ** 2)
                 r = sqrt(max(remaining, 0.0))
-                candid[idx] = uniform(-r, r)
+                candid[idx] = self.rng.uniform(-r, r)
             candid = candid[rng] + centre
             flag = self.check_constraints(candid)
             radius = radius * self.contraction
@@ -211,11 +211,16 @@ class SurrogateSearch(object):
     def __init__(self, objective, **kwargs):
         from numpy import inf
         from scipy.special import binom
+        import random
 
         self.objective = objective
+        self.random_state = kwargs.pop("random_state", None)
+        self.rng = random.Random(self.random_state)
         self.ineqs = kwargs.pop("ineq", [])
         self.bounds = kwargs.pop("bounds", None)
         self.MaxIter = kwargs.pop("max_iter", 50)
+        self.time_limit = kwargs.pop("time_limit", None)
+        self.max_evals = kwargs.pop("max_evals", None)
         self.radius = kwargs.pop("radius", 2.0)
         self.contraction = kwargs.pop("contraction", 0.9)
         sampling = kwargs.pop("sampling", SphereSample)
@@ -224,6 +229,7 @@ class SurrogateSearch(object):
             contraction=self.contraction,
             ineq=self.ineqs,
             bounds=self.bounds,
+            rng=self.rng,
         )
         self.iteration = 0
         self.verbose = kwargs.pop("verbose", False)
@@ -443,7 +449,9 @@ class SurrogateSearch(object):
         # except ImportError:
         #    tqdm = None
         from math import log
+        from time import monotonic
 
+        started = monotonic()
         # if tqdm is not None:
         if self.verbose > 0:
             # pbar = tqdm(total=self.MaxIter)
@@ -451,6 +459,10 @@ class SurrogateSearch(object):
             print("Iteration {m} / {n}".format(m=self.iteration, n=self.MaxIter))
         self.__optim_param()
         while self.iteration <= self.MaxIter:
+            if self.time_limit is not None and monotonic() - started >= self.time_limit:
+                break
+            if self.max_evals is not None and len(self.evaluated) >= self.max_evals:
+                break
             if self.verbose > 1:
                 print("Iteration # %d" % self.iteration)
                 print("----------" * 8)
@@ -690,6 +702,9 @@ class SurrogateRandomCV(BaseSearchCV):
             max_itr_no_prog=10000,
             ineqs=(),
             init=None,
+            time_limit=None,
+            max_evals=None,
+            random_state=None,
     ):
         super(SurrogateRandomCV, self).__init__(
             estimator=estimator,
@@ -718,6 +733,9 @@ class SurrogateRandomCV(BaseSearchCV):
         self.warm_start = warm_start
         self.Continue = Continue
         self.max_itr_no_prog = max_itr_no_prog
+        self.time_limit = time_limit
+        self.max_evals = max_evals
+        self.random_state = random_state
         self.bounds = []
         self.ineqs = ineqs
         self.init = init if init is not None else {}
@@ -727,6 +745,8 @@ class SurrogateRandomCV(BaseSearchCV):
         self.best_estimator_ = None
         self.best_estimator_score = 0.0
         self.best_score_ = 0.
+        self.evaluation_history_ = []
+        self.cv_results_ = {}
 
     def fit(self, X, y=None, groups=None, **fit_params):
         """
@@ -801,7 +821,7 @@ class SurrogateRandomCV(BaseSearchCV):
             self.radius = sqrt(rds)
         self.x0 = array(x0_)
         self.bounds = tuple(self.bounds)
-        cv_dat = list(cv.split(X, y))
+        cv_dat = list(cv.split(X, y, groups))
 
         def obj(x):
             cand_params = {}
@@ -888,6 +908,13 @@ class SurrogateRandomCV(BaseSearchCV):
                     score += sc
                     n_test += 1
             score = score / float(max(n_test, 1))
+            self.evaluation_history_.append(
+                {
+                    "params": cand_params.copy(),
+                    "score": -score if n_test else None,
+                    "status": "complete" if n_test else "failed",
+                }
+            )
             return -score
 
         self.OPTIM = SurrogateSearch(
@@ -904,6 +931,9 @@ class SurrogateRandomCV(BaseSearchCV):
             search_sphere=self.search_sphere,
             contraction=self.contraction,
             max_itr_no_prog=self.max_itr_no_prog,
+            time_limit=self.time_limit,
+            max_evals=self.max_evals,
+            random_state=self.random_state,
             optimizer=self.optimizer,
             scipy_solver=self.scipy_solver,
             task_name=self.task_name,
@@ -932,4 +962,9 @@ class SurrogateRandomCV(BaseSearchCV):
         self.best_estimator_ = clone(self.estimator).set_params(**best_params_)
         self.best_estimator_score = scr
         self.best_score_ = scr
+        self.cv_results_ = {
+            "params": [item["params"] for item in self.evaluation_history_],
+            "mean_test_score": [item["score"] for item in self.evaluation_history_],
+            "status": [item["status"] for item in self.evaluation_history_],
+        }
         return self
