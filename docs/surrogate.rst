@@ -171,6 +171,18 @@ the estimator's arguments and their values are objects of the followin types:
     srch.fit(X, y)
     print(srch.best_estimator_)
 
+``SurrogateRandomCV`` also supports ``groups`` in ``fit`` for group-aware
+cross-validation, ``time_limit`` and ``max_evals`` resource budgets, and
+``random_state`` for reproducible sampling. Evaluated configurations are
+available through ``evaluation_history_`` and ``cv_results_``; each record
+includes parameters, score, status, duration, and any captured error. Use
+``pareto_frontier()`` to inspect completed trials that trade validation score
+against evaluation duration.
+
+For an estimator with no tunable parameters, pass an empty ``params`` mapping.
+The search evaluates that estimator directly with cross-validation instead of
+building a zero-dimensional surrogate problem.
+
 
 
 .. note::

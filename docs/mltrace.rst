@@ -47,6 +47,10 @@ Let us make up a sample classification task and trace the models via `mltrace`.
     MLTr = mltrack('sample', db_name="sample.db")
     # register the data
     MLTr.RegisterData(df, 'target')
+    # inspect the recorded Python and dependency versions
+    print(MLTr.GetMetadata())
+    # add dataset or experiment metadata
+    MLTr.UpdateMetadata({'dataset_version': 'sample-v1', 'seed': 7})
     # modify the description of the task
     MLTr.UpdateTask({'description': "This is a sample task to demonstrate\\
             capabilities of the mltrace."})

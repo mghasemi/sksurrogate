@@ -18,6 +18,16 @@ evolutionary optimization settings.
 The evolutionary optimization module is designed to be very flexible and can be modified to perform
 evolutionary optimization on any given evolutionary compatible problem.
 
+Reliability features
+====================
+The current AutoML workflow supports reproducible ``random_state`` propagation,
+optional ``time_limit`` and ``max_evals`` budgets, group-aware cross-validation,
+out-of-fold stacking features to reduce target leakage, and an sklearn-style
+``AML`` surface with ``predict``, ``predict_proba``, ``score``, ``get_params``
+and ``set_params``. Parameter-free estimators are evaluated directly with
+cross-validation. Search results expose trial metadata through
+``evaluation_history_`` and ``cv_results_``.
+
 Dependencies
 =============================
 
