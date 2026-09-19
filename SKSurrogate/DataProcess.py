@@ -166,9 +166,9 @@ class DataPreprocess(object):
     def numeric(val, typ='float64'):
         trans_val = re.sub(r"[^\d\.]", "", str(val))
         if typ == 'float64':
-            return np.float(trans_val)
+            return float(trans_val)
         elif typ == 'int64':
-            return np.int(trans_val)
+            return int(trans_val)
 
     def is_float(self, clmn):
         """
@@ -367,8 +367,8 @@ class DataPreprocess(object):
         self.steps.append(('Date2Num', dtn))
         self.steps.append(('Impute', self.imputer))
         trans = Pipeline(self.steps)
-        self.transformed_df = pandas.DataFrame(trans.fit_transform(org_df), columns=oe.feature_names)
-        for clmn in ohe.feature_names:
+        self.transformed_df = pandas.DataFrame(trans.fit_transform(org_df), columns=oe.get_feature_names_out())
+        for clmn in ohe.get_feature_names_out():
             if clmn not in self.columns:
                 if self.force_impute:
                     self.transformed_df[clmn] = self.transformed_df.apply(

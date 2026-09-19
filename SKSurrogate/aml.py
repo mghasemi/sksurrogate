@@ -191,11 +191,11 @@ except ImportError:
             "class_weight": HDReal((1.0e-5, 1.0e-5), (20.0, 20.0)),
         },
         "sklearn.ensemble.GradientBoostingClassifier": {
-            "loss": Categorical(["deviance", "exponential"]),
+            "loss": Categorical(["log_loss", "exponential"]),
             "learning_rate": Real(1.0e-6, 1.0 - 1.0e-6),
             "n_estimators": Integer(10, 500),
             "subsample": Real(1.0e-6, 1.0),
-            "criterion": Categorical(["friedman_mse", "mse", "mae"]),
+            "criterion": Categorical(["friedman_mse", "squared_error"]),
             # "min_samples_split": Integer(2, 20),
             # "min_samples_leaf": Integer(1, 20),
             # "min_weight_fraction_leaf": Real(0., .5),
@@ -428,6 +428,7 @@ class AML(object):
         :return: None
         """
         from importlib import import_module
+        from sklearn.base import is_classifier, is_regressor
         from sklearn.feature_selection import SelectorMixin
 
         for alg in self.config:
@@ -437,12 +438,15 @@ class AML(object):
                 module = import_module(module_str)
                 clss = module.__getattribute__(detail[-1])
                 mdl = clss()
-                if hasattr(mdl, "_estimator_type"):
-                    self.config_types[alg] = mdl._estimator_type
-                    if mdl._estimator_type in ["regressor", "classifier"]:
-                        self.couldBlast.append(alg)
-                    elif mdl._estimator_type == "sampler":
-                        self.couldBfirst.append(alg)
+                if is_classifier(mdl):
+                    self.config_types[alg] = "classifier"
+                    self.couldBlast.append(alg)
+                elif is_regressor(mdl):
+                    self.config_types[alg] = "regressor"
+                    self.couldBlast.append(alg)
+                elif hasattr(mdl, "_estimator_type") and mdl._estimator_type == "sampler":
+                    self.config_types[alg] = "sampler"
+                    self.couldBfirst.append(alg)
                 else:
                     self.config_types[alg] = "transformer"
                 if (

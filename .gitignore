@@ -1,0 +1,35 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Packaging and build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Test, coverage, and type-checker caches
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.pyright/
+
+# Jupyter and tooling state
+.ipynb_checkpoints/
+.vscode/
+
+# SKSurrogate optimization checkpoints and serialized results
+*.eoa
+*.pkl
+
+# OS metadata
+.DS_Store
+Thumbs.db

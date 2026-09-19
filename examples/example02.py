@@ -7,7 +7,7 @@ from SKSurrogate import *
 
 config = {
     # Regressors
-    "sklearn.linear_model.LinearRegression": {"normalize": Categorical([True, False])},
+    "sklearn.linear_model.LinearRegression": {},
     "sklearn.kernel_ridge.KernelRidge": {
         "alpha": Real(1.0e-4, 10.0),
         "kernel": Categorical(
