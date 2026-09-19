@@ -12,6 +12,8 @@ data manipulation.
 It also has built in capabilities to generate some typical plots and graph in machine learning.
 """
 
+import hashlib
+import json
 import numpy
 import joblib
 from typing import Any
@@ -246,6 +248,25 @@ class mltrack(object):
         self._split_cache = {}
         self._register_environment_metadata()
 
+    def close(self):
+        """Release SQLite handles held by this tracker instance and the shared Peewee database."""
+        try:
+            if getattr(self, "conn", None) is not None:
+                self.conn.close()
+                self.conn = None
+        finally:
+            try:
+                MLTRACK_DB.close()
+            except Exception:
+                pass
+
+    def __del__(self):
+        """Ensure SQLite connections are closed when the tracker is garbage collected."""
+        try:
+            self.close()
+        except Exception:
+            pass
+
     def _register_environment_metadata(self):
         """Record interpreter and core dependency versions for reproducibility."""
         import importlib.metadata
@@ -367,13 +388,214 @@ class mltrack(object):
             Tskres.save()
         return mdl
 
-    def RegisterData(self, source_df: Any, target):
+    @staticmethod
+    def _build_dataset_schema(source_df):
+        """Construct a deterministic, JSON-serializable schema for a DataFrame."""
+        schema = {}
+        for column in source_df.columns:
+            series = source_df[column]
+            unique_values = list(series.dropna().unique())
+            normalized = []
+            for value in unique_values:
+                if value is None:
+                    continue
+                normalized.append(str(value))
+            schema[str(column)] = {
+                "dtype": str(series.dtype),
+                "null_count": int(series.isna().sum()),
+                "nullable": bool(series.isna().any()),
+                "row_count": int(len(series)),
+                "unique_count": int(series.nunique(dropna=True)),
+                "categorical_values": sorted(set(normalized)),
+            }
+        return schema
+
+    @staticmethod
+    def _compute_dataset_fingerprint(source_df):
+        """Hash both schema and contents so a changed column or value changes identity."""
+        schema = mltrack._build_dataset_schema(source_df)
+        payload = {
+            "schema": schema,
+            "data": json.loads(source_df.to_json(orient="split", date_format="iso")),
+        }
+        serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+        return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+    def _require_registered_dataset(self):
+        """Fetch the last registered schema or fail with a clear message."""
+        metadata = self.GetMetadata()
+        if "dataset_schema" not in metadata or "dataset_columns" not in metadata:
+            raise ValueError(
+                "No registered dataset schema was found. Call RegisterData(...) before validating data."
+            )
+        return metadata
+
+    @staticmethod
+    def _format_schema_difference(expected_columns, actual_columns):
+        """Return a readable description for missing/extra/reordered columns."""
+        missing = [column for column in expected_columns if column not in actual_columns]
+        extra = [column for column in actual_columns if column not in expected_columns]
+        if missing or extra:
+            detail = []
+            if missing:
+                detail.append("missing columns: %s" % ", ".join(missing))
+            if extra:
+                detail.append("unexpected columns: %s" % ", ".join(extra))
+            if list(expected_columns) != list(actual_columns):
+                detail.append(
+                    "expected order: [%s], received: [%s]" % (
+                        ", ".join(expected_columns),
+                        ", ".join(actual_columns),
+                    )
+                )
+            return "; ".join(detail)
+        return "columns are in a different order"
+
+    def _validate_schema_compatibility(
+        self,
+        source_df,
+        expected_schema,
+        target_name=None,
+        unknown_categories="raise",
+        missing_columns="raise",
+    ):
+        """Check dtype/null/category compatibility against a stored schema."""
+        for column, expected in expected_schema.items():
+            if column not in source_df.columns:
+                if missing_columns == "ignore":
+                    continue
+                raise ValueError("Dataset schema mismatch: missing column '%s'." % column)
+            actual = source_df[column]
+            if str(actual.dtype) != expected["dtype"]:
+                raise ValueError(
+                    "Column '%s' has dtype '%s' but expected '%s'." % (
+                        column,
+                        actual.dtype,
+                        expected["dtype"],
+                    )
+                )
+            if not expected.get("nullable", True) and actual.isna().any():
+                raise ValueError("Column '%s' contains null values but the schema marks it as non-nullable." % column)
+            allowed_categories = expected.get("categorical_values")
+            if allowed_categories:
+                actual_values = set(str(value) for value in actual.dropna().unique())
+                unknown = sorted(actual_values - set(allowed_categories))
+                if unknown and unknown_categories == "raise":
+                    raise ValueError(
+                        "Column '%s' includes values not seen during training: %s" % (
+                            column,
+                            ", ".join(unknown[:5]),
+                        )
+                    )
+        if target_name is not None and target_name not in source_df.columns:
+            if missing_columns == "ignore":
+                return
+            raise ValueError("Target column '%s' is missing from the dataset." % target_name)
+
+    def validate_data(
+        self,
+        source_df: Any,
+        target=None,
+        missing_columns="raise",
+        unknown_categories="raise",
+    ):
+        """Validate a training dataset against the registered schema for this task."""
+        metadata = self._require_registered_dataset()
+        expected_columns = list(metadata.get("dataset_columns", []))
+        expected_target = target if target is not None else self.target or metadata.get("target_name")
+        if expected_target is None:
+            raise ValueError("A target column must be provided to validate a training dataset.")
+        if expected_target not in source_df.columns:
+            if missing_columns == "ignore":
+                return True
+            raise ValueError("Target column '%s' is missing from the dataset." % expected_target)
+        actual_columns = list(source_df.columns)
+        if actual_columns != expected_columns:
+            if missing_columns == "ignore":
+                ordered_present = [column for column in expected_columns if column in actual_columns]
+                extra = [column for column in actual_columns if column not in expected_columns]
+                if extra or ordered_present != actual_columns:
+                    raise ValueError(
+                        "Dataset schema mismatch: %s" % self._format_schema_difference(expected_columns, actual_columns)
+                    )
+            elif missing_columns == "allow":
+                if set(actual_columns) != set(expected_columns):
+                    raise ValueError(
+                        "Dataset schema mismatch: %s" % self._format_schema_difference(expected_columns, actual_columns)
+                    )
+            else:
+                raise ValueError(
+                    "Dataset schema mismatch: %s" % self._format_schema_difference(expected_columns, actual_columns)
+                )
+        self._validate_schema_compatibility(
+            source_df,
+            metadata["dataset_schema"],
+            target_name=expected_target,
+            unknown_categories=unknown_categories,
+            missing_columns=missing_columns,
+        )
+        return True
+
+    def validate_prediction_data(
+        self,
+        source_df: Any,
+        missing_columns="raise",
+        unknown_categories="raise",
+    ):
+        """Validate input features for prediction against the registered feature schema."""
+        metadata = self._require_registered_dataset()
+        target_name = metadata.get("target_name", self.target)
+        expected_columns = [
+            column for column in metadata.get("dataset_columns", []) if column != target_name
+        ]
+        actual_columns = list(source_df.columns)
+        if actual_columns != expected_columns:
+            if missing_columns == "ignore":
+                ordered_present = [column for column in expected_columns if column in actual_columns]
+                extra = [column for column in actual_columns if column not in expected_columns]
+                if extra or ordered_present != actual_columns:
+                    raise ValueError(
+                        "Prediction schema mismatch: %s" % self._format_schema_difference(expected_columns, actual_columns)
+                    )
+            elif missing_columns == "allow":
+                if set(actual_columns) != set(expected_columns):
+                    raise ValueError(
+                        "Prediction schema mismatch: %s" % self._format_schema_difference(expected_columns, actual_columns)
+                    )
+            else:
+                raise ValueError(
+                    "Prediction schema mismatch: %s" % self._format_schema_difference(expected_columns, actual_columns)
+                )
+        feature_schema = {
+            column: metadata["dataset_schema"][column]
+            for column in expected_columns
+            if column in metadata["dataset_schema"]
+        }
+        self._validate_schema_compatibility(
+            source_df,
+            feature_schema,
+            unknown_categories=unknown_categories,
+            missing_columns=missing_columns,
+        )
+        return True
+
+    def RegisterData(
+        self,
+        source_df: Any,
+        target,
+        source_uri=None,
+        partition=None,
+        ingestion_timestamp=None,
+    ):
         """
         Registers a pandas DataFrame into the SQLite database.
         Upon a call, it also sets `self.X` and `self.y` which are numpy arrays.
 
         :param source_df: the pandas DataFrame to be stored
         :param target: the name of the target column to be predicted
+        :param source_uri: optional dataset source identifier or URI
+        :param partition: optional partition label such as train/validation/test
+        :param ingestion_timestamp: optional timestamp for the dataset ingestion event
         :return: None
         """
         # TBM
@@ -392,36 +614,337 @@ class mltrack(object):
         clmns = list(source_df.columns)
         if target not in clmns:
             raise BaseException("`%s` is not a part of data source." % target)
-        source_df.to_sql("data", self.conn, if_exists="replace", index=False)
+        dataset_schema = self._build_dataset_schema(source_df)
+        dataset_fingerprint = self._compute_dataset_fingerprint(source_df)
+        timestamp = ingestion_timestamp or datetime.now().isoformat(timespec="seconds")
+        metadata = self.GetMetadata()
+        partition_history = metadata.get("dataset_partition_history", {})
+        partition_key = partition or "unknown"
+        partition_history[partition_key] = {
+            "source_uri": source_uri,
+            "ingestion_timestamp": timestamp,
+            "fingerprint": dataset_fingerprint,
+            "rows": int(len(source_df)),
+            "columns": list(source_df.columns),
+            "target": target,
+            "feature_count": int(len([column for column in source_df.columns if column != target])),
+        }
+        self.UpdateMetadata(
+            {
+                "dataset_schema": dataset_schema,
+                "dataset_fingerprint": dataset_fingerprint,
+                "dataset_rows": int(len(source_df)),
+                "dataset_columns": list(source_df.columns),
+                "dataset_feature_count": int(len([column for column in source_df.columns if column != target])),
+                "dataset_source_uri": source_uri,
+                "dataset_partition": partition_key,
+                "dataset_ingestion_timestamp": timestamp,
+                "dataset_partition_history": partition_history,
+                "target_name": target,
+            }
+        )
+        table_name = "data"
+        partition_key = partition or "default"
+        if partition_key and partition_key != "default":
+            table_name = "data_%s" % str(partition_key).lower()
+        source_df.to_sql(table_name, self.conn, if_exists="replace", index=False)
+        if partition_key == "default":
+            source_df.to_sql("data", self.conn, if_exists="replace", index=False)
         clmns.remove(target)
         self.X = source_df[clmns].values
         self.y = source_df[target].values
 
-    def get_data(self):
-        """
-        Retrieves data in numpy format
+    def dataset_splits(self):
+        """Return the stored dataset-partition metadata keyed by split name."""
+        metadata = self.GetMetadata()
+        history = metadata.get("dataset_partition_history", {})
+        return history if isinstance(history, dict) else {}
 
+    def get_data(self, partition=None):
+        """
+        Retrieves data in numpy format.
+
+        :param partition: optional split label, such as 'train', 'validation', or 'test'.
         :return: numpy arrays X, y
         """
         from pandas import read_sql
 
-        df = read_sql("SELECT * FROM data", self.conn)
+        table_name = "data"
+        if partition is not None:
+            table_name = "data_%s" % str(partition).lower()
+            if not self._partition_table_exists(table_name):
+                raise ValueError("No registered data is available for partition '%s'." % partition)
+
+        df = read_sql("SELECT * FROM %s" % table_name, self.conn)
         clmns = list(df.columns)
+        if self.target not in clmns:
+            raise ValueError("Target column '%s' is missing from the %s partition." % (self.target, table_name))
         clmns.remove(self.target)
         self.X = df[clmns].values
         self.y = df[self.target].values
         return self.X, self.y
 
-    def get_dataframe(self):
-        """
-        Retrieves data in pandas DataFrame format
+    def _partition_table_exists(self, table_name):
+        """Check whether a partition-specific data table exists in the tracker database."""
+        cursor = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (table_name,),
+        )
+        return cursor.fetchone() is not None
 
+    def get_dataframe(self, partition=None):
+        """
+        Retrieves data in pandas DataFrame format.
+
+        :param partition: optional split label, such as 'train', 'validation', or 'test'.
         :return: pandas DataFrame containing all data
         """
         from pandas import read_sql
 
-        df = read_sql("SELECT * FROM data", self.conn)
+        table_name = "data"
+        if partition is not None:
+            table_name = "data_%s" % str(partition).lower()
+            if not self._partition_table_exists(table_name):
+                raise ValueError("No registered data is available for partition '%s'." % partition)
+
+        df = read_sql("SELECT * FROM %s" % table_name, self.conn)
         return df
+
+    def nested_cv_evaluation(
+        self,
+        estimator,
+        inner_cv=2,
+        outer_cv=2,
+        train_partition="train",
+        validation_partition="validation",
+        scoring=None,
+        groups=None,
+        repeats=1,
+        confidence_level=0.95,
+    ):
+        """Evaluate a model with nested CV while reserving the validation partition for the final score.
+
+        Metric semantics:
+        - ``outer_scores`` are fold-level scores computed on each held-out outer split.
+        - ``mean_outer_score`` is the arithmetic mean across those outer folds.
+        - ``inner_scores`` are the per-outer-fold average validation scores used during model selection.
+        - ``fold_metrics`` stores the per-fold predictions and scores for each outer split.
+        - ``final_validation_score`` is a pooled score on the untouched validation partition after selection.
+        - ``repeated_outer_scores`` and ``confidence_interval`` summarize repeat-level means across repeated CV runs.
+        """
+        import pandas as pd
+        from scipy.stats import norm
+        from sklearn.base import clone, is_classifier
+        from sklearn.model_selection import KFold, StratifiedKFold, GroupKFold
+        from sklearn.metrics import accuracy_score
+
+        if not isinstance(repeats, int) or repeats < 1:
+            raise ValueError("repeats must be an integer greater than or equal to 1.")
+        if not 0.0 < confidence_level < 1.0:
+            raise ValueError("confidence_level must be between 0 and 1.")
+
+        train_frame = self.get_dataframe(train_partition)
+        target = self.target or train_frame.columns[-1]
+        y_train = train_frame[target].to_numpy()
+        X_train_frame = train_frame.drop(columns=[target])
+        X_train = pd.get_dummies(X_train_frame, drop_first=False)
+
+        try:
+            validation_frame = self.get_dataframe(validation_partition)
+            y_valid = validation_frame[target].to_numpy()
+            X_valid_frame = validation_frame.drop(columns=[target])
+            X_valid = pd.get_dummies(X_valid_frame, drop_first=False)
+        except ValueError:
+            X_valid = None
+            y_valid = None
+
+        if X_valid is not None:
+            X_train, X_valid = X_train.align(X_valid, join="outer", axis=1, fill_value=0)
+            X_train = X_train.to_numpy()
+            X_valid = X_valid.to_numpy()
+        else:
+            X_train = X_train.to_numpy()
+
+        def can_use_stratified(labels, cv_spec):
+            if not (is_classifier(estimator) and labels is not None):
+                return False
+            labels = numpy.asarray(labels)
+            unique_labels = numpy.unique(labels)
+            if len(unique_labels) <= 1:
+                return False
+            label_codes = numpy.searchsorted(unique_labels, labels)
+            counts = numpy.bincount(label_codes, minlength=len(unique_labels))
+            return numpy.min(counts) >= cv_spec
+
+        def make_splitter(cv_spec, labels=None, group_values=None, random_state_seed=42):
+            if not isinstance(cv_spec, int):
+                return cv_spec
+            if group_values is not None:
+                group_values = numpy.asarray(group_values)
+                if len(numpy.unique(group_values)) >= cv_spec:
+                    return GroupKFold(n_splits=cv_spec)
+            if can_use_stratified(labels, cv_spec):
+                return StratifiedKFold(n_splits=cv_spec, shuffle=True, random_state=random_state_seed)
+            return KFold(n_splits=cv_spec, shuffle=True, random_state=random_state_seed)
+
+        def iter_splits(splitter, X, y, split_groups=None, random_state_seed=42):
+            if isinstance(splitter, StratifiedKFold):
+                labels = numpy.asarray(y)
+                unique_labels = numpy.unique(labels)
+                if len(unique_labels) <= 1:
+                    fallback = KFold(n_splits=splitter.n_splits, shuffle=True, random_state=random_state_seed)
+                    return list(fallback.split(X, y))
+                label_codes = numpy.searchsorted(unique_labels, labels)
+                counts = numpy.bincount(label_codes, minlength=len(unique_labels))
+                if numpy.min(counts) < splitter.n_splits:
+                    fallback = KFold(n_splits=splitter.n_splits, shuffle=True, random_state=random_state_seed)
+                    return list(fallback.split(X, y))
+            if split_groups is None:
+                return list(splitter.split(X, y))
+            try:
+                return list(splitter.split(X, y, split_groups))
+            except ValueError:
+                if isinstance(splitter, GroupKFold):
+                    fallback = KFold(n_splits=splitter.n_splits, shuffle=True, random_state=random_state_seed)
+                    return list(fallback.split(X, y))
+                raise
+
+        repeated_outer_scores = []
+        repeated_metrics = []
+        for repeat_index in range(repeats):
+            inner_splitter = make_splitter(inner_cv, y_train, groups, random_state_seed=42 + repeat_index)
+            outer_splitter = make_splitter(outer_cv, y_train, groups, random_state_seed=42 + repeat_index)
+
+            outer_scores = []
+            inner_scores = []
+            fold_metrics = []
+
+            for outer_split in iter_splits(outer_splitter, X_train, y_train, groups, random_state_seed=42 + repeat_index):
+                outer_train_idx, outer_test_idx = outer_split
+                X_outer_train = X_train[outer_train_idx]
+                y_outer_train = y_train[outer_train_idx]
+                X_outer_test = X_train[outer_test_idx]
+                y_outer_test = y_train[outer_test_idx]
+
+                fold_scores = []
+                if len(numpy.unique(y_outer_train)) < 2:
+                    candidate = clone(estimator)
+                    candidate.fit(X_outer_train, y_outer_train)
+                    if hasattr(candidate, "score"):
+                        score = candidate.score(X_outer_test, y_outer_test)
+                    else:
+                        predictions = candidate.predict(X_outer_test)
+                        if scoring is not None:
+                            score = scoring(y_outer_test, predictions)
+                        else:
+                            score = accuracy_score(y_outer_test, predictions)
+                    fold_scores = [float(score)]
+                else:
+                    inner_groups = groups[outer_train_idx] if groups is not None else None
+                    for inner_split in iter_splits(inner_splitter, X_outer_train, y_outer_train, inner_groups, random_state_seed=42 + repeat_index):
+                        inner_train_idx, inner_valid_idx = inner_split
+                        if len(numpy.unique(y_outer_train[inner_train_idx])) < 2:
+                            candidate = clone(estimator)
+                            candidate.fit(X_outer_train, y_outer_train)
+                        else:
+                            candidate = clone(estimator)
+                            candidate.fit(X_outer_train[inner_train_idx], y_outer_train[inner_train_idx])
+                        if hasattr(candidate, "score"):
+                            score = candidate.score(X_outer_train[inner_valid_idx], y_outer_train[inner_valid_idx])
+                        else:
+                            predictions = candidate.predict(X_outer_train[inner_valid_idx])
+                            if scoring is not None:
+                                score = scoring(y_outer_train[inner_valid_idx], predictions)
+                            else:
+                                score = accuracy_score(y_outer_train[inner_valid_idx], predictions)
+                        fold_scores.append(float(score))
+
+                best_candidate = clone(estimator)
+                best_candidate.fit(X_outer_train, y_outer_train)
+                if hasattr(best_candidate, "score"):
+                    outer_predictions = best_candidate.predict(X_outer_test)
+                    outer_score = best_candidate.score(X_outer_test, y_outer_test)
+                else:
+                    outer_predictions = best_candidate.predict(X_outer_test)
+                    if scoring is not None:
+                        outer_score = scoring(y_outer_test, outer_predictions)
+                    else:
+                        outer_score = accuracy_score(y_outer_test, outer_predictions)
+
+                outer_scores.append(float(outer_score))
+                inner_mean_score = float(sum(fold_scores) / max(len(fold_scores), 1))
+                inner_scores.append(inner_mean_score)
+                fold_metrics.append({
+                    "outer_fold": len(fold_metrics),
+                    "inner_scores": [float(score) for score in fold_scores],
+                    "outer_predictions": [value.item() if hasattr(value, "item") else value for value in outer_predictions.tolist()],
+                    "outer_truth": [value.item() if hasattr(value, "item") else value for value in y_outer_test.tolist()],
+                    "outer_score": float(outer_score),
+                    "inner_score_mean": inner_mean_score,
+                })
+
+            repeat_result = {
+                "repeat_index": repeat_index,
+                "outer_scores": outer_scores,
+                "inner_scores": inner_scores,
+                "mean_outer_score": float(sum(outer_scores) / max(len(outer_scores), 1)),
+                "fold_metrics": fold_metrics,
+            }
+            repeated_metrics.append(repeat_result)
+            repeated_outer_scores.append(repeat_result["mean_outer_score"])
+
+        mean_score = float(sum(repeated_outer_scores) / max(len(repeated_outer_scores), 1))
+        sample_variance = 0.0
+        if len(repeated_outer_scores) > 1:
+            sample_variance = float(sum((value - mean_score) ** 2 for value in repeated_outer_scores) / (len(repeated_outer_scores) - 1))
+        z_value = float(norm.ppf((1.0 + confidence_level) / 2.0))
+        margin = z_value * numpy.sqrt(sample_variance / max(len(repeated_outer_scores), 1)) if len(repeated_outer_scores) > 1 else 0.0
+        confidence_interval = {
+            "confidence_level": confidence_level,
+            "lower": float(mean_score - margin),
+            "upper": float(mean_score + margin),
+        }
+
+        result = {
+            "outer_scores": repeated_metrics[0]["outer_scores"] if repeated_metrics else [],
+            "inner_scores": repeated_metrics[0]["inner_scores"] if repeated_metrics else [],
+            "mean_outer_score": mean_score,
+            "fold_metrics": repeated_metrics[0]["fold_metrics"] if repeated_metrics else [],
+            "repeat_count": repeats,
+            "repeated_outer_scores": repeated_outer_scores,
+            "confidence_interval": confidence_interval,
+        }
+
+        if X_valid is not None and y_valid is not None:
+            final_model = clone(estimator)
+            final_model.fit(X_train, y_train)
+            if hasattr(final_model, "score"):
+                final_score = float(final_model.score(X_valid, y_valid))
+            else:
+                predictions = final_model.predict(X_valid)
+                if scoring is not None:
+                    final_score = float(scoring(y_valid, predictions))
+                else:
+                    final_score = float(accuracy_score(y_valid, predictions))
+            result["final_validation_score"] = final_score
+
+        self.UpdateMetadata({
+            "nested_cv_evaluation": {
+                "inner_cv": inner_cv,
+                "outer_cv": outer_cv,
+                "train_partition": train_partition,
+                "validation_partition": validation_partition,
+                "repeat_count": repeats,
+                "confidence_interval": confidence_interval,
+                "outer_scores": result.get("outer_scores"),
+                "mean_outer_score": result.get("mean_outer_score"),
+                "final_validation_score": result.get("final_validation_score"),
+                "groups": list(groups) if groups is not None else None,
+                "fold_metrics": result.get("fold_metrics"),
+                "repeated_outer_scores": repeated_outer_scores,
+            }
+        })
+        return result
 
     def LogMetrics(self, mdl, cv=None):
         """

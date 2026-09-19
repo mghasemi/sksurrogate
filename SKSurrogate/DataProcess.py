@@ -29,8 +29,6 @@ from sklearn.pipeline import Pipeline
 from sklearn.experimental import enable_iterative_imputer
 from sklearn.impute import IterativeImputer
 from sklearn.feature_extraction.text import TfidfVectorizer
-from category_encoders.one_hot import OneHotEncoder
-from category_encoders.ordinal import OrdinalEncoder
 
 
 class DateTime2Num(TransformerMixin, BaseEstimator):
@@ -354,34 +352,58 @@ class DataPreprocess(object):
         if self.deduced_types['text']:
             txt_clmn_df = self.df[self.deduced_types['text']]
             org_df.drop(self.deduced_types['text'], axis=1, inplace=True)
-        ohe = OneHotEncoder(cols=self.deduced_types['categorical'], drop_invariant=True, handle_missing='return_nan',
-                            handle_unknown='return_nan')
         ordinal_columns = self.deduced_types['binary'] + self.deduced_types['label']
         for clmn in ordinal_columns:
             self.transform_label_bin(clmn)
-        clmn_maps = [{'col': _, 'mapping': self.mapping[_]} for _ in
-                     self.deduced_types['binary'] + self.deduced_types['label']]
-        oe = OrdinalEncoder(cols=ordinal_columns, mapping=clmn_maps, handle_missing='return_nan',
-                            handle_unknown='return_nan')
+
+        working_df = org_df.copy()
+        for clmn in ordinal_columns:
+            working_df[clmn] = working_df[clmn].map(self.mapping[clmn]).astype(float)
+
+        for clmn in self.deduced_types['categorical']:
+            dummy = pandas.get_dummies(
+                working_df[clmn].astype(object).fillna("__MISSING__"),
+                prefix=str(clmn),
+                prefix_sep="_",
+                dummy_na=False,
+            )
+            working_df = pandas.concat([working_df.drop(columns=[clmn]), dummy], axis=1)
+
+        for clmn in self.deduced_types['datetime64']:
+            working_df[clmn] = pandas.to_datetime(working_df[clmn], errors='coerce')
+            working_df[clmn] = (
+                (working_df[clmn] - pandas.Timestamp("1970-01-01"))
+                .dt.total_seconds()
+                .astype(float)
+            )
+
         dtn = DateTime2Num(cols=self.deduced_types['datetime64'])
-        self.steps.append(('OneHot', ohe))
-        self.steps.append(('Ordinal', oe))
         self.steps.append(('Date2Num', dtn))
         self.steps.append(('Impute', self.imputer))
         trans = Pipeline(self.steps)
-        self.transformed_df = pandas.DataFrame(trans.fit_transform(org_df), columns=oe.get_feature_names_out())
-        encoded_columns = set(ohe.get_feature_names_out())
-        rounded_columns = encoded_columns.union(ordinal_columns)
+
+        # Keep the numeric matrix consistent with the original API while avoiding the deprecated category_encoders path.
+        encoded_frame = pandas.DataFrame(
+            trans.fit_transform(working_df),
+            columns=working_df.columns,
+        )
+        self.transformed_df = encoded_frame.copy()
+
+        rounded_columns = set(ordinal_columns).union(self.deduced_types['categorical'])
         for clmn in self.transformed_df.columns.intersection(rounded_columns):
-            rounded = self.transformed_df[clmn].round(0)
-            self.transformed_df[clmn] = rounded.astype(int) if self.force_impute else rounded
+            rounded = pandas.to_numeric(self.transformed_df[clmn], errors='coerce').round(0)
+            if self.force_impute:
+                self.transformed_df[clmn] = rounded.astype(int)
+            else:
+                self.transformed_df[clmn] = rounded.astype(float)
+
         for clmn in self.deduced_types['text']:
             txt_array = txt_clmn_df[clmn].values
             processed_txt = self.txt_prcsr.fit_transform(txt_array)
             length = processed_txt.shape[1]
             clmn_names = ["%s_%d" % (clmn, _) for _ in range(length)]
-            # self.transformed_df.drop([clmn], axis=1, inplace=True)
             self.transformed_df = pandas.concat(
                 [self.transformed_df, pandas.DataFrame(processed_txt.toarray(), columns=clmn_names)], axis=1)
+
         self.encoded = True
         return self.transformed_df

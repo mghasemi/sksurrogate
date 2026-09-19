@@ -16,6 +16,29 @@ Finding an optimized pipeline -based on a given list of transformers and estimat
 a time-consuming task. A version of evolutionary optimization has been implemented to reduce
 its time in lieu of global optimality.
 
+Data identity and schema validation
+-----------------------------------
+``SKSurrogate`` now records a deterministic dataset fingerprint and a JSON-serializable schema
+for each tracked dataset. Each call to ``mltrack.RegisterData(...)`` stores dataset metadata,
+including the target column, row count, column names, dtypes, nullability, and categorical values.
+This allows a run to be identified and later compared against a different dataset or a refreshed
+training sample.
+
+The tracker also exposes ``validate_data(...)`` and ``validate_prediction_data(...)`` to compare
+incoming data against the stored schema before training or inference. By default the checks are
+strict: missing columns, reordered columns, dtype mismatches, and unknown categorical values fail
+with actionable errors. For compatibility workflows, these checks can be relaxed explicitly with
+``missing_columns='ignore'`` or ``unknown_categories='ignore'``.
+
+The intended workflow is:
+
+1. Register the training dataset with ``mltrack.RegisterData(frame, target)``.
+2. Validate training data before fitting with ``tracker.validate_data(frame, target=...)``.
+3. Validate prediction inputs with ``tracker.validate_prediction_data(frame)`` before calling
+   ``predict`` on a model or pipeline.
+4. Use the stored ``dataset_fingerprint`` and ``dataset_schema`` metadata for reproducibility,
+   drift checks, and auditability.
+
 Dependencies
 ----------------
 ``SKSurrogate`` heavily depends on `NumPy <http://www.numpy.org/>`_,

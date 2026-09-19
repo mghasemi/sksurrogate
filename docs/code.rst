@@ -1,26 +1,40 @@
 Code Documentation
 =================================
 
-.. automodule:: structsearch
+This reference covers the public ``SKSurrogate`` API that users are expected to
+import from the package root. The package exposes the stable automation and
+tracking interfaces directly, while the internal implementation modules remain
+available for advanced usage.
+
+.. currentmodule:: SKSurrogate
+
+.. automodule:: SKSurrogate
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+The package also exposes the major implementation modules for advanced users:
+
+.. automodule:: SKSurrogate.structsearch
    :members:
 
-.. automodule:: eoa
+.. automodule:: SKSurrogate.eoa
    :members:
 
-.. automodule:: NpyProximation
+.. automodule:: SKSurrogate.NpyProximation
    :members:
 
-.. automodule:: sensapprx
+.. automodule:: SKSurrogate.sensapprx
    :members:
 
-.. automodule:: aml
+.. automodule:: SKSurrogate.aml
    :members:
 
-.. automodule:: mltrace
+.. automodule:: SKSurrogate.mltrace
    :members:
 
-.. automodule:: DataProcess
-    :members:
+.. automodule:: SKSurrogate.DataProcess
+   :members:
 
-.. automodule:: synthdat
+.. automodule:: SKSurrogate.synthdat
    :members:

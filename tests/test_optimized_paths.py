@@ -10,7 +10,7 @@ import pandas as pd
 from sklearn.datasets import make_classification
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import ShuffleSplit
-from sklearn.model_selection import KFold
+from sklearn.model_selection import KFold, GroupKFold
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.linear_model import LinearRegression, LogisticRegression
 
@@ -84,6 +84,310 @@ class TestOptimizedPaths(unittest.TestCase):
             self.assertIs(first_split[2], second_split[2])
             self.assertIsNotNone(metrics["logloss"])
             self.assertEqual(len(tracker.allPlots(model.mltrack_id)), 2)
+
+    def test_dataset_fingerprint_and_schema_are_stable_and_sensitive(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            frame_a = pd.DataFrame(
+                {
+                    "feature_a": [1.0, 2.0, 3.0],
+                    "feature_b": ["x", "y", "x"],
+                    "target": [0, 1, 0],
+                }
+            )
+            frame_b = frame_a.copy()
+            frame_c = frame_a.copy()
+            frame_c.loc[0, "feature_a"] = 9.0
+
+            for frame in (frame_a, frame_b):
+                tracker = mltrack("fingerprint-test", db_name=database.name)
+                tracker.RegisterData(frame, "target")
+                metadata = tracker.GetMetadata()
+                self.assertIn("dataset_fingerprint", metadata)
+                self.assertIn("dataset_schema", metadata)
+                self.assertEqual(len(metadata["dataset_fingerprint"]), 64)
+
+            tracker = mltrack("fingerprint-test", db_name=database.name)
+            tracker.RegisterData(frame_a, "target")
+            fingerprint_a = tracker.GetMetadata()["dataset_fingerprint"]
+            tracker.RegisterData(frame_c, "target")
+            fingerprint_c = tracker.GetMetadata()["dataset_fingerprint"]
+            self.assertNotEqual(fingerprint_a, fingerprint_c)
+            schema = tracker.GetMetadata()["dataset_schema"]
+            self.assertIn("feature_a", schema)
+            self.assertIn("target", schema)
+
+    def test_dataset_schema_validation_rejects_missing_and_reordered_columns(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            tracker = mltrack("schema-validation", db_name=database.name)
+            reference = pd.DataFrame(
+                {
+                    "feature_a": [1.0, 2.0, 3.0],
+                    "feature_b": ["x", "y", "x"],
+                    "target": [0, 1, 0],
+                }
+            )
+            tracker.RegisterData(reference, "target")
+
+            tracker.validate_data(reference)
+            with self.assertRaises(ValueError):
+                tracker.validate_data(reference[["feature_a", "target"]])
+            with self.assertRaises(ValueError):
+                tracker.validate_data(reference[["target", "feature_b", "feature_a"]])
+
+            prediction_data = reference[["feature_a", "feature_b"]].copy()
+            tracker.validate_prediction_data(prediction_data)
+            with self.assertRaises(ValueError):
+                tracker.validate_prediction_data(reference[["feature_a", "target"]])
+
+    def test_dataset_validation_policy_handles_missing_and_unknown_categories(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            tracker = mltrack("schema-policy", db_name=database.name)
+            reference = pd.DataFrame(
+                {
+                    "feature_a": [1.0, 2.0, 3.0],
+                    "feature_b": ["x", "y", "x"],
+                    "target": [0, 1, 0],
+                }
+            )
+            tracker.RegisterData(reference, "target")
+
+            with self.assertRaises(ValueError):
+                tracker.validate_data(reference[["feature_a", "target"]])
+
+            self.assertTrue(
+                tracker.validate_data(
+                    reference[["feature_a", "target"]],
+                    missing_columns="ignore",
+                    target="target",
+                )
+            )
+
+            unknown_category = reference.copy()
+            unknown_category.loc[0, "feature_b"] = "z"
+            with self.assertRaises(ValueError):
+                tracker.validate_data(unknown_category)
+            self.assertTrue(
+                tracker.validate_data(unknown_category, unknown_categories="ignore")
+            )
+
+    def test_dataset_provenance_and_partition_metadata_are_recorded(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            tracker = mltrack("provenance-test", db_name=database.name)
+            frame = pd.DataFrame(
+                {
+                    "feature_a": [1.0, 2.0, 3.0],
+                    "feature_b": ["x", "y", "x"],
+                    "target": [0, 1, 0],
+                }
+            )
+
+            tracker.RegisterData(frame, "target", source_uri="s3://bucket/train.csv", partition="train")
+            metadata = tracker.GetMetadata()
+            self.assertEqual(metadata["dataset_source_uri"], "s3://bucket/train.csv")
+            self.assertEqual(metadata["dataset_partition"], "train")
+            self.assertIn("dataset_ingestion_timestamp", metadata)
+            self.assertEqual(metadata["dataset_feature_count"], 2)
+            self.assertEqual(metadata["dataset_rows"], 3)
+
+    def test_dataset_partition_history_tracks_train_and_validation_sets(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            tracker = mltrack("partition-history", db_name=database.name)
+            train = pd.DataFrame(
+                {
+                    "feature_a": [1.0, 2.0, 3.0],
+                    "feature_b": ["x", "y", "x"],
+                    "target": [0, 1, 0],
+                }
+            )
+            validation = pd.DataFrame(
+                {
+                    "feature_a": [4.0, 5.0],
+                    "feature_b": ["y", "x"],
+                    "target": [1, 0],
+                }
+            )
+
+            tracker.RegisterData(train, "target", partition="train", source_uri="train.csv")
+            tracker.RegisterData(validation, "target", partition="validation", source_uri="validation.csv")
+            metadata = tracker.GetMetadata()
+
+            self.assertEqual(metadata["dataset_partition"], "validation")
+            self.assertIn("train", metadata["dataset_partition_history"])
+            self.assertIn("validation", metadata["dataset_partition_history"])
+            self.assertEqual(metadata["dataset_partition_history"]["train"]["source_uri"], "train.csv")
+            self.assertEqual(metadata["dataset_partition_history"]["validation"]["source_uri"], "validation.csv")
+
+    def test_explicit_split_data_is_retrievable_by_partition(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            tracker = mltrack("explicit-splits", db_name=database.name)
+            train = pd.DataFrame(
+                {
+                    "feature_a": [1.0, 2.0, 3.0],
+                    "feature_b": ["x", "y", "x"],
+                    "target": [0, 1, 0],
+                }
+            )
+            validation = pd.DataFrame(
+                {
+                    "feature_a": [4.0, 5.0],
+                    "feature_b": ["y", "x"],
+                    "target": [1, 0],
+                }
+            )
+
+            tracker.RegisterData(train, "target", partition="train")
+            tracker.RegisterData(validation, "target", partition="validation")
+
+            X_train, y_train = tracker.get_data("train")
+            X_validation, y_validation = tracker.get_data("validation")
+            self.assertEqual(X_train.shape[0], 3)
+            self.assertEqual(X_validation.shape[0], 2)
+            self.assertListEqual(y_train.tolist(), [0, 1, 0])
+            self.assertListEqual(y_validation.tolist(), [1, 0])
+
+            split_map = tracker.dataset_splits()
+            self.assertIn("train", split_map)
+            self.assertIn("validation", split_map)
+            self.assertEqual(split_map["validation"]["rows"], 2)
+
+    def test_nested_cv_evaluation_uses_train_split_for_selection_and_validation_for_final_score(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            tracker = mltrack("nested-cv", db_name=database.name)
+            train = pd.DataFrame(
+                {
+                    "feature_a": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+                    "feature_b": ["x", "y", "x", "y", "x", "y"],
+                    "target": [0, 1, 0, 1, 0, 1],
+                }
+            )
+            validation = pd.DataFrame(
+                {
+                    "feature_a": [7.0, 8.0],
+                    "feature_b": ["x", "y"],
+                    "target": [0, 1],
+                }
+            )
+            tracker.RegisterData(train, "target", partition="train")
+            tracker.RegisterData(validation, "target", partition="validation")
+
+            results = tracker.nested_cv_evaluation(
+                LogisticRegression(max_iter=200),
+                inner_cv=2,
+                outer_cv=2,
+                train_partition="train",
+                validation_partition="validation",
+            )
+            self.assertIn("outer_scores", results)
+            self.assertIn("mean_outer_score", results)
+            self.assertIn("final_validation_score", results)
+            self.assertGreaterEqual(results["final_validation_score"], 0.0)
+            self.assertLessEqual(results["mean_outer_score"], 1.0)
+
+    def test_nested_cv_evaluation_supports_group_kfold_configuration(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            tracker = mltrack("grouped-cv", db_name=database.name)
+            train = pd.DataFrame(
+                {
+                    "feature_a": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+                    "feature_b": ["x", "y", "x", "y", "x", "y"],
+                    "group_id": [0, 0, 1, 1, 2, 2],
+                    "target": [0, 1, 0, 1, 0, 1],
+                }
+            )
+            validation = pd.DataFrame(
+                {
+                    "feature_a": [7.0, 8.0],
+                    "feature_b": ["x", "y"],
+                    "group_id": [3, 3],
+                    "target": [0, 1],
+                }
+            )
+            tracker.RegisterData(train, "target", partition="train")
+            tracker.RegisterData(validation, "target", partition="validation")
+
+            results = tracker.nested_cv_evaluation(
+                LogisticRegression(max_iter=200),
+                inner_cv=GroupKFold(n_splits=2),
+                outer_cv=GroupKFold(n_splits=2),
+                train_partition="train",
+                validation_partition="validation",
+                groups=train["group_id"].to_numpy(),
+            )
+            self.assertIn("outer_scores", results)
+            self.assertIn("mean_outer_score", results)
+            self.assertIn("final_validation_score", results)
+            self.assertGreaterEqual(len(results["outer_scores"]), 1)
+            self.assertLessEqual(results["mean_outer_score"], 1.0)
+
+    def test_nested_cv_evaluation_stores_fold_level_predictions_and_metrics(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            tracker = mltrack("fold-metrics", db_name=database.name)
+            train = pd.DataFrame(
+                {
+                    "feature_a": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+                    "feature_b": ["x", "y", "x", "y", "x", "y"],
+                    "target": [0, 1, 0, 1, 0, 1],
+                }
+            )
+            validation = pd.DataFrame(
+                {
+                    "feature_a": [7.0, 8.0],
+                    "feature_b": ["x", "y"],
+                    "target": [0, 1],
+                }
+            )
+            tracker.RegisterData(train, "target", partition="train")
+            tracker.RegisterData(validation, "target", partition="validation")
+
+            results = tracker.nested_cv_evaluation(
+                LogisticRegression(max_iter=200),
+                inner_cv=2,
+                outer_cv=2,
+                train_partition="train",
+                validation_partition="validation",
+            )
+            self.assertIn("fold_metrics", results)
+            self.assertEqual(len(results["fold_metrics"]), 2)
+            self.assertIn("inner_scores", results["fold_metrics"][0])
+            self.assertIn("outer_predictions", results["fold_metrics"][0])
+            self.assertIn("outer_score", results["fold_metrics"][0])
+
+    def test_nested_cv_evaluation_supports_repeated_cv_and_reports_confidence_interval(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            tracker = mltrack("repeat-cv", db_name=database.name)
+            train = pd.DataFrame(
+                {
+                    "feature_a": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+                    "feature_b": ["x", "y", "x", "y", "x", "y", "x", "y"],
+                    "target": [0, 1, 0, 1, 0, 1, 0, 1],
+                }
+            )
+            validation = pd.DataFrame(
+                {
+                    "feature_a": [9.0, 10.0],
+                    "feature_b": ["x", "y"],
+                    "target": [0, 1],
+                }
+            )
+            tracker.RegisterData(train, "target", partition="train")
+            tracker.RegisterData(validation, "target", partition="validation")
+
+            results = tracker.nested_cv_evaluation(
+                LogisticRegression(max_iter=200),
+                inner_cv=2,
+                outer_cv=2,
+                train_partition="train",
+                validation_partition="validation",
+                repeats=3,
+                confidence_level=0.95,
+            )
+            self.assertIn("repeat_count", results)
+            self.assertEqual(results["repeat_count"], 3)
+            self.assertIn("confidence_interval", results)
+            self.assertIn("lower", results["confidence_interval"])
+            self.assertIn("upper", results["confidence_interval"])
+            self.assertIn("repeated_outer_scores", results)
+            self.assertEqual(len(results["repeated_outer_scores"]), 3)
 
     def test_uniform_parent_sampling_is_unique(self):
         class Reference:
