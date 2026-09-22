@@ -38,6 +38,14 @@ class Settings:
     def monitoring_dir(self):
         return self.root / "monitoring"
 
+    @property
+    def jobs_dir(self):
+        return self.root / "jobs"
+
+    @property
+    def checkpoints_dir(self):
+        return self.root / "checkpoints"
+
     def ensure(self):
         for directory in (
             self.datasets_dir,
@@ -46,6 +54,8 @@ class Settings:
             self.registry_dir,
             self.predictions_dir,
             self.monitoring_dir,
+            self.jobs_dir,
+            self.checkpoints_dir,
         ):
             directory.mkdir(parents=True, exist_ok=True)
         return self
@@ -64,6 +74,12 @@ class Settings:
 
     def monitor_log_path(self, task_name, model_version):
         return self.monitoring_dir / task_name / (model_version + ".json")
+
+    def job_record_path(self, job_id):
+        return self.jobs_dir / (job_id + ".json")
+
+    def task_checkpoint_dir(self, task_name, job_id):
+        return self.checkpoints_dir / task_name / job_id
 
 
 settings = Settings().ensure()

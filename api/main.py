@@ -11,7 +11,19 @@ No authentication and SQLite-only storage are intentional v1 decisions.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routers import bundles, datasets, inference, monitoring, quality_gates, registry
+from .routers import (
+    bundles,
+    datasets,
+    experiments,
+    inference,
+    jobs,
+    lineage,
+    monitoring,
+    quality_gates,
+    registry,
+    retraining,
+    sensitivity,
+)
 
 app = FastAPI(
     title="SKSurrogate API",
@@ -33,6 +45,11 @@ app.include_router(quality_gates.router)
 app.include_router(registry.router)
 app.include_router(inference.router)
 app.include_router(monitoring.router)
+app.include_router(sensitivity.router)
+app.include_router(experiments.router)
+app.include_router(jobs.router)
+app.include_router(retraining.router)
+app.include_router(lineage.router)
 
 
 @app.get("/api/health", tags=["health"])
