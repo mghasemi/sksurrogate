@@ -214,6 +214,125 @@ def delayed_label_performance(predictions, labels, *, model_version=None, task_t
     return {"model_version": model_version, "rows": int(len(labels)), "metrics": metrics}
 
 
+def fairness_report(y_true, y_pred, groups, *, positive_label=1):
+    """Summarize demographic parity and equal-opportunity gaps across groups."""
+    y_true = np.asarray(y_true)
+    y_pred = np.asarray(y_pred)
+    groups = np.asarray(groups)
+    if len(y_true) != len(y_pred) or len(y_true) != len(groups):
+        raise ValueError("y_true, y_pred, and groups must have the same length")
+    if not len(y_true):
+        raise ValueError("inputs cannot be empty")
+    by_group = {}
+    selection_rates = []
+    opportunity_rates = []
+    for group in sorted(np.unique(groups)):
+        mask = groups == group
+        predicted_positive = y_pred[mask] == positive_label
+        actual_positive = y_true[mask] == positive_label
+        selection_rate = float(np.mean(predicted_positive)) if np.any(mask) else 0.0
+        true_positive_rate = float(np.mean(predicted_positive[actual_positive])) if np.any(actual_positive) else 0.0
+        by_group[str(group)] = {
+            "count": int(np.sum(mask)),
+            "selection_rate": selection_rate,
+            "true_positive_rate": true_positive_rate,
+            "accuracy": float(np.mean(y_true[mask] == y_pred[mask])) if np.any(mask) else 0.0,
+        }
+        selection_rates.append(selection_rate)
+        opportunity_rates.append(true_positive_rate)
+    fairness = {
+        "demographic_parity_gap": float(max(selection_rates) - min(selection_rates)) if selection_rates else 0.0,
+        "equal_opportunity_gap": float(max(opportunity_rates) - min(opportunity_rates)) if opportunity_rates else 0.0,
+    }
+    return {"groups": by_group, "fairness": fairness}
+
+
+def subgroup_performance_report(y_true, y_pred, groups, *, metric="accuracy", positive_label=1):
+    """Report group-level metrics and the maximum performance gap between subgroups."""
+    y_true = np.asarray(y_true)
+    y_pred = np.asarray(y_pred)
+    groups = np.asarray(groups)
+    if len(y_true) != len(y_pred) or len(y_true) != len(groups):
+        raise ValueError("y_true, y_pred, and groups must have the same length")
+    if metric not in {"accuracy", "precision", "recall", "f1", "loss"}:
+        raise ValueError("metric must be one of accuracy, precision, recall, f1, or loss")
+    results = {}
+    values = []
+    for group in sorted(np.unique(groups)):
+        mask = groups == group
+        group_true = y_true[mask]
+        group_pred = y_pred[mask]
+        if metric == "accuracy":
+            value = float(np.mean(group_true == group_pred)) if len(group_true) else 0.0
+        elif metric == "precision":
+            positive_pred = group_pred == positive_label
+            actual_positive = group_true == positive_label
+            value = float(np.mean(positive_pred[actual_positive])) if np.any(actual_positive) else 0.0
+        elif metric == "recall":
+            actual_positive = group_true == positive_label
+            value = float(np.mean(group_pred[actual_positive] == positive_label)) if np.any(actual_positive) else 0.0
+        elif metric == "f1":
+            actual_positive = group_true == positive_label
+            actual_negative = group_true != positive_label
+            tp = np.sum((group_pred == positive_label) & actual_positive)
+            fp = np.sum((group_pred == positive_label) & actual_negative)
+            precision = tp / (tp + fp) if (tp + fp) else 0.0
+            recall = tp / np.sum(actual_positive) if np.any(actual_positive) else 0.0
+            value = 0.0 if (precision + recall) == 0.0 else (2.0 * precision * recall) / (precision + recall)
+        else:
+            value = 1.0 - float(np.mean(group_true == group_pred)) if len(group_true) else 0.0
+        results[str(group)] = {metric: value, "count": int(len(group_true))}
+        values.append(value)
+    return {"groups": results, "metric": metric, "fairness_gap": float(max(values) - min(values)) if values else 0.0}
+
+
+def loss_report(y_true, y_pred, groups=None, *, positive_label=1):
+    """Convenience wrapper for group-level loss reporting."""
+    if groups is None:
+        groups = np.zeros_like(np.asarray(y_true), dtype=object)
+    return subgroup_performance_report(y_true, y_pred, groups, metric="loss", positive_label=positive_label)
+
+
+def sensitive_feature_report(frame, *, sensitive_features=None):
+    """Flag sensitive and PII-like columns before model training or serving."""
+    if not isinstance(frame, pd.DataFrame):
+        raise TypeError("frame must be a pandas DataFrame")
+    explicit_sensitive = set(sensitive_features or [])
+    pii_tokens = (
+        "email",
+        "phone",
+        "ssn",
+        "social_security",
+        "address",
+        "name",
+        "passport",
+        "tax_id",
+        "dob",
+        "date_of_birth",
+        "ip_address",
+    )
+    pii_columns = []
+    sensitive_columns = []
+    for column in frame.columns:
+        lowered = str(column).lower()
+        if any(token in lowered for token in pii_tokens):
+            pii_columns.append(column)
+        if column in explicit_sensitive or any(token in lowered for token in ("ssn", "secret", "password", "token", "api_key")):
+            sensitive_columns.append(column)
+    pii_columns = sorted(set(pii_columns))
+    sensitive_columns = sorted(set(sensitive_columns))
+    warnings = []
+    if pii_columns:
+        warnings.append("PII-like columns detected: %s" % ", ".join(pii_columns))
+    if sensitive_columns:
+        warnings.append("Sensitive columns detected: %s" % ", ".join(sensitive_columns))
+    return {
+        "pii_columns": pii_columns,
+        "sensitive_columns": sensitive_columns,
+        "warnings": warnings,
+    }
+
+
 class InferenceMonitor:
     """Accumulate latency, error-rate, and throughput metrics for requests."""
 

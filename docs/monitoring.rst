@@ -64,6 +64,67 @@ and MSE instead of classification accuracy. Prediction drift supports numeric an
 categorical prediction values and uses the same thresholded alert format as feature
 drift.
 
+Governance and fairness checks
+==============================
+
+The monitoring module also includes governance checks for model fairness and sensitive
+feature use before training or production serving. Use ``sensitive_feature_report`` to
+highlight PII-like and user-declared sensitive columns before they reach a model:
+
+.. code-block:: python
+
+    import pandas as pd
+    from SKSurrogate import sensitive_feature_report
+
+    frame = pd.DataFrame({
+        "email": ["a@example.com", "b@example.com"],
+        "ssn": ["123", "456"],
+        "amount": [25.0, 42.0],
+    })
+    report = sensitive_feature_report(frame, sensitive_features=["ssn"])
+
+The report returns ``pii_columns`` and ``sensitive_columns`` together with a list of
+warning strings, which can be attached to a training run or CI gate before model
+registration. Sensitive keys such as ``api_key``, ``password``, and ``token`` are also
+redacted automatically from bundle audit metadata and registry event payloads.
+
+Use ``fairness_report`` to compare selection rates and true-positive rates across
+configured groups. This is useful for detecting demographic parity or equal-opportunity
+imbalance before a model is promoted to production:
+
+.. code-block:: python
+
+    import numpy as np
+    from SKSurrogate import fairness_report
+
+    y_true = np.array([1, 0, 1, 0, 1, 0, 1, 0])
+    y_pred = np.array([1, 0, 1, 0, 1, 0, 0, 0])
+    groups = np.array(["A", "A", "A", "A", "B", "B", "B", "B"])
+
+    fairness = fairness_report(y_true, y_pred, groups)
+
+The returned dictionary contains a per-group summary under ``fairness["groups"]`` and
+aggregate gaps under ``fairness["fairness"]``. The demographic parity gap measures the
+spread in positive prediction rate across groups; the equal-opportunity gap measures the
+spread in true-positive rate across groups.
+
+Use ``subgroup_performance_report`` to compare any metric across groups and quantify the
+largest observed gap:
+
+.. code-block:: python
+
+    from SKSurrogate import subgroup_performance_report
+
+    subgroup_metrics = subgroup_performance_report(
+        y_true,
+        y_pred,
+        groups,
+        metric="accuracy",
+    )
+
+The report returns a metric value for each group together with ``fairness_gap``. The same
+helper supports ``accuracy``, ``precision``, ``recall``, ``f1``, and ``loss`` metrics.
+
 ``InferenceMonitor`` accumulates request latency, error rate, row throughput, and
 model version for a serving process:
 

@@ -23,7 +23,16 @@ from .mltrace import np2df, mltrack
 from .DataProcess import DataPreprocess
 from .modelbundle import ModelBundle, ModelRegistry, export_mlflow, load_bundle, save_bundle
 from .inference import SchemaValidationError, create_app, predict_batch, serve
-from .monitoring import InferenceMonitor, delayed_label_performance, drift_report, prediction_distribution_report
+from .monitoring import (
+    InferenceMonitor,
+    delayed_label_performance,
+    drift_report,
+    fairness_report,
+    loss_report,
+    prediction_distribution_report,
+    sensitive_feature_report,
+    subgroup_performance_report,
+)
 
 __all__ = [
     "AML",
@@ -61,8 +70,12 @@ __all__ = [
     "create_app",
     "serve",
     "drift_report",
+    "fairness_report",
     "prediction_distribution_report",
     "delayed_label_performance",
+    "loss_report",
+    "sensitive_feature_report",
+    "subgroup_performance_report",
     "InferenceMonitor",
     "np2df",
     "load_bundle",

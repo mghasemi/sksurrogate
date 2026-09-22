@@ -230,20 +230,20 @@ Dependencies: Phases 1, 5, and 6.
 
 ## Phase 8: Governance, Fairness, and Security
 
-Status: not started
+Status: complete
 
 Goal: provide auditability and responsible-use controls.
 
 Tasks:
 
-- [ ] Add immutable audit events for training, evaluation, promotion, and rollback.
-- [ ] Add user/run ownership metadata.
-- [ ] Add sensitive-feature declarations.
-- [ ] Add group fairness metrics and reports.
-- [ ] Add subgroup performance reports.
-- [ ] Add PII and sensitive-column warnings.
-- [ ] Add secret-management guidance and prevent secrets in metadata.
-- [ ] Add retention and deletion controls for stored datasets and predictions.
+- [x] Add immutable audit events for training, evaluation, promotion, and rollback.
+- [x] Add user/run ownership metadata.
+- [x] Add sensitive-feature declarations.
+- [x] Add group fairness metrics and reports.
+- [x] Add subgroup performance reports.
+- [x] Add PII and sensitive-column warnings.
+- [x] Add secret-management guidance and prevent secrets in metadata.
+- [x] Add retention and deletion controls for stored datasets and predictions.
 
 Acceptance criteria:
 
@@ -371,3 +371,13 @@ Dependencies: all prior phases.
 - Added range drift, prediction-distribution drift, delayed-label performance metrics, and `InferenceMonitor` summaries for latency, error rate, and throughput.
 - Added focused regression tests for synthetic distribution shifts and independent schema-change reporting.
 - Expanded monitoring documentation with range metrics, prediction drift, delayed-label regression metrics, and runtime summary usage.
+
+### 2026-09-22
+
+- Started Phase 8 with auditable `ModelBundle` metadata: `owner`, `run_id`, `sensitive_features`, and redacted audit events that strip secrets from metadata and nested dict/list payloads.
+- Added `ModelRegistry.audit_log()` and registry-level promotion/rollback history entries for immutable audit tracking.
+- Added `sensitive_feature_report()` to flag PII and sensitive columns before training or serving.
+- Added regression tests covering audit redaction, registry audit history, and sensitive-column warnings.
+- Added `fairness_report()` and `subgroup_performance_report()` to quantify selection-rate and accuracy gaps by group.
+- Added `ModelRegistry.register_dataset()`, `register_prediction()`, and `delete_artifacts()` for retention-aware lifecycle deletion by task, model, and dataset identity.
+- Closed Phase 8 with full regression coverage and the phase marked as complete.

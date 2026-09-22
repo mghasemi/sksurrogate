@@ -4,6 +4,7 @@ import importlib.metadata
 import json
 import os
 import platform
+import shutil
 import tempfile
 import uuid
 from datetime import datetime, timezone
@@ -14,6 +15,31 @@ import joblib
 
 BUNDLE_FORMAT_VERSION = 1
 REGISTRY_STATES = {"candidate", "validated", "staging", "production", "archived"}
+_SENSITIVE_KEYS = {
+    "api_key",
+    "apikey",
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "private_key",
+    "privatekey",
+    "ssn",
+}
+
+
+def _redact_sensitive_value(key, value):
+    if isinstance(key, str):
+        normalized = key.lower().replace("-", "_")
+        if any(token in normalized for token in _SENSITIVE_KEYS):
+            return "[REDACTED]"
+    if isinstance(value, dict):
+        return {inner_key: _redact_sensitive_value(inner_key, inner_value) for inner_key, inner_value in value.items()}
+    if isinstance(value, list):
+        return [_redact_sensitive_value(key, item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_sensitive_value(key, item) for item in value)
+    return value
 
 
 def _dependencies():
@@ -42,6 +68,10 @@ class ModelBundle:
         config_version=None,
         model_version=None,
         dependencies=None,
+        owner=None,
+        run_id=None,
+        sensitive_features=None,
+        audit_events=None,
     ):
         self.model = model
         self.task_name = task_name
@@ -53,7 +83,21 @@ class ModelBundle:
         self.config_version = config_version
         self.model_version = model_version or uuid.uuid4().hex
         self.dependencies = _dependencies() if dependencies is None else dependencies
+        self.owner = owner
+        self.run_id = run_id
+        self.sensitive_features = list(sensitive_features) if sensitive_features is not None else []
+        self.audit_events = list(audit_events) if audit_events is not None else []
         self.created_at = datetime.now(timezone.utc).isoformat()
+
+    def record_audit_event(self, event_type, **details):
+        snapshot = {**self.metadata, **details}
+        event = {
+            "event_type": event_type,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "details": _redact_sensitive_value("details", snapshot),
+        }
+        self.audit_events.append(event)
+        return event
 
     def to_record(self):
         return {
@@ -64,11 +108,15 @@ class ModelBundle:
             "model": self.model,
             "preprocessing": self.preprocessing,
             "schema": self.schema,
-            "metadata": self.metadata,
+            "metadata": _redact_sensitive_value("metadata", self.metadata),
             "metrics": self.metrics,
             "dataset_fingerprint": self.dataset_fingerprint,
             "config_version": self.config_version,
             "dependencies": self.dependencies,
+            "owner": self.owner,
+            "run_id": self.run_id,
+            "sensitive_features": list(self.sensitive_features),
+            "audit_events": self.audit_events,
         }
 
     @classmethod
@@ -88,6 +136,10 @@ class ModelBundle:
             config_version=record.get("config_version"),
             model_version=record.get("model_version"),
             dependencies=record.get("dependencies"),
+            owner=record.get("owner"),
+            run_id=record.get("run_id"),
+            sensitive_features=record.get("sensitive_features"),
+            audit_events=record.get("audit_events", []),
         )
         bundle.created_at = record.get("created_at", bundle.created_at)
         return bundle
@@ -210,17 +262,28 @@ class ModelRegistry:
         if not isinstance(bundle, ModelBundle):
             raise TypeError("bundle must be a ModelBundle")
         task_name = bundle.task_name or "default"
+        bundle.record_audit_event("register", task_name=task_name, model_version=bundle.model_version)
         task_dir = self.root / task_name
         path = task_dir / (bundle.model_version + ".bundle")
         save_bundle(bundle, path)
         index = self._read_index()
-        task = index["models"].setdefault(task_name, {"versions": {}, "aliases": {}, "history": []})
+        task = index["models"].setdefault(
+            task_name,
+            {"versions": {}, "aliases": {}, "history": [], "audit": []},
+        )
         task["versions"][bundle.model_version] = {
             "path": str(path.relative_to(self.root)),
             "state": "candidate",
             "created_at": bundle.created_at,
         }
         task["aliases"]["latest"] = bundle.model_version
+        task["audit"].append({
+            "event_type": "register",
+            "task_name": task_name,
+            "model_version": bundle.model_version,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "details": {"state": "candidate"},
+        })
         self._write_index(index)
         return bundle.model_version
 
@@ -236,6 +299,15 @@ class ModelRegistry:
         task["versions"][model_version]["state"] = state
         task["aliases"][state] = model_version
         task["history"].append({
+            "event_type": "promote",
+            "action": "promote",
+            "from": previous,
+            "to": state,
+            "model_version": model_version,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+        task.setdefault("audit", []).append({
+            "event_type": "promote",
             "action": "promote",
             "from": previous,
             "to": state,
@@ -260,6 +332,15 @@ class ModelRegistry:
         previous = task["aliases"].get(state)
         task["aliases"][state] = target
         task["history"].append({
+            "event_type": "rollback",
+            "action": "rollback",
+            "state": state,
+            "from": previous,
+            "to": target,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+        task.setdefault("audit", []).append({
+            "event_type": "rollback",
             "action": "rollback",
             "state": state,
             "from": previous,
@@ -267,6 +348,146 @@ class ModelRegistry:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
         self._write_index(index)
+
+    def audit_log(self, task_name):
+        index = self._read_index()
+        task = index["models"].get(task_name)
+        if task is None:
+            raise KeyError("Unknown model task: %r" % task_name)
+        return list(task.get("audit", task.get("history", [])))
+
+    def register_dataset(self, task_name, dataset_fingerprint, source_path, *, metadata=None):
+        """Register a stored dataset artifact and keep retention metadata for the task."""
+        index = self._read_index()
+        task = index["models"].setdefault(
+            task_name,
+            {"versions": {}, "aliases": {}, "history": [], "audit": [], "datasets": {}, "predictions": {}},
+        )
+        dataset_dir = self.root / task_name / "datasets"
+        dataset_dir.mkdir(parents=True, exist_ok=True)
+        dataset_file = dataset_dir / (dataset_fingerprint + ".json")
+        payload = {
+            "task_name": task_name,
+            "dataset_fingerprint": dataset_fingerprint,
+            "source_path": str(source_path),
+            "registered_at": datetime.now(timezone.utc).isoformat(),
+            "metadata": metadata or {},
+        }
+        with dataset_file.open("w", encoding="utf-8") as stream:
+            json.dump(payload, stream, indent=2, sort_keys=True)
+        task.setdefault("datasets", {})[dataset_fingerprint] = {
+            "path": str(dataset_file.relative_to(self.root)),
+            "source_path": str(source_path),
+            "registered_at": payload["registered_at"],
+            "metadata": payload["metadata"],
+        }
+        self._write_index(index)
+        return dataset_file
+
+    def register_prediction(self, task_name, model_version, dataset_fingerprint, source_path, *, prediction_id=None, metadata=None):
+        """Register a stored prediction artifact keyed to a model and dataset."""
+        index = self._read_index()
+        task = index["models"].setdefault(
+            task_name,
+            {"versions": {}, "aliases": {}, "history": [], "audit": [], "datasets": {}, "predictions": {}},
+        )
+        prediction_id = prediction_id or uuid.uuid4().hex
+        target_dir = self.root / task_name / "predictions" / model_version / dataset_fingerprint
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / (prediction_id + ".csv")
+        source = Path(source_path)
+        if source.exists() and source != target_path:
+            shutil.copy2(str(source), str(target_path))
+        else:
+            target_path.write_text(str(source_path), encoding="utf-8")
+        task.setdefault("predictions", {}).setdefault(model_version, {}).setdefault(dataset_fingerprint, {})[prediction_id] = {
+            "path": str(target_path.relative_to(self.root)),
+            "registered_at": datetime.now(timezone.utc).isoformat(),
+            "metadata": metadata or {},
+        }
+        self._write_index(index)
+        return target_path
+
+    def delete_artifacts(self, task_name, *, model_version=None, dataset_fingerprint=None):
+        """Delete stored dataset and prediction artifacts by task, model, and dataset identity."""
+        index = self._read_index()
+        task = index["models"].get(task_name)
+        if task is None:
+            raise KeyError("Unknown model task: %r" % task_name)
+        deleted = {"datasets": 0, "predictions": 0}
+
+        datasets = task.get("datasets", {})
+        if dataset_fingerprint is not None:
+            entry = datasets.pop(dataset_fingerprint, None)
+            if entry is not None:
+                path = self.root / entry["path"]
+                if path.exists():
+                    path.unlink()
+                deleted["datasets"] += 1
+        else:
+            for dataset_key in list(datasets):
+                entry = datasets.pop(dataset_key, None)
+                path = self.root / entry["path"]
+                if path.exists():
+                    path.unlink()
+                deleted["datasets"] += 1
+
+        predictions = task.get("predictions", {})
+        if model_version is not None:
+            model_predictions = predictions.get(model_version, {})
+            if dataset_fingerprint is not None:
+                dataset_predictions = model_predictions.pop(dataset_fingerprint, {})
+                for prediction_key, entry in list(dataset_predictions.items()):
+                    path = self.root / entry["path"]
+                    if path.exists():
+                        path.unlink()
+                    deleted["predictions"] += 1
+                if not model_predictions:
+                    predictions.pop(model_version, None)
+            else:
+                for dataset_key in list(model_predictions):
+                    dataset_predictions = model_predictions.pop(dataset_key, {})
+                    for prediction_key, entry in list(dataset_predictions.items()):
+                        path = self.root / entry["path"]
+                        if path.exists():
+                            path.unlink()
+                        deleted["predictions"] += 1
+                if not model_predictions:
+                    predictions.pop(model_version, None)
+        elif dataset_fingerprint is not None:
+            for model_key, model_predictions in list(predictions.items()):
+                dataset_predictions = model_predictions.pop(dataset_fingerprint, {})
+                for prediction_key, entry in list(dataset_predictions.items()):
+                    path = self.root / entry["path"]
+                    if path.exists():
+                        path.unlink()
+                    deleted["predictions"] += 1
+                if not model_predictions:
+                    predictions.pop(model_key, None)
+        else:
+            for model_key, model_predictions in list(predictions.items()):
+                for dataset_key in list(model_predictions):
+                    dataset_predictions = model_predictions.pop(dataset_key, {})
+                    for prediction_key, entry in list(dataset_predictions.items()):
+                        path = self.root / entry["path"]
+                        if path.exists():
+                            path.unlink()
+                        deleted["predictions"] += 1
+                if not model_predictions:
+                    predictions.pop(model_key, None)
+
+        task["datasets"] = datasets
+        task["predictions"] = predictions
+        task.setdefault("audit", []).append({
+            "event_type": "delete_artifacts",
+            "task_name": task_name,
+            "model_version": model_version,
+            "dataset_fingerprint": dataset_fingerprint,
+            "deleted": deleted,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+        self._write_index(index)
+        return deleted
 
     def load(self, task_name, alias="production", **kwargs):
         index = self._read_index()
@@ -281,4 +502,4 @@ class ModelRegistry:
         task = index["models"].get(task_name)
         if task is None:
             raise KeyError("Unknown model task: %r" % task_name)
-        return list(task["history"])
+        return list(task.get("history", []))

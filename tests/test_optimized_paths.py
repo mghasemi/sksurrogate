@@ -33,10 +33,14 @@ from SKSurrogate import (
     InferenceMonitor,
     delayed_label_performance,
     prediction_distribution_report,
+    loss_report,
     load_bundle,
     mltrack,
     np2df,
     save_bundle,
+    sensitive_feature_report,
+    fairness_report,
+    subgroup_performance_report,
 )
 from SKSurrogate.inference import main as batch_main
 from SKSurrogate.inference import create_app
@@ -106,6 +110,111 @@ class TestOptimizedPaths(unittest.TestCase):
         self.assertEqual(summary["error_rate"], 0.5)
         self.assertEqual(summary["rows"], 150)
         self.assertEqual(summary["throughput_rows_per_second"], 3750.0)
+
+    def test_phase8_bundle_tracks_audit_events_and_ownership(self):
+        model = DummyClassifier(strategy="most_frequent").fit(
+            np.array([[0.0], [1.0]]), np.array([0, 1])
+        )
+        bundle = ModelBundle(
+            model,
+            owner="alice",
+            run_id="run-42",
+            sensitive_features=["ssn"],
+            metadata={"api_key": "super-secret"},
+        )
+
+        bundle.record_audit_event("training", dataset_fingerprint="fp-1", status="ok")
+
+        self.assertEqual(bundle.owner, "alice")
+        self.assertEqual(bundle.run_id, "run-42")
+        self.assertEqual(bundle.sensitive_features, ["ssn"])
+        self.assertEqual(bundle.audit_events[0]["event_type"], "training")
+        self.assertEqual(bundle.audit_events[0]["details"]["api_key"], "[REDACTED]")
+        self.assertEqual(bundle.audit_events[0]["details"]["dataset_fingerprint"], "fp-1")
+
+    def test_phase8_registry_records_promotions_and_audit_history(self):
+        model = DummyClassifier(strategy="most_frequent").fit(
+            np.array([[0.0], [1.0]]), np.array([0, 1])
+        )
+        bundle = ModelBundle(model, task_name="governance-demo", owner="alice")
+
+        with tempfile.TemporaryDirectory() as directory:
+            registry = ModelRegistry(directory)
+            model_version = registry.register(bundle)
+            registry.promote("governance-demo", model_version, "staging")
+            audit = registry.audit_log("governance-demo")
+
+        self.assertEqual(audit[0]["event_type"], "register")
+        self.assertTrue(any(event["event_type"] == "promote" and event["to"] == "staging" for event in audit))
+
+    def test_sensitive_feature_report_flags_pii_and_sensitive_columns(self):
+        frame = pd.DataFrame({"email": ["a@example.com", "b@example.com"], "ssn": ["123", "456"], "amount": [1.0, 2.0]})
+
+        report = sensitive_feature_report(frame, sensitive_features=["ssn"])
+
+        self.assertIn("email", report["pii_columns"])
+        self.assertIn("ssn", report["sensitive_columns"])
+        self.assertTrue(report["warnings"])
+
+    def test_registry_retention_deletes_artifacts_by_task_model_and_dataset(self):
+        with tempfile.TemporaryDirectory() as directory:
+            registry = ModelRegistry(directory)
+            dataset_path = Path(directory) / "dataset.csv"
+            prediction_path = Path(directory) / "prediction.csv"
+            dataset_path.write_text("feature\n1\n2\n", encoding="utf-8")
+            prediction_path.write_text("prediction\n0\n1\n", encoding="utf-8")
+
+            registry.register_dataset(
+                "retention-demo",
+                "dataset-fp-1",
+                dataset_path,
+                metadata={"rows": 2},
+            )
+            registry.register_prediction(
+                "retention-demo",
+                "model-v1",
+                "dataset-fp-1",
+                prediction_path,
+                prediction_id="pred-1",
+            )
+
+            self.assertTrue((Path(directory) / "retention-demo" / "datasets" / "dataset-fp-1.json").exists())
+            self.assertTrue((Path(directory) / "retention-demo" / "predictions" / "model-v1" / "dataset-fp-1" / "pred-1.csv").exists())
+
+            deleted = registry.delete_artifacts(
+                task_name="retention-demo",
+                model_version="model-v1",
+                dataset_fingerprint="dataset-fp-1",
+            )
+
+            self.assertTrue(deleted["datasets"])
+            self.assertTrue(deleted["predictions"])
+            self.assertFalse((Path(directory) / "retention-demo" / "datasets" / "dataset-fp-1.json").exists())
+            self.assertFalse((Path(directory) / "retention-demo" / "predictions" / "model-v1" / "dataset-fp-1" / "pred-1.csv").exists())
+
+    def test_group_fairness_report_detects_selection_gap(self):
+        y_true = np.array([1, 0, 1, 0, 1, 0, 1, 0])
+        y_pred = np.array([1, 0, 1, 0, 1, 0, 0, 0])
+        groups = np.array(["A", "A", "A", "A", "B", "B", "B", "B"])
+
+        report = fairness_report(y_true, y_pred, groups)
+
+        self.assertAlmostEqual(report["groups"]["A"]["selection_rate"], 0.5)
+        self.assertAlmostEqual(report["groups"]["B"]["selection_rate"], 0.25)
+        self.assertGreater(report["fairness"]["demographic_parity_gap"], 0.0)
+        self.assertGreater(report["fairness"]["equal_opportunity_gap"], 0.0)
+
+    def test_subgroup_performance_report_compares_accuracy_by_group(self):
+        y_true = np.array([1, 0, 1, 0, 1, 0, 1, 0])
+        y_pred = np.array([1, 0, 1, 0, 1, 0, 0, 0])
+        groups = np.array(["A", "A", "A", "A", "B", "B", "B", "B"])
+
+        report = subgroup_performance_report(y_true, y_pred, groups, metric="accuracy")
+
+        self.assertAlmostEqual(report["groups"]["A"]["accuracy"], 1.0)
+        self.assertAlmostEqual(report["groups"]["B"]["accuracy"], 0.75)
+        self.assertAlmostEqual(report["fairness_gap"], 0.25)
+
     def test_batch_prediction_validates_schema_and_preserves_model_metadata(self):
         model = DummyClassifier(strategy="most_frequent").fit(
             np.array([[0.0], [1.0], [2.0]]), np.array([0, 1, 0])

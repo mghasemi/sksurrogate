@@ -73,6 +73,53 @@ records a timestamped history entry. Roll back an alias to a known version with:
 
     registry.rollback("customer-churn", "production", model_version="previous-version")
 
+Artifact retention and deletion
+================================
+
+Registry storage also supports versioned dataset and prediction artifacts so a task can be
+retained or cleaned up by task, model version, and dataset identity. Use
+``register_dataset`` and ``register_prediction`` to keep raw data and prediction outputs
+linked to a specific dataset fingerprint:
+
+.. code-block:: python
+
+    from pathlib import Path
+    from SKSurrogate import ModelRegistry
+
+    registry = ModelRegistry("artifacts/registry")
+    dataset_path = Path("artifacts/train.csv")
+    prediction_path = Path("artifacts/preds.csv")
+
+    registry.register_dataset(
+        "customer-churn",
+        "dataset-v42",
+        dataset_path,
+        metadata={"rows": 25000, "target": "label"},
+    )
+    registry.register_prediction(
+        "customer-churn",
+        "model-v7",
+        "dataset-v42",
+        prediction_path,
+        prediction_id="nightly-run-01",
+        metadata={"source": "batch-scoring"},
+    )
+
+Later, delete artifacts by identity when retention should be enforced or a dataset must be
+purged after a retention period:
+
+.. code-block:: python
+
+    deleted = registry.delete_artifacts(
+        task_name="customer-churn",
+        model_version="model-v7",
+        dataset_fingerprint="dataset-v42",
+    )
+
+The return value contains the number of deleted dataset and prediction artifacts. The
+registry also records an ``delete_artifacts`` audit event so each cleanup stays
+traceable to the task, model version, and dataset fingerprint being removed.
+
 Registry and bundle writes use temporary files followed by atomic replacement, so a
 partially written artifact is not presented as a completed bundle or registry index.
 
