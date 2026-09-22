@@ -21,6 +21,7 @@ Welcome to SKSurrogate's documentation!
    modelbundles
    inference
    monitoring
+   phase9
    code
 
 Indices and tables

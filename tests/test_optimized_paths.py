@@ -22,9 +22,16 @@ from sklearn.pipeline import Pipeline
 
 from SKSurrogate import (
     AML,
+    assert_bundle_quality,
+    BundleQualityGateError,
+    check_bundle_quality,
     DataPreprocess,
+    DeploymentApprovalGate,
+    DaskExecutionBackend,
+    LocalProcessExecutionBackend,
     ModelBundle,
     ModelRegistry,
+    RetrainingJob,
     SchemaValidationError,
     StackingEstimator,
     export_mlflow,
@@ -191,6 +198,195 @@ class TestOptimizedPaths(unittest.TestCase):
             self.assertTrue(deleted["predictions"])
             self.assertFalse((Path(directory) / "retention-demo" / "datasets" / "dataset-fp-1.json").exists())
             self.assertFalse((Path(directory) / "retention-demo" / "predictions" / "model-v1" / "dataset-fp-1" / "pred-1.csv").exists())
+
+    def test_phase9_local_backend_persists_trial_state_and_resumes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            backend = LocalProcessExecutionBackend(directory, task_name="phase9-demo")
+
+            trial_id = backend.submit_trial(
+                {"value": 2},
+                fn=lambda params: params["value"] * 3,
+                worker_id="worker-a",
+            )
+
+            self.assertEqual(backend.get_trial(trial_id)["status"], "queued")
+
+            backend.mark_running(trial_id, worker_id="worker-b")
+            backend.mark_failed(trial_id, error="crash-before-result")
+
+            resumed = LocalProcessExecutionBackend(directory, task_name="phase9-demo").resume_incomplete_trials()
+            self.assertEqual(len(resumed), 1)
+            self.assertEqual(resumed[0]["trial_id"], trial_id)
+
+            result = resumed[0]["fn"](resumed[0]["params"])
+            self.assertEqual(result, 6)
+            backend.mark_completed(trial_id, result=result)
+            self.assertEqual(backend.get_trial(trial_id)["status"], "completed")
+            self.assertEqual(backend.get_trial(trial_id)["result"], 6)
+
+    def test_phase9_local_backend_executes_pending_trials_with_failures(self):
+        with tempfile.TemporaryDirectory() as directory:
+            backend = LocalProcessExecutionBackend(directory, task_name="phase9-worker")
+
+            success_id = backend.submit_trial({"value": 3}, fn=lambda params: params["value"] * 2)
+            failed_id = backend.submit_trial({"value": 0}, fn=lambda params: 1 / params["value"])
+
+            executed = backend.execute_pending(worker_id="worker-c")
+
+            self.assertEqual(len(executed), 2)
+            self.assertEqual(backend.get_trial(success_id)["status"], "completed")
+            self.assertEqual(backend.get_trial(success_id)["result"], 6)
+            self.assertEqual(backend.get_trial(failed_id)["status"], "failed")
+            self.assertIn("ZeroDivisionError", backend.get_trial(failed_id)["error"])
+
+    def test_phase9_local_backend_claims_and_lists_completed_results(self):
+        with tempfile.TemporaryDirectory() as directory:
+            backend = LocalProcessExecutionBackend(directory, task_name="phase9-queue")
+
+            pending_id = backend.submit_trial({"value": 7}, fn=lambda params: params["value"] + 1)
+
+            self.assertEqual(backend.claim_trial(pending_id, worker_id="worker-d")["status"], "running")
+            self.assertIsNone(backend.claim_trial(pending_id, worker_id="worker-e"))
+
+            backend.mark_completed(pending_id, result=8, worker_id="worker-d")
+            result_rows = backend.list_results()
+
+            self.assertEqual(len(result_rows), 1)
+            self.assertEqual(result_rows[0]["result"], 8)
+            self.assertEqual(result_rows[0]["worker_id"], "worker-d")
+
+    def test_phase9_local_backend_claims_oldest_pending_trial(self):
+        with tempfile.TemporaryDirectory() as directory:
+            backend = LocalProcessExecutionBackend(directory, task_name="phase9-order")
+
+            first = backend.submit_trial({"value": 1}, fn=lambda params: params["value"])
+            second = backend.submit_trial({"value": 2}, fn=lambda params: params["value"])
+
+            first_claim = backend.claim_next_trial(worker_id="worker-x")
+            self.assertEqual(first_claim["trial_id"], first)
+            self.assertEqual(backend.list_pending()[0]["trial_id"], second)
+            self.assertEqual(len(backend.list_pending()), 1)
+
+    def test_phase9_dask_backend_dispatches_and_persists_callback_result(self):
+        class ImmediateFuture:
+            def __init__(self, value):
+                self.value = value
+
+            def add_done_callback(self, callback):
+                callback(self)
+
+            def result(self):
+                return self.value
+
+        class FakeClient:
+            def submit(self, fn, params):
+                return ImmediateFuture(fn(params))
+
+        with tempfile.TemporaryDirectory() as directory:
+            backend = DaskExecutionBackend(directory, task_name="phase9-dask", client=FakeClient())
+            trial_id = backend.submit_trial({"value": 4}, fn=lambda params: params["value"] * 5)
+
+            scheduled = backend.execute_pending(worker_id="dask-worker")
+
+            self.assertEqual(scheduled[0]["trial_id"], trial_id)
+            self.assertEqual(backend.get_trial(trial_id)["status"], "completed")
+            self.assertEqual(backend.get_trial(trial_id)["result"], 20)
+            self.assertEqual(backend.get_trial(trial_id)["worker_id"], "dask-worker")
+
+    def test_phase9_ci_quality_gates_validate_schema_metrics_and_size(self):
+        model = DummyClassifier(strategy="most_frequent").fit(
+            np.array([[0.0], [1.0]]), np.array([0, 1])
+        )
+        bundle = ModelBundle(
+            model,
+            schema={"columns": ["feature"]},
+            metrics={"accuracy": 0.92},
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = save_bundle(bundle, Path(directory) / "model.bundle")
+            report = check_bundle_quality(
+                path,
+                expected_schema={"columns": ["feature"]},
+                metric_thresholds={"accuracy": 0.90},
+                max_bundle_size_bytes=path.stat().st_size,
+            )
+            self.assertTrue(report["passed"])
+            self.assertTrue(assert_bundle_quality(path, metric_thresholds={"accuracy": 0.90})["passed"])
+
+            failed = check_bundle_quality(
+                path,
+                expected_schema={"columns": ["other"]},
+                metric_thresholds={"accuracy": 0.95},
+                max_bundle_size_bytes=1,
+            )
+            self.assertFalse(failed["passed"])
+            with self.assertRaises(BundleQualityGateError):
+                assert_bundle_quality(path, metric_thresholds={"accuracy": 0.95})
+
+    def test_phase9_retraining_entry_points_register_and_promote_bundles(self):
+        model = DummyClassifier(strategy="most_frequent").fit(
+            np.array([[0.0], [1.0]]), np.array([0, 1])
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            registry = ModelRegistry(directory)
+            calls = []
+
+            def trainer(context):
+                calls.append(context)
+                return ModelBundle(model, metrics={"accuracy": 1.0})
+
+            job = RetrainingJob(
+                trainer,
+                registry,
+                "phase9-retraining",
+                promotion_state="staging",
+            )
+            skipped = job.run_scheduled(lambda context: context["due"], context={"due": False})
+            result = job.run_on_data(lambda context: context["new_data"], context={"new_data": True})
+
+            self.assertEqual(skipped["status"], "skipped")
+            self.assertEqual(result["status"], "completed")
+            self.assertEqual(result["promotion_state"], "staging")
+            self.assertEqual(calls, [{"new_data": True}])
+            self.assertEqual(registry.audit_log("phase9-retraining")[-1]["to"], "staging")
+
+    def test_phase9_deployment_gate_requires_approval_and_preserves_rollback_audit(self):
+        model = DummyClassifier(strategy="most_frequent").fit(
+            np.array([[0.0], [1.0]]), np.array([0, 1])
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            registry = ModelRegistry(directory)
+            first = registry.register(ModelBundle(model, task_name="phase9-deploy"))
+            second = registry.register(ModelBundle(model, task_name="phase9-deploy"))
+            gate = DeploymentApprovalGate(registry, required_approvals=2)
+
+            with self.assertRaises(PermissionError):
+                gate.promote("phase9-deploy", first, "production", approvers=["alice"])
+            with self.assertRaises(ValueError):
+                gate.promote(
+                    "phase9-deploy",
+                    first,
+                    "production",
+                    approvers=["alice", "bob"],
+                    quality_report={"passed": False},
+                )
+
+            promoted = gate.promote(
+                "phase9-deploy",
+                first,
+                "production",
+                approvers=["alice", "bob", "alice"],
+                quality_report={"passed": True},
+            )
+            gate.promote("phase9-deploy", second, "production", approvers=["carol", "dana"])
+            rollback = gate.rollback("phase9-deploy", "production", model_version=first)
+            audit = registry.audit_log("phase9-deploy")
+
+            self.assertEqual(promoted["status"], "promoted")
+            self.assertEqual(rollback["status"], "rolled_back")
+            self.assertEqual(sum(event["event_type"] == "approval" for event in audit), 4)
+            self.assertEqual(audit[-1]["event_type"], "rollback")
 
     def test_group_fairness_report_detects_selection_gap(self):
         y_true = np.array([1, 0, 1, 0, 1, 0, 1, 0])

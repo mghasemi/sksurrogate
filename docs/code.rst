@@ -42,6 +42,18 @@ The package also exposes the major implementation modules for advanced users:
 .. automodule:: SKSurrogate.monitoring
    :members:
 
+.. automodule:: SKSurrogate.execution
+   :members:
+
+.. automodule:: SKSurrogate.ci
+   :members:
+
+.. automodule:: SKSurrogate.retraining
+   :members:
+
+.. automodule:: SKSurrogate.deployment
+   :members:
+
 .. automodule:: SKSurrogate.DataProcess
    :members:
 

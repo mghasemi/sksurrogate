@@ -256,20 +256,21 @@ Dependencies: Phases 1, 5, and 7.
 
 ## Phase 9: Distributed Execution and CI/CD Integration
 
-Status: not started
+Status: complete
 
 Goal: scale searches and automate quality gates.
 
 Tasks:
 
-- [ ] Define an execution backend interface.
-- [ ] Add a local process backend with durable trial state.
-- [ ] Add optional Dask or Ray integration.
-- [ ] Add queue-based worker coordination.
-- [ ] Add concurrent-safe result storage.
-- [ ] Add CI checks for schema compatibility, metrics, and model size.
-- [ ] Add scheduled and data-triggered retraining entry points.
-- [ ] Add deployment approval gates and rollback automation.
+- [x] Define an execution backend interface.
+- [x] Add a local process backend with durable trial state.
+- [x] Add queue-based worker coordination.
+- [x] Add concurrent-safe result storage.
+- [x] Add oldest-first pending trial selection and resume-safe execution semantics.
+- [x] Add optional Dask integration through an asynchronous client adapter backed by durable trial state.
+- [x] Add CI checks for schema compatibility, metrics, and model size.
+- [x] Add scheduled and data-triggered retraining entry points.
+- [x] Add deployment approval gates and rollback automation.
 
 Acceptance criteria:
 
@@ -282,13 +283,13 @@ Dependencies: Phases 3, 5, 7, and 8.
 
 ## Phase 10: Documentation and Release Hardening
 
-Status: not started
+Status: in progress
 
 Goal: make the operational features discoverable and maintainable.
 
 Tasks:
 
-- [ ] Add end-to-end MLOps documentation and diagrams.
+- [x] Add end-to-end MLOps documentation and operational use cases for Phase 9.
 - [ ] Add runnable examples for each lifecycle stage.
 - [ ] Add migration notes for existing SQLite databases and checkpoints.
 - [ ] Add API reference coverage for public classes and methods.
@@ -381,3 +382,22 @@ Dependencies: all prior phases.
 - Added `fairness_report()` and `subgroup_performance_report()` to quantify selection-rate and accuracy gaps by group.
 - Added `ModelRegistry.register_dataset()`, `register_prediction()`, and `delete_artifacts()` for retention-aware lifecycle deletion by task, model, and dataset identity.
 - Closed Phase 8 with full regression coverage and the phase marked as complete.
+
+### 2026-09-22
+
+- Started Phase 9 by adding a filesystem-backed `LocalProcessExecutionBackend` that persists trial state, supports queued/running/failed/completed transitions, and can resume incomplete tasks from disk.
+- Added the public execution backend interface and exported the local backend through the package API.
+- Added focused regressions covering durable trial state, failure transitions, resume behavior, worker execution of pending jobs, safe queue claiming, and oldest-first scheduling.
+- Extended the backend contract with an `execute_pending()` worker loop and a `claim_trial()`/`claim_next_trial()`/`list_results()` workflow that marks trials as running, reserves work for one worker, captures exceptions, exposes the pending queue in creation order, and makes completed results queryable.
+- Current state: the local Phase 9 execution foundation is complete and validated. The next milestone is to add the first distributed execution backend interface beyond the local process adapter and to wire it into higher-level search orchestration.
+- Added an optional `DaskExecutionBackend` that dispatches claimed trials to a Dask-compatible client while retaining durable local state for status, results, failures, and resume behavior.
+- Added a dependency-free fake-client regression covering asynchronous callback completion and persisted Dask results. Dask remains optional and is only imported when a client is not injected.
+- Added `check_bundle_quality()` and `assert_bundle_quality()` for CI enforcement of bundle schema compatibility, metric minimums, and serialized artifact size, with structured failure reports.
+- Added scheduler-agnostic `RetrainingJob` entry points for scheduled and data-triggered runs, including bundle registration and optional lifecycle promotion.
+- Added durable registry approval events and `DeploymentApprovalGate`, requiring unique approvers and passing quality gates before promotion while preserving rollback audit history.
+- Closed Phase 9 with full regression coverage; distributed execution, CI quality gates, retraining entry points, and approval-gated rollback workflows are implemented and validated.
+
+### 2026-09-22
+
+- Added `phase9.rst` covering execution backend lifecycles, local and Dask usage, CI quality gates, triggered retraining, approval-gated deployment, rollback, safety boundaries, and operational use cases.
+- Added Phase 9 implementation modules to the generated API reference and linked the new guide from the documentation index.

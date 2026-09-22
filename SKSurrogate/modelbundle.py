@@ -316,6 +316,26 @@ class ModelRegistry:
         })
         self._write_index(index)
 
+    def record_approval(self, task_name, model_version, approver, *, state):
+        """Persist an approval event for a pending lifecycle transition."""
+        if not str(approver).strip():
+            raise ValueError("approver must not be empty")
+        index = self._read_index()
+        task = index["models"].get(task_name)
+        if task is None or model_version not in task["versions"]:
+            raise KeyError("Unknown model version %r for task %r" % (model_version, task_name))
+        event = {
+            "event_type": "approval",
+            "action": "approve",
+            "state": state,
+            "model_version": model_version,
+            "approver": str(approver),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        task.setdefault("audit", []).append(event)
+        self._write_index(index)
+        return event
+
     def rollback(self, task_name, state, model_version=None):
         """Point a lifecycle alias at a prior version and record the rollback."""
         index = self._read_index()
