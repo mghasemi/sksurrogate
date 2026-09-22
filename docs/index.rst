@@ -22,6 +22,8 @@ Welcome to SKSurrogate's documentation!
    inference
    monitoring
    phase9
+   phase10
+   release
    code
 
 Indices and tables

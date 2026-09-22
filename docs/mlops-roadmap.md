@@ -290,13 +290,13 @@ Goal: make the operational features discoverable and maintainable.
 Tasks:
 
 - [x] Add end-to-end MLOps documentation and operational use cases for Phase 9.
-- [ ] Add runnable examples for each lifecycle stage.
-- [ ] Add migration notes for existing SQLite databases and checkpoints.
-- [ ] Add API reference coverage for public classes and methods.
-- [ ] Add performance benchmarks and regression thresholds.
-- [ ] Add supported Python/dependency version policy.
-- [ ] Add release checklist and compatibility matrix.
-- [ ] Add changelog entries for each phase.
+- [x] Add runnable examples for each lifecycle stage.
+- [x] Add migration notes for existing SQLite databases and checkpoints.
+- [x] Add API reference coverage for public classes and methods.
+- [x] Add performance benchmarks and regression thresholds.
+- [x] Add supported Python/dependency version policy.
+- [x] Add release checklist and compatibility matrix.
+- [x] Add changelog entries for each phase.
 
 Acceptance criteria:
 
@@ -401,3 +401,16 @@ Dependencies: all prior phases.
 
 - Added `phase9.rst` covering execution backend lifecycles, local and Dask usage, CI quality gates, triggered retraining, approval-gated deployment, rollback, safety boundaries, and operational use cases.
 - Added Phase 9 implementation modules to the generated API reference and linked the new guide from the documentation index.
+
+### 2026-09-22
+
+- Started Phase 10 with `example04_end_to_end.py`, a runnable offline-to-deployment workflow covering model validation, bundle persistence, registry promotion, batch inference, and drift reporting.
+- Added `phase10.rst` with the tutorial command and lifecycle explanation, and linked it from the documentation index.
+- Validated the example and focused regression suite successfully.
+- Added SQLite database and EOA checkpoint migration notes covering backups, compatibility checks, rollback, and conversion of legacy saved models into versioned bundles.
+- Verified that `docs/code.rst` covers the package-root API and all public implementation modules, including the Phase 5–9 MLOps interfaces.
+- Added `examples/benchmark_phase10.py` with median timing and opt-in thresholds for bundle loading, batch inference, and drift reporting.
+- Documented the Python 3.11 release baseline, Python 3.13 validation environment, expected Python 3.12 compatibility, and unpinned dependency policy.
+- Added `docs/release.rst` with the release checklist and compatibility matrix, and added `CHANGELOG.rst` entries for Phases 1 through 10.
+- Added `example05_full_classification.py`, a synthetic classification tutorial covering nested evaluation, quality gates, approval-gated promotion, inference, drift, fairness, delayed labels, runtime monitoring, and audit history.
+- Added `example06_full_regression.py`, a synthetic regression tutorial covering nested evaluation, R2 quality gates, approval-gated promotion, numeric drift, delayed-label MAE/MSE, runtime monitoring, and audit history.
