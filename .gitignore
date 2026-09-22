@@ -31,9 +31,13 @@ htmlcov/
 .vscode/
 
 # SKSurrogate optimization checkpoints and serialized results
+example*-checkpoints/
 *.eoa
 *.pkl
 *.db
+*.sqlite
+*.sqlite3
+*.joblib
 
 # OS metadata
 .DS_Store
