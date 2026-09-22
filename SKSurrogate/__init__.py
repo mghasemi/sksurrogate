@@ -21,6 +21,7 @@ from .aml import Words, StackingEstimator, AML
 from .eoa import EOA, UniformRand, MaxGenTermination, UniformCrossover, Elites, Mutation
 from .mltrace import np2df, mltrack
 from .DataProcess import DataPreprocess
+from .modelbundle import ModelBundle, ModelRegistry, export_mlflow, load_bundle, save_bundle
 
 __all__ = [
     "AML",
@@ -50,5 +51,10 @@ __all__ = [
     "UniformRand",
     "Words",
     "mltrack",
+    "ModelBundle",
+    "ModelRegistry",
+    "export_mlflow",
     "np2df",
+    "load_bundle",
+    "save_bundle",
 ]

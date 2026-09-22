@@ -9,7 +9,7 @@ from sklearn.gaussian_process.kernels import Matern, Sum, ExpSineSquared
 from SKSurrogate import *
 
 param_grid_krr = {
-    "alpha": np.logspace(-4, 0, 5),
+    "alpha": np.logspace(-2, 0, 5),
     "kernel": [
         Sum(Matern(), ExpSineSquared(l, p))
         for l in np.logspace(-2, 2, 10)
@@ -24,10 +24,9 @@ config = {
     # Classifiers
     "sklearn.naive_bayes.GaussianNB": {"var_smoothing": Real(1.0e-9, 2.0e-1)},
     "sklearn.linear_model.LogisticRegression": {
-        "penalty": Categorical(["l1", "l2"]),
+        "penalty": Categorical(["l2"]),
         "C": Real(1.0e-6, 10.0),
         "class_weight": HDReal((1.0e-5, 1.0e-5), (20.0, 20.0))
-        # 'dual': Categorical([True, False])
     },
     "sklearn.svm.SVC": {
         "C": Real(1e-6, 20.0),
@@ -36,13 +35,13 @@ config = {
         "class_weight": HDReal((1.0e-5, 1.0e-5), (20.0, 20.0)),
     },
     "lightgbm.LGBMClassifier": {
-        "boosting_type": Categorical(["gbdt", "dart", "goss", "rf"]),
+        "boosting_type": Categorical(["gbdt", "dart"]),
         "num_leaves": Integer(2, 100),
         "learning_rate": Real(1.0e-7, 1.0 - 1.0e-6),  # prior='uniform'),
         "n_estimators": Integer(5, 250),
         "min_split_gain": Real(0.0, 1.0),  # prior='uniform'),
-        "subsample": Real(1.0e-6, 1.0),  # prior='uniform'),
         "importance_type": Categorical(["split", "gain"]),
+        "verbosity": Categorical([-1]),
     },
     # Preprocesssors
     "sklearn.preprocessing.StandardScaler": {

@@ -33,6 +33,9 @@ The package also exposes the major implementation modules for advanced users:
 .. automodule:: SKSurrogate.mltrace
    :members:
 
+.. automodule:: SKSurrogate.modelbundle
+   :members:
+
 .. automodule:: SKSurrogate.DataProcess
    :members:
 

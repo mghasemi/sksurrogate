@@ -10,7 +10,7 @@ config = {
     # Regressors
     "sklearn.linear_model.LinearRegression": {},
     "sklearn.kernel_ridge.KernelRidge": {
-        "alpha": Real(1.0e-4, 10.0),
+        "alpha": Real(1.0e-2, 10.0),
         "kernel": Categorical(
             [
                 Sum(Matern(), ExpSineSquared(l, p))

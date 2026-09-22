@@ -304,6 +304,17 @@ class SurrogateSearch(object):
             fl.close()
         except FileNotFoundError:
             pass
+        expected_dimension = len(self.bounds) if self.bounds is not None else None
+        restored_current = restored_data.get("current")
+        if expected_dimension is not None and restored_current is not None:
+            if len(restored_current) != expected_dimension:
+                restored_data = {}
+        if expected_dimension is not None and restored_data.get("evaluated"):
+            restored_data["evaluated"] = [
+                item
+                for item in restored_data["evaluated"]
+                if len(item[0]) == expected_dimension
+            ]
         if self.Continue:
             if "iteration" in restored_data:
                 self.iteration = restored_data["iteration"]
@@ -563,6 +574,7 @@ class Real(object):
 
         self.lower = a if a is not None else -inf
         self.upper = b if b is not None else inf
+        self.scale = kwargs.pop("scale", "linear")
         self.bound_tuple = (self.lower, self.upper)
         self.extra = kwargs
 
@@ -584,6 +596,7 @@ class Integer(object):
 
         self.lower = int(a) - 0.49 if a is not None else -inf
         self.upper = int(b) + 0.49 if b is not None else inf
+        self.scale = kwargs.pop("scale", "linear")
         self.bound_tuple = (self.lower, self.upper)
         self.extra = kwargs
 
@@ -740,6 +753,8 @@ class SurrogateRandomCV(BaseSearchCV):
             memory_limit=None,
             prune_threshold=None,
             min_partial_folds=1,
+            forbidden=(),
+            conditional=(),
     ):
         super(SurrogateRandomCV, self).__init__(
             estimator=estimator,
@@ -774,6 +789,8 @@ class SurrogateRandomCV(BaseSearchCV):
         self.memory_limit = memory_limit
         self.prune_threshold = prune_threshold
         self.min_partial_folds = min_partial_folds
+        self.forbidden = tuple(forbidden)
+        self.conditional = dict(conditional)
         self.random_state = random_state
         self.bounds = []
         if self.cpu_limit is not None:
@@ -794,6 +811,159 @@ class SurrogateRandomCV(BaseSearchCV):
         self.cv_results_ = {}
         self.termination_reason = None
         self.summary_ = {}
+        self.failure_summary_ = {}
+
+    def _validate_search_space(self):
+        """Validate parameter definitions before starting model evaluation."""
+        from sklearn.base import clone
+        from math import isfinite
+
+        estimator_params = self.estimator.get_params(deep=True)
+        representative = {}
+        for name in self.params_list:
+            if name not in estimator_params:
+                raise ValueError(
+                    "Unknown search parameter %r for %s"
+                    % (name, self.estimator.__class__.__name__)
+                )
+            parameter = self.params[name]
+            value_type = getattr(parameter, "VType", None)
+            if value_type == "categorical":
+                if not parameter.items:
+                    raise ValueError("Search parameter %r has no categorical values" % name)
+                representative[name] = parameter.items[0]
+                continue
+            if value_type == "hdreal":
+                if parameter.n < 1:
+                    raise ValueError("Search parameter %r must contain at least one value" % name)
+                representative[name] = {
+                    index: bounds[0] for index, bounds in enumerate(parameter.bound_tuple)
+                }
+                continue
+            if value_type not in {"integer", "real"}:
+                raise ValueError("Unsupported search space type for %r: %r" % (name, value_type))
+            lower = parameter.lower
+            upper = parameter.upper
+            if lower > upper:
+                raise ValueError("Search parameter %r has a lower bound above its upper bound" % name)
+            scale = getattr(parameter, "scale", "linear")
+            if scale not in {"linear", "log"}:
+                raise ValueError("Unsupported scale for search parameter %r: %r" % (name, scale))
+            if scale == "log" and (lower <= 0 or not isfinite(lower) or not isfinite(upper)):
+                raise ValueError("Log-scaled search parameter %r must have finite positive bounds" % name)
+            representative[name] = lower
+
+        try:
+            clone(self.estimator).set_params(**representative)
+        except Exception as exc:
+            raise ValueError(
+                "Invalid estimator search parameters: %s: %s"
+                % (exc.__class__.__name__, exc)
+            ) from exc
+
+    @staticmethod
+    def _encoded_bounds(parameter):
+        from math import log
+
+        if getattr(parameter, "scale", "linear") == "log":
+            return log(parameter.lower), log(parameter.upper)
+        return parameter.lower, parameter.upper
+
+    @staticmethod
+    def _encode_value(parameter, value):
+        from math import log
+
+        if getattr(parameter, "scale", "linear") == "log":
+            return log(value)
+        return value
+
+    @staticmethod
+    def _decode_value(parameter, value):
+        from math import exp
+
+        if getattr(parameter, "scale", "linear") == "log":
+            return exp(value)
+        return value
+
+    def _forbidden_reason(self, parameters):
+        for rule in self.forbidden:
+            if callable(rule):
+                matched = rule(parameters)
+            elif isinstance(rule, dict):
+                matched = all(parameters.get(name) == value for name, value in rule.items())
+            else:
+                raise ValueError("Forbidden rules must be callables or parameter mappings")
+            if matched:
+                return getattr(rule, "__name__", None) or "forbidden parameter combination"
+        return None
+
+    @staticmethod
+    def _condition_matches(rule, parameters):
+        if callable(rule):
+            return bool(rule(parameters))
+        if isinstance(rule, dict):
+            return all(parameters.get(name) == value for name, value in rule.items())
+        raise ValueError("Conditional rules must be callables or parameter mappings")
+
+    def _apply_conditional_parameters(self, parameters):
+        active = parameters.copy()
+        for name, rule in self.conditional.items():
+            if name in active and not self._condition_matches(rule, parameters):
+                active.pop(name)
+        return active
+
+    def _zero_feature_reason(self, parameters, X, y):
+        """Return a reason when a candidate pipeline removes every feature."""
+        import numpy as np
+        from sklearn.base import clone
+
+        pipeline = clone(self.estimator)
+        if not hasattr(pipeline, "steps") or len(pipeline.steps) < 2:
+            return None
+        pipeline.set_params(**parameters)
+        features = X
+        for _, transformer in pipeline.steps[:-1]:
+            try:
+                if hasattr(transformer, "fit_transform"):
+                    features = transformer.fit_transform(features, y)
+                else:
+                    transformer.fit(features, y)
+                    features = transformer.transform(features)
+            except Exception as exc:
+                return (
+                    "pipeline preprocessing failed before evaluation: %s: %s"
+                    % (exc.__class__.__name__, exc)
+                )
+            if np.asarray(features).ndim > 1 and np.asarray(features).shape[1] == 0:
+                return "pipeline preprocessing produced zero features"
+        return None
+
+    def _validate_pipeline_structure(self):
+        """Reject malformed pipelines before constructing the evaluation loop."""
+        steps = getattr(self.estimator, "steps", None)
+        if steps is None:
+            return
+        if not steps:
+            raise ValueError("Pipeline must contain at least one step")
+
+        names = []
+        for index, step in enumerate(steps):
+            if not isinstance(step, tuple) or len(step) != 2:
+                raise ValueError("Pipeline step %d must be a (name, estimator) tuple" % index)
+            name, transformer = step
+            if not isinstance(name, str) or not name or name.startswith("__"):
+                raise ValueError("Pipeline step %d has an invalid name %r" % (index, name))
+            if name in names:
+                raise ValueError("Pipeline step names must be unique: %r" % name)
+            names.append(name)
+            if index < len(steps) - 1:
+                if transformer is None or not hasattr(transformer, "fit") or not hasattr(transformer, "transform"):
+                    raise ValueError(
+                        "Pipeline intermediate step %r must implement fit and transform"
+                        % name
+                    )
+            elif transformer is not None and not hasattr(transformer, "fit"):
+                raise ValueError("Pipeline final step %r must implement fit" % name)
 
     def fit(self, X, y=None, groups=None, **fit_params):
         """
@@ -816,6 +986,8 @@ class SurrogateRandomCV(BaseSearchCV):
         from sklearn.model_selection import check_cv
         from sklearn.model_selection._validation import _fit_and_score
 
+        self._validate_search_space()
+        self._validate_pipeline_structure()
         # from lightgbm.sklearn import LightGBMError
         radius_list = []
         self.scorer_ = check_scoring(self.estimator, scoring=self.scoring)
@@ -831,17 +1003,21 @@ class SurrogateRandomCV(BaseSearchCV):
         for param in self.params_list:
             param_num_range = self.params[param]
             if param_num_range.VType != "hdreal":
+                lower, upper = self._encoded_bounds(param_num_range)
                 radius_list.append(
-                    (param_num_range.upper - param_num_range.lower) / 2.0
+                    (upper - lower) / 2.0
                 )
                 if param in self.init:
                     if param_num_range.VType == "categorical":
                         x0_.append(param_num_range.items.index(self.init[param]))
                     else:
-                        x0_.append(self.init[param])
+                        x0_.append(self._encode_value(param_num_range, self.init[param]))
                 else:
-                    x0_.append(uniform(param_num_range.lower, param_num_range.upper))
-                self.bounds.append(param_num_range.bound_tuple)
+                    x0_.append(uniform(lower, upper))
+                if param_num_range.VType == "categorical":
+                    self.bounds.append(param_num_range.bound_tuple)
+                else:
+                    self.bounds.append((lower, upper))
             else:
                 for i in range(param_num_range.n):
                     radius_list.append(
@@ -880,13 +1056,14 @@ class SurrogateRandomCV(BaseSearchCV):
                 _param_num_range = self.params[_param]
                 if _param_num_range.VType != "hdreal":
                     if _param_num_range.VType == "integer":
-                        cand_params[_param] = int(round(x[_idx]))
+                        cand_params[_param] = int(round(self._decode_value(_param_num_range, x[_idx])))
                     elif _param_num_range.VType == "categorical":
-                        cand_params[_param] = _param_num_range.items[
-                            int(round(x[_idx]))
-                        ]
+                        category_index = min(
+                            max(int(round(x[_idx])), 0), len(_param_num_range.items) - 1
+                        )
+                        cand_params[_param] = _param_num_range.items[category_index]
                     else:
-                        cand_params[_param] = x[_idx]
+                        cand_params[_param] = self._decode_value(_param_num_range, x[_idx])
                     _idx += 1
                 else:
                     _cls_dict = {}
@@ -899,7 +1076,57 @@ class SurrogateRandomCV(BaseSearchCV):
             score = 0
             n_test = 0
 
-            def parallel_fit_score(cl, cand_params_, X, y, scorer, train, test, verbose, fit_params_, error_score):
+            cand_params = self._apply_conditional_parameters(cand_params)
+            forbidden_reason = self._forbidden_reason(cand_params)
+            if forbidden_reason is not None:
+                self.evaluation_history_.append(
+                    {
+                        "params": cand_params.copy(),
+                        "score": None,
+                        "status": "invalid",
+                        "duration": perf_counter() - started,
+                        "fold_duration": 0.0,
+                        "error": forbidden_reason,
+                        "partial_folds": 0,
+                        "failure_records": [
+                            {
+                                "fold": None,
+                                "type": "ForbiddenParameterCombination",
+                                "message": forbidden_reason,
+                                "traceback": None,
+                                "parameters": cand_params.copy(),
+                            }
+                        ],
+                    }
+                )
+                return float("inf")
+            zero_feature_reason = self._zero_feature_reason(cand_params, X, y)
+            if zero_feature_reason is not None:
+                self.evaluation_history_.append(
+                    {
+                        "params": cand_params.copy(),
+                        "score": None,
+                        "status": "invalid",
+                        "duration": perf_counter() - started,
+                        "fold_duration": 0.0,
+                        "error": zero_feature_reason,
+                        "partial_folds": 0,
+                        "failure_records": [
+                            {
+                                "fold": None,
+                                "type": "ZeroFeaturePipeline",
+                                "message": zero_feature_reason,
+                                "traceback": None,
+                                "parameters": cand_params.copy(),
+                            }
+                        ],
+                    }
+                )
+                return float("inf")
+
+            def parallel_fit_score(
+                cl, cand_params_, X, y, scorer, train, test, fold, verbose, fit_params_, error_score
+            ):
                 fold_started = perf_counter()
                 cl.set_params(**cand_params_)
                 try:
@@ -917,23 +1144,38 @@ class SurrogateRandomCV(BaseSearchCV):
                         error_score=error_score,  #
                     )
                     if _score.get("fit_error") is not None:
+                        fit_error = _score["fit_error"]
                         return {
                             "score": None,
-                            "error": repr(_score["fit_error"]),
+                            "error": repr(fit_error),
                             "duration": perf_counter() - fold_started,
+                            "failure_type": "FitError",
+                            "failure_message": str(fit_error),
+                            "failure_traceback": str(fit_error),
+                            "fold": fold,
                         }
                     return {
                         "score": _score["test_scores"],
                         "error": None,
                         "duration": perf_counter() - fold_started,
+                        "failure_type": None,
+                        "failure_message": None,
+                        "failure_traceback": None,
+                        "fold": fold,
                     }
                 except Exception as exc:
+                    import traceback
+
                     if self.verbose > 1:
                         print("Model evaluation error")
                     return {
                         "score": None,
                         "error": repr(exc),
                         "duration": perf_counter() - fold_started,
+                        "failure_type": exc.__class__.__name__,
+                        "failure_message": str(exc),
+                        "failure_traceback": traceback.format_exc(),
+                        "fold": fold,
                     }
 
             try:
@@ -947,15 +1189,35 @@ class SurrogateRandomCV(BaseSearchCV):
                                                                 scorer=self.scorer_,
                                                                 train=train,
                                                                 test=test,
+                                                                fold=fold,
                                                                 verbose=self.verbose,
                                                                 fit_params_=self.fit_params,
                                                                 error_score=self.error_score
                                                                 )
-                                    for train, test in cv_dat)
-            except:
-                scores = ({"score": None, "error": "parallel evaluation failed", "duration": 0.0},)
+                                    for fold, (train, test) in enumerate(cv_dat))
+            except Exception as exc:
+                scores = ({
+                    "score": None,
+                    "error": repr(exc),
+                    "duration": 0.0,
+                    "failure_type": exc.__class__.__name__,
+                    "failure_message": str(exc),
+                    "failure_traceback": repr(exc),
+                    "fold": None,
+                },)
             errors = [result["error"] for result in scores if result["error"] is not None]
             durations = [result["duration"] for result in scores]
+            failure_records = [
+                {
+                    "fold": result.get("fold"),
+                    "type": result.get("failure_type"),
+                    "message": result.get("failure_message"),
+                    "traceback": result.get("failure_traceback"),
+                    "parameters": cand_params.copy(),
+                }
+                for result in scores
+                if result.get("error") is not None
+            ]
             for result in scores:
                 sc = result["score"]
                 if sc is not None:
@@ -976,6 +1238,7 @@ class SurrogateRandomCV(BaseSearchCV):
                         "fold_duration": sum(durations),
                         "error": "; ".join(errors) if errors else None,
                         "partial_folds": n_test,
+                        "failure_records": failure_records,
                     }
                 )
                 return float("inf")
@@ -988,6 +1251,7 @@ class SurrogateRandomCV(BaseSearchCV):
                     "fold_duration": sum(durations),
                     "error": "; ".join(errors) if errors else None,
                     "partial_folds": n_test,
+                    "failure_records": failure_records,
                 }
             )
             return -score
@@ -1028,9 +1292,12 @@ class SurrogateRandomCV(BaseSearchCV):
                 if param_num_range.VType == "integer":
                     best_params_[param] = int(round(x[idx]))
                 elif param_num_range.VType == "categorical":
-                    best_params_[param] = param_num_range.items[int(round(x[idx]))]
+                    category_index = min(
+                        max(int(round(x[idx])), 0), len(param_num_range.items) - 1
+                    )
+                    best_params_[param] = param_num_range.items[category_index]
                 else:
-                    best_params_[param] = x[idx]
+                    best_params_[param] = self._decode_value(param_num_range, x[idx])
                 idx += 1
             else:
                 cls_dict = {}
@@ -1049,6 +1316,37 @@ class SurrogateRandomCV(BaseSearchCV):
             "status": [item["status"] for item in self.evaluation_history_],
             "duration": [item["duration"] for item in self.evaluation_history_],
             "error": [item["error"] for item in self.evaluation_history_],
+            "failure_records": [item.get("failure_records", []) for item in self.evaluation_history_],
+        }
+        estimator_name = self.estimator.__class__.__name__
+        failed_trials = [item for item in self.evaluation_history_ if item["status"] == "failed"]
+        self.failure_summary_ = {
+            "by_estimator": {
+                estimator_name: {
+                    "trials": len(self.evaluation_history_),
+                    "failed_trials": len(failed_trials),
+                    "failure_rate": len(failed_trials) / float(max(len(self.evaluation_history_), 1)),
+                }
+            },
+            "failure_types": {
+                failure_type: sum(
+                    1
+                    for item in failed_trials
+                    for record in item.get("failure_records", [])
+                    if record.get("type") == failure_type
+                )
+                for failure_type in sorted(
+                    {
+                        record.get("type")
+                        for item in failed_trials
+                        for record in item.get("failure_records", [])
+                        if record.get("type")
+                    }
+                )
+            },
+            "invalid_trials": sum(
+                1 for item in self.evaluation_history_ if item["status"] == "invalid"
+            ),
         }
         return self
 

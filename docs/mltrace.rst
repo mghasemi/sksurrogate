@@ -55,6 +55,19 @@ Let us make up a sample classification task and trace the models via `mltrace`.
     MLTr.UpdateTask({'description': "This is a sample task to demonstrate\\
             capabilities of the mltrace."})
 
+Dataset registration records a deterministic fingerprint and a serializable schema.
+The schema includes feature names, dtypes, nullability, row and unique-value counts,
+and observed categorical values. Use ``validate_data`` before training and
+``validate_prediction_data`` before serving predictions; missing, extra, reordered, or
+incompatible columns and unknown categorical values are rejected by default. The
+``missing_columns`` and ``unknown_categories`` policies can be set to ``"ignore"``
+when a controlled migration requires them.
+
+Explicit ``train``, ``validation``, and ``test`` partitions can be registered and
+retrieved with ``get_data(partition=...)``. ``dataset_splits()`` returns partition
+identity, source, row count, feature count, and fingerprint metadata for reproducible
+split handling.
+
 **Step 2.** Get to know the data by visualizing correlations and sensitivities::
 
     from sklearn.gaussian_process.kernels import Matern, Sum, ExpSineSquared
@@ -147,6 +160,13 @@ Let us make up a sample classification task and trace the models via `mltrace`.
     # 'f1': 0.8789651291713657, 'recall': 0.8664344690110679, 'mcc': 0.7657250436230718,
     # 'logloss': 4.061801043429923, 'variance': None, 'max_error': None, 'mse': None,
     # 'mae': None, 'r2': None}
+
+For model selection that must remain separate from final evaluation,
+``nested_cv_evaluation`` uses the training partition for inner selection and outer
+fold estimates, then evaluates the selected model once on the untouched validation
+partition. It stores fold-level predictions and metrics, mean outer scores, repeated-CV
+confidence intervals, and the final validation score in task metadata. Group-aware
+splitters preserve group labels through the evaluation path.
 
 **Step 5.** Plot learning curves for accuracy, :math:`F_1`, area under ROC, calibration lift and
  cumulative curves for the two models::

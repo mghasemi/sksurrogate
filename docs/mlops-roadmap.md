@@ -122,21 +122,21 @@ Dependencies: Phase 2.
 
 ## Phase 4: Search Space and Failure Management
 
-Status: in progress
+Status: complete
 
 Goal: prevent invalid configurations before expensive fitting and make failures actionable.
 
 Tasks:
 
-- [ ] Add conditional and hierarchical parameters.
-- [ ] Add forbidden parameter combinations.
-- [ ] Add log-scaled numeric distributions.
-- [ ] Validate estimator parameters before starting a search.
-- [ ] Reject invalid pipeline structures before evaluation.
-- [ ] Record exception type, message, traceback, parameters, and fold.
-- [ ] Add failure-rate summaries by estimator and pipeline.
-- [ ] Add safeguards for zero-feature transformations.
-- [ ] Add explicit handling for parameter-free estimators.
+- [x] Add conditional and hierarchical parameters.
+- [x] Add forbidden parameter combinations.
+- [x] Add log-scaled numeric distributions.
+- [x] Validate estimator parameters before starting a search.
+- [x] Reject invalid pipeline structures before evaluation.
+- [x] Record exception type, message, traceback, parameters, and fold.
+- [x] Add failure-rate summaries by estimator and pipeline.
+- [x] Add safeguards for zero-feature transformations.
+- [x] Add explicit handling for parameter-free estimators.
 
 Acceptance criteria:
 
@@ -149,21 +149,21 @@ Dependencies: Phase 3.
 
 ## Phase 5: Model Bundles and Registry Lifecycle
 
-Status: not started
+Status: complete
 
 Goal: make trained models portable, versioned, and promotable.
 
 Tasks:
 
-- [ ] Define a model bundle format containing model, preprocessing, schema, metadata, metrics, and dependencies.
-- [ ] Add dataset fingerprint and code/config version to each bundle.
-- [ ] Add model version identifiers.
-- [ ] Add registry states: candidate, validated, staging, production, archived.
-- [ ] Add promotion and rollback records.
-- [ ] Add compatibility checks when loading bundles.
-- [ ] Add model aliases such as `latest`, `staging`, and `production`.
-- [ ] Replace temporary files with safe atomic writes.
-- [ ] Add optional MLflow-compatible export.
+- [x] Define a model bundle format containing model, preprocessing, schema, metadata, metrics, and dependencies.
+- [x] Add dataset fingerprint and code/config version to each bundle.
+- [x] Add model version identifiers.
+- [x] Add registry states: candidate, validated, staging, production, archived.
+- [x] Add promotion and rollback records.
+- [x] Add compatibility checks when loading bundles.
+- [x] Add model aliases such as `latest`, `staging`, and `production`.
+- [x] Replace temporary files with safe atomic writes.
+- [x] Add optional MLflow-compatible export.
 
 Acceptance criteria:
 
@@ -329,3 +329,26 @@ Dependencies: all prior phases.
 - Completed the nested CV evaluation milestone: `mltrack.nested_cv_evaluation()` now uses the train split for inner model selection and outer-fold evaluation, and the validation split for the final held-out score.
 - Added group-aware handling for `GroupKFold` and safe fallbacks for insufficient groups so grouped evaluation remains valid when a fold becomes too small.
 - Current state is Phase 1 complete and Phase 2 materially complete for KFold/StratifiedKFold/GroupKFold evaluation paths, with repeated CV, metric reporting, and time-series split support still pending.
+- Continued Phase 4 by adding pre-fit search-space validation for parameter names, bounds, categorical domains, and representative estimator configuration.
+- Added forbidden parameter rules using mappings or callables; rejected candidates are recorded as `invalid` without entering CV fitting.
+- Added structured fold failure records containing failure type, message, traceback, sampled parameters, and fold index, plus estimator-level failure-rate summaries in `failure_summary_` and `cv_results_`.
+- Added focused regression tests for unknown parameters, forbidden combinations, and structured fit failures. Remaining Phase 4 work includes broader malformed-pipeline validation.
+- Added conditional parameter activation rules using mappings or callables; inactive hierarchical parameters are omitted before estimator configuration.
+- Added `scale="log"` support for `Real` and `Integer` distributions with encoded optimizer bounds and decoded estimator values, including positive-bound validation.
+- Added regression coverage confirming parameter-free estimators run with an empty search space.
+- Added candidate pipeline preflight that rejects zero-feature transformations, including selectors that raise before returning an empty matrix.
+
+### 2026-09-22
+
+- Completed Phase 4 by adding static pipeline structure validation before the evaluation loop.
+- Malformed pipeline steps, duplicate or invalid names, non-transforming intermediate steps, and non-fitting final steps now fail with actionable errors before any trial is evaluated.
+- Added regression coverage proving malformed pipelines leave the evaluation history empty, and reran the Phase 4 regression set successfully.
+
+### 2026-09-22
+
+- Started Phase 5 with portable `ModelBundle` artifacts containing the fitted model, preprocessing, schema, metrics, provenance, configuration, dependency, and version metadata.
+- Added atomic bundle persistence and compatibility checks for schema, bundle format, and recorded runtime dependencies.
+- Added a filesystem `ModelRegistry` with version coexistence, lifecycle aliases, promotion and rollback history.
+- Added focused round-trip, compatibility, and registry lifecycle tests.
+- Added optional MLflow-compatible export with standard `MLmodel`, sklearn `model.pkl`, and bundle metadata artifacts; MLflow is not required to create the export.
+- Documented the model bundle and registry API, Phase 4 search safeguards, dataset schema and partition contracts, and nested evaluation semantics.

@@ -640,7 +640,7 @@ class AML(object):
                 cv=2,
             )
             param_grid_krr = {
-                "alpha": logspace(-4, 0, 10),
+                "alpha": logspace(-2, 0, 10),
                 "kernel": [
                     Sum(Matern(), ExpSineSquared(l, p))
                     for l in logspace(-2, 2, 20)
@@ -726,6 +726,8 @@ class AML(object):
     def _new_estimator(self, estimator_class):
         """Instantiate an estimator and seed it when it exposes ``random_state``."""
         estimator = estimator_class()
+        if estimator_class.__module__.startswith("lightgbm"):
+            estimator.set_params(verbosity=-1)
         if self.random_state is not None and hasattr(estimator, "get_params"):
             params = estimator.get_params(deep=False)
             if "random_state" in params:
@@ -948,6 +950,7 @@ class AML(object):
             est = seq[ent_idx]
             clss = self._get_class(est)
             pre = "stp_%d" % idx
+            step_param_prefix = ""
             if (
                     self.config_types[est] in ["regressor", "classifier"]
                     and ent_idx < n - 1
@@ -964,6 +967,7 @@ class AML(object):
                         ),
                     )
                 )
+                step_param_prefix = "estimator__"
                 ent_idx += 1
             elif est == "sklearn.pipeline.FeatureUnion":
                 self.config[est] = dict()
@@ -1011,9 +1015,9 @@ class AML(object):
                 mdl = self._new_estimator(clss)
                 steps.append((pre, mdl))
                 ent_idx += 1
-            for kw in self.config[est]:
-                config[pre + "__" + kw] = self.config[est][kw]
             idx += 1
+            for kw in self.config[est]:
+                config[pre + "__" + step_param_prefix + kw] = self.config[est][kw]
         ppln = Pipeline(steps)
         if self.verbose > 0:
             print("=" * 90)

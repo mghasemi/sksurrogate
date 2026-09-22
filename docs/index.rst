@@ -18,6 +18,7 @@ Welcome to SKSurrogate's documentation!
    opd
    dataproc
    mltrace
+   modelbundles
    code
 
 Indices and tables

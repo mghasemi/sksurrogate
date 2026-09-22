@@ -179,6 +179,23 @@ includes parameters, score, status, duration, and any captured error. Use
 ``pareto_frontier()`` to inspect completed trials that trade validation score
 against evaluation duration.
 
+Search-space and pipeline safeguards include:
+
+* conditional parameters, which are omitted when their activation rule does not match;
+* forbidden parameter mappings or callables, recorded as ``invalid`` trials before fitting;
+* logarithmic ``Real`` and ``Integer`` ranges using ``scale="log"``;
+* pre-fit validation of unknown estimator parameters, bounds, categorical domains, and
+    representative estimator configuration;
+* static pipeline validation for step names, duplicate steps, transformer capabilities,
+    and final estimator capabilities;
+* candidate preflight that rejects preprocessing failures and transformations that produce
+    zero features before an estimator is fitted.
+
+Fit failures are retained per fold with their exception type, message, traceback,
+parameters, and fold index. ``failure_summary_`` reports failure rates and failure types
+by estimator. Trial statuses distinguish ``invalid``, ``failed``, ``pruned``, and
+``complete`` evaluations.
+
 For an estimator with no tunable parameters, pass an empty ``params`` mapping.
 The search evaluates that estimator directly with cross-validation instead of
 building a zero-dimensional surrogate problem.

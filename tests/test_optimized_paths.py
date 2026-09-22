@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 import warnings
+from pathlib import Path
 
 import matplotlib
 
@@ -9,19 +10,101 @@ matplotlib.use("Agg")
 import numpy as np
 import pandas as pd
 from sklearn.datasets import make_classification
+from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import ShuffleSplit
 from sklearn.model_selection import KFold, GroupKFold
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.feature_selection import VarianceThreshold
+from sklearn.pipeline import Pipeline
 
-from SKSurrogate import AML, DataPreprocess, StackingEstimator, mltrack, np2df
+from SKSurrogate import (
+    AML,
+    DataPreprocess,
+    ModelBundle,
+    ModelRegistry,
+    StackingEstimator,
+    export_mlflow,
+    load_bundle,
+    mltrack,
+    np2df,
+    save_bundle,
+)
 from SKSurrogate.eoa import UniformRand
 from SKSurrogate.sensapprx import SensAprx
-from SKSurrogate.structsearch import Real, SurrogateRandomCV, SurrogateSearch
+from SKSurrogate.structsearch import Categorical, Real, SurrogateRandomCV, SurrogateSearch
 
 
 class TestOptimizedPaths(unittest.TestCase):
+    def test_model_bundle_round_trip_preserves_predictions_and_metadata(self):
+        model = LogisticRegression(max_iter=100).fit([[0.0], [1.0], [2.0], [3.0]], [0, 0, 1, 1])
+        bundle = ModelBundle(
+            model,
+            task_name="bundle-test",
+            schema={"feature": {"dtype": "float64"}},
+            metrics={"accuracy": 1.0},
+            dataset_fingerprint="dataset-1",
+            config_version="config-1",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = save_bundle(bundle, Path(directory) / "model.bundle")
+            loaded = load_bundle(path, expected_schema=bundle.schema)
+
+        np.testing.assert_array_equal(bundle.predict([[0.0], [3.0]]), loaded.predict([[0.0], [3.0]]))
+        self.assertEqual(loaded.dataset_fingerprint, "dataset-1")
+        self.assertEqual(loaded.config_version, "config-1")
+
+    def test_model_bundle_rejects_incompatible_schema(self):
+        bundle = ModelBundle(
+            DummyClassifier(strategy="most_frequent").fit(np.array([[0.0]]), np.array([1])),
+            schema={"a": "float"},
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = save_bundle(bundle, Path(directory) / "model.bundle")
+            with self.assertRaisesRegex(ValueError, "schema is incompatible"):
+                load_bundle(path, expected_schema={"b": "float"})
+
+    def test_model_bundle_exports_mlflow_compatible_layout(self):
+        model = DummyClassifier(strategy="most_frequent").fit(
+            np.array([[0.0], [1.0]]), np.array([0, 1])
+        )
+        bundle = ModelBundle(model, task_name="mlflow-test", model_version="v1", dependencies={})
+        with tempfile.TemporaryDirectory() as directory:
+            export_path = export_mlflow(bundle, Path(directory) / "exported-model")
+            self.assertTrue((export_path / "MLmodel").is_file())
+            self.assertTrue((export_path / "model.pkl").is_file())
+            self.assertTrue((export_path / "bundle.json").is_file())
+            exported_model = __import__("joblib").load(export_path / "model.pkl")
+
+        np.testing.assert_array_equal(
+            model.predict(np.array([[0.0], [1.0]])),
+            exported_model.predict(np.array([[0.0], [1.0]])),
+        )
+
+    def test_model_registry_supports_versions_aliases_and_rollback_history(self):
+        model = DummyClassifier(strategy="most_frequent").fit(
+            np.array([[0.0], [1.0]]), np.array([0, 1])
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            registry = ModelRegistry(directory)
+            first = ModelBundle(model, task_name="registry-test", model_version="v1", dependencies={})
+            second = ModelBundle(model, task_name="registry-test", model_version="v2", dependencies={})
+            registry.register(first)
+            registry.register(second)
+            self.assertEqual(
+                registry.load("registry-test", "latest", strict_dependencies=False).model_version,
+                "v2",
+            )
+            registry.promote("registry-test", "v1", "production")
+            registry.promote("registry-test", "v2", "production")
+            registry.rollback("registry-test", "production", "v1")
+            loaded = registry.load("registry-test", "production", strict_dependencies=False)
+            history_length = len(registry.history("registry-test"))
+
+        self.assertEqual(loaded.model_version, "v1")
+        self.assertEqual(history_length, 3)
+
     def test_sensitivity_reduction_matches_group_means(self):
         X = np.array([[0, 1], [0, 1], [1, 0]], dtype=float)
         y = np.array([2.0, 4.0, 8.0])
@@ -483,6 +566,233 @@ class TestOptimizedPaths(unittest.TestCase):
         self.assertIn("duration", search.cv_results_)
         self.assertIn("error", search.cv_results_)
         self.assertTrue(search.pareto_frontier())
+
+    def test_surrogate_cv_rejects_unknown_search_parameters_before_evaluation(self):
+        search = SurrogateRandomCV(
+            LogisticRegression(max_iter=100),
+            {"missing_parameter": Real(0.1, 1.0)},
+            cv=2,
+            max_iter=1,
+            min_evals=1,
+            refit=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "Unknown search parameter"):
+            search.fit([[0.0], [1.0]], [0, 1])
+
+    def test_surrogate_cv_supports_log_scaled_numeric_parameters(self):
+        X = np.array([[0.0], [1.0], [2.0], [3.0]])
+        y = np.array([0, 1, 0, 1])
+        search = SurrogateRandomCV(
+            LogisticRegression(max_iter=100),
+            {"C": Real(1.0e-3, 1.0e3, scale="log")},
+            cv=2,
+            n_jobs=1,
+            max_iter=1,
+            min_evals=1,
+            max_evals=1,
+            refit=False,
+        )
+
+        search.fit(X, y)
+
+        values = [item["params"]["C"] for item in search.evaluation_history_]
+        self.assertTrue(all(1.0e-3 <= value <= 1.0e3 for value in values))
+        self.assertGreater(search.best_estimator_.get_params()["C"], 0.0)
+
+    def test_surrogate_cv_clamps_optimizer_category_coordinates(self):
+        search = SurrogateRandomCV(
+            LogisticRegression(max_iter=100),
+            {"solver": Categorical(["lbfgs", "liblinear"])},
+            cv=2,
+            n_jobs=1,
+            max_iter=1,
+            min_evals=1,
+            max_evals=1,
+            refit=False,
+        )
+
+        search.fit([[0.0], [1.0], [2.0], [3.0]], [0, 1, 0, 1])
+
+        self.assertIn(search.best_estimator_.get_params()["solver"], {"lbfgs", "liblinear"})
+
+    def test_surrogate_cv_rejects_invalid_log_scaled_bounds(self):
+        search = SurrogateRandomCV(
+            LogisticRegression(max_iter=100),
+            {"C": Real(0.0, 1.0, scale="log")},
+            cv=2,
+            max_iter=1,
+            min_evals=1,
+            refit=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "finite positive bounds"):
+            search.fit([[0.0], [1.0]], [0, 1])
+
+    def test_surrogate_cv_omits_inactive_conditional_parameters(self):
+        search = SurrogateRandomCV(
+            LogisticRegression(max_iter=100),
+            {
+                "penalty": Categorical(["l2"]),
+                "l1_ratio": Real(0.1, 0.9),
+            },
+            conditional={"l1_ratio": {"penalty": "elasticnet"}},
+            cv=2,
+            n_jobs=1,
+            max_iter=1,
+            min_evals=1,
+            max_evals=1,
+            refit=False,
+        )
+
+        search.fit([[0.0], [1.0], [2.0], [3.0]], [0, 1, 0, 1])
+
+        self.assertTrue(search.evaluation_history_)
+        self.assertTrue(all("l1_ratio" not in item["params"] for item in search.evaluation_history_))
+
+    def test_surrogate_cv_supports_parameter_free_estimators(self):
+        search = SurrogateRandomCV(
+            DummyClassifier(strategy="most_frequent"),
+            {},
+            cv=2,
+            n_jobs=1,
+            max_iter=1,
+            min_evals=1,
+            max_evals=1,
+            refit=False,
+        )
+
+        search.fit([[0.0], [1.0], [2.0], [3.0]], [0, 1, 0, 1])
+
+        self.assertEqual(search.evaluation_history_[0]["params"], {})
+        self.assertEqual(search.evaluation_history_[0]["status"], "complete")
+
+    def test_aml_routes_wrapped_estimator_parameters_through_stacking_estimator(self):
+        with tempfile.TemporaryDirectory() as directory:
+            automl = AML(
+                config={
+                    "sklearn.linear_model.LogisticRegression": {"C": Real(0.1, 1.0)},
+                    "sklearn.linear_model.LinearRegression": {},
+                },
+                cv=2,
+                n_jobs=1,
+                verbose=0,
+                check_point=directory + "/",
+                max_evals=1,
+                min_random_evals=1,
+            )
+            automl.add_surrogate(LinearRegression(), 1)
+
+            model, _ = automl.optimize_pipeline(
+                (
+                    "sklearn.linear_model.LogisticRegression",
+                    "sklearn.linear_model.LinearRegression",
+                ),
+                np.array([[0.0], [1.0], [2.0], [3.0]]),
+                np.array([0.0, 1.0, 0.0, 1.0]),
+            )
+
+            self.assertIn("stp_0__estimator__C", model.get_params())
+
+    def test_surrogate_cv_rejects_zero_feature_pipeline_before_fitting(self):
+        pipeline = Pipeline(
+            [
+                ("selector", VarianceThreshold(threshold=1.0)),
+                ("model", LogisticRegression(max_iter=100)),
+            ]
+        )
+        search = SurrogateRandomCV(
+            pipeline,
+            {},
+            cv=2,
+            n_jobs=1,
+            max_iter=1,
+            min_evals=1,
+            max_evals=1,
+            refit=False,
+        )
+
+        search.fit(np.zeros((4, 2)), [0, 1, 0, 1])
+
+        self.assertTrue(search.evaluation_history_)
+        self.assertEqual(search.evaluation_history_[0]["status"], "invalid")
+        self.assertEqual(
+            search.evaluation_history_[0]["failure_records"][0]["type"],
+            "ZeroFeaturePipeline",
+        )
+
+    def test_surrogate_cv_rejects_malformed_pipeline_before_evaluation(self):
+        pipeline = Pipeline(
+            [
+                ("transformer", VarianceThreshold()),
+                ("model", object()),
+            ]
+        )
+        search = SurrogateRandomCV(
+            pipeline,
+            {},
+            cv=2,
+            n_jobs=1,
+            max_iter=1,
+            min_evals=1,
+            max_evals=1,
+            refit=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "final step 'model' must implement fit"):
+            search.fit(np.ones((4, 2)), [0, 1, 0, 1])
+
+        self.assertEqual(search.evaluation_history_, [])
+
+    def test_surrogate_cv_records_structured_fit_failures(self):
+        X = np.array([[0.0], [1.0], [2.0], [3.0]])
+        y = np.array([0, 1, 0, 1])
+        search = SurrogateRandomCV(
+            LogisticRegression(max_iter=100),
+            {"penalty": Categorical(["invalid"])},
+            cv=2,
+            n_jobs=1,
+            max_iter=1,
+            min_evals=1,
+            error_score=np.nan,
+            refit=False,
+        )
+
+        search.fit(X, y)
+
+        trial = search.evaluation_history_[0]
+        self.assertEqual(trial["status"], "failed")
+        self.assertTrue(trial["failure_records"])
+        failure = trial["failure_records"][0]
+        self.assertEqual(failure["type"], "FitError")
+        self.assertIn("invalid", failure["message"])
+        self.assertEqual(failure["parameters"], {"penalty": "invalid"})
+        self.assertEqual(search.cv_results_["failure_records"][0], trial["failure_records"])
+        self.assertEqual(
+            search.failure_summary_["by_estimator"]["LogisticRegression"]["failed_trials"],
+            len(search.evaluation_history_),
+        )
+
+    def test_surrogate_cv_rejects_forbidden_combinations_before_fitting(self):
+        search = SurrogateRandomCV(
+            LogisticRegression(max_iter=100),
+            {"penalty": Categorical(["l1"])},
+            forbidden=({"penalty": "l1"},),
+            cv=2,
+            max_iter=1,
+            min_evals=1,
+            refit=False,
+        )
+
+        search.fit([[0.0], [1.0], [2.0], [3.0]], [0, 1, 0, 1])
+
+        self.assertTrue(search.evaluation_history_)
+        self.assertTrue(all(item["status"] == "invalid" for item in search.evaluation_history_))
+        self.assertEqual(search.failure_summary_["invalid_trials"], len(search.evaluation_history_))
+        self.assertEqual(
+            search.evaluation_history_[0]["failure_records"][0]["type"],
+            "ForbiddenParameterCombination",
+        )
 
     def test_surrogate_search_records_budget_termination_reason(self):
         search = SurrogateSearch(
