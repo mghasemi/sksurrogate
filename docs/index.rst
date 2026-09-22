@@ -26,6 +26,8 @@ Welcome to SKSurrogate's documentation!
    release
    code
 
+See also `the Web UI & API design plan <ui-plan.md>`_.
+
 Indices and tables
 ==================
 
