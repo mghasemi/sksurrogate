@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 import warnings
+import json
 from pathlib import Path
 
 import matplotlib
@@ -24,19 +25,200 @@ from SKSurrogate import (
     DataPreprocess,
     ModelBundle,
     ModelRegistry,
+    SchemaValidationError,
     StackingEstimator,
     export_mlflow,
+    predict_batch,
+    drift_report,
+    InferenceMonitor,
+    delayed_label_performance,
+    prediction_distribution_report,
     load_bundle,
     mltrack,
     np2df,
     save_bundle,
 )
+from SKSurrogate.inference import main as batch_main
+from SKSurrogate.inference import create_app
 from SKSurrogate.eoa import UniformRand
 from SKSurrogate.sensapprx import SensAprx
 from SKSurrogate.structsearch import Categorical, Real, SurrogateRandomCV, SurrogateSearch
 
 
 class TestOptimizedPaths(unittest.TestCase):
+    def test_drift_report_separates_schema_quality_and_distribution_changes(self):
+        reference = pd.DataFrame(
+            {"amount": np.arange(100, dtype=float), "segment": ["a", "b"] * 50}
+        )
+        current = pd.DataFrame(
+            {"amount": np.arange(100, dtype=float) + 100.0, "segment": ["a"] * 100}
+        )
+
+        report = drift_report(
+            reference,
+            current,
+            model_version="production-v1",
+            reference_dataset_fingerprint="train-v1",
+            current_dataset_fingerprint="live-v2",
+        )
+
+        self.assertEqual(report["model_version"], "production-v1")
+        self.assertEqual(report["reference_dataset_fingerprint"], "train-v1")
+        self.assertEqual(report["schema_changes"]["missing_columns"], [])
+        self.assertEqual(report["data_quality"]["missingness"]["amount"]["delta"], 0.0)
+        self.assertGreater(report["drift"]["numeric"]["amount"]["value"], 0.0)
+        self.assertGreater(report["drift"]["categorical"]["segment"]["value"], 0.0)
+        self.assertTrue(report["alerts"])
+
+    def test_drift_report_reports_schema_changes_separately(self):
+        reference = pd.DataFrame({"feature": [1.0, 2.0], "category": ["a", "b"]})
+        current = pd.DataFrame({"category": ["a", "c"], "new_feature": [1, 2]})
+
+        report = drift_report(reference, current)
+
+        self.assertEqual(report["schema_changes"]["missing_columns"], ["feature"])
+        self.assertEqual(report["schema_changes"]["extra_columns"], ["new_feature"])
+        self.assertNotIn("feature", report["drift"]["numeric"])
+
+    def test_monitoring_reports_range_and_prediction_drift(self):
+        reference = pd.DataFrame({"feature": np.arange(100, dtype=float)})
+        current = pd.DataFrame({"feature": np.arange(100, dtype=float) + 100.0})
+
+        report = drift_report(reference, current, range_threshold=0.5)
+        prediction_report = prediction_distribution_report(
+            np.zeros(100), np.ones(100), model_version="model-v1"
+        )
+
+        self.assertEqual(report["drift"]["range"]["feature"]["out_of_range_rate"], 1.0)
+        self.assertTrue(any(alert["type"] == "range_drift" for alert in report["alerts"]))
+        self.assertEqual(prediction_report["model_version"], "model-v1")
+        self.assertTrue(prediction_report["alerts"])
+
+    def test_monitoring_updates_delayed_label_metrics_and_runtime_summary(self):
+        performance = delayed_label_performance([0, 1, 1], [0, 0, 1], model_version="model-v1")
+        monitor = InferenceMonitor("model-v1")
+        monitor.record(10.0, 100)
+        monitor.record(30.0, 50, success=False)
+        summary = monitor.summary()
+
+        self.assertEqual(performance["metrics"]["accuracy"], 2 / 3)
+        self.assertEqual(summary["requests"], 2)
+        self.assertEqual(summary["error_rate"], 0.5)
+        self.assertEqual(summary["rows"], 150)
+        self.assertEqual(summary["throughput_rows_per_second"], 3750.0)
+    def test_batch_prediction_validates_schema_and_preserves_model_metadata(self):
+        model = DummyClassifier(strategy="most_frequent").fit(
+            np.array([[0.0], [1.0], [2.0]]), np.array([0, 1, 0])
+        )
+        bundle = ModelBundle(
+            model,
+            model_version="batch-v1",
+            schema={"feature": {"dtype": "float64", "categorical_values": []}},
+            dependencies={},
+        )
+        frame = pd.DataFrame({"feature": np.array([3.0, 4.0])})
+
+        result = predict_batch(bundle, frame, request_id="request-1")
+
+        self.assertListEqual(result["prediction"].tolist(), [0, 0])
+        self.assertEqual(result["model_version"].unique().tolist(), ["batch-v1"])
+        self.assertEqual(result["request_id"].unique().tolist(), ["request-1"])
+        self.assertEqual(result.attrs["inference_metrics"]["rows"], 2)
+        self.assertGreaterEqual(result.attrs["inference_metrics"]["latency_ms"], 0.0)
+        self.assertGreaterEqual(
+            result.attrs["inference_metrics"]["throughput_rows_per_second"], 0.0
+        )
+
+        with self.assertRaises(SchemaValidationError) as context:
+            predict_batch(bundle, pd.DataFrame({"wrong": [3.0]}))
+        self.assertIn("missing columns", context.exception.errors[0])
+
+    def test_batch_prediction_writes_csv_atomically(self):
+        model = DummyClassifier(strategy="most_frequent").fit(
+            np.array([[0.0], [1.0]]), np.array([0, 1])
+        )
+        bundle = ModelBundle(model, schema={"feature": {"dtype": "float64"}}, dependencies={})
+        with tempfile.TemporaryDirectory() as directory:
+            output_path = Path(directory) / "predictions.csv"
+            predict_batch(bundle, pd.DataFrame({"feature": [2.0]}), output_path=output_path)
+            output = pd.read_csv(output_path)
+
+        self.assertEqual(output.loc[0, "prediction"], 0)
+        self.assertIn("request_id", output)
+
+    def test_batch_prediction_cli_uses_same_inference_path(self):
+        model = DummyClassifier(strategy="most_frequent").fit(
+            np.array([[0.0], [1.0]]), np.array([0, 1])
+        )
+        bundle = ModelBundle(model, model_version="cli-v1", dependencies={})
+        with tempfile.TemporaryDirectory() as directory:
+            bundle_path = Path(directory) / "model.bundle"
+            input_path = Path(directory) / "input.csv"
+            output_path = Path(directory) / "output.csv"
+            save_bundle(bundle, bundle_path)
+            pd.DataFrame({"feature": [2.0]}).to_csv(input_path, index=False)
+
+            self.assertEqual(
+                batch_main(
+                    [
+                        "--bundle", str(bundle_path),
+                        "--input", str(input_path),
+                        "--output", str(output_path),
+                        "--request-id", "cli-request",
+                        "--no-strict-dependencies",
+                    ]
+                ),
+                0,
+            )
+            output = pd.read_csv(output_path)
+
+        self.assertEqual(output.loc[0, "model_version"], "cli-v1")
+        self.assertEqual(output.loc[0, "request_id"], "cli-request")
+
+    def test_http_adapter_exposes_health_readiness_and_prediction(self):
+        from io import BytesIO
+        from wsgiref.util import setup_testing_defaults
+
+        model = DummyClassifier(strategy="most_frequent").fit(
+            np.array([[0.0], [1.0]]), np.array([0, 1])
+        )
+        application = create_app(
+            ModelBundle(
+                model,
+                model_version="http-v1",
+                schema={"feature": {"dtype": "float64"}},
+                dependencies={},
+            ),
+            strict_dependencies=False,
+        )
+
+        def request(method, path, payload=None):
+            environment = {}
+            setup_testing_defaults(environment)
+            environment.update({"REQUEST_METHOD": method, "PATH_INFO": path})
+            encoded = json.dumps(payload).encode("utf-8") if payload is not None else b""
+            environment["CONTENT_LENGTH"] = str(len(encoded))
+            environment["wsgi.input"] = BytesIO(encoded)
+            status = []
+            body = b"".join(application(environment, lambda value, headers: status.append(value)))
+            return status[0], json.loads(body)
+
+        health_status, health = request("GET", "/health")
+        ready_status, ready = request("GET", "/ready")
+        predict_status, prediction = request(
+            "POST", "/predict", {"data": [{"feature": 2.0}], "request_id": "http-request"}
+        )
+
+        self.assertEqual(health_status, "200 OK")
+        self.assertEqual(health["status"], "ok")
+        self.assertEqual(ready_status, "200 OK")
+        self.assertEqual(ready["model_version"], "http-v1")
+        self.assertEqual(predict_status, "200 OK")
+        self.assertEqual(prediction["predictions"], [0])
+        self.assertEqual(prediction["request_id"], "http-request")
+        self.assertEqual(prediction["metrics"]["rows"], 1)
+        self.assertGreaterEqual(prediction["metrics"]["latency_ms"], 0.0)
+
     def test_model_bundle_round_trip_preserves_predictions_and_metadata(self):
         model = LogisticRegression(max_iter=100).fit([[0.0], [1.0], [2.0], [3.0]], [0, 0, 1, 1])
         bundle = ModelBundle(

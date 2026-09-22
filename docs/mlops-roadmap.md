@@ -176,20 +176,20 @@ Dependencies: Phases 1 and 2.
 
 ## Phase 6: Batch and Online Inference
 
-Status: not started
+Status: complete
 
 Goal: make trained models usable outside the training process.
 
 Tasks:
 
-- [ ] Add a stable batch prediction API.
-- [ ] Add prediction input/output schema validation.
-- [ ] Add optional CLI batch prediction command.
-- [ ] Add a lightweight HTTP serving adapter.
-- [ ] Add health, readiness, and model-version endpoints.
-- [ ] Add request ID and prediction audit fields.
-- [ ] Add configurable handling for malformed requests.
-- [ ] Add inference latency and throughput measurements.
+- [x] Add a stable batch prediction API.
+- [x] Add prediction input/output schema validation.
+- [x] Add optional CLI batch prediction command.
+- [x] Add a lightweight HTTP serving adapter.
+- [x] Add health, readiness, and model-version endpoints.
+- [x] Add request ID and prediction audit fields.
+- [x] Add configurable handling for malformed requests.
+- [x] Add inference latency and throughput measurements.
 
 Acceptance criteria:
 
@@ -202,21 +202,22 @@ Dependencies: Phase 5.
 
 ## Phase 7: Data Quality, Drift, and Performance Monitoring
 
-Status: not started
+Status: complete
 
 Goal: detect when production data or model behavior changes.
 
 Tasks:
 
-- [ ] Add input data-quality checks.
-- [ ] Add feature distribution drift metrics.
-- [ ] Add categorical-value drift detection.
-- [ ] Add missingness and range drift detection.
-- [ ] Add prediction distribution drift detection.
-- [ ] Add delayed-label performance monitoring.
-- [ ] Add latency, error-rate, and throughput tracking.
-- [ ] Add configurable thresholds and alert records.
-- [ ] Link monitoring reports to model and dataset versions.
+- [x] Add input data-quality checks.
+- [x] Add feature distribution drift metrics.
+- [x] Add categorical-value drift detection.
+- [x] Add missingness drift detection.
+- [x] Add range drift detection.
+- [x] Add prediction distribution drift detection.
+- [x] Add delayed-label performance monitoring.
+- [x] Add latency, error-rate, and throughput tracking.
+- [x] Add configurable thresholds and alert records.
+- [x] Link monitoring reports to model and dataset versions.
 
 Acceptance criteria:
 
@@ -352,3 +353,21 @@ Dependencies: all prior phases.
 - Added focused round-trip, compatibility, and registry lifecycle tests.
 - Added optional MLflow-compatible export with standard `MLmodel`, sklearn `model.pkl`, and bundle metadata artifacts; MLflow is not required to create the export.
 - Documented the model bundle and registry API, Phase 4 search safeguards, dataset schema and partition contracts, and nested evaluation semantics.
+
+### 2026-09-22
+
+- Started Phase 6 with `predict_batch`, which accepts a `ModelBundle` or bundle path and DataFrame or CSV input.
+- Added structured `SchemaValidationError` failures for missing, extra, reordered, incompatible-dtype, and unknown-categorical input columns.
+- Batch results include predictions, model version, and request ID; CSV output uses atomic replacement.
+- Added focused batch inference regression tests and public API documentation.
+- Added the `sksurrogate-batch-predict` CLI wrapper for bundle-backed CSV scoring, request IDs, and optional dependency checks.
+- Added a dependency-free WSGI adapter with `/health`, `/ready`, `/model`, and `/predict` endpoints; malformed JSON and schema failures return structured 400 responses.
+- Added latency, row-count, and throughput metrics to batch result metadata and online prediction responses.
+
+### 2026-09-22
+
+- Started Phase 7 with `drift_report`, which separates schema changes and missingness quality changes from numeric PSI and categorical total-variation drift.
+- Added configurable drift thresholds and alert records, with reference/current dataset fingerprints and deployed model version linkage.
+- Added range drift, prediction-distribution drift, delayed-label performance metrics, and `InferenceMonitor` summaries for latency, error rate, and throughput.
+- Added focused regression tests for synthetic distribution shifts and independent schema-change reporting.
+- Expanded monitoring documentation with range metrics, prediction drift, delayed-label regression metrics, and runtime summary usage.

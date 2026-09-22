@@ -19,6 +19,8 @@ Welcome to SKSurrogate's documentation!
    dataproc
    mltrace
    modelbundles
+   inference
+   monitoring
    code
 
 Indices and tables

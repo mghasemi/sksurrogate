@@ -22,6 +22,8 @@ from .eoa import EOA, UniformRand, MaxGenTermination, UniformCrossover, Elites, 
 from .mltrace import np2df, mltrack
 from .DataProcess import DataPreprocess
 from .modelbundle import ModelBundle, ModelRegistry, export_mlflow, load_bundle, save_bundle
+from .inference import SchemaValidationError, create_app, predict_batch, serve
+from .monitoring import InferenceMonitor, delayed_label_performance, drift_report, prediction_distribution_report
 
 __all__ = [
     "AML",
@@ -54,6 +56,14 @@ __all__ = [
     "ModelBundle",
     "ModelRegistry",
     "export_mlflow",
+    "predict_batch",
+    "SchemaValidationError",
+    "create_app",
+    "serve",
+    "drift_report",
+    "prediction_distribution_report",
+    "delayed_label_performance",
+    "InferenceMonitor",
     "np2df",
     "load_bundle",
     "save_bundle",

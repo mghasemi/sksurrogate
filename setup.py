@@ -40,4 +40,9 @@ setup(
         "peewee",
         "category_encoders",
     ],
+    entry_points={
+        "console_scripts": [
+            "sksurrogate-batch-predict=SKSurrogate.inference:main",
+        ],
+    },
 )
