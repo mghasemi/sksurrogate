@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { listJobs, getApiBase } from "../api/client";
+import { listJobs, getEffectiveApiBase } from "../api/client";
 import type { JobRecord } from "../api/client";
 import { Card, Stat, StatusBadge, Table, ErrorNote, Loading, fmtNum } from "../components/ui";
 
@@ -22,11 +22,11 @@ export default function DashboardPage() {
     <div className="stack">
       <div className="page-head">
         <h1>Dashboard</h1>
-        <span className="desc">Cross-task overview of the control plane at {getApiBase()}</span>
+        <span className="desc">Cross-task overview of the control plane at {getEffectiveApiBase()}</span>
       </div>
 
       <div className="grid cols-4">
-        <Stat label="API" value={jobsQ.isError ? "offline" : jobsQ.isLoading ? "…" : "online"} sub={getApiBase()} />
+        <Stat label="API" value={jobsQ.isError ? "offline" : jobsQ.isLoading ? "…" : "online"} sub={getEffectiveApiBase()} />
         <Stat label="Jobs (all tasks)" value={fmtNum(jobsQ.data?.jobs.length)} sub={`${jobsQ.data?.jobs.filter((j) => j.status === "running").length ?? 0} running`} />
         <Stat label="Completed" value={fmtNum(jobsQ.data?.jobs.filter((j) => j.status === "completed").length)} />
         <Stat label="Failed" value={fmtNum(jobsQ.data?.jobs.filter((j) => j.status === "failed").length)} />

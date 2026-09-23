@@ -1,24 +1,50 @@
 /**
  * Typed client for the SKSurrogate control-plane API.
  *
- * The base URL defaults to http://localhost:8013 (the uvicorn port used in
- * docs/HANDOFF.md) and can be overridden with VITE_API_BASE_URL or a runtime
- * override stored in localStorage (see setApiBase).
+ * Requests default to a *same-origin* base ("") so the Vite dev server's
+ * ``/api`` proxy (see vite.config.ts) forwards them to the backend. That keeps
+ * the UI working wherever it is served from — http://localhost:5174, the
+ * container's or host's LAN IP, or a forwarded/tunnel URL — and sidesteps both
+ * CORS and mixed-content failures, because the browser only ever talks to its
+ * own origin.
+ *
+ * Point at an absolute API URL instead by setting VITE_API_BASE_URL, or with a
+ * runtime override saved from the Settings page (see setApiBase).
  */
 
-const DEFAULT_BASE = "http://localhost:8013";
+/** Same-origin by default: the dev server proxies /api to the backend. */
+const DEFAULT_BASE = "";
 
-function base(): string {
+/** Explicitly configured base, or "" for same-origin. */
+function configuredBase(): string {
   const env = import.meta.env.VITE_API_BASE_URL as string | undefined;
   return (localStorage.getItem("sksurrogate_api_base") || env || DEFAULT_BASE).replace(/\/+$/, "");
 }
 
-export function getApiBase(): string {
-  return base();
+/** Base used to build request URLs ("" means same-origin). */
+function base(): string {
+  return configuredBase();
 }
 
+/** The configured API base; an empty string means "this page's own origin". */
+export function getApiBase(): string {
+  return configuredBase();
+}
+
+/**
+ * Absolute API base (never empty), for URLs that need a scheme — WebSocket
+ * handshakes and read-only display. Falls back to the page's own origin, which
+ * is what the dev-server proxy answers on.
+ */
+export function getEffectiveApiBase(): string {
+  return configuredBase() || window.location.origin;
+}
+
+/** Save an absolute API base; an empty value clears the override (back to same-origin). */
 export function setApiBase(url: string): void {
-  localStorage.setItem("sksurrogate_api_base", url.replace(/\/+$/, ""));
+  const trimmed = url.replace(/\/+$/, "");
+  if (trimmed) localStorage.setItem("sksurrogate_api_base", trimmed);
+  else localStorage.removeItem("sksurrogate_api_base");
 }
 
 /** Shared API key, sent as an X-API-Key header (and WS query param) when the server requires one. */
@@ -143,6 +169,8 @@ export interface RegisterDatasetResponse {
   dataset_fingerprint: string | null;
   dataset_schema: Record<string, unknown> | null;
   deduced_types: Record<string, string>;
+  /** Name-based PII / sensitive-column scan of the uploaded frame (Phase 2.4). */
+  sensitive_scan?: SensitiveScanReport;
 }
 
 export interface DatasetMetadata {
@@ -539,6 +567,72 @@ export interface MonitorSummary {
 export const monitorSummary = (task: string, modelVersion: string) =>
   get<MonitorSummary>(`/api/monitoring/${encodeURIComponent(task)}/${encodeURIComponent(modelVersion)}/summary`);
 
+/** Where a prediction series comes from — exactly one field must be set. */
+export interface PredictionSource {
+  /** Stored dataset partition; its registered target column is used as the series by default. */
+  partition?: string | null;
+  /** Persisted inference artifact id (from predict-batch). */
+  request_id?: string | null;
+  /** Inline values for ad-hoc checks (numbers, or labels for groups). */
+  values?: Array<number | string> | null;
+  /** Column override: any stored column of the partition/artifact (e.g. a demographic attribute for groups). */
+  column?: string | null;
+}
+
+export interface PredictionDriftRequest {
+  reference_source: PredictionSource;
+  current_source: PredictionSource;
+  threshold?: number;
+  bins?: number;
+}
+
+/** Same shape as DriftReport (single "prediction" column) plus the marker field. */
+export type PredictionDriftReport = DriftReport & { prediction_column: string };
+
+export const checkPredictionDrift = (task: string, modelVersion: string, body: PredictionDriftRequest) =>
+  post<PredictionDriftReport>(
+    `/api/monitoring/${encodeURIComponent(task)}/${encodeURIComponent(modelVersion)}/prediction-drift`,
+    body,
+  );
+
+export type SubgroupMetric = "accuracy" | "precision" | "recall" | "f1" | "loss";
+
+export interface SubgroupPerformanceRequest {
+  y_true_source: PredictionSource;
+  y_pred_source: PredictionSource;
+  groups_source?: PredictionSource | null;
+  inline_groups?: Array<string | number> | null;
+  metric?: SubgroupMetric;
+  positive_label?: number;
+}
+
+export interface SubgroupPerformanceReport {
+  groups: Record<string, { [metric in SubgroupMetric]?: number } & { count: number }>;
+  metric: SubgroupMetric;
+  fairness_gap: number;
+}
+
+export const checkSubgroupPerformance = (task: string, modelVersion: string, body: SubgroupPerformanceRequest) =>
+  post<SubgroupPerformanceReport>(
+    `/api/monitoring/${encodeURIComponent(task)}/${encodeURIComponent(modelVersion)}/subgroup-performance`,
+    body,
+  );
+
+export interface SensitiveScanRequest {
+  partition?: string | null;
+  columns?: string[] | null;
+  sensitive_features?: string[] | null;
+}
+
+export interface SensitiveScanReport {
+  pii_columns: string[];
+  sensitive_columns: string[];
+  warnings: string[];
+}
+
+export const scanSensitiveFeatures = (task: string, body: SensitiveScanRequest) =>
+  post<SensitiveScanReport>(`/api/monitoring/${encodeURIComponent(task)}/sensitive-scan`, body);
+
 /* ------------------------------------------------------------------ */
 /* Sensitivity                                                         */
 /* ------------------------------------------------------------------ */
@@ -880,7 +974,9 @@ export function subscribeToJob(
   jobId: string,
   onStatus: (record: JobRecord) => void,
 ): () => void {
-  const url = base().replace(/^http/, "ws");
+  // WebSocket URLs need an explicit scheme, so resolve the (possibly empty)
+  // same-origin base to an absolute one: http->ws, https->wss.
+  const url = getEffectiveApiBase().replace(/^http/, "ws");
   // Browsers cannot set custom headers on a WebSocket handshake, so the key is
   // passed as a query parameter (the server accepts it there when auth is on).
   const key = getApiKey();

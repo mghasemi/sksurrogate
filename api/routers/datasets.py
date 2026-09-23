@@ -16,6 +16,7 @@ from SKSurrogate import (
     cv_param_defs,
     cv_to_spec,
     default_cv_spec,
+    sensitive_feature_report,
 )
 
 from ..config import settings
@@ -109,6 +110,8 @@ async def register_dataset(task_name: str, target: str = Form(...), partition: s
         "dataset_fingerprint": metadata.get("dataset_fingerprint"),
         "dataset_schema": metadata.get("dataset_schema"),
         "deduced_types": preview.pivot_types,
+        # Name-based PII / sensitive-column scan of the uploaded frame (Phase 2.4).
+        "sensitive_scan": sensitive_feature_report(frame),
     }
 
 

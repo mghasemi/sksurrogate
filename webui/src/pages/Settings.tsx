@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { getApiKey, getApiBase, registryAudit, setApiKey, setApiBase } from "../api/client";
+import { getApiKey, getApiBase, getEffectiveApiBase, registryAudit, setApiKey, setApiBase } from "../api/client";
 import type { AuditEvent } from "../api/client";
 import { Badge, Card, ErrorNote, Loading, Table, fmtNum } from "../components/ui";
 import { useTask } from "../lib/task-context";
@@ -23,16 +23,20 @@ function ApiBaseCard() {
   };
 
   return (
-    <Card title="API connection" sub="Base URL of the SKSurrogate control-plane API. Stored in this browser only; VITE_API_BASE_URL is used when no override is saved.">
+    <Card title="API connection" sub="Base URL of the SKSurrogate control-plane API. Leave empty to use this page's own origin, which the Vite dev server proxies to the backend — that works from localhost, a LAN IP, or a forwarded URL. Stored in this browser only; VITE_API_BASE_URL is used when no override is saved.">
       <div className="row fixed">
         <div className="field" style={{ flex: "1 1 320px", minWidth: 240 }}>
           <label>Base URL</label>
-          <input className="mono" value={url} onChange={(e) => setUrl(e.target.value)} spellCheck={false} placeholder="http://localhost:8013" />
+          <input className="mono" value={url} onChange={(e) => setUrl(e.target.value)} spellCheck={false} placeholder="(empty = same origin)" />
         </div>
         <button className="btn primary" style={{ alignSelf: "flex-end", marginBottom: 2 }} onClick={onSave}>
           Save
         </button>
       </div>
+      <p className="muted" style={{ marginTop: 2 }}>
+        Requests currently go to <code className="mono">{getEffectiveApiBase()}</code>
+        {getApiBase() ? " (absolute override)" : " (same origin, via the dev-server proxy)"}.
+      </p>
       <div className="row fixed">
         <div className="field" style={{ flex: "1 1 320px", minWidth: 240 }}>
           <label>API key</label>

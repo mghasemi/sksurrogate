@@ -25,6 +25,12 @@ WORKDIR /app
 COPY api/ ./api/
 COPY SKSurrogate/ ./SKSurrogate/
 COPY webui/ ./webui/
+# Editable install of the local package: mltrace reads its own version via
+# importlib.metadata, so its distribution metadata must exist. Dependencies are
+# already installed from requirements.txt, hence --no-deps. The editable target
+# (/app/SKSurrogate) stays valid at runtime because the repo is bind-mounted.
+COPY setup.py readme.rst License.txt ./
+RUN pip install --no-cache-dir --no-deps -e .
 # Stash node_modules where the bind mount can't shadow it
 COPY --from=webdeps /build/webui/node_modules /opt/webui-node-modules
 

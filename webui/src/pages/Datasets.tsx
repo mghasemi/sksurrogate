@@ -10,7 +10,7 @@ import {
   registerDataset,
   setDatasetCV,
 } from "../api/client";
-import type { CVParamDef, CVSpec, DatasetPreview, RegisterDatasetResponse } from "../api/client";
+import type { CVParamDef, CVSpec, DatasetPreview, RegisterDatasetResponse, SensitiveScanReport } from "../api/client";
 import { Card, ErrorNote, Loading, Table, Badge, fmtNum } from "../components/ui";
 import { useTask } from "../lib/task-context";
 
@@ -180,10 +180,13 @@ export default function DatasetsPage() {
 
         {registerMut.isError && <ErrorNote error={registerMut.error} />}
         {registerMut.isSuccess && (
-          <div className="success-note">
-            Registered {fmtNum((registerMut.data as RegisterDatasetResponse).rows)} rows → fingerprint{" "}
-            <code>{(registerMut.data as RegisterDatasetResponse).dataset_fingerprint ?? "n/a"}</code>
-          </div>
+          <>
+            <div className="success-note">
+              Registered {fmtNum((registerMut.data as RegisterDatasetResponse).rows)} rows → fingerprint{" "}
+              <code>{(registerMut.data as RegisterDatasetResponse).dataset_fingerprint ?? "n/a"}</code>
+            </div>
+            <SensitiveScanNote scan={(registerMut.data as RegisterDatasetResponse).sensitive_scan} />
+          </>
         )}
 
         <button
@@ -364,6 +367,25 @@ export default function DatasetsPage() {
       </Card>
 
       <TargetStatsCard task={task} enabled={partitions.length > 0} />
+    </div>
+  );
+}
+
+/** Name-based PII / sensitive-column scan returned by dataset registration (Phase 2.4). */
+function SensitiveScanNote({ scan }: { scan?: SensitiveScanReport }) {
+  if (!scan || (scan.pii_columns.length === 0 && scan.sensitive_columns.length === 0)) return null;
+  return (
+    <div className="row" style={{ alignItems: "center", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+      <span className="muted" style={{ fontSize: 12.5 }}>Sensitive-column scan:</span>
+      {scan.pii_columns.map((c) => (
+        <Badge key={`pii-${c}`} tone="warn">PII · {c}</Badge>
+      ))}
+      {scan.sensitive_columns.map((c) => (
+        <Badge key={`sens-${c}`} tone="err">sensitive · {c}</Badge>
+      ))}
+      <span className="muted" style={{ fontSize: 12.5 }}>
+        consider excluding these from the feature set before training.
+      </span>
     </div>
   );
 }

@@ -37,11 +37,16 @@ from .routers import (
 
 
 def _cors_origins() -> list[str]:
-    if settings.cors_origins:
-        return settings.cors_origins
-    # Default: local dev origins only (no wildcard), so a misconfigured
-    # non-local deployment does not silently accept cross-origin requests.
-    return ["http://localhost:*", "http://127.0.0.1:*"]
+    """Extra browser origins allowed to call the API, from
+    ``SKSURROGATE_API_CORS_ORIGINS`` (comma-separated).
+
+    Local development needs no entry here: the ``allow_origin_regex`` passed to
+    ``CORSMiddleware`` below already allows ``localhost`` / ``127.0.0.1`` on any
+    port. Starlette matches ``allow_origins`` *exactly*, so a wildcard entry such
+    as ``http://localhost:*`` would never match anything — extend the regex for
+    patterns, and use this list only for concrete extra origins.
+    """
+    return list(settings.cors_origins)
 
 
 class ApiKeyMiddleware:
@@ -106,8 +111,12 @@ app = FastAPI(
 # Middleware added first ends up innermost; CORSMiddleware is added last so it
 # stays outermost and can decorate the 401 responses with CORS headers.
 app.add_middleware(ApiKeyMiddleware)
-# The UI is a separate SPA client (see docs/ui-plan.md); allow local dev origins by default,
-# or an explicit list via SKSURROGATE_API_CORS_ORIGINS.
+# The UI is a separate SPA client (see docs/ui-plan.md) and normally calls the API
+# *same-origin*, through the dev server's /api proxy — see webui/vite.config.ts —
+# so it needs no CORS entry at all. The regex keeps direct localhost/127.0.0.1
+# calls working; SKSURROGATE_API_CORS_ORIGINS adds extra origins for non-local
+# deployments. Starlette matches allow_origins exactly (no wildcards), and the
+# regex is what actually allows local dev origins on any port.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
