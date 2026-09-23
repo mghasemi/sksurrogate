@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { getApiBase, registryAudit, setApiBase } from "../api/client";
+import { getApiKey, getApiBase, registryAudit, setApiKey, setApiBase } from "../api/client";
 import type { AuditEvent } from "../api/client";
 import { Badge, Card, ErrorNote, Loading, Table, fmtNum } from "../components/ui";
 import { useTask } from "../lib/task-context";
@@ -9,12 +9,14 @@ import { useTask } from "../lib/task-context";
 function ApiBaseCard() {
   const qc = useQueryClient();
   const [url, setUrl] = useState(getApiBase());
+  const [key, setKey] = useState(getApiKey());
   const [saved, setSaved] = useState(false);
 
   const onSave = () => {
     setApiBase(url.trim());
-    // The client reads the base URL per request, so new calls hit the new
-    // endpoint immediately — drop cached responses to force a fresh fetch.
+    setApiKey(key);
+    // The client reads the base URL and key per request, so new calls hit the
+    // new endpoint immediately — drop cached responses to force a fresh fetch.
     void qc.invalidateQueries();
     setSaved(true);
     window.setTimeout(() => setSaved(false), 2000);
@@ -31,6 +33,22 @@ function ApiBaseCard() {
           Save
         </button>
       </div>
+      <div className="row fixed">
+        <div className="field" style={{ flex: "1 1 320px", minWidth: 240 }}>
+          <label>API key</label>
+          <input
+            className="mono"
+            type="password"
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            spellCheck={false}
+            placeholder="(none — only needed when the server sets SKSURROGATE_API_KEY)"
+          />
+        </div>
+      </div>
+      <p className="muted" style={{ marginTop: 6 }}>
+        Sent as an <code>X-API-Key</code> header on every request (and a query parameter for job streams) when the server requires one. Leave empty for local, keyless use.
+      </p>
       {saved && <p className="success-note">Saved — all views now talk to the new endpoint.</p>}
     </Card>
   );

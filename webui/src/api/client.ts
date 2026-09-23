@@ -21,6 +21,21 @@ export function setApiBase(url: string): void {
   localStorage.setItem("sksurrogate_api_base", url.replace(/\/+$/, ""));
 }
 
+/** Shared API key, sent as an X-API-Key header (and WS query param) when the server requires one. */
+export function getApiKey(): string {
+  return localStorage.getItem("sksurrogate_api_key") || "";
+}
+
+export function setApiKey(key: string): void {
+  if (key.trim()) localStorage.setItem("sksurrogate_api_key", key.trim());
+  else localStorage.removeItem("sksurrogate_api_key");
+}
+
+function authHeaders(): Record<string, string> {
+  const key = getApiKey();
+  return key ? { "X-API-Key": key } : {};
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -40,9 +55,11 @@ export const retryUnlessNotFound = (_failureCount: number, err: unknown): boolea
   !(err instanceof ApiError && err.status === 404);
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const headers = authHeaders();
+  if (body !== undefined) headers["Content-Type"] = "application/json";
   const res = await fetch(`${base()}${path}`, {
     method,
-    headers: body !== undefined ? { "Content-Type": "application/json" } : undefined,
+    headers: Object.keys(headers).length ? headers : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
@@ -149,6 +166,7 @@ export async function registerDataset(
   form.append("file", file);
   const res = await fetch(`${base()}/api/datasets/${encodeURIComponent(taskName)}/register`, {
     method: "POST",
+    headers: authHeaders(),
     body: form,
   });
   if (!res.ok) {
@@ -547,7 +565,12 @@ export function subscribeToJob(
   onStatus: (record: JobRecord) => void,
 ): () => void {
   const url = base().replace(/^http/, "ws");
-  const ws = new WebSocket(`${url}/api/jobs/${encodeURIComponent(jobId)}/stream`);
+  // Browsers cannot set custom headers on a WebSocket handshake, so the key is
+  // passed as a query parameter (the server accepts it there when auth is on).
+  const key = getApiKey();
+  const ws = new WebSocket(
+    `${url}/api/jobs/${encodeURIComponent(jobId)}/stream${key ? `?api_key=${encodeURIComponent(key)}` : ""}`,
+  );
   ws.onmessage = (event) => {
     try {
       onStatus(JSON.parse(event.data as string) as JobRecord);

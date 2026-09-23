@@ -9,10 +9,21 @@ from pathlib import Path
 
 
 class Settings:
-    """Resolves the on-disk layout under a single configurable root directory."""
+    """Resolves the on-disk layout under a single configurable root directory.
+
+    Security knobs (all optional — v1 defaults keep the API open for local use):
+
+    - ``SKSURROGATE_API_KEY``: when set, every endpoint except ``/api/health``
+      requires this key (sent as an ``X-API-Key`` header or a Bearer token).
+    - ``SKSURROGATE_API_CORS_ORIGINS``: comma-separated list of allowed CORS
+      origins. When unset, only local dev origins (localhost / 127.0.0.1 on any
+      port) are allowed instead of the old wildcard.
+    """
 
     def __init__(self, root=None):
         self.root = Path(root or os.environ.get("SKSURROGATE_API_HOME", "./var/sksurrogate-api")).resolve()
+        self.api_key = os.environ.get("SKSURROGATE_API_KEY") or None
+        self.cors_origins = [o.strip() for o in os.environ.get("SKSURROGATE_API_CORS_ORIGINS", "").split(",") if o.strip()]
 
     @property
     def datasets_dir(self):

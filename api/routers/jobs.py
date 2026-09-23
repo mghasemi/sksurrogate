@@ -1,4 +1,10 @@
-"""Job status endpoints: polling and a lightweight WebSocket progress stream."""
+"""Job status endpoints: polling and a lightweight WebSocket progress stream.
+
+API-key enforcement (when ``SKSURROGATE_API_KEY`` is set) happens in the
+shared middleware in ``api/main.py``, which also covers this WebSocket route;
+the browser UI passes the key as an ``api_key`` query parameter because it
+cannot set custom headers on a WS handshake.
+"""
 
 import asyncio
 

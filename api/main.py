@@ -5,12 +5,20 @@ Run locally with:
     uvicorn api.main:app --reload
 
 See docs/ui-plan.md for the overall architecture and phased delivery plan.
-No authentication and SQLite-only storage are intentional v1 decisions.
+SQLite-only storage is an intentional v1 decision. Authentication is opt-in:
+set ``SKSURROGATE_API_KEY`` to require a shared key on every endpoint except
+``/api/health``, and ``SKSURROGATE_API_CORS_ORIGINS`` (comma-separated) to
+control which browser origins may call the API — by default only local dev
+origins are allowed.
 """
+
+from urllib.parse import parse_qsl
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.responses import JSONResponse
 
+from .config import settings
 from .routers import (
     bundles,
     datasets,
@@ -25,16 +33,83 @@ from .routers import (
     sensitivity,
 )
 
+
+def _cors_origins() -> list[str]:
+    if settings.cors_origins:
+        return settings.cors_origins
+    # Default: local dev origins only (no wildcard), so a misconfigured
+    # non-local deployment does not silently accept cross-origin requests.
+    return ["http://localhost:*", "http://127.0.0.1:*"]
+
+
+class ApiKeyMiddleware:
+    """Enforce the shared API key on every ``/api`` scope except ``/api/health``.
+
+    Implemented as a pure-ASGI middleware (rather than a FastAPI dependency) so
+    it covers both HTTP routes and the WebSocket job stream — global
+    dependencies do not apply to WebSockets. The key is read from an
+    ``X-API-Key`` header, a Bearer token, or — for the WS handshake, where
+    browsers cannot set custom headers — an ``api_key`` query parameter.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    @staticmethod
+    def _header(headers, name: str) -> str:
+        target = name.lower().encode("latin-1")
+        for key, value in headers or []:
+            if key.lower() == target:
+                return value.decode("latin-1")
+        return ""
+
+    async def __call__(self, scope, receive, send):
+        path = scope.get("path", "")
+        protected = (
+            settings.api_key is not None
+            and scope["type"] in ("http", "websocket")
+            and path.startswith("/api")
+            and path != "/api/health"
+        )
+        if not protected:
+            await self.app(scope, receive, send)
+            return
+
+        supplied = self._header(scope.get("headers"), "x-api-key")
+        authorization = self._header(scope.get("headers"), "authorization")
+        if authorization.lower().startswith("bearer "):
+            supplied = supplied or authorization[7:].strip()
+        if scope["type"] == "websocket":
+            for key, value in parse_qsl(scope.get("query_string", b"").decode("latin-1")):
+                if key == "api_key":
+                    supplied = supplied or value
+                    break
+
+        if supplied != settings.api_key:
+            if scope["type"] == "http":
+                response = JSONResponse(status_code=401, content={"detail": "Invalid or missing API key"})
+                await response(scope, receive, send)
+            else:
+                await send({"type": "websocket.close", "code": 1008})
+            return
+        await self.app(scope, receive, send)
+
+
 app = FastAPI(
     title="SKSurrogate API",
     description="Control-plane API for the SKSurrogate MLOps toolkit.",
     version="0.1.0",
 )
 
-# The UI is a separate SPA client (see docs/ui-plan.md); allow any local dev origin for now.
+# Middleware added first ends up innermost; CORSMiddleware is added last so it
+# stays outermost and can decorate the 401 responses with CORS headers.
+app.add_middleware(ApiKeyMiddleware)
+# The UI is a separate SPA client (see docs/ui-plan.md); allow local dev origins by default,
+# or an explicit list via SKSURROGATE_API_CORS_ORIGINS.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins(),
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_methods=["*"],
     allow_headers=["*"],
 )

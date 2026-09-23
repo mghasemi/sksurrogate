@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import {
@@ -18,22 +18,25 @@ import {
   Sigma,
 } from "lucide-react";
 
+import { Loading } from "./components/ui";
 import { TaskProvider, useTask } from "./lib/task-context";
 import { useHealth } from "./lib/hooks";
 
-import DashboardPage from "./pages/Dashboard";
-import DatasetsPage from "./pages/Datasets";
-import FeatureAnalysisPage from "./pages/FeatureAnalysis";
-import ExperimentsPage from "./pages/Experiments";
-import EvaluationPage from "./pages/Evaluation";
-import BundlesPage from "./pages/Bundles";
-import QualityGatesPage from "./pages/QualityGates";
-import RegistryPage from "./pages/Registry";
-import InferencePage from "./pages/Inference";
-import MonitoringPage from "./pages/Monitoring";
-import RetrainingPage from "./pages/Retraining";
-import JobsPage from "./pages/Jobs";
-import SettingsPage from "./pages/Settings";
+// Route-level code splitting: each page is its own chunk so the initial load
+// only pays for the shell + the first route (see docs/HANDOFF.md next steps).
+const DashboardPage = lazy(() => import("./pages/Dashboard"));
+const DatasetsPage = lazy(() => import("./pages/Datasets"));
+const FeatureAnalysisPage = lazy(() => import("./pages/FeatureAnalysis"));
+const ExperimentsPage = lazy(() => import("./pages/Experiments"));
+const EvaluationPage = lazy(() => import("./pages/Evaluation"));
+const BundlesPage = lazy(() => import("./pages/Bundles"));
+const QualityGatesPage = lazy(() => import("./pages/QualityGates"));
+const RegistryPage = lazy(() => import("./pages/Registry"));
+const InferencePage = lazy(() => import("./pages/Inference"));
+const MonitoringPage = lazy(() => import("./pages/Monitoring"));
+const RetrainingPage = lazy(() => import("./pages/Retraining"));
+const JobsPage = lazy(() => import("./pages/Jobs"));
+const SettingsPage = lazy(() => import("./pages/Settings"));
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
@@ -177,6 +180,7 @@ function Shell() {
       <div className="main">
         <Topbar onMenu={() => setNavOpen((open) => !open)} />
         <main className="content">
+          <Suspense fallback={<Loading label="Loading page…" />}>
           <Routes>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/datasets" element={<DatasetsPage />} />
@@ -192,6 +196,7 @@ function Shell() {
             <Route path="/jobs" element={<JobsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>
+          </Suspense>
         </main>
       </div>
     </div>
