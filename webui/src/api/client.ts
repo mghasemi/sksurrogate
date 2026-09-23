@@ -32,8 +32,11 @@ export class ApiError extends Error {
 /**
  * Retry predicate for queries where a 404 means "nothing registered yet"
  * rather than a real failure — retry everything except not-found responses.
+ * TanStack Query v5 invokes this as (failureCount, error), so the error is
+ * the SECOND argument; treating the first arg as the error would make every
+ * 404 retry forever and leave queries stuck in isLoading.
  */
-export const retryUnlessNotFound = (err: unknown): boolean =>
+export const retryUnlessNotFound = (_failureCount: number, err: unknown): boolean =>
   !(err instanceof ApiError && err.status === 404);
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
