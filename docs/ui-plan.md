@@ -34,7 +34,7 @@
 │  FastAPI service ("sksurrogate-api")                       │
 │  - Routers per MLOps stage (see §4)                        │
 │  - Pydantic schemas = the contract with the UI              │
-│  - Auth (API key / OAuth2, RBAC for approvals)              │
+│  - Opt-in shared-key auth + configurable CORS origins       │
 │  - Job manager for long-running work (AML/EOA searches,     │
 │    nested CV, batch drift scans) -> background workers      │
 │  - Adapts DataFrames/estimators/bundles <-> JSON/files       │
@@ -146,14 +146,23 @@ boundary directly:
   (`api/state.db`, plain `sqlite3`/SQLAlchemy) owned by the API layer for
   job records, registry/audit indexes, and any UI-only state. No external DB
   server required; the whole stack runs from a single folder + `pip install`.
-- **Auth**: **none for v1** — the API is assumed to run on a trusted
-  local/internal network with no login. All endpoints are open. This keeps
-  the initial build simple; the router/schema layer is structured so an
-  auth dependency (API key or OAuth2/JWT) can be slotted in later without
-  reshaping the routes. Approval actions in Registry & Deployment still
-  record an `approver` name/string field (free text, unauthenticated) so the
-  existing `DeploymentApprovalGate` multi-approver bookkeeping and audit
-  trail keep working — it's just not identity-verified yet.
+- **Auth**: shipped as **opt-in shared-key auth** (the v1 plan was "none",
+  kept as the default). Set `SKSURROGATE_API_KEY` to enable; unset leaves all
+  endpoints open for trusted local use. The key is accepted via the
+  `X-API-Key` header, an `Authorization: Bearer <key>` token, or — on
+  WebSocket routes only, because browsers cannot set custom headers on a WS
+  handshake — an `api_key` query parameter. Enforcement lives in a pure-ASGI
+  middleware (`ApiKeyMiddleware` in `api/main.py`) covering both HTTP and
+  WebSocket scopes; global FastAPI dependencies do not apply to WS routes.
+  `/api/health` stays open unconditionally (the UI's connectivity indicator).
+  CORS origins are configurable via `SKSURROGATE_API_CORS_ORIGINS`
+  (comma-separated); unset defaults to local-only origins
+  (`localhost`/`127.0.0.1`, any port) instead of a wildcard.
+  Approval actions in Registry & Deployment still record an `approver`
+  name/string field (free text, unauthenticated) so the existing
+  `DeploymentApprovalGate` multi-approver bookkeeping and audit trail keep
+  working — it's just not identity-verified yet. Per-user RBAC/OAuth2 remains
+  future work if the tool moves beyond single-user/trusted-network use.
 - **Frontend**: React + TypeScript + Vite, a component library such as
   Mantine or shadcn/ui + Tailwind for a clean modern look, TanStack Query for
   data fetching/caching, TanStack Table for result grids, Recharts/Visx for
@@ -214,8 +223,10 @@ exist yet).
 
 ## 9. Decisions
 
-- **Auth**: none for v1 (see §6). Revisit if the tool moves beyond
-  single-user/trusted-network use.
+- **Auth**: opt-in shared-key auth shipped in v1 (see §6) — `SKSURROGATE_API_KEY`
+  enables it, unset stays open; CORS origins configurable via
+  `SKSURROGATE_API_CORS_ORIGINS` with a local-only default. Per-user RBAC/OAuth2
+  remains future work if the tool moves beyond single-user/trusted-network use.
 - **Storage**: SQLite only, for both `mltrace`'s existing experiment DBs and
   the new API-owned state DB (jobs, registry index, audit). Datasets/bundles
   remain plain files on the local filesystem (or a mounted volume); no S3

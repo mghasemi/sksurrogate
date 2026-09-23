@@ -4,6 +4,23 @@ Changelog
 Unreleased
 ----------
 
+Control-plane API and Web UI (branch ``ui``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Added a FastAPI control plane under ``api/`` covering datasets, bundles,
+  quality gates, registry/deployment, inference, monitoring, sensitivity,
+  experiments, background jobs with WebSocket progress streaming, retraining,
+  and a lineage traceability endpoint.
+* Added a React/Vite web UI under ``webui/`` with pages for every pipeline
+  stage, live job tracking, a responsive shell, and route-level code splitting.
+* Added opt-in shared-key API authentication via the ``SKSURROGATE_API_KEY``
+  environment variable (accepted through the ``X-API-Key`` header, Bearer
+  tokens, or an ``api_key`` query parameter on WebSocket routes); unset keeps
+  all endpoints open for local use.
+* Made CORS origins configurable via ``SKSURROGATE_API_CORS_ORIGINS``, defaulting
+  to local-only origins instead of a wildcard; the web UI stores and sends an
+  API key from its Settings page.
+
 Phase 10: Documentation and release hardening
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

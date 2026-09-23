@@ -1,7 +1,8 @@
 """Storage layout configuration for the SKSurrogate API.
 
 Everything is filesystem + SQLite based (see docs/ui-plan.md, section 9):
-no auth, no external database, no object storage required for v1.
+auth is opt-in via environment variables (documented below), and no external
+database or object storage is required for v1.
 """
 
 import os
@@ -14,7 +15,8 @@ class Settings:
     Security knobs (all optional — v1 defaults keep the API open for local use):
 
     - ``SKSURROGATE_API_KEY``: when set, every endpoint except ``/api/health``
-      requires this key (sent as an ``X-API-Key`` header or a Bearer token).
+      requires this key (sent as an ``X-API-Key`` header, a Bearer token, or —
+      on WebSocket routes only — an ``api_key`` query parameter).
     - ``SKSURROGATE_API_CORS_ORIGINS``: comma-separated list of allowed CORS
       origins. When unset, only local dev origins (localhost / 127.0.0.1 on any
       port) are allowed instead of the old wildcard.
