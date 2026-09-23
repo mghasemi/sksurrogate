@@ -41,13 +41,11 @@ def get_lineage(task_name: str, model_version: str):
     registry_state = None
     registry = ModelRegistry(settings.registry_dir)
     try:
-        history = registry.history(task_name)
         audit = registry.audit_log(task_name)
         version_events = [event for event in audit if event.get("model_version") == model_version]
-        current_state = next(
-            (event.get("to") for event in reversed(history) if event.get("model_version") == model_version),
-            None,
-        )
+        # The current state is stored per-version (register/promote update it);
+        # promotion history alone is empty for freshly-registered candidates.
+        current_state = registry.version_state(task_name, model_version)
         registry_state = {"state": current_state, "history": version_events}
     except KeyError:
         registry_state = None

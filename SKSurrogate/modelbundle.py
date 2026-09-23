@@ -523,3 +523,19 @@ class ModelRegistry:
         if task is None:
             raise KeyError("Unknown model task: %r" % task_name)
         return list(task.get("history", []))
+
+    def version_state(self, task_name, model_version):
+        """Return the current lifecycle state of a registered version.
+
+        The authoritative value lives in ``versions`` (set by register/promote);
+        promotion history alone is empty for freshly-registered candidates.
+        Raises KeyError if the task or version is unknown to the registry.
+        """
+        index = self._read_index()
+        task = index["models"].get(task_name)
+        if task is None:
+            raise KeyError("Unknown model task: %r" % task_name)
+        versions = task.get("versions", {})
+        if model_version not in versions:
+            raise KeyError("Unknown model version %r for task %r" % (model_version, task_name))
+        return versions[model_version]["state"]
