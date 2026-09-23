@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { BrowserRouter, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import {
   Activity,
@@ -18,6 +18,7 @@ import {
   Sigma,
 } from "lucide-react";
 
+import { listTasks } from "./api/client";
 import { Loading } from "./components/ui";
 import { TaskProvider, useTask } from "./lib/task-context";
 import { useHealth } from "./lib/hooks";
@@ -134,11 +135,32 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
   );
 }
 
+/** Sentinel option value for "add a new task" in the task dropdown. */
+const NEW_TASK_VALUE = "__new_task__";
+
 function Topbar({ onMenu }: { onMenu: () => void }) {
   const { task, setTask } = useTask();
   const healthOk = useHealth();
   const location = useLocation();
   const title = TITLES[location.pathname] ?? "SKSurrogate";
+
+  // Known tasks come from the API storage layout; refresh periodically so a
+  // task registered on another page (or in another browser) shows up here.
+  const tasksQ = useQuery({ queryKey: ["tasks"], queryFn: listTasks, refetchInterval: 15000 });
+  const [addingNew, setAddingNew] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  // Keep the current task selectable even if it is not in the API list yet
+  // (e.g. just typed and no data registered for it).
+  const known = tasksQ.data?.tasks ?? [];
+  const options = task && !known.includes(task) ? [...known, task] : known;
+
+  const commitNewTask = () => {
+    const name = draft.trim();
+    setAddingNew(false);
+    setDraft("");
+    if (name) setTask(name);
+  };
 
   return (
     <header className="topbar">
@@ -149,12 +171,37 @@ function Topbar({ onMenu }: { onMenu: () => void }) {
       <span className="spacer" />
       <label className="task-picker">
         Task
-        <input
-          value={task}
-          onChange={(e) => setTask(e.target.value.trim())}
-          placeholder="task_name (e.g. galaxy3)"
-          spellCheck={false}
-        />
+        {addingNew ? (
+          <input
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={commitNewTask}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitNewTask();
+              else if (e.key === "Escape") {
+                setAddingNew(false);
+                setDraft("");
+              }
+            }}
+            placeholder="new task name, press Enter"
+            spellCheck={false}
+          />
+        ) : (
+          <select
+            value={task || ""}
+            onChange={(e) => {
+              if (e.target.value === NEW_TASK_VALUE) setAddingNew(true);
+              else setTask(e.target.value);
+            }}
+          >
+            <option value="">— select a task —</option>
+            {options.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+            <option value={NEW_TASK_VALUE}>+ Add new task…</option>
+          </select>
+        )}
       </label>
       <span className={`health-dot${healthOk ? " ok" : ""}`}>
         <span className="dot" />

@@ -33,6 +33,35 @@ export function Card({
   );
 }
 
+/** Horizontal tab bar; render the matching panel yourself next to it. */
+export function Tabs({
+  tabs,
+  active,
+  onChange,
+}: {
+  tabs: Array<{ id: string; label: ReactNode; badge?: ReactNode }>;
+  active: string;
+  onChange: (id: string) => void;
+}) {
+  return (
+    <div className="tabs" role="tablist">
+      {tabs.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          role="tab"
+          aria-selected={t.id === active}
+          className={`tab${t.id === active ? " active" : ""}`}
+          onClick={() => onChange(t.id)}
+        >
+          {t.label}
+          {t.badge !== undefined && <span className="tab-badge">{t.badge}</span>}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function Stat({ label, value, sub }: { label: string; value: ReactNode; sub?: ReactNode }) {
   return (
     <div className="card stat">

@@ -124,6 +124,13 @@ export interface PartitionInfo {
 export const health = () => get<{ status: string }>("/api/health");
 
 /* ------------------------------------------------------------------ */
+/* Tasks                                                               */
+/* ------------------------------------------------------------------ */
+
+/** Known task names discovered across the API storage layout. */
+export const listTasks = () => get<{ tasks: string[] }>("/api/tasks");
+
+/* ------------------------------------------------------------------ */
 /* Datasets                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -189,6 +196,34 @@ export const previewDataset = (task: string, partition: string, limit = 20) =>
   get<DatasetPreview>(
     `/api/datasets/${encodeURIComponent(task)}/${encodeURIComponent(partition)}/preview?limit=${limit}`,
   );
+
+/** A scikit-learn cross-validation splitter spec (see SKSurrogate.mltrace.cv_to_spec). */
+export type CVSpec = { type: string; [param: string]: unknown } | number;
+
+/** One editable constructor parameter of a CV splitter. */
+export interface CVParamDef {
+  name: string;
+  kind: "int" | "float" | "bool";
+  default: unknown;
+}
+
+export interface CVOptionsResponse {
+  task_name: string;
+  options: string[];
+  /** Constructor parameters per splitter, for rendering editable fields. */
+  param_defs?: Record<string, CVParamDef[]>;
+  current: CVSpec;
+  stored: boolean;
+}
+
+export const getDatasetCV = (task: string) =>
+  get<CVOptionsResponse>(`/api/datasets/${encodeURIComponent(task)}/cv`);
+
+export const setDatasetCV = (task: string, spec: CVSpec, params?: Record<string, unknown>) =>
+  request<{ task_name: string; cv: CVSpec }>("PUT", `/api/datasets/${encodeURIComponent(task)}/cv`, {
+    spec,
+    ...(params ? { params } : {}),
+  });
 
 /* ------------------------------------------------------------------ */
 /* Bundles                                                             */
@@ -494,6 +529,32 @@ export interface SensitivityRequest {
 export const runSensitivity = (task: string, body: SensitivityRequest) =>
   post<{ job_id: string; status: string }>(`/api/sensitivity/${encodeURIComponent(task)}/run`, body);
 
+/** Result payload of a completed sensitivity job (see api/routers/sensitivity.py). */
+export interface SensitivityJobResult {
+  method: string;
+  n_features_to_select: number;
+  feature_columns: string[];
+  top_feature_indices: number[];
+  top_feature_names: string[];
+  /** One weight per entry of `feature_columns`; null where the value was not finite. */
+  weights: Array<number | null>;
+}
+
+/** Narrow an unknown job result to a sensitivity result, or return null. */
+export function asSensitivityResult(result: unknown): SensitivityJobResult | null {
+  if (!result || typeof result !== "object") return null;
+  const r = result as Partial<SensitivityJobResult>;
+  if (!Array.isArray(r.feature_columns) || !Array.isArray(r.weights) || typeof r.method !== "string") return null;
+  return {
+    method: r.method,
+    n_features_to_select: r.n_features_to_select ?? 0,
+    feature_columns: r.feature_columns,
+    top_feature_indices: r.top_feature_indices ?? [],
+    top_feature_names: r.top_feature_names ?? [],
+    weights: r.weights,
+  };
+}
+
 export interface CorrelationThresholdResult {
   threshold: number;
   feature_columns: string[];
@@ -504,6 +565,37 @@ export interface CorrelationThresholdResult {
 export const runCorrelationThreshold = (task: string, threshold = 0.7, trainPartition = "train") =>
   post<CorrelationThresholdResult>(
     `/api/sensitivity/${encodeURIComponent(task)}/correlation-threshold?threshold=${threshold}&train_partition=${encodeURIComponent(trainPartition)}`,
+  );
+
+/** Square feature-by-feature matrix as consumed by the heatmap renderer (mirrors mltrack.heatmap). */
+export interface HeatmapData {
+  labels: string[];
+  columns: string[];
+  values: Array<Array<number | null>>;
+}
+
+export interface CorrelationMatrixResult extends HeatmapData {
+  task_name: string;
+  partition: string;
+  kind: "correlation";
+}
+
+export const getCorrelationMatrix = (task: string, trainPartition = "train", maxFeatures = 60) =>
+  get<CorrelationMatrixResult>(
+    `/api/sensitivity/${encodeURIComponent(task)}/correlation-matrix?train_partition=${encodeURIComponent(trainPartition)}&max_features=${maxFeatures}`,
+  );
+
+export interface WeightsHeatmapResult extends HeatmapData {
+  task_name: string;
+  kind: "weights";
+  available: boolean;
+  /** "stored" = read from the mltrack weights table; "computed" = pearson/variance on demand. */
+  source: "stored" | "computed";
+}
+
+export const getWeightsHeatmap = (task: string, trainPartition = "train", maxFeatures = 60) =>
+  get<WeightsHeatmapResult>(
+    `/api/sensitivity/${encodeURIComponent(task)}/weights-heatmap?train_partition=${encodeURIComponent(trainPartition)}&max_features=${maxFeatures}`,
   );
 
 /* ------------------------------------------------------------------ */

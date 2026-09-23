@@ -19,7 +19,15 @@ from .NpyProximation import (
 from .sensapprx import SensAprx, CorrelationThreshold
 from .aml import Words, StackingEstimator, AML
 from .eoa import EOA, UniformRand, MaxGenTermination, UniformCrossover, Elites, Mutation
-from .mltrace import np2df, mltrack
+from .mltrace import (
+    STANDARD_CV_SPLITTERS,
+    build_cv,
+    cv_param_defs,
+    cv_to_spec,
+    default_cv_spec,
+    mltrack,
+    np2df,
+)
 from .DataProcess import DataPreprocess
 from .ci import BundleQualityGateError, assert_bundle_quality, check_bundle_quality
 from .deployment import DeploymentApprovalGate
@@ -44,6 +52,10 @@ __all__ = [
     "BundleQualityGateError",
     "Categorical",
     "CorrelationThreshold",
+    "build_cv",
+    "cv_param_defs",
+    "cv_to_spec",
+    "default_cv_spec",
     "DataPreprocess",
     "DeploymentApprovalGate",
     "DaskExecutionBackend",
@@ -62,6 +74,7 @@ __all__ = [
     "Real",
     "Regression",
     "RetrainingJob",
+    "STANDARD_CV_SPLITTERS",
     "SensAprx",
     "SphereSample",
     "StackingEstimator",

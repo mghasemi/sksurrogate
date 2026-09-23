@@ -12,6 +12,7 @@ control which browser origins may call the API — by default only local dev
 origins are allowed.
 """
 
+import json
 from urllib.parse import parse_qsl
 
 from fastapi import FastAPI
@@ -130,3 +131,35 @@ app.include_router(lineage.router)
 @app.get("/api/health", tags=["health"])
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/tasks", tags=["tasks"])
+def list_tasks():
+    """Return known task names discovered across the storage layout.
+
+    A task is considered known if it has a directory under any of the
+    per-task storage areas, an mltrace database file, or at least one
+    persisted job record. This powers the task dropdown in the web UI.
+    """
+    names = set()
+    for directory in (
+        settings.datasets_dir,
+        settings.bundles_dir,
+        settings.registry_dir,
+        settings.monitoring_dir,
+        settings.checkpoints_dir,
+    ):
+        if directory.is_dir():
+            names.update(p.name for p in directory.iterdir() if p.is_dir())
+    if settings.mltrace_dir.is_dir():
+        names.update(p.stem for p in settings.mltrace_dir.glob("*.db"))
+    if settings.jobs_dir.is_dir():
+        for path in settings.jobs_dir.glob("*.json"):
+            try:
+                record = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            name = record.get("task_name") if isinstance(record, dict) else None
+            if isinstance(name, str) and name:
+                names.add(name)
+    return {"tasks": sorted(names)}

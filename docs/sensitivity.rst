@@ -110,3 +110,29 @@ with correlation below a given threshold:
 
 The above procedure selects those features which has high (positive or negative) correlation with higher number of
 other features and omits the other features. Repeats this process until no more pair with high correlation remains.
+
+Heatmaps
+--------
+
+``SKSurrogate.mltrace.mltrack.heatmap`` renders any :class:`pandas.DataFrame`
+as a labelled matrix (``imshow`` with row/column ticks), which is how the
+tracker visualises feature weights and correlation structure. The web control
+plane exposes the same two data sets as JSON so they can be drawn in the
+browser without a Python process:
+
+``GET /api/sensitivity/{task}/correlation-matrix``
+    Pearson correlation matrix of the stored ``train`` partition, built as
+    ``pandas.DataFrame(X, columns=feature_columns).corr()``.
+
+``GET /api/sensitivity/{task}/weights-heatmap``
+    Feature weights, one column per weight type. Prefers the weights persisted
+    by a sensitivity run in the tracker (``source: "stored"``); when none are
+    available it computes ``pearson`` (correlation with the target) and
+    ``variance`` from the stored train partition instead and reports
+    ``source: "computed"``.
+
+Both endpoints return ``{"labels": [...], "columns": [...], "values": [[...]]}``
+and accept ``train_partition`` and ``max_features`` (default ``60``) query
+parameters. Requests for wider datasets are rejected with HTTP ``400`` so that
+an oversized matrix is never shipped to the client; prune the feature set first
+or raise the limit.

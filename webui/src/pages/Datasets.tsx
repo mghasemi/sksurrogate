@@ -1,11 +1,21 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { UploadCloud } from "lucide-react";
 
-import { getDatasetMetadata, previewDataset, registerDataset } from "../api/client";
-import type { DatasetPreview, RegisterDatasetResponse } from "../api/client";
+import { getDatasetCV, getDatasetMetadata, previewDataset, registerDataset, setDatasetCV } from "../api/client";
+import type { CVParamDef, CVSpec, DatasetPreview, RegisterDatasetResponse } from "../api/client";
 import { Card, ErrorNote, Loading, Table, Badge, fmtNum } from "../components/ui";
 import { useTask } from "../lib/task-context";
+
+/** Human-readable label for a stored CV spec, e.g. "StratifiedKFold(n_splits=5)". */
+function describeCv(spec: CVSpec): string {
+  if (typeof spec === "number") return `${spec}-fold cross validation`;
+  const type = String((spec as Record<string, unknown>).type ?? "");
+  if (!type || type === "default") return "ShuffleSplit(n_splits=3, test_size=0.25)";
+  const params = Object.entries(spec).filter(([k]) => k !== "type");
+  if (!params.length) return type;
+  return `${type}(${params.map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(", ")})`;
+}
 
 export default function DatasetsPage() {
   const { task } = useTask();
@@ -40,6 +50,71 @@ export default function DatasetsPage() {
     },
   });
 
+  const cvQ = useQuery({
+    queryKey: ["dataset-cv", task],
+    queryFn: () => getDatasetCV(task),
+    enabled: !!task,
+  });
+  const [cvChoice, setCvChoice] = useState<string>("");
+  // Editable constructor parameters of the selected splitter (raw input strings).
+  const [cvParamValues, setCvParamValues] = useState<Record<string, string>>({});
+  const setCvMut = useMutation({
+    mutationFn: (vars: { spec: CVSpec; params?: Record<string, unknown> }) =>
+      setDatasetCV(task, vars.spec, vars.params),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["dataset-cv", task] }),
+  });
+
+  const cvOptions = cvQ.data?.options ?? [];
+  // Preselect the splitter matching the stored spec's type when available.
+  const storedType =
+    cvQ.data && typeof cvQ.data.current === "object" ? String(cvQ.data.current.type ?? "") : "";
+  const selectValue = cvChoice || (cvOptions.includes(storedType) ? storedType : "");
+
+  // Constructor parameters exposed by the selected splitter.
+  const paramDefs: CVParamDef[] = cvQ.data?.param_defs?.[selectValue] ?? [];
+
+  /** Prefill parameter fields from the stored spec (if it matches), else defaults. */
+  const initialValuesFor = (splitter: string): Record<string, string> => {
+    const defs = cvQ.data?.param_defs?.[splitter] ?? [];
+    const current = cvQ.data?.current;
+    const stored = typeof current === "object" && String(current.type) === splitter ? current : null;
+    const values: Record<string, string> = {};
+    for (const def of defs) {
+      const fromStored = stored ? (stored as Record<string, unknown>)[def.name] : undefined;
+      const value = fromStored !== undefined ? fromStored : def.default;
+      // null/undefined default (e.g. test_size "auto") → empty field.
+      values[def.name] = value === undefined || value === null ? "" : String(value);
+    }
+    return values;
+  };
+
+  // Seed the fields when data loads with a preselected splitter.
+  useEffect(() => {
+    if (cvQ.data && !cvChoice && selectValue) setCvParamValues(initialValuesFor(selectValue));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cvQ.data, cvChoice, selectValue]);
+
+  const invalidParam = paramDefs.find((def) => {
+    if (def.kind === "bool") return false;
+    const raw = cvParamValues[def.name];
+    if (raw === undefined || raw.trim() === "") return false; // blank → splitter default
+    const num = Number(raw);
+    if (!Number.isFinite(num)) return true;
+    if (def.kind === "int" && !Number.isInteger(num)) return true;
+    if (def.name === "n_splits" && num < 2) return true;
+    return false;
+  });
+
+  const saveCv = () => {
+    if (!selectValue || invalidParam) return;
+    const params: Record<string, unknown> = {};
+    for (const def of paramDefs) {
+      const raw = cvParamValues[def.name];
+      if (raw === undefined || raw.trim() === "") continue; // omit → splitter default
+      params[def.name] = def.kind === "bool" ? raw === "true" : Number(raw);
+    }
+    setCvMut.mutate({ spec: { type: selectValue }, params });
+  };
   const partitions = metaQ.data ? Object.keys(metaQ.data.partitions ?? {}) : [];
   const previewRows = previewQ.data?.rows ?? [];
   const previewCols = previewRows.length ? Object.keys(previewRows[0]) : [];
@@ -111,6 +186,102 @@ export default function DatasetsPage() {
         >
           {registerMut.isPending ? "Registering…" : "Register dataset"}
         </button>
+      </Card>
+
+      <Card
+        title="Cross-validation partitioning"
+        sub="Choose how the data is split into train/test folds; saved to the task's tracking pipeline and used by downstream training."
+      >
+        {cvQ.isLoading && task && <Loading />}
+        {cvQ.isError && <ErrorNote error={cvQ.error} />}
+        {cvQ.data && (
+          <>
+            <div className="row">
+              <div className="field fixed" style={{ flex: "0 1 320px", minWidth: 240 }}>
+                <label>Splitter</label>
+                <select
+                  value={selectValue}
+                  onChange={(e) => {
+                    setCvChoice(e.target.value);
+                    if (e.target.value) setCvParamValues(initialValuesFor(e.target.value));
+                  }}
+                >
+                  {cvOptions.map((opt) => (
+                    <option key={opt} value={opt}>
+                      {opt}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {paramDefs.length > 0 && (
+              <div className="row">
+                {paramDefs.map((def) =>
+                  def.kind === "bool" ? (
+                    <label key={def.name} className="checkbox-row" style={{ marginBottom: 12 }}>
+                      <input
+                        type="checkbox"
+                        checked={cvParamValues[def.name] === "true"}
+                        onChange={(e) =>
+                          setCvParamValues((p) => ({ ...p, [def.name]: String(e.target.checked) }))
+                        }
+                      />
+                      {def.name}
+                    </label>
+                  ) : (
+                    <div
+                      key={def.name}
+                      className="field fixed"
+                      style={{ flex: "0 1 160px", minWidth: 120, marginBottom: 12 }}
+                    >
+                      <label>{def.name}</label>
+                      <input
+                        type="number"
+                        step={def.kind === "int" ? 1 : "any"}
+                        min={def.name === "n_splits" ? 2 : undefined}
+                        value={cvParamValues[def.name] ?? ""}
+                        onChange={(e) => setCvParamValues((p) => ({ ...p, [def.name]: e.target.value }))}
+                      />
+                    </div>
+                  ),
+                )}
+              </div>
+            )}
+
+            {invalidParam && (
+              <div className="error-note">
+                “{invalidParam.name}” must be a valid number{invalidParam.kind === "int" ? " (whole)" : ""}
+                {invalidParam.name === "n_splits" ? ", at least 2" : ""}. Leave it blank to use the
+                splitter default.
+              </div>
+            )}
+
+            <dl className="kv">
+              <dt>Current</dt>
+              <dd className="mono">{cvQ.data.stored ? describeCv(cvQ.data.current) : `${describeCv(cvQ.data.current)} (default)`}</dd>
+              {typeof cvQ.data.current === "object" && (
+                <>
+                  <dt>Stored spec</dt>
+                  <dd className="mono">{JSON.stringify(cvQ.data.current)}</dd>
+                </>
+              )}
+            </dl>
+
+            {setCvMut.isError && <ErrorNote error={setCvMut.error} />}
+            {setCvMut.isSuccess && (
+              <div className="success-note">Saved cross-validation method: <code>{describeCv(setCvMut.data.cv)}</code></div>
+            )}
+
+            <button
+              className="btn primary"
+              disabled={!task || !selectValue || !!invalidParam || setCvMut.isPending}
+              onClick={saveCv}
+            >
+              {setCvMut.isPending ? "Saving…" : "Save cross-validation method"}
+            </button>
+          </>
+        )}
       </Card>
 
       <Card title="Registered metadata" sub={metaQ.data?.dataset_fingerprint ?? undefined}>

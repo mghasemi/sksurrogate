@@ -12,7 +12,12 @@ from .config import settings
 
 @contextmanager
 def open_tracker(task_name):
-    """Open a task-scoped ``mltrack`` instance and always close its SQLite handle."""
+    """Open a task-scoped ``mltrack`` instance and always close its SQLite handle.
+
+    The splitter persisted for the task (via ``SetCV``) is restored onto the
+    tracker automatically by ``mltrack.__init__``, so downstream CV-based
+    operations keep using the partitioning method chosen in the UI.
+    """
     tracker = mltrack(task_name, db_name=str(settings.mltrace_db_path(task_name)))
     try:
         yield tracker

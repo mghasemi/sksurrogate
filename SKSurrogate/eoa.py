@@ -62,6 +62,15 @@ class EOA(object):
         self.num_parents = kwargs.pop(
             "num_parents", 2 * int(self.population_size * self.parents_porp / 2.0)
         )
+        if self.num_parents > self.population_size:
+            raise ValueError(
+                "num_parents ({num_parents}) exceeds the population size "
+                "({population_size}). Narrow num_parents (or widen the search "
+                "space) so that at least num_parents candidates exist.".format(
+                    num_parents=self.num_parents,
+                    population_size=self.population_size,
+                )
+            )
         self.elits_porp = kwargs.pop("elits_porp", 0.2)
         self.num_elites = int(self.elits_porp * self.num_parents)
         self.mutation_prob = kwargs.pop("mutation_prob", 0.05)

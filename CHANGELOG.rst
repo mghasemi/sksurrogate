@@ -21,6 +21,22 @@ Control-plane API and Web UI (branch ``ui``)
   to local-only origins instead of a wildcard; the web UI stores and sends an
   API key from its Settings page.
 
+Bug fixes
+~~~~~~~~~
+
+* Fixed the experiments stage failing with ``ValueError: too many values to
+  unpack (expected 2)``: the stored cross-validation spec (a JSON dictionary)
+  was handed straight to ``AML``, and scikit-learn's ``check_cv`` treated that
+  dictionary as an iterable of ``(train, test)`` folds and unpacked its keys.
+  The API now rebuilds the splitter with ``SKSurrogate.mltrace.build_cv`` while
+  keeping the JSON spec for the bundle audit event, and ``AML`` normalizes any
+  dictionary ``cv`` the same way so no caller can repeat the mistake.
+* ``EOA`` now rejects ``num_parents`` larger than the population size with a
+  message naming both values, instead of failing later inside
+  ``random.sample`` with ``Sample larger than population or is negative``.
+* ``SKSurrogate.aml.default_config`` is defined at module level again, so
+  ``AML()`` works without an explicit ``config``.
+
 Phase 10: Documentation and release hardening
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

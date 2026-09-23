@@ -35,6 +35,36 @@ def get_registered_target(task_name):
     return target, metadata
 
 
+def get_stored_cv_spec(task_name):
+    """Return the raw JSON-serializable CV spec stored for a task, or ``None``.
+
+    This is the audit/display form (``{"type": "ShuffleSplit", "n_splits": 4}``);
+    use :func:`get_stored_cv` to obtain something the library can actually fit with.
+    """
+    with open_tracker(task_name) as tracker:
+        return tracker.GetCVSpec()
+
+
+def get_stored_cv(task_name):
+    """Return the CV splitter persisted for a task (via ``SetCV``), or ``None``.
+
+    The stored spec is rebuilt into a real scikit-learn splitter (or an integer
+    fold count) so it can be handed straight to the library. Passing the raw
+    spec dict instead is a trap: a dict has no ``split`` method, so
+    scikit-learn's ``check_cv`` treats it as an iterable of pre-computed
+    ``(train, test)`` folds and fails with a confusing unpack error.
+    """
+    from SKSurrogate import build_cv
+
+    spec = get_stored_cv_spec(task_name)
+    if spec is None:
+        return None
+    try:
+        return build_cv(spec)
+    except (ValueError, KeyError, TypeError):
+        raise bad_request("Stored CV splitter %r for task %r could not be rebuilt" % (spec, task_name))
+
+
 def fit_baseline_bundle(
     task_name,
     *,
@@ -103,7 +133,12 @@ def fit_experiment_bundle(
     owner=None,
     run_id=None,
 ):
-    """Run an AML/EOA pipeline search and wrap the best fitted pipeline into a ``ModelBundle``."""
+    """Run an AML/EOA pipeline search and wrap the best fitted pipeline into a ``ModelBundle``.
+
+    The cross-validation splitter persisted for the task (see
+    ``PUT /api/datasets/{task}/cv``) is used for the search when present;
+    otherwise scikit-learn's default fold convention applies.
+    """
     target, metadata = get_registered_target(task_name)
     frame = load_partition(task_name, train_partition)
     feature_columns = [column for column in frame.columns if column != target]
@@ -115,6 +150,8 @@ def fit_experiment_bundle(
         for estimator, params in config.items()
     }
 
+    cv_spec = get_stored_cv_spec(task_name)
+    cv = get_stored_cv(task_name)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     aml = AML(
         config=parsed_config,
@@ -122,6 +159,7 @@ def fit_experiment_bundle(
         scoring=scoring,
         check_point=str(checkpoint_dir) + "/",
         random_state=random_state,
+        cv=cv if cv is not None else 3,
     )
     aml.eoa_fit(X, y, max_generation=max_generation, num_parents=num_parents)
     # SurrogateRandomCV refits best_estimator_ on the full dataset (refit=True),
@@ -142,6 +180,7 @@ def fit_experiment_bundle(
     bundle.record_audit_event(
         "experiment",
         scoring=scoring,
+        cv=cv_spec,
         length=length,
         max_generation=max_generation,
         num_parents=num_parents,

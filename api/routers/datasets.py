@@ -7,13 +7,74 @@ file-upload + JSON endpoints, per docs/ui-plan.md section 4.
 
 import pandas as pd
 from fastapi import APIRouter, File, Form, UploadFile
+from pydantic import BaseModel
 
-from SKSurrogate import DataPreprocess
+from SKSurrogate import (
+    STANDARD_CV_SPLITTERS,
+    DataPreprocess,
+    build_cv,
+    cv_param_defs,
+    cv_to_spec,
+    default_cv_spec,
+)
 
 from ..config import settings
 from ..deps import bad_request, not_found, open_tracker
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
+
+
+class SetCVRequest(BaseModel):
+    """Cross-validation splitter selection for a task.
+
+    ``spec`` is either an integer fold count (scikit-learn convention: number of
+    ``(Stratified)KFold`` folds), or a dictionary with a ``type`` key naming one
+    of the standard splitters, e.g. ``{"type": "StratifiedKFold"}``.
+
+    ``params`` optionally carries the splitter's constructor parameters (e.g.
+    ``{"n_splits": 5, "shuffle": true}``); they are merged into the spec before
+    it is validated and stored in the tracking pipeline.
+    """
+
+    spec: dict | int
+    params: dict[str, object] | None = None
+
+
+@router.get("/{task_name}/cv")
+def get_cv(task_name: str):
+    """Return the standard splitter options and the task's current CV selection."""
+    if not settings.mltrace_db_path(task_name).exists():
+        raise not_found("No dataset registered for task %r" % task_name)
+    with open_tracker(task_name) as tracker:
+        stored_spec = tracker.GetCVSpec()
+    return {
+        "task_name": task_name,
+        "options": list(STANDARD_CV_SPLITTERS),
+        # Constructor parameters each splitter exposes, so the UI can render
+        # editable fields below the dropdown (name/kind/default per parameter).
+        "param_defs": {name: cv_param_defs(name) for name in STANDARD_CV_SPLITTERS},
+        "current": stored_spec if stored_spec is not None else default_cv_spec(),
+        "stored": stored_spec is not None,
+    }
+
+
+@router.put("/{task_name}/cv")
+def set_cv(task_name: str, body: SetCVRequest):
+    """Persist the task's cross-validation splitter in the tracking pipeline."""
+    if not settings.mltrace_db_path(task_name).exists():
+        raise not_found("No dataset registered for task %r" % task_name)
+    spec = body.spec
+    if body.params is not None and isinstance(spec, dict):
+        # Merge user-edited constructor parameters into the splitter spec.
+        merged = dict(spec)
+        merged.update(body.params)
+        spec = merged
+    try:
+        with open_tracker(task_name) as tracker:
+            stored_spec = tracker.SetCV(spec)
+    except (ValueError, KeyError, TypeError) as exc:
+        raise bad_request(str(exc))
+    return {"task_name": task_name, "cv": stored_spec}
 
 
 @router.post("/{task_name}/register")

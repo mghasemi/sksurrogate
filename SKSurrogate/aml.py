@@ -213,7 +213,8 @@ except ImportError:
     Integer = lambda a, b: None
     Categorical = lambda a: None
     HDReal = lambda a, b: None
-    default_config = {
+
+default_config = {
         # Classifiers
         "sklearn.naive_bayes.BernoulliNB": {
             "alpha": Real(10.0e-5, 100.0),
@@ -482,9 +483,18 @@ class AML(object):
         self.time_limit = time_limit
         self.max_evals = max_evals
         self._apply_resource_limits()
-        # TBD: check cv
         if cv is None:
             self.cv = 3
+        elif isinstance(cv, dict):
+            # Accept a JSON spec as produced by ``mltrace.cv_to_spec`` /
+            # ``mltrace.GetCVSpec`` and rebuild the splitter. A raw dict has no
+            # ``split`` method, so scikit-learn's ``check_cv`` would treat it as
+            # an iterable of pre-computed (train, test) folds and fail with a
+            # confusing "too many values to unpack" error.
+            from .mltrace import build_cv
+
+            rebuilt = build_cv(cv)
+            self.cv = 3 if rebuilt is None else rebuilt
         else:
             self.cv = cv
         self.types()
