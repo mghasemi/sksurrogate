@@ -539,3 +539,20 @@ class ModelRegistry:
         if model_version not in versions:
             raise KeyError("Unknown model version %r for task %r" % (model_version, task_name))
         return versions[model_version]["state"]
+
+    def summary(self, task_name):
+        """Return the registry state of one task as a plain dict.
+
+        Includes every lifecycle alias (``latest`` plus any promoted states)
+        and the current state of each registered version, so clients can
+        render the full lifecycle in a single round-trip instead of probing
+        aliases one by one. Raises KeyError if the task is unknown.
+        """
+        index = self._read_index()
+        task = index["models"].get(task_name)
+        if task is None:
+            raise KeyError("Unknown model task: %r" % task_name)
+        return {
+            "aliases": dict(task.get("aliases", {})),
+            "versions": {v: meta.get("state") for v, meta in task.get("versions", {}).items()},
+        }

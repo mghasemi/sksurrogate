@@ -77,6 +77,15 @@ def rollback_bundle(task_name: str, body: RollbackRequest):
         raise not_found(str(exc))
 
 
+@router.get("/{task_name}/summary")
+def registry_summary(task_name: str):
+    """All lifecycle aliases + per-version states in one round-trip."""
+    try:
+        return {"task_name": task_name, **_registry().summary(task_name)}
+    except KeyError as exc:
+        raise not_found(str(exc))
+
+
 @router.get("/{task_name}/history")
 def registry_history(task_name: str):
     try:

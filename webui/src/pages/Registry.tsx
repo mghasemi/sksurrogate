@@ -4,11 +4,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   REGISTRY_STATES,
   listBundles,
-  loadRegisteredBundle,
   promoteBundle,
   registerBundle,
   registryAudit,
   registryHistory,
+  registrySummary,
+  retryUnlessNotFound,
   rollbackBundle,
 } from "../api/client";
 import type { AuditEvent, RegistryHistoryEntry } from "../api/client";
@@ -16,57 +17,53 @@ import { LineageRail } from "../components/LineageRail";
 import { Badge, Card, ErrorNote, Loading, StatusBadge, Table, fmtNum } from "../components/ui";
 import { useTask } from "../lib/task-context";
 
+/** How many registered versions currently sit in a given lifecycle state. */
+function countInState(versions: Record<string, string>, state: string): number {
+  return Object.values(versions).filter((s) => s === state).length;
+}
+
 export default function RegistryPage() {
   const { task } = useTask();
   const qc = useQueryClient();
 
   const bundlesQ = useQuery({ queryKey: ["bundles-list", task], queryFn: () => listBundles(task), enabled: !!task });
+  // One round-trip for the whole lifecycle: aliases + per-version states.
+  // A 404 just means "no registry state yet" — not an error worth surfacing.
+  const summaryQ = useQuery({
+    queryKey: ["registry-summary", task],
+    queryFn: () => registrySummary(task),
+    enabled: !!task,
+    retry: retryUnlessNotFound,
+  });
   const historyQ = useQuery({
     queryKey: ["registry-history", task],
     queryFn: () => registryHistory(task),
     enabled: !!task,
-    retry: false,
+    retry: retryUnlessNotFound,
   });
   const auditQ = useQuery({
     queryKey: ["registry-audit", task],
     queryFn: () => registryAudit(task),
     enabled: !!task,
-    retry: false,
+    retry: retryUnlessNotFound,
   });
 
-  // Every state alias that currently points at a version (404s are tolerated).
-  const [aliasState, setAliasState] = useState<Record<string, string | null>>({});
-  useQuery({
-    queryKey: ["registry-aliases", task],
-    enabled: !!task,
-    retry: false,
-    queryFn: async () => {
-      const out: Record<string, string | null> = {};
-      for (const state of REGISTRY_STATES) {
-        try {
-          const res = await loadRegisteredBundle(task, state);
-          out[state] = res.model_version;
-        } catch {
-          out[state] = null;
-        }
-      }
-      setAliasState(out);
-      return out;
-    },
-  });
+  const aliases = summaryQ.data?.aliases ?? {};
+  const versionStates = summaryQ.data?.versions ?? {};
 
-  // Versions the user can act on: bundles folder + anything seen in history/audit.
+  // Versions the user can act on: bundles folder + registry versions + history/audit.
   const versions = useMemo(() => {
     const set = new Set<string>(bundlesQ.data?.bundles ?? []);
+    for (const v of Object.keys(versionStates)) set.add(v);
     for (const h of historyQ.data?.history ?? []) if (h.model_version) set.add(h.model_version);
     for (const a of auditQ.data?.audit ?? []) if (a.model_version) set.add(a.model_version);
     return [...set].reverse();
-  }, [bundlesQ.data, historyQ.data, auditQ.data]);
+  }, [bundlesQ.data, versionStates, historyQ.data, auditQ.data]);
 
   const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["registry-summary", task] });
     qc.invalidateQueries({ queryKey: ["registry-history", task] });
     qc.invalidateQueries({ queryKey: ["registry-audit", task] });
-    qc.invalidateQueries({ queryKey: ["registry-aliases", task] });
   };
 
   return (
@@ -80,23 +77,38 @@ export default function RegistryPage() {
 
       {task && (
         <Card title="Lifecycle" sub="Current holder of each alias. Promote moves a version forward; rollback re-points an alias at a prior version.">
-          <div className="state-flow">
-            {REGISTRY_STATES.map((s, i) => (
-              <span key={s} style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                {i > 0 && <span className="state-arrow">→</span>}
-                <div style={{ textAlign: "center" }}>
-                  <div className={`state-node${aliasState[s] ? " current" : ""}`}>{s}</div>
-                  <div className="muted mono" style={{ fontSize: 11, marginTop: 3 }}>
-                    {aliasState[s] ?? "—"}
-                  </div>
+          {summaryQ.isLoading && <Loading />}
+          {!summaryQ.isLoading && summaryQ.isError && !summaryQ.data && (
+            <p className="muted">No registry state yet for this task — register a bundle below to get started.</p>
+          )}
+          {summaryQ.data && (
+            <>
+              {aliases.latest && (
+                <div style={{ marginBottom: 10 }}>
+                  <span className="muted" style={{ marginRight: 8 }}>latest →</span>
+                  <code>{aliases.latest}</code>{" "}
+                  <StatusBadge status={versionStates[aliases.latest] ?? "candidate"} />
                 </div>
-              </span>
-            ))}
-          </div>
+              )}
+              <div className="state-flow">
+                {REGISTRY_STATES.map((s, i) => (
+                  <span key={s} style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                    {i > 0 && <span className="state-arrow">→</span>}
+                    <div style={{ textAlign: "center" }}>
+                      <div className={`state-node${aliases[s] ? " current" : ""}`}>{s}</div>
+                      <div className="muted mono" style={{ fontSize: 11, marginTop: 3 }}>
+                        {aliases[s] ?? (countInState(versionStates, s) > 0 ? `${countInState(versionStates, s)} version(s)` : "—")}
+                      </div>
+                    </div>
+                  </span>
+                ))}
+              </div>
 
-          {[...new Set(Object.values(aliasState).filter((v): v is string => !!v))].map((v) => (
-            <LineageRail key={v} task={task} modelVersion={v} />
-          ))}
+              {[...new Set([aliases.latest, ...Object.values(aliases)].filter((v): v is string => !!v))].map((v) => (
+                <LineageRail key={v} task={task} modelVersion={v} />
+              ))}
+            </>
+          )}
         </Card>
       )}
 

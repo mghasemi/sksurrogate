@@ -29,6 +29,13 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Retry predicate for queries where a 404 means "nothing registered yet"
+ * rather than a real failure — retry everything except not-found responses.
+ */
+export const retryUnlessNotFound = (err: unknown): boolean =>
+  !(err instanceof ApiError && err.status === 404);
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${base()}${path}`, {
     method,
@@ -282,6 +289,15 @@ export interface RegistryHistoryEntry {
   state?: string;
   timestamp: string;
 }
+
+export interface RegistrySummary {
+  task_name: string;
+  aliases: Record<string, string>;
+  versions: Record<string, string>;
+}
+
+export const registrySummary = (task: string) =>
+  get<RegistrySummary>(`/api/registry/${encodeURIComponent(task)}/summary`);
 
 export const registryHistory = (task: string) =>
   get<{ task_name: string; history: RegistryHistoryEntry[] }>(`/api/registry/${encodeURIComponent(task)}/history`);
