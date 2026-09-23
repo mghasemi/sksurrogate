@@ -11,10 +11,10 @@ import pandas as pd
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from SKSurrogate import SchemaValidationError, predict_batch
+from SKSurrogate import ModelRegistry, SchemaValidationError, predict_batch
 
 from ..config import settings
-from ..deps import append_monitor_record, bad_request, not_found, resolve_bundle
+from ..deps import append_monitor_record, bad_request, not_found, open_tracker, resolve_bundle
 
 router = APIRouter(prefix="/api/inference", tags=["inference"])
 
@@ -88,6 +88,26 @@ def predict_batch_endpoint(task_name: str, body: PredictRequest):
         raise bad_request("; ".join(exc.errors))
     metrics = result.attrs["inference_metrics"]
     append_monitor_record(task_name, bundle.model_version, metrics["latency_ms"], metrics["rows"])
+
+    # Phase 3.4 auto-wiring: register the persisted CSV as a prediction artifact
+    # (keyed to the model version + dataset fingerprint) so lineage is complete.
+    # Best-effort — never fail a prediction that already succeeded.
+    try:
+        fingerprint = bundle.dataset_fingerprint
+        if fingerprint is None and settings.mltrace_db_path(task_name).exists():
+            with open_tracker(task_name) as tracker:
+                fingerprint = (tracker.GetMetadata() or {}).get("dataset_fingerprint")
+        ModelRegistry(settings.registry_dir).register_prediction(
+            task_name,
+            bundle.model_version,
+            fingerprint or "unregistered",
+            output_path,
+            prediction_id=request_id,
+            metadata={"rows": metrics["rows"], "source": "predict-batch"},
+        )
+    except Exception:  # pragma: no cover - defensive; registration is auxiliary
+        pass
+
     return {
         "task_name": task_name,
         "model_version": bundle.model_version,

@@ -3,10 +3,12 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 
 import {
   REGISTRY_STATES,
+  findBestBundle,
   getDatasetMetadata,
   listBundles,
   predict,
   predictBatch,
+  retryUnlessNotFound,
 } from "../api/client";
 import type { PredictRequest, PredictResponse, PredictBatchResponse } from "../api/client";
 import { LineageRail } from "../components/LineageRail";
@@ -57,13 +59,26 @@ function useModelInputs() {
 }
 
 function ModelPicker({
+  task,
   versions,
   inputs,
 }: {
+  task: string;
   versions: string[];
   inputs: ReturnType<typeof useModelInputs>;
 }) {
   const { mode, setMode, modelVersion, setModelVersion, alias, setAlias } = inputs;
+  // Phase 3.2: suggest the bundle with the best recorded score, but never
+  // preselect it — inference on production data stays an explicit choice.
+  const bestQ = useQuery({
+    queryKey: ["bundle-best", task],
+    queryFn: () => findBestBundle(task),
+    enabled: !!task,
+    retry: retryUnlessNotFound,
+  });
+  const bestVersion = bestQ.data?.model_version ?? null;
+  const bestIsAvailable = !!bestVersion && versions.includes(bestVersion);
+
   return (
     <div className="row">
       <div className="field fixed" style={{ flex: "0 1 150px", minWidth: 120 }}>
@@ -82,6 +97,18 @@ function ModelPicker({
               <option key={v}>{v}</option>
             ))}
           </select>
+          {bestIsAvailable && (
+            <div className="chips" style={{ marginTop: 6 }}>
+              <button
+                type="button"
+                className="chip"
+                title={`Highest ${bestQ.data?.metric ?? "score"} metric: ${bestQ.data?.value ?? "—"}`}
+                onClick={() => setModelVersion(bestVersion!)}
+              >
+                ★ best: {bestVersion}
+              </button>
+            </div>
+          )}
         </div>
       ) : (
         <div className="field fixed" style={{ flex: "0 1 200px", minWidth: 150 }}>
@@ -203,7 +230,7 @@ function PredictConsole({ task, versions, partitions }: { task: string; versions
       title="Predict console"
       sub="Single request → JSON predictions. Stored partitions are projected onto the bundle's features (the target label is ignored); inline rows are validated exactly as sent."
     >
-      <ModelPicker versions={versions} inputs={inputs} />
+      <ModelPicker task={task} versions={versions} inputs={inputs} />
       <InputSource
         partitions={partitions}
         source={source}
@@ -259,7 +286,7 @@ function BatchRun({ task, versions, partitions }: { task: string; versions: stri
 
   return (
     <Card title="Batch run" sub="Persists predictions as a CSV artifact under the task's predictions folder.">
-      <ModelPicker versions={versions} inputs={inputs} />
+      <ModelPicker task={task} versions={versions} inputs={inputs} />
       <InputSource
         partitions={partitions}
         source={source}

@@ -7,7 +7,8 @@ export function Card({
   actions,
   children,
 }: {
-  title?: string;
+  /** Heading text, or a node when an inline badge sits next to the title. */
+  title?: ReactNode;
   sub?: string;
   actions?: ReactNode;
   children: ReactNode;
@@ -189,4 +190,18 @@ export function fmtNum(v: number | null | undefined): string {
 export function fmtPct(v: number | null | undefined): string {
   if (v === null || v === undefined || Number.isNaN(v)) return "—";
   return `${(v * 100).toFixed(2)}%`;
+}
+
+/** Human-readable byte size, e.g. 1.2 KB / 3.4 MB. */
+export function fmtBytes(v: number | null | undefined): string {
+  if (v === null || v === undefined || Number.isNaN(v)) return "—";
+  if (v < 1024) return `${v} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = v / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(1)} ${units[unit]}`;
 }

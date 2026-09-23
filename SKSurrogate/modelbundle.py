@@ -509,6 +509,48 @@ class ModelRegistry:
         self._write_index(index)
         return deleted
 
+    def artifacts(self, task_name):
+        """List the dataset and prediction artifacts registered for a task.
+
+        Returns a plain, JSON-serializable view with one entry per artifact
+        (``kind`` is ``"dataset"`` or ``"prediction"``), each carrying the
+        stored path, registration timestamp, free-form metadata and the
+        on-disk size, so a retention/cleanup UI can show exactly what a call
+        to :meth:`delete_artifacts` would remove. Raises KeyError if the task
+        is unknown to the registry.
+        """
+        index = self._read_index()
+        task = index["models"].get(task_name)
+        if task is None:
+            raise KeyError("Unknown model task: %r" % task_name)
+
+        def _entry(kind, path, registered_at, metadata, **extra):
+            absolute = self.root / path
+            return {
+                "kind": kind,
+                "path": path,
+                "exists": absolute.exists(),
+                "size_bytes": absolute.stat().st_size if absolute.exists() else 0,
+                "registered_at": registered_at,
+                "metadata": metadata or {},
+                **extra,
+            }
+
+        datasets = [
+            _entry("dataset", entry["path"], entry.get("registered_at"), entry.get("metadata"),
+                   dataset_fingerprint=fingerprint, source_path=entry.get("source_path"))
+            for fingerprint, entry in sorted(task.get("datasets", {}).items())
+        ]
+        predictions = [
+            _entry("prediction", entry["path"], entry.get("registered_at"), entry.get("metadata"),
+                   model_version=model_version, dataset_fingerprint=dataset_fingerprint,
+                   prediction_id=prediction_id)
+            for model_version, by_dataset in sorted(task.get("predictions", {}).items())
+            for dataset_fingerprint, by_id in sorted(by_dataset.items())
+            for prediction_id, entry in sorted(by_id.items())
+        ]
+        return {"datasets": datasets, "predictions": predictions}
+
     def load(self, task_name, alias="production", **kwargs):
         index = self._read_index()
         task = index["models"].get(task_name)

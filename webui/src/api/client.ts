@@ -313,6 +313,97 @@ export const listBundles = (task: string) => get<BundleList>(`/api/bundles/${enc
 export const getBundle = (task: string, modelVersion: string) =>
   get<BundleSummary>(`/api/bundles/${encodeURIComponent(task)}/${encodeURIComponent(modelVersion)}`);
 
+/* --- Phase 3.1 model preservation --------------------------------- */
+
+export interface PreservedSnapshot {
+  pickle_id: number;
+  model_id: number;
+  init_date: string;
+}
+
+export const preserveBundle = (task: string, modelVersion: string) =>
+  post<PreservedSnapshot & { task_name: string; model_version: string }>(
+    `/api/bundles/${encodeURIComponent(task)}/${encodeURIComponent(modelVersion)}/preserve`,
+  );
+
+export const listPreservedModels = (task: string) =>
+  get<{ task_name: string; snapshots: PreservedSnapshot[] }>(
+    `/api/bundles/${encodeURIComponent(task)}/preserved`,
+  );
+
+export interface RecoverModelResponse {
+  task_name: string;
+  pickle_id: number;
+  model_type: string;
+  smoke_score: number | null;
+  model_version: string;
+}
+
+export const recoverModel = (task: string, pickleId: number) =>
+  post<RecoverModelResponse>(`/api/bundles/${encodeURIComponent(task)}/recover`, {
+    pickle_id: pickleId,
+  });
+
+/* --- Phase 3.2 best model ----------------------------------------- */
+
+export interface BestBundle {
+  task_name: string;
+  /** The metric that won the ranking. */
+  metric: string;
+  /** The candidate metrics that were tried, in order. */
+  metrics_tried: string[];
+  model_version: string;
+  value: number | null;
+}
+
+/**
+ * Metric names to rank by, in order of preference. A task's bundles come from
+ * different producers — baselines record `score`, AML experiments record
+ * `train_score` — so the endpoint picks the first metric that ranks anything.
+ */
+export const BEST_METRIC_PREFERENCE = ["score", "train_score"] as const;
+
+/** The bundle with the highest value of `metric`, or of the first of several that ranks anything. */
+export const getBestBundle = (task: string, metric: string = BEST_METRIC_PREFERENCE.join(",")) =>
+  get<BestBundle>(
+    `/api/bundles/${encodeURIComponent(task)}/best?metric=${encodeURIComponent(metric)}`,
+  );
+
+/** Best bundle across {@link BEST_METRIC_PREFERENCE}, or `null` when nothing is rankable yet. */
+export async function findBestBundle(
+  task: string,
+  metrics: readonly string[] = BEST_METRIC_PREFERENCE,
+): Promise<BestBundle | null> {
+  try {
+    return await getBestBundle(task, metrics.join(","));
+  } catch (err) {
+    // 404 = "no bundle carries any of these metrics yet" — a normal empty state.
+    if (err instanceof ApiError && err.status === 404) return null;
+    throw err;
+  }
+}
+
+/* --- Phase 3.3 export & download ---------------------------------- */
+
+/**
+ * Absolute URL that streams the bundle as an MLflow-layout zip.
+ *
+ * Anchor downloads cannot carry the `X-API-Key` header, so the key is appended
+ * as a query parameter — the same escape hatch the WebSocket job stream uses.
+ */
+export function exportMlflowUrl(task: string, modelVersion: string): string {
+  const key = getApiKey();
+  const base = getEffectiveApiBase();
+  return `${base}/api/bundles/${encodeURIComponent(task)}/${encodeURIComponent(modelVersion)}/export-mlflow${key ? `?api_key=${encodeURIComponent(key)}` : ""}`;
+}
+
+/** Absolute URL that streams the raw `.bundle` file (API key as query param, see above). */
+export function bundleDownloadUrl(task: string, modelVersion: string): string {
+  const key = getApiKey();
+  const base = getEffectiveApiBase();
+  return `${base}/api/bundles/${encodeURIComponent(task)}/${encodeURIComponent(modelVersion)}/download${key ? `?api_key=${encodeURIComponent(key)}` : ""}`;
+}
+
 /* ------------------------------------------------------------------ */
 /* Quality gates                                                       */
 /* ------------------------------------------------------------------ */
@@ -423,6 +514,59 @@ export interface RegisteredBundleView extends BundleSummary {
 
 export const loadRegisteredBundle = (task: string, alias = "production") =>
   get<RegisteredBundleView>(`/api/registry/${encodeURIComponent(task)}/load?alias=${encodeURIComponent(alias)}`);
+
+/* --- Phase 3.4 artifact lineage & cleanup -------------------------- */
+
+export interface RegistryArtifact {
+  kind: "dataset" | "prediction";
+  path: string;
+  exists: boolean;
+  size_bytes: number;
+  registered_at?: string;
+  metadata: Record<string, unknown>;
+  /** Datasets only. */
+  dataset_fingerprint?: string;
+  source_path?: string;
+  /** Predictions only. */
+  model_version?: string;
+  prediction_id?: string;
+}
+
+export interface RegistryArtifacts {
+  task_name: string;
+  datasets: RegistryArtifact[];
+  predictions: RegistryArtifact[];
+  dataset_count: number;
+  prediction_count: number;
+  total_bytes: number;
+}
+
+export const getRegistryArtifacts = (task: string) =>
+  get<RegistryArtifacts>(`/api/registry/${encodeURIComponent(task)}/artifacts`);
+
+/** Selectors for a cleanup; at least one must be set (the server returns 422 otherwise). */
+export interface DeleteArtifactsRequest {
+  model_version?: string | null;
+  dataset_fingerprint?: string | null;
+}
+
+export interface DeleteArtifactsResponse {
+  task_name: string;
+  model_version: string | null;
+  dataset_fingerprint: string | null;
+  deleted: { datasets: number; predictions: number };
+}
+
+export const deleteArtifacts = (task: string, body: DeleteArtifactsRequest) => {
+  const params = new URLSearchParams();
+  if (body.model_version) params.set("model_version", body.model_version);
+  if (body.dataset_fingerprint) params.set("dataset_fingerprint", body.dataset_fingerprint);
+  const query = params.toString();
+  return request<DeleteArtifactsResponse>(
+    "DELETE",
+    `/api/registry/${encodeURIComponent(task)}/artifacts${query ? `?${query}` : ""}`,
+  );
+};
 
 /* ------------------------------------------------------------------ */
 /* Inference                                                           */

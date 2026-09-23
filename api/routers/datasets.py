@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from SKSurrogate import (
     STANDARD_CV_SPLITTERS,
     DataPreprocess,
+    ModelRegistry,
     build_cv,
     cv_param_defs,
     cv_to_spec,
@@ -100,6 +101,19 @@ async def register_dataset(task_name: str, target: str = Form(...), partition: s
     with open_tracker(task_name) as tracker:
         tracker.RegisterData(frame, target, partition=partition)
         metadata = tracker.GetMetadata()
+
+    # Phase 3.4 auto-wiring: record the stored CSV as a registry artifact so the
+    # lineage rail and the artifact-cleanup UI can see it. Best-effort — a
+    # registry failure must never fail an otherwise successful upload.
+    try:
+        ModelRegistry(settings.registry_dir).register_dataset(
+            task_name,
+            metadata.get("dataset_fingerprint"),
+            csv_path,
+            metadata={"partition": partition, "target": target, "rows": int(len(frame))},
+        )
+    except Exception:  # pragma: no cover - defensive; registration is auxiliary
+        pass
 
     return {
         "task_name": task_name,

@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from SKSurrogate import DeploymentApprovalGate, ModelRegistry, load_bundle
 
 from ..config import settings
-from ..deps import bad_request, bundle_summary, not_found
+from ..deps import bad_request, bundle_summary, not_found, unprocessable
 
 router = APIRouter(prefix="/api/registry", tags=["registry"])
 
@@ -110,3 +110,60 @@ def load_registered_bundle(task_name: str, alias: str = "production"):
     except KeyError as exc:
         raise not_found(str(exc))
     return {"alias": alias, **bundle_summary(bundle)}
+
+
+# --------------------------------------------------------------------------- #
+# Phase 3.4 — artifact lineage & cleanup                                      #
+# --------------------------------------------------------------------------- #
+
+@router.get("/{task_name}/artifacts")
+def registry_artifacts(task_name: str):
+    """List the dataset and prediction artifacts registered for a task.
+
+    Every entry carries its stored path, on-disk size and registration
+    metadata, so the UI can show exactly what a cleanup would delete.
+    """
+    try:
+        artifacts = _registry().artifacts(task_name)
+    except KeyError as exc:
+        raise not_found(str(exc))
+    return {
+        "task_name": task_name,
+        "datasets": artifacts["datasets"],
+        "predictions": artifacts["predictions"],
+        "dataset_count": len(artifacts["datasets"]),
+        "prediction_count": len(artifacts["predictions"]),
+        "total_bytes": sum(
+            entry["size_bytes"] for entry in artifacts["datasets"] + artifacts["predictions"]
+        ),
+    }
+
+
+@router.delete("/{task_name}/artifacts")
+def delete_registry_artifacts(
+    task_name: str,
+    model_version: str | None = None,
+    dataset_fingerprint: str | None = None,
+):
+    """Delete stored dataset/prediction artifacts, scoped by model and/or dataset.
+
+    At least one selector is required: omitting both would silently wipe every
+    artifact of the task, which is too blunt for a destructive endpoint (422).
+    The deletion is recorded in the registry audit log.
+    """
+    if model_version is None and dataset_fingerprint is None:
+        raise unprocessable(
+            "At least one of 'model_version' or 'dataset_fingerprint' must be provided"
+        )
+    try:
+        deleted = _registry().delete_artifacts(
+            task_name, model_version=model_version, dataset_fingerprint=dataset_fingerprint
+        )
+    except KeyError as exc:
+        raise not_found(str(exc))
+    return {
+        "task_name": task_name,
+        "model_version": model_version,
+        "dataset_fingerprint": dataset_fingerprint,
+        "deleted": deleted,
+    }

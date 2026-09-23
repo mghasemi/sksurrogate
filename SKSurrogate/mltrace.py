@@ -1354,19 +1354,18 @@ class mltrack(object):
         :return: None
         """
 
+        import io
+
         if "mltrack_id" not in mdl.__dict__:
             mdl = self.LogModel(mdl)
         mdl_id = mdl.mltrack_id
-        file = open("track_ml_tmp_mdl.joblib", "wb")
-        joblib.dump(mdl, file)
-        file.close()
-        file = open("track_ml_tmp_mdl.joblib", "rb")
-        str_cntnt = file.read()
-        Saved.create(model_id=mdl_id, pickle=str_cntnt)
-        file.close()
-        import os
-
-        os.remove("track_ml_tmp_mdl.joblib")
+        # Serialize straight into memory: staging through a file in the process
+        # working directory used a fixed name, which both raced between
+        # concurrent requests and littered leftover files wherever the caller
+        # happened to run from.
+        buffer = io.BytesIO()
+        joblib.dump(mdl, buffer)
+        Saved.create(model_id=mdl_id, pickle=buffer.getvalue())
 
     def RecoverModel(self, mdl_id):
         """
@@ -1376,21 +1375,15 @@ class mltrack(object):
         :return: a fitted model
         """
 
+        import io
+
         res = (
             Saved.select()
             .where(Saved.model_id == mdl_id)
             .order_by(Saved.init_date.desc())
             .dicts()
         )
-        file = open("track_ml_tmp_mdl.joblib", "wb")
-        file.write(res[0]["pickle"])
-        file.close()
-        file = open("track_ml_tmp_mdl.joblib", "rb")
-        mdl = joblib.load(file)
-        file.close()
-        import os
-
-        os.remove("track_ml_tmp_mdl.joblib")
+        mdl = joblib.load(io.BytesIO(res[0]["pickle"]))
         if mdl_id not in self.Recovered:
             self.Recovered.append(mdl_id)
         return mdl

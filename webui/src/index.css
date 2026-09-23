@@ -229,6 +229,10 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   background: rgba(52, 211, 153, 0.08); border: 1px solid rgba(52, 211, 153, 0.3);
   color: var(--ok); border-radius: 8px; padding: 9px 12px; font-size: 13px; margin-bottom: 12px;
 }
+.warn-note {
+  background: rgba(251, 191, 36, 0.08); border: 1px solid rgba(251, 191, 36, 0.3);
+  color: var(--warn); border-radius: 8px; padding: 9px 12px; font-size: 13px; margin-bottom: 12px;
+}
 .spinner {
   width: 16px; height: 16px; border-radius: 50%;
   border: 2px solid var(--border); border-top-color: var(--accent);

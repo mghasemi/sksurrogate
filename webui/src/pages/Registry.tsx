@@ -3,6 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
   REGISTRY_STATES,
+  deleteArtifacts,
+  getRegistryArtifacts,
   listBundles,
   promoteBundle,
   registerBundle,
@@ -12,9 +14,9 @@ import {
   retryUnlessNotFound,
   rollbackBundle,
 } from "../api/client";
-import type { AuditEvent, RegistryHistoryEntry } from "../api/client";
+import type { AuditEvent, RegistryArtifact, RegistryHistoryEntry } from "../api/client";
 import { LineageRail } from "../components/LineageRail";
-import { Badge, Card, ErrorNote, Loading, StatusBadge, Table, fmtNum } from "../components/ui";
+import { Badge, Card, ErrorNote, Loading, StatusBadge, Table, fmtBytes, fmtNum } from "../components/ui";
 import { useTask } from "../lib/task-context";
 
 /** How many registered versions currently sit in a given lifecycle state. */
@@ -138,8 +140,159 @@ export default function RegistryPage() {
         )}
       </Card>
 
+      <ArtifactCleanupCard task={task} versions={versions} onDone={invalidate} />
+
       <AuditCard task={task} audit={auditQ.data?.audit ?? []} loading={auditQ.isLoading} error={auditQ.error} />
     </div>
+  );
+}
+
+/**
+ * Retention view over the registry's stored dataset/prediction artifacts.
+ *
+ * The dataset fingerprint list is derived from the artifacts the registry
+ * actually holds (not from the mltrace metadata), so the selection always
+ * matches what a cleanup call can delete. At least one selector is required —
+ * the server rejects an unscoped delete with 422 — so the button stays
+ * disabled until a scope is chosen.
+ */
+function ArtifactCleanupCard({ task, versions, onDone }: { task: string; versions: string[]; onDone: () => void }) {
+  const qc = useQueryClient();
+  const [version, setVersion] = useState("");
+  const [fingerprint, setFingerprint] = useState("");
+
+  const artifactsQ = useQuery({
+    queryKey: ["registry-artifacts", task],
+    queryFn: () => getRegistryArtifacts(task),
+    enabled: !!task,
+    retry: retryUnlessNotFound,
+  });
+
+  const datasets = artifactsQ.data?.datasets ?? [];
+  const predictions = artifactsQ.data?.predictions ?? [];
+
+  const fingerprints = useMemo(
+    () => [...new Set(datasets.map((d) => d.dataset_fingerprint).filter((f): f is string => !!f))],
+    [datasets],
+  );
+
+  // What the pending selection would remove, so the confirmation is concrete.
+  const doomed = useMemo(() => {
+    const matchingDatasets = fingerprint ? datasets.filter((d) => d.dataset_fingerprint === fingerprint) : [];
+    const matchingPredictions = predictions.filter(
+      (p) =>
+        (!version || p.model_version === version) &&
+        (!fingerprint || p.dataset_fingerprint === fingerprint),
+    );
+    const bytes = [...matchingDatasets, ...matchingPredictions].reduce((sum, a) => sum + a.size_bytes, 0);
+    return { datasets: matchingDatasets, predictions: matchingPredictions, bytes };
+  }, [datasets, predictions, version, fingerprint]);
+
+  const mut = useMutation({
+    mutationFn: () => deleteArtifacts(task, { model_version: version || null, dataset_fingerprint: fingerprint || null }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["registry-artifacts", task] });
+      onDone();
+    },
+  });
+
+  const scope = [version && `model ${version}`, fingerprint && `dataset ${fingerprint}`].filter(Boolean).join(" + ");
+
+  return (
+    <Card
+      title="Artifact cleanup"
+      sub="Drops the registry's record of registered dataset versions and deletes stored prediction CSVs. The source CSVs under datasets/ and all bundles are untouched."
+      actions={
+        <button className="btn" onClick={() => artifactsQ.refetch()} disabled={artifactsQ.isFetching}>
+          {artifactsQ.isFetching ? "Refreshing…" : "Refresh"}
+        </button>
+      }
+    >
+      {!task && <p className="muted">Pick a task to inspect its artifacts.</p>}
+      {artifactsQ.isLoading && task && <Loading />}
+      {artifactsQ.isError && <ErrorNote error={artifactsQ.error} />}
+
+      {task && artifactsQ.data && (
+        <>
+          <div className="row">
+            <div className="field fixed" style={{ flex: "0 1 320px", minWidth: 240 }}>
+              <label>Model version (predictions)</label>
+              <select value={version} onChange={(e) => setVersion(e.target.value)}>
+                <option value="">— any model —</option>
+                {[...new Set([...versions, ...predictions.map((p) => p.model_version).filter((v): v is string => !!v)])].map(
+                  (v) => (
+                    <option key={v}>{v}</option>
+                  ),
+                )}
+              </select>
+            </div>
+            <div className="field fixed" style={{ flex: "0 1 420px", minWidth: 280 }}>
+              <label>Dataset fingerprint</label>
+              <select value={fingerprint} onChange={(e) => setFingerprint(e.target.value)}>
+                <option value="">— any dataset —</option>
+                {fingerprints.map((f) => (
+                  <option key={f}>{f}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <p className="muted" style={{ marginTop: 4 }}>
+            {fmtNum(datasets.length)} dataset(s) · {fmtNum(predictions.length)} prediction(s) ·{" "}
+            {fmtBytes(artifactsQ.data.total_bytes)} stored
+          </p>
+
+          {scope ? (
+            <div className="warn-note">
+              Removing <strong>{fmtNum(doomed.datasets.length)}</strong> dataset copy/copies and{" "}
+              <strong>{fmtNum(doomed.predictions.length)}</strong> prediction file(s) matching {scope} (
+              {fmtBytes(doomed.bytes)}).
+            </div>
+          ) : (
+            <p className="muted">Choose a model version and/or dataset fingerprint to scope the deletion.</p>
+          )}
+
+          {mut.isError && <ErrorNote error={mut.error} />}
+          {mut.isSuccess && (
+            <div className="success-note">
+              Deleted {fmtNum(mut.data.deleted.datasets)} dataset(s) and {fmtNum(mut.data.deleted.predictions)}{" "}
+              prediction(s).
+            </div>
+          )}
+
+          <button
+            className="btn danger"
+            disabled={!scope || mut.isPending}
+            onClick={() => {
+              if (window.confirm(`Permanently delete artifacts matching ${scope} for task “${task}”?`)) mut.mutate();
+            }}
+          >
+            {mut.isPending ? "Deleting…" : "Delete artifacts"}
+          </button>
+
+          {(datasets.length > 0 || predictions.length > 0) && (
+            <>
+              <h3 style={{ marginTop: 16 }}>Registered artifacts</h3>
+              <Table<RegistryArtifact>
+                columns={["Kind", "Model version", "Dataset fingerprint", "Path", "Size", "Registered"]}
+                rows={[...datasets, ...predictions]}
+                keyOf={(a, i) => `${a.kind}-${a.path}-${i}`}
+                render={(a) => [
+                  <td key="k">
+                    <Badge tone={a.kind === "dataset" ? "info" : "muted"}>{a.kind}</Badge>
+                  </td>,
+                  <td key="m" className="mono">{a.model_version ?? "—"}</td>,
+                  <td key="f" className="mono" style={{ fontSize: 11 }}>{a.dataset_fingerprint ?? "—"}</td>,
+                  <td key="p" className="mono" style={{ fontSize: 11 }}>{a.path}</td>,
+                  <td key="s">{fmtBytes(a.size_bytes)}</td>,
+                  <td key="t" className="mono">{a.registered_at ?? "—"}</td>,
+                ]}
+              />
+            </>
+          )}
+        </>
+      )}
+    </Card>
   );
 }
 
