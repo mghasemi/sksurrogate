@@ -42,3 +42,4 @@ example*-checkpoints/
 # OS metadata
 .DS_Store
 Thumbs.db
+HANDOFF.md
