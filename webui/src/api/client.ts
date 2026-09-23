@@ -401,6 +401,8 @@ export interface PredictResponse {
   request_id: string;
   predictions: Array<number | string>;
   metrics: InferenceMetrics;
+  /** Columns present in the input but not in the bundle schema (e.g. the target label). */
+  ignored_columns: string[];
 }
 
 export const predict = (task: string, body: PredictRequest) =>
@@ -413,6 +415,8 @@ export interface PredictBatchResponse {
   rows: number;
   metrics: InferenceMetrics;
   output_path: string;
+  /** Columns present in the input but not in the bundle schema (e.g. the target label). */
+  ignored_columns: string[];
 }
 
 export const predictBatch = (task: string, body: PredictRequest) =>
@@ -599,6 +603,69 @@ export const getWeightsHeatmap = (task: string, trainPartition = "train", maxFea
   );
 
 /* ------------------------------------------------------------------ */
+/* Evaluation — learning curves                                        */
+/* ------------------------------------------------------------------ */
+
+/** One curated metric offered as a learning-curve tab (see api/training.py). */
+export interface LearningCurveMetric {
+  /** Scikit-learn scorer name passed to the API as `scoring`. */
+  value: string;
+  label: string;
+  /** False for error metrics such as RMSE — the curve then decreases with more data. */
+  higher_is_better: boolean;
+}
+
+export interface LearningCurveMetricsResponse {
+  task_name: string;
+  /** "Classification" | "Regression" | null when no bundle could be inspected. */
+  family: string | null;
+  metrics: LearningCurveMetric[];
+  default: string | null;
+}
+
+export interface LearningCurveSeries {
+  model_version: string;
+  /** Absolute number of training samples at each point of the curve. */
+  train_sizes: number[];
+  /** The same sizes as a fraction of the dataset (0–1). */
+  train_sizes_fraction: number[];
+  /** Null where a fold could not be scored (rendered as a gap). */
+  train_scores_mean: Array<number | null>;
+  train_scores_std: Array<number | null>;
+  validation_scores_mean: Array<number | null>;
+  validation_scores_std: Array<number | null>;
+}
+
+export interface LearningCurvesResponse {
+  task_name: string;
+  scoring: string;
+  scoring_label: string;
+  train_partition: string;
+  n_points: number;
+  series: LearningCurveSeries[];
+  /** Bundles that could not be scored for this metric. */
+  errors: Array<{ model_version: string; detail: string }>;
+}
+
+/** Relevant learning-curve metrics for the task, inferred from its bundles' problem family. */
+export const getLearningCurveMetrics = (task: string, modelVersion?: string) =>
+  get<LearningCurveMetricsResponse>(
+    `/api/evaluation/${encodeURIComponent(task)}/metrics${modelVersion ? `?model_version=${encodeURIComponent(modelVersion)}` : ""}`,
+  );
+
+/** Cross-validated learning curves for every (or the given) bundle under one metric. */
+export function getLearningCurves(
+  task: string,
+  opts: { scoring: string; trainPartition?: string; nPoints?: number; modelVersions?: string[] },
+): Promise<LearningCurvesResponse> {
+  const params = new URLSearchParams({ scoring: opts.scoring });
+  if (opts.trainPartition) params.set("train_partition", opts.trainPartition);
+  if (opts.nPoints) params.set("n_points", String(opts.nPoints));
+  if (opts.modelVersions?.length) params.set("model_versions", opts.modelVersions.join(","));
+  return get<LearningCurvesResponse>(`/api/evaluation/${encodeURIComponent(task)}/learning-curves?${params}`);
+}
+
+/* ------------------------------------------------------------------ */
 /* Experiments                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -641,6 +708,35 @@ export const DEFAULT_EXPERIMENT_CONFIG: Record<string, Record<string, ParamSpec>
     min_samples_split: { type: "integer", low: 2, high: 10 },
   },
 };
+
+/* ------------------------------------------------------------------ */
+/* Scoring (AML/EOA objective)                                         */
+/* ------------------------------------------------------------------ */
+
+export interface ScoringOption {
+  /** Scikit-learn scorer name passed straight to AML as `scoring`. */
+  value: string;
+  /** Human-readable label (e.g. "Mean squared error (negated)"). */
+  label: string;
+}
+
+export interface ScoringGroup {
+  label: string;
+  options: ScoringOption[];
+}
+
+export interface ScoringOptionsResponse {
+  groups: ScoringGroup[];
+  default: string;
+}
+
+/**
+ * The standard scikit-learn scorers that can drive the AML/EOA search. The
+ * selected value becomes the objective the search maximizes; `neg_*` metrics
+ * are already sign-flipped by scikit-learn, so "higher score" always means a
+ * better model regardless of whether the raw metric is an error or a score.
+ */
+export const getScoringOptions = () => get<ScoringOptionsResponse>("/api/experiments/scoring-options");
 
 /* ------------------------------------------------------------------ */
 /* Jobs                                                                */

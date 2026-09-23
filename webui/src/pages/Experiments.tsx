@@ -5,6 +5,7 @@ import { DEFAULT_EXPERIMENT_CONFIG, runExperiment } from "../api/client";
 import type { ParamSpec, RunExperimentRequest } from "../api/client";
 import { Card, ErrorNote } from "../components/ui";
 import { JobTracker } from "../components/JobTracker";
+import { ScoringSelect } from "../components/ScoringSelect";
 import { useTask } from "../lib/task-context";
 
 function defaultConfigJson(): string {
@@ -83,28 +84,28 @@ export default function ExperimentsPage() {
         )}
       </Card>
 
-      <Card title="Run settings">
+      <Card
+        title="Run settings"
+        sub="Each field is one column of the row; the scoring metric becomes the objective the AML/EOA search maximizes."
+      >
         <div className="row">
-          <div className="field fixed" style={{ flex: "0 1 120px", minWidth: 90 }}>
+          <div className="field">
             <label>Length (trials)</label>
             <input type="number" min={1} value={length} onChange={(e) => setLength(Number(e.target.value))} />
           </div>
-          <div className="field fixed" style={{ flex: "0 1 140px", minWidth: 100 }}>
+          <div className="field">
             <label>Max generation</label>
             <input type="number" min={1} value={maxGeneration} onChange={(e) => setMaxGeneration(Number(e.target.value))} />
           </div>
-          <div className="field fixed" style={{ flex: "0 1 130px", minWidth: 100 }}>
+          <div className="field">
             <label>Num parents</label>
             <input type="number" min={2} value={numParents} onChange={(e) => setNumParents(Number(e.target.value))} />
           </div>
-          <div className="field fixed" style={{ flex: "0 1 150px", minWidth: 120 }}>
+          <div className="field">
             <label>Train partition</label>
             <input value={trainPartition} onChange={(e) => setTrainPartition(e.target.value)} spellCheck={false} />
           </div>
-          <div className="field fixed" style={{ flex: "0 1 150px", minWidth: 120 }}>
-            <label>Scoring</label>
-            <input value={scoring} onChange={(e) => setScoring(e.target.value)} spellCheck={false} />
-          </div>
+          <ScoringSelect value={scoring} onChange={setScoring} disabled={!task} />
         </div>
 
         {runMut.isError && <ErrorNote error={runMut.error} />}

@@ -27,14 +27,29 @@ class PredictRequest(BaseModel):
     request_id: str | None = None
 
 
-def _resolve_input_frame(task_name, body: PredictRequest):
+def _resolve_input_frame(task_name, body: PredictRequest, bundle):
+    """Build the input frame, returning ``(frame, ignored_columns)``.
+
+    A stored partition is *registered training data*, so it carries the target
+    label (and any other non-feature column). ``predict_batch`` validates the
+    input schema strictly — it rejects unknown columns outright — so a partition
+    is projected onto the bundle schema first and the dropped columns are
+    reported back. Inline ``rows`` are the caller's exact payload (the
+    production serving contract) and are passed through untouched.
+    """
     if body.rows is not None:
-        return pd.DataFrame(body.rows)
+        return pd.DataFrame(body.rows), []
     if body.partition is not None:
         csv_path = settings.task_dataset_dir(task_name) / (body.partition + ".csv")
         if not csv_path.exists():
             raise not_found("No dataset partition %r stored for task %r" % (body.partition, task_name))
-        return pd.read_csv(csv_path)
+        frame = pd.read_csv(csv_path)
+        if not bundle.schema:
+            return frame, []
+        ignored = [column for column in frame.columns if column not in bundle.schema]
+        # Schema order is authoritative, so selecting by it also normalizes a
+        # partition whose columns happen to be stored in a different order.
+        return frame[[column for column in bundle.schema if column in frame.columns]], ignored
     raise bad_request("Either 'rows' or 'partition' must be provided")
 
 
@@ -42,7 +57,7 @@ def _resolve_input_frame(task_name, body: PredictRequest):
 def predict(task_name: str, body: PredictRequest):
     """Run predictions in-request and return them as JSON (no file written)."""
     bundle = resolve_bundle(task_name, model_version=body.model_version, alias=body.alias)
-    frame = _resolve_input_frame(task_name, body)
+    frame, ignored_columns = _resolve_input_frame(task_name, body, bundle)
     try:
         result = predict_batch(bundle, frame, request_id=body.request_id or uuid.uuid4().hex)
     except SchemaValidationError as exc:
@@ -55,6 +70,7 @@ def predict(task_name: str, body: PredictRequest):
         "request_id": result["request_id"].iloc[0],
         "predictions": result["prediction"].tolist(),
         "metrics": metrics,
+        "ignored_columns": ignored_columns,
     }
 
 
@@ -62,7 +78,7 @@ def predict(task_name: str, body: PredictRequest):
 def predict_batch_endpoint(task_name: str, body: PredictRequest):
     """Run predictions and persist them as a CSV artifact under the task's predictions folder."""
     bundle = resolve_bundle(task_name, model_version=body.model_version, alias=body.alias)
-    frame = _resolve_input_frame(task_name, body)
+    frame, ignored_columns = _resolve_input_frame(task_name, body, bundle)
     request_id = body.request_id or uuid.uuid4().hex
     output_dir = settings.task_predictions_dir(task_name) / bundle.model_version
     output_path = output_dir / (request_id + ".csv")
@@ -79,4 +95,5 @@ def predict_batch_endpoint(task_name: str, body: PredictRequest):
         "rows": metrics["rows"],
         "metrics": metrics,
         "output_path": str(output_path),
+        "ignored_columns": ignored_columns,
     }

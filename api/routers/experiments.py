@@ -13,7 +13,7 @@ from SKSurrogate import save_bundle
 
 from ..config import settings
 from ..jobs import job_manager
-from ..training import fit_experiment_bundle
+from ..training import fit_experiment_bundle, standard_scoring_options
 
 router = APIRouter(prefix="/api/experiments", tags=["experiments"])
 
@@ -35,6 +35,17 @@ class RunExperimentRequest(BaseModel):
     random_state: int | None = None
     owner: str | None = None
     run_id: str | None = None
+
+
+@router.get("/scoring-options")
+def scoring_options():
+    """Standard scikit-learn scorers that can serve as the AML/EOA optimization objective.
+
+    The chosen ``scoring`` value is handed to ``AML`` and becomes the metric the
+    evolutionary search maximizes, so this is the direct source of truth for the
+    Experiments/Retraining "Scoring" dropdown.
+    """
+    return {"groups": standard_scoring_options(), "default": "accuracy"}
 
 
 @router.post("/{task_name}/run")

@@ -20,6 +20,12 @@ Control-plane API and Web UI (branch ``ui``)
 * Made CORS origins configurable via ``SKSURROGATE_API_CORS_ORIGINS``, defaulting
   to local-only origins instead of a wildcard; the web UI stores and sends an
   API key from its Settings page.
+* Added learning-curve evaluation: ``GET /api/evaluation/{task}/metrics`` lists
+  the metrics relevant to the task's problem family, and
+  ``GET /api/evaluation/{task}/learning-curves`` computes cross-validated
+  training/held-out curves per bundle for one metric via scikit-learn. The
+  Evaluation page's "Metric comparison" card now has one tab per metric on top
+  of the side-by-side overview chart.
 
 Bug fixes
 ~~~~~~~~~
@@ -36,6 +42,13 @@ Bug fixes
   ``random.sample`` with ``Sample larger than population or is negative``.
 * ``SKSurrogate.aml.default_config`` is defined at module level again, so
   ``AML()`` works without an explicit ``config``.
+* Inference on a stored partition no longer fails with ``400: extra columns:
+  target``. A registered partition is training data, so it carries the target
+  label while the bundle schema holds only features; ``predict_batch`` validates
+  strictly and rejected the label outright. The control-plane API now projects a
+  stored partition onto the bundle schema (which also normalizes column order)
+  and reports the dropped columns as ``ignored_columns``. Inline ``rows`` are
+  still validated exactly as sent, since they represent the serving payload.
 
 Phase 10: Documentation and release hardening
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

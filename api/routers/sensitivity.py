@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from SKSurrogate import CorrelationThreshold, SensAprx
 
 from ..config import settings
-from ..deps import bad_request, not_found, open_tracker
+from ..deps import bad_request, finite_or_none as _finite, not_found, open_tracker
 from ..jobs import job_manager
 
 router = APIRouter(prefix="/api/sensitivity", tags=["sensitivity"])
@@ -23,17 +23,6 @@ class SensitivityRequest(BaseModel):
     method: str = "sobol"
     n_features_to_select: int = 5
     train_partition: str = "train"
-
-
-def _finite(value) -> float | None:
-    """JSON-safe scalar: NaN/inf become null so the UI can render gaps."""
-    try:
-        value = float(value)
-    except (TypeError, ValueError):
-        return None
-    if value != value or value in (float("inf"), float("-inf")):
-        return None
-    return value
 
 
 def _heatmap_payload(frame: pd.DataFrame, index_col: str | None, max_features: int) -> dict:

@@ -25,6 +25,17 @@ def open_tracker(task_name):
         tracker.close()
 
 
+def finite_or_none(value):
+    """JSON-safe scalar: NaN/inf become ``None`` so JSON responses stay valid."""
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    if value != value or value in (float("inf"), float("-inf")):
+        return None
+    return value
+
+
 def not_found(message):
     return HTTPException(status_code=404, detail=message)
 

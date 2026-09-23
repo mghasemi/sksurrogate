@@ -23,6 +23,7 @@ from .config import settings
 from .routers import (
     bundles,
     datasets,
+    evaluation,
     experiments,
     inference,
     jobs,
@@ -126,6 +127,7 @@ app.include_router(experiments.router)
 app.include_router(jobs.router)
 app.include_router(retraining.router)
 app.include_router(lineage.router)
+app.include_router(evaluation.router)
 
 
 @app.get("/api/health", tags=["health"])

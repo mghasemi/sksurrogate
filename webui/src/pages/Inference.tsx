@@ -152,6 +152,17 @@ function InputSource({
   );
 }
 
+/** Non-schema columns the API dropped from a stored partition (e.g. the target label). */
+function IgnoredColumns({ columns }: { columns?: string[] }) {
+  if (!columns || columns.length === 0) return null;
+  return (
+    <div className="hint" style={{ marginTop: 10 }}>
+      Ignored (not part of the bundle schema):{" "}
+      <span className="mono">{columns.join(", ")}</span>
+    </div>
+  );
+}
+
 function buildBody(
   inputs: ReturnType<typeof useModelInputs>,
   source: InputSourceKind,
@@ -188,7 +199,10 @@ function PredictConsole({ task, versions, partitions }: { task: string; versions
   const mut = useMutation({ mutationFn: (body: PredictRequest) => predict(task, body), onSuccess: setResult });
 
   return (
-    <Card title="Predict console" sub="Single request → JSON predictions. Extra columns (e.g. the target) are rejected by schema validation.">
+    <Card
+      title="Predict console"
+      sub="Single request → JSON predictions. Stored partitions are projected onto the bundle's features (the target label is ignored); inline rows are validated exactly as sent."
+    >
       <ModelPicker versions={versions} inputs={inputs} />
       <InputSource
         partitions={partitions}
@@ -224,6 +238,7 @@ function PredictConsole({ task, versions, partitions }: { task: string; versions
             <Stat label="Rows" value={fmtNum(result.metrics.rows)} />
             <Stat label="Latency" value={`${fmtNum(result.metrics.latency_ms)} ms`} />
           </div>
+          <IgnoredColumns columns={result.ignored_columns} />
           <h3 style={{ marginTop: 14 }}>Predictions</h3>
           <JsonView data={result.predictions} />
         </div>
@@ -278,6 +293,7 @@ function BatchRun({ task, versions, partitions }: { task: string; versions: stri
             Wrote <code>{fmtNum(result.rows)}</code> rows for model <code>{result.model_version}</code> →{" "}
             <span className="mono">{result.output_path}</span>
           </div>
+          <IgnoredColumns columns={result.ignored_columns} />
         </>
       )}
     </Card>

@@ -12,6 +12,7 @@ import {
 import type { JobRecord, ParamSpec, RunRetrainingRequest } from "../api/client";
 import { Card, ErrorNote, StatusBadge, Table } from "../components/ui";
 import { JobTracker } from "../components/JobTracker";
+import { ScoringSelect } from "../components/ScoringSelect";
 import { useTask } from "../lib/task-context";
 
 type TrainerKind = "baseline" | "experiment";
@@ -221,10 +222,12 @@ export default function RetrainingPage() {
             </div>
           )}
           {kind === "experiment" && (
-            <div className="field fixed" style={{ flex: "0 1 150px", minWidth: 120 }}>
-              <label>Scoring</label>
-              <input value={scoring} onChange={(e) => setScoring(e.target.value)} spellCheck={false} />
-            </div>
+            <ScoringSelect
+              value={scoring}
+              onChange={setScoring}
+              disabled={!task}
+              style={{ flex: "0 1 170px", minWidth: 140 }}
+            />
           )}
         </div>
       </Card>
