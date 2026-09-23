@@ -124,9 +124,9 @@ def fit_experiment_bundle(
         random_state=random_state,
     )
     aml.eoa_fit(X, y, max_generation=max_generation, num_parents=num_parents)
+    # SurrogateRandomCV refits best_estimator_ on the full dataset (refit=True),
+    # so it is ready for scoring/serving without an extra fit here.
     best_estimator = aml.best_estimator_
-    # AML/SurrogateRandomCV leaves best_estimator_ cloned-but-unfitted; fit it for serving.
-    best_estimator.fit(X, y)
     train_score = float(aml.score(X, y))
 
     schema = {column: {"dtype": str(frame[column].dtype)} for column in feature_columns}

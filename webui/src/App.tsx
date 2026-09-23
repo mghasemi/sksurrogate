@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, NavLink, Route, Routes, useLocation } from "react-router-dom";
 import {
@@ -11,6 +12,7 @@ import {
   LayoutDashboard,
   LineChart,
   ListChecks,
+  Menu,
   RefreshCw,
   Settings2,
   Sigma,
@@ -98,7 +100,7 @@ const TITLES: Record<string, string> = {
   "/settings": "Settings / Audit",
 };
 
-function Sidebar() {
+function Sidebar({ onNavigate }: { onNavigate: () => void }) {
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -116,6 +118,7 @@ function Sidebar() {
               key={to}
               to={to}
               end={to === "/"}
+              onClick={onNavigate}
               className={({ isActive }) => `nav-item${isActive ? " active" : ""}`}
             >
               <Icon size={16} />
@@ -128,7 +131,7 @@ function Sidebar() {
   );
 }
 
-function Topbar() {
+function Topbar({ onMenu }: { onMenu: () => void }) {
   const { task, setTask } = useTask();
   const healthOk = useHealth();
   const location = useLocation();
@@ -136,6 +139,9 @@ function Topbar() {
 
   return (
     <header className="topbar">
+      <button type="button" className="btn menu-btn" onClick={onMenu} aria-label="Toggle navigation">
+        <Menu size={16} />
+      </button>
       <span className="title">{title}</span>
       <span className="spacer" />
       <label className="task-picker">
@@ -156,11 +162,20 @@ function Topbar() {
 }
 
 function Shell() {
+  const [navOpen, setNavOpen] = useState(false);
+  const location = useLocation();
+
+  // Close the off-canvas sidebar whenever the route changes.
+  useEffect(() => {
+    setNavOpen(false);
+  }, [location.pathname]);
+
   return (
-    <div className="shell">
-      <Sidebar />
+    <div className={`shell${navOpen ? " nav-open" : ""}`}>
+      {navOpen && <div className="scrim" onClick={() => setNavOpen(false)} />}
+      <Sidebar onNavigate={() => setNavOpen(false)} />
       <div className="main">
-        <Topbar />
+        <Topbar onMenu={() => setNavOpen((open) => !open)} />
         <main className="content">
           <Routes>
             <Route path="/" element={<DashboardPage />} />

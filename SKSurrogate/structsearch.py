@@ -1306,6 +1306,12 @@ class SurrogateRandomCV(BaseSearchCV):
                     idx += 1
                 best_params_[param] = cls_dict
         self.best_estimator_ = clone(self.estimator).set_params(**best_params_)
+        if self.refit is not False:
+            # Refit the best estimator on the full dataset so it can be used for
+            # prediction/scoring (mirrors sklearn's BaseSearchCV refit behavior;
+            # uses the same fit_params as the CV folds above).
+            refit_kwargs = dict(self.fit_params or {})
+            self.best_estimator_.fit(X, y, **refit_kwargs)
         self.best_estimator_score = scr
         self.best_score_ = scr
         self.termination_reason = getattr(self.OPTIM, "termination_reason", None)
