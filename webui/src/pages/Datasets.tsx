@@ -2,7 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { UploadCloud } from "lucide-react";
 
-import { getDatasetCV, getDatasetMetadata, previewDataset, registerDataset, setDatasetCV } from "../api/client";
+import {
+  getDatasetCV,
+  getDatasetMetadata,
+  getTargetStats,
+  previewDataset,
+  registerDataset,
+  setDatasetCV,
+} from "../api/client";
 import type { CVParamDef, CVSpec, DatasetPreview, RegisterDatasetResponse } from "../api/client";
 import { Card, ErrorNote, Loading, Table, Badge, fmtNum } from "../components/ui";
 import { useTask } from "../lib/task-context";
@@ -355,6 +362,57 @@ export default function DatasetsPage() {
           </>
         )}
       </Card>
+
+      <TargetStatsCard task={task} enabled={partitions.length > 0} />
     </div>
+  );
+}
+
+/** Descriptive statistics of the registered target column. */
+function TargetStatsCard({ task, enabled }: { task: string; enabled: boolean }) {
+  const statsQ = useQuery({
+    queryKey: ["target-stats", task],
+    queryFn: () => getTargetStats(task),
+    enabled: !!task && enabled,
+    retry: false,
+  });
+
+  const rows = statsQ.data
+    ? ([
+        ["count", statsQ.data.count],
+        ["mean", statsQ.data.mean],
+        ["std", statsQ.data.std],
+        ["min", statsQ.data.min],
+        ["25%", statsQ.data["25%"]],
+        ["50%", statsQ.data["50%"]],
+        ["75%", statsQ.data["75%"]],
+        ["max", statsQ.data.max],
+      ] as Array<[string, number | null]>)
+    : [];
+
+  return (
+    <Card
+      title="Target statistics"
+      sub={
+        statsQ.data
+          ? `describe() of “${statsQ.data.target}” over the ${statsQ.data.partition} partition`
+          : "Summary of the registered target column"
+      }
+    >
+      {!enabled && <p className="muted">Register a dataset partition to see target statistics.</p>}
+      {enabled && statsQ.isLoading && <Loading />}
+      {enabled && statsQ.isError && <ErrorNote error={statsQ.error} />}
+      {rows.length > 0 && (
+        <Table<[string, number | null]>
+          columns={["Statistic", "Value"]}
+          rows={rows}
+          keyOf={(row) => row[0]}
+          render={(row) => [
+            <td key="k" className="mono">{row[0]}</td>,
+            <td key="v">{fmtNum(row[1])}</td>,
+          ]}
+        />
+      )}
+    </Card>
   );
 }

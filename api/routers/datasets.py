@@ -19,7 +19,7 @@ from SKSurrogate import (
 )
 
 from ..config import settings
-from ..deps import bad_request, not_found, open_tracker
+from ..deps import bad_request, finite_or_none as _finite, not_found, open_tracker
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
 
@@ -139,3 +139,54 @@ def preview_dataset(task_name: str, partition: str, limit: int = 20):
         raise not_found("No dataset partition %r stored for task %r" % (partition, task_name))
     frame = pd.read_csv(csv_path, nrows=max(limit, 0))
     return {"task_name": task_name, "partition": partition, "rows": frame.to_dict(orient="records")}
+
+
+@router.get("/{task_name}/target-stats")
+def target_stats(task_name: str):
+    """Descriptive statistics of the registered target column.
+
+    ``mltrack.Stats`` reads the unpartitioned ``data`` table, which API-registered
+    tasks do not have (their rows live in per-partition tables), so this endpoint
+    computes the same ``describe()`` summary from the stored partitions instead —
+    preferring ``train``, then any registered partition. Cheap enough to run inline.
+    """
+    if not settings.mltrace_db_path(task_name).exists():
+        raise not_found("No dataset registered for task %r" % task_name)
+
+    with open_tracker(task_name) as tracker:
+        metadata = tracker.GetMetadata()
+        target = metadata.get("target_name")
+        splits = tracker.dataset_splits()
+        if target is None or not splits:
+            raise not_found("No dataset registered for task %r" % task_name)
+
+        preferred = ["train", "validation", "test"]
+        ordered = [name for name in preferred if name in splits] + sorted(
+            set(splits) - set(preferred)
+        )
+        frame = None
+        partition_used = None
+        for name in ordered:
+            try:
+                candidate = tracker.get_dataframe(name)
+            except ValueError:
+                continue
+            if target in candidate.columns:
+                frame, partition_used = candidate, name
+                break
+
+    if frame is None:
+        raise not_found(
+            "Target column %r not found in any registered partition of task %r" % (target, task_name)
+        )
+
+    summary = frame[target].describe()
+    # ``describe()`` yields float counts; keep the exact integer row count instead.
+    stats = {key: _finite(value) for key, value in summary.items() if key != "count"}
+    return {
+        "task_name": task_name,
+        "partition": partition_used,
+        "target": target,
+        "count": int(frame[target].count()),
+        **stats,
+    }

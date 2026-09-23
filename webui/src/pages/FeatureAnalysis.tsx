@@ -4,13 +4,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   asSensitivityResult,
   getCorrelationMatrix,
+  getTopFeatures,
   getWeightsHeatmap,
   runCorrelationThreshold,
   runSensitivity,
 } from "../api/client";
 import type { CorrelationThresholdResult, SensitivityJobResult } from "../api/client";
 import { Heatmap } from "../components/Heatmap";
-import { Card, ErrorNote, Loading, EmptyState, Tabs, fmtNum } from "../components/ui";
+import { Card, ErrorNote, Loading, EmptyState, Tabs, Badge, fmtNum } from "../components/ui";
 import { JobTracker } from "../components/JobTracker";
 import { useTask } from "../lib/task-context";
 
@@ -149,6 +150,8 @@ export default function FeatureAnalysisPage() {
         </Card>
       </div>
 
+      <TopFeaturesCard task={task} refreshKey={sensResult ? sensResult.method : null} />
+
       <Card
         title="Heatmaps"
         sub="Rendered from the same source as SKSurrogate's mltrack.heatmap. Each matrix loads on demand when its tab is opened."
@@ -230,6 +233,65 @@ export default function FeatureAnalysisPage() {
         Tip: the top-N features from a sensitivity run can be fed into the Experiments stage to constrain the search space.
       </p>
     </div>
+  );
+}
+
+/**
+ * Consensus ranking across every stored weighting column (mltrack.TopFeatures).
+ * There is nothing to show until weights have been persisted for the task, so an
+ * unavailable response renders a disabled card pointing at the sensitivity job.
+ */
+function TopFeaturesCard({ task, refreshKey }: { task: string; refreshKey: string | null }) {
+  const [num, setNum] = useState(10);
+  const topQ = useQuery({
+    queryKey: ["top-features", task, num, refreshKey],
+    queryFn: () => getTopFeatures(task, num),
+    enabled: !!task,
+    retry: false,
+  });
+
+  const data = topQ.data;
+  const maxCount = data?.features.reduce((acc, [, count]) => Math.max(acc, count), 0) ?? 0;
+
+  return (
+    <Card
+      title="Consensus top features"
+      sub="How often each feature lands in the top-N of every stored weighting (mltrack.TopFeatures)."
+      actions={
+        <div className="field fixed" style={{ flex: "0 0 110px", minWidth: 90 }}>
+          <label>Top-N</label>
+          <input type="number" min={1} value={num} onChange={(e) => setNum(Math.max(1, Number(e.target.value)))} />
+        </div>
+      }
+    >
+      {!task && <p className="muted">Pick a task name first.</p>}
+      {topQ.isLoading && task && <Loading />}
+      {topQ.isError && <ErrorNote error={topQ.error} />}
+
+      {data && !data.available && <EmptyState title="No stored weightings yet" hint={data.hint} />}
+
+      {data?.available && data.features.length === 0 && (
+        <EmptyState title="No features ranked" hint={`No feature appears in the top ${num} of any stored weighting.`} />
+      )}
+
+      {data?.available && data.features.length > 0 && (
+        <>
+          <p className="muted">
+            Ranked by appearances across <strong>{fmtNum(data.weightings ?? 0)}</strong> weighting column(s).
+          </p>
+          <div className="chips">
+            {data.features.map(([feature, count]) => (
+              <span key={feature} className="chip">
+                {feature}{" "}
+                <Badge tone={count === maxCount && maxCount > 0 ? "ok" : "muted"}>
+                  {count}/{data.weightings ?? 0}
+                </Badge>
+              </span>
+            ))}
+          </div>
+        </>
+      )}
+    </Card>
   );
 }
 

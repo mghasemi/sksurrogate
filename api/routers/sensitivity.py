@@ -141,3 +141,45 @@ def get_weights_heatmap(task_name: str, train_partition: str = "train", max_feat
     )
     payload = _heatmap_payload(weights_df, "feature", max_features)
     return {"task_name": task_name, "kind": "weights", "available": True, "source": "computed", **payload}
+
+
+@router.get("/{task_name}/top-features")
+def get_top_features(task_name: str, num: int = 10):
+    """Consensus top features across the stored weightings (``mltrack.TopFeatures``).
+
+    Ranks features by how often they appear in the top ``num`` of every weighting
+    column of the task's ``weights`` table. That table is only populated when a
+    weights analysis has been run and persisted for the task, so when it is missing
+    or empty the endpoint reports ``available: false`` with a hint instead of an
+    error — the UI renders a disabled card pointing at the sensitivity job.
+    """
+    if not settings.mltrace_db_path(task_name).exists():
+        raise not_found("No dataset registered for task %r" % task_name)
+
+    unavailable = {
+        "task_name": task_name,
+        "available": False,
+        "hint": "No feature weightings stored yet — run a sensitivity analysis first.",
+        "features": [],
+    }
+
+    with open_tracker(task_name) as tracker:
+        try:
+            weights_df = tracker.RetrieveWeights()
+        except Exception:
+            return unavailable
+        if len(weights_df) == 0 or "feature" not in weights_df.columns:
+            return unavailable
+        weight_columns = [column for column in weights_df.columns if column != "feature"]
+        if not weight_columns:
+            return unavailable
+        ranking = tracker.TopFeatures(num=num)
+
+    return {
+        "task_name": task_name,
+        "available": True,
+        "num": num,
+        "weightings": len(weight_columns),
+        # OrderedDict → list of [feature, appearances] pairs, most frequent first.
+        "features": [[feature, int(count)] for feature, count in ranking.items()],
+    }

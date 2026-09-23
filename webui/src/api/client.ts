@@ -225,6 +225,25 @@ export const setDatasetCV = (task: string, spec: CVSpec, params?: Record<string,
     ...(params ? { params } : {}),
   });
 
+/** Descriptive statistics of the registered target column (pandas describe()). */
+export interface TargetStats {
+  task_name: string;
+  /** Partition the stats were computed from (train preferred). */
+  partition: string;
+  target: string;
+  count: number;
+  mean: number | null;
+  std: number | null;
+  min: number | null;
+  "25%": number | null;
+  "50%": number | null;
+  "75%": number | null;
+  max: number | null;
+}
+
+export const getTargetStats = (task: string) =>
+  get<TargetStats>(`/api/datasets/${encodeURIComponent(task)}/target-stats`);
+
 /* ------------------------------------------------------------------ */
 /* Bundles                                                             */
 /* ------------------------------------------------------------------ */
@@ -602,6 +621,24 @@ export const getWeightsHeatmap = (task: string, trainPartition = "train", maxFea
     `/api/sensitivity/${encodeURIComponent(task)}/weights-heatmap?train_partition=${encodeURIComponent(trainPartition)}&max_features=${maxFeatures}`,
   );
 
+/** Consensus top features across the stored weightings (mltrack.TopFeatures). */
+export interface TopFeaturesResponse {
+  task_name: string;
+  /** False when no weights table exists yet — render a disabled card with `hint`. */
+  available: boolean;
+  hint?: string;
+  num?: number;
+  /** Number of weighting columns the consensus was computed over. */
+  weightings?: number;
+  /** [feature, appearances] pairs, most frequent first. Empty when unavailable. */
+  features: Array<[string, number]>;
+}
+
+export const getTopFeatures = (task: string, num = 10) =>
+  get<TopFeaturesResponse>(
+    `/api/sensitivity/${encodeURIComponent(task)}/top-features?num=${Math.max(1, Math.floor(num))}`,
+  );
+
 /* ------------------------------------------------------------------ */
 /* Evaluation — learning curves                                        */
 /* ------------------------------------------------------------------ */
@@ -664,6 +701,97 @@ export function getLearningCurves(
   if (opts.modelVersions?.length) params.set("model_versions", opts.modelVersions.join(","));
   return get<LearningCurvesResponse>(`/api/evaluation/${encodeURIComponent(task)}/learning-curves?${params}`);
 }
+
+/* ------------------------------------------------------------------ */
+/* Evaluation — nested CV (background job)                             */
+/* ------------------------------------------------------------------ */
+
+export interface NestedCVRequest {
+  /** Exactly one of model_version / alias must be set. */
+  model_version?: string | null;
+  alias?: string | null;
+  inner_cv?: number;
+  outer_cv?: number;
+  train_partition?: string;
+  validation_partition?: string;
+  scoring?: string | null;
+  repeats?: number;
+  confidence_level?: number;
+}
+
+/** Submit a nested-CV evaluation job; poll the returned id for the result. */
+export const runNestedCV = (task: string, body: NestedCVRequest) =>
+  post<{ job_id: string; status: string }>(`/api/evaluation/${encodeURIComponent(task)}/nested-cv`, body);
+
+/** Result payload of a completed nested-CV job (see api/routers/evaluation.py). */
+export interface NestedCVJobResult {
+  task_name: string;
+  model_version: string;
+  outer_scores: number[];
+  inner_scores: number[];
+  mean_outer_score: number | null;
+  fold_metrics: Array<{
+    outer_fold: number;
+    inner_scores: number[];
+    outer_predictions: unknown[];
+    outer_truth: unknown[];
+    outer_score: number | null;
+    inner_score_mean: number | null;
+  }>;
+  repeat_count: number;
+  repeated_outer_scores: number[];
+  confidence_interval: { confidence_level: number; lower: number | null; upper: number | null };
+  final_validation_score?: number | null;
+}
+
+/** Narrow an unknown job result to a nested-CV result, or return null. */
+export function asNestedCVResult(result: unknown): NestedCVJobResult | null {
+  if (!result || typeof result !== "object") return null;
+  const r = result as Partial<NestedCVJobResult>;
+  if (!Array.isArray(r.outer_scores) || !r.confidence_interval) return null;
+  return r as NestedCVJobResult;
+}
+
+/* ------------------------------------------------------------------ */
+/* Evaluation — diagnostic curves                                      */
+/* ------------------------------------------------------------------ */
+
+export interface BundleCurvesResponse {
+  task_name: string;
+  model_version: string;
+  bins: number;
+  n_test_samples: number;
+  classes: string[];
+  roc?: { fpr: Array<number | null>; tpr: Array<number | null>; auc: number | null };
+  calibration?: {
+    mean_predicted_value: Array<number | null>;
+    fraction_of_positives: Array<number | null>;
+    histogram_counts: number[];
+    histogram_edges: Array<number | null>;
+  };
+  cumulative_gain?: {
+    percentages: Array<number | null>;
+    gains_class0: Array<number | null>;
+    gains_class1: Array<number | null>;
+    class0: string;
+    class1: string;
+  };
+  lift?: {
+    percentages: Array<number | null>;
+    lifts_class0: Array<number | null>;
+    lifts_class1: Array<number | null>;
+    class0: string;
+    class1: string;
+  };
+  /** Per-curve failures (e.g. gain/lift on a multi-class target) — not fatal. */
+  errors: Array<{ curve: string; detail: string }>;
+}
+
+/** Diagnostic curves for one classification bundle (422 for regression bundles). */
+export const getBundleCurves = (task: string, modelVersion: string, bins = 10) =>
+  get<BundleCurvesResponse>(
+    `/api/evaluation/${encodeURIComponent(task)}/${encodeURIComponent(modelVersion)}/curves?bins=${Math.max(2, Math.min(50, bins))}`,
+  );
 
 /* ------------------------------------------------------------------ */
 /* Experiments                                                         */
