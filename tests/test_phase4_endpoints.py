@@ -268,6 +268,27 @@ class TestPhase4Endpoints(unittest.TestCase):
         event = [e for e in bundle.audit_events if e["event_type"] == "experiment"][-1]
         self.assertEqual(event["details"]["forbidden"], [["penalty", "l1"]])
 
+    def test_run_experiment_reports_when_every_candidate_is_forbidden(self):
+        # The only value of the only parameter is banned, so no candidate can
+        # ever complete: the job must fail with a clear message rather than an
+        # opaque NotFittedError leaking out of aml.score().
+        config = {
+            "sklearn.linear_model.LogisticRegression": {
+                "penalty": {"type": "categorical", "items": ["l1"]},
+            },
+        }
+        body = RunExperimentRequest(
+            config={name: {p: ParamSpec(**spec) for p, spec in params.items()} for name, params in config.items()},
+            length=1,
+            max_generation=1,
+            num_parents=1,
+            forbidden=[["penalty", "l1"]],
+        )
+        submitted = experiments_router.run_experiment(TASK, body)
+        record = _wait_for_job(submitted["job_id"])
+        self.assertEqual(record["status"], "failed")
+        self.assertIn("every candidate was rejected", record["error"])
+
     def test_run_experiment_records_conditional_parameters(self):
         config = {
             "sklearn.linear_model.LogisticRegression": {

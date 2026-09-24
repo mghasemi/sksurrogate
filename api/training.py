@@ -2,10 +2,12 @@
 
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.exceptions import NotFittedError
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import get_scorer, get_scorer_names
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
+from sklearn.utils.validation import check_is_fitted
 
 from SKSurrogate import AML, Categorical, Integer, ModelBundle, Real
 
@@ -454,8 +456,21 @@ def fit_experiment_bundle(
         aml.add_surrogate(LinearRegression(), int(surrogate_itrs) if surrogate_itrs else 20)
     aml.eoa_fit(X, y, max_generation=max_generation, num_parents=num_parents)
     # SurrogateRandomCV refits best_estimator_ on the full dataset (refit=True),
-    # so it is ready for scoring/serving without an extra fit here.
+    # so it is ready for scoring/serving without an extra fit here. When every
+    # candidate was rejected (e.g. the forbidden rules ban the whole space) it
+    # leaves an unfitted estimator and score inf; report that as a clear 400
+    # instead of an opaque NotFittedError from aml.score below.
     best_estimator = aml.best_estimator_
+    try:
+        check_is_fitted(best_estimator)
+    except NotFittedError:
+        # Deliberately not chained: the job record stores the whole traceback and
+        # the NotFittedError detail adds nothing to the actionable message here.
+        raise bad_request(
+            "No search candidate could be fitted: every candidate was rejected. "
+            "Check that the forbidden rules (and any conditional parameters) leave "
+            "at least one viable configuration."
+        ) from None
     train_score = float(aml.score(X, y))
 
     schema = {column: {"dtype": str(frame[column].dtype)} for column in feature_columns}
@@ -570,13 +585,32 @@ def fit_pipeline_bundle(
     # linear model with a small budget keeps the single-structure run fast.
     aml.add_surrogate(LinearRegression(), 10)
     pipeline, score = aml.optimize_pipeline(tuple(seq), X, y)
+    # Mirror fit_experiment_bundle: an all-trials-rejected optimization leaves an
+    # unfitted pipeline and an infinite score, which would otherwise be wrapped
+    # into a bundle (and reported as a non-JSON `Infinity`).
+    try:
+        check_is_fitted(pipeline)
+    except NotFittedError:
+        # See fit_experiment_bundle: keep the recorded error free of the
+        # NotFittedError chain.
+        raise bad_request(
+            "No parameter configuration for this structure could be fitted: every "
+            "candidate was rejected. Check that the search space leaves at least "
+            "one viable configuration."
+        ) from None
+    train_score = finite_or_none(float(score))
+    if train_score is None:
+        raise bad_request(
+            "No parameter configuration for this structure scored finitely: every "
+            "candidate was rejected."
+        )
 
     schema = {column: {"dtype": str(frame[column].dtype)} for column in feature_columns}
     bundle = ModelBundle(
         pipeline,
         task_name=task_name,
         schema=schema,
-        metrics={"train_score": float(score)},
+        metrics={"train_score": train_score},
         dataset_fingerprint=metadata.get("dataset_fingerprint"),
         owner=owner,
         run_id=run_id,
