@@ -1305,15 +1305,40 @@ class SurrogateRandomCV(BaseSearchCV):
                     cls_dict[target_classes[i]] = x[idx]
                     idx += 1
                 best_params_[param] = cls_dict
-        self.best_estimator_ = clone(self.estimator).set_params(**best_params_)
-        if self.refit is not False:
-            # Refit the best estimator on the full dataset so it can be used for
-            # prediction/scoring (mirrors sklearn's BaseSearchCV refit behavior;
-            # uses the same fit_params as the CV folds above).
-            refit_kwargs = dict(self.fit_params or {})
-            self.best_estimator_.fit(X, y, **refit_kwargs)
-        self.best_estimator_score = scr
-        self.best_score_ = scr
+        # The optimizer's solution can land inside a region every trial rejected
+        # (a forbidden combination, or a candidate whose folds all failed).
+        # Refitting those settings either raises (e.g. lbfgs with penalty='l1')
+        # or silently returns a banned model, so fall back to the best trial that
+        # was actually completed; when no trial was, skip the refit entirely.
+        from numpy import isfinite
+
+        feasible = [
+            item
+            for item in self.evaluation_history_
+            if item.get("score") is not None and isfinite(item["score"])
+        ]
+        if not feasible:
+            self.best_estimator_ = clone(self.estimator)
+            self.best_estimator_score = float("inf")
+            self.best_score_ = float("inf")
+        else:
+            if not isfinite(scr) or self._forbidden_reason(best_params_) is not None:
+                best_trial = min(feasible, key=lambda item: item["score"])
+                best_params_ = {
+                    name: value
+                    for name, value in best_trial["params"].items()
+                    if name in self.params_list
+                }
+                scr = best_trial["score"]
+            self.best_estimator_ = clone(self.estimator).set_params(**best_params_)
+            if self.refit is not False:
+                # Refit the best estimator on the full dataset so it can be used for
+                # prediction/scoring (mirrors sklearn's BaseSearchCV refit behavior;
+                # uses the same fit_params as the CV folds above).
+                refit_kwargs = dict(self.fit_params or {})
+                self.best_estimator_.fit(X, y, **refit_kwargs)
+            self.best_estimator_score = scr
+            self.best_score_ = scr
         self.termination_reason = getattr(self.OPTIM, "termination_reason", None)
         self.summary_ = getattr(self.OPTIM, "summary_", {})
         self.cv_results_ = {

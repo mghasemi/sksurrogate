@@ -12,8 +12,9 @@ from pydantic import BaseModel
 from SKSurrogate import save_bundle
 
 from ..config import settings
+from ..deps import bad_request
 from ..jobs import job_manager
-from ..training import fit_experiment_bundle, standard_scoring_options
+from ..training import fit_experiment_bundle, fit_pipeline_bundle, standard_scoring_options
 
 router = APIRouter(prefix="/api/experiments", tags=["experiments"])
 
@@ -23,10 +24,28 @@ class ParamSpec(BaseModel):
     low: float | None = None
     high: float | None = None
     items: list | None = None
+    depends_on: dict[str, list] | None = None  # {other_param: [allowed values]} conditional rule
+
+
+#: A search-space entry is either a range spec or a plain scalar — the latter only
+#: appears under the reserved ``"stacking"`` directive (see ``api.training``).
+ParamValue = ParamSpec | bool | int | None
+SearchSpace = dict[str, dict[str, ParamValue]]
+
+
+def _dump_config(config):
+    """Turn validated request config values back into plain JSON (specs or scalars)."""
+    dumped = {}
+    for estimator, params in (config or {}).items():
+        row = {}
+        for name, spec in params.items():
+            row[name] = spec.model_dump(exclude_none=True) if isinstance(spec, BaseModel) else spec
+        dumped[estimator] = row
+    return dumped
 
 
 class RunExperimentRequest(BaseModel):
-    config: dict[str, dict[str, ParamSpec]]
+    config: SearchSpace
     length: int = 2
     max_generation: int = 3
     num_parents: int = 4
@@ -35,6 +54,9 @@ class RunExperimentRequest(BaseModel):
     random_state: int | None = None
     owner: str | None = None
     run_id: str | None = None
+    surrogate_mode: bool = False
+    surrogate_itrs: int | None = None  # per-surrogate iteration budget (surrogate mode only)
+    forbidden: list[list] | None = None  # [["param", value], ...] disallowed combinations
 
 
 @router.get("/scoring-options")
@@ -51,20 +73,70 @@ def scoring_options():
 @router.post("/{task_name}/run")
 def run_experiment(task_name: str, body: RunExperimentRequest):
     """Submit an AML/EOA pipeline search job over the given search-space config."""
-    config = {
-        estimator: {name: spec.model_dump(exclude_none=True) for name, spec in params.items()}
-        for estimator, params in body.config.items()
-    }
+    if body.surrogate_itrs is not None and body.surrogate_itrs < 1:
+        raise bad_request("surrogate_itrs must be a positive integer")
+    config = _dump_config(body.config)
 
     def make_job(job_id):
         def _run():
-            bundle, evaluation_history = fit_experiment_bundle(
+            bundle, evaluation_history, top_pipelines, pareto = fit_experiment_bundle(
                 task_name,
                 config=config,
                 checkpoint_dir=settings.task_checkpoint_dir(task_name, job_id),
                 length=body.length,
                 max_generation=body.max_generation,
                 num_parents=body.num_parents,
+                train_partition=body.train_partition,
+                scoring=body.scoring,
+                random_state=body.random_state,
+                owner=body.owner,
+                run_id=body.run_id,
+                surrogate_mode=body.surrogate_mode,
+                surrogate_itrs=body.surrogate_itrs,
+                forbidden=body.forbidden,
+            )
+            bundles_dir = settings.task_bundles_dir(task_name)
+            bundles_dir.mkdir(parents=True, exist_ok=True)
+            bundle_path = save_bundle(bundle, bundles_dir / (bundle.model_version + ".bundle"))
+            return {
+                "model_version": bundle.model_version,
+                "bundle_path": str(bundle_path),
+                "train_score": bundle.metrics.get("train_score"),
+                "evaluation_history": evaluation_history,
+                "top_pipelines": top_pipelines,
+                "pareto": pareto,
+            }
+
+        return _run
+
+    job_id = job_manager.submit(task_name, "experiment", make_job)
+    return {"job_id": job_id, "status": "queued"}
+
+
+class OptimizePipelineRequest(BaseModel):
+    seq: list[str]  # ordered component names, e.g. ["sklearn.linear_model.LogisticRegression"]
+    config: SearchSpace | None = None  # optional per-component search space
+    train_partition: str = "train"
+    scoring: str = "accuracy"
+    random_state: int | None = None
+    owner: str | None = None
+    run_id: str | None = None
+
+
+@router.post("/{task_name}/optimize-pipeline")
+def optimize_pipeline(task_name: str, body: OptimizePipelineRequest):
+    """Submit a job that optimizes one explicit pipeline structure (no search over structures)."""
+    if not body.seq:
+        raise bad_request("seq must name at least one component")
+    config = _dump_config(body.config)
+
+    def make_job(job_id):
+        def _run():
+            bundle = fit_pipeline_bundle(
+                task_name,
+                seq=body.seq,
+                config=config,
+                checkpoint_dir=settings.task_checkpoint_dir(task_name, job_id),
                 train_partition=body.train_partition,
                 scoring=body.scoring,
                 random_state=body.random_state,
@@ -78,10 +150,10 @@ def run_experiment(task_name: str, body: RunExperimentRequest):
                 "model_version": bundle.model_version,
                 "bundle_path": str(bundle_path),
                 "train_score": bundle.metrics.get("train_score"),
-                "evaluation_history": evaluation_history,
+                "pipeline": list(body.seq),
             }
 
         return _run
 
-    job_id = job_manager.submit(task_name, "experiment", make_job)
+    job_id = job_manager.submit(task_name, "optimize_pipeline", make_job)
     return {"job_id": job_id, "status": "queued"}

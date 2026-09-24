@@ -290,7 +290,18 @@ def fit_baseline_bundle(
 
 
 def build_search_param(spec):
-    """Convert a JSON param spec (``{"type": "real"|"integer"|"categorical", ...}``) into a structsearch range."""
+    """Convert a JSON param spec (``{"type": "real"|"integer"|"categorical", ...}``) into a structsearch range.
+
+    An optional ``depends_on`` key (``{other_param: [allowed values]}``) is
+    stripped from the spec — it does not belong on the range object; the caller
+    collects those entries into AML's conditional-parameter map instead.
+    """
+    if not isinstance(spec, dict):
+        raise bad_request(
+            "Each parameter spec must be an object with a 'type' (real/integer/categorical); got %r" % (spec,)
+        )
+    if "depends_on" in spec:
+        spec = {key: value for key, value in spec.items() if key != "depends_on"}
     if spec["type"] == "real":
         return Real(spec.get("low"), spec.get("high"))
     if spec["type"] == "integer":
@@ -298,6 +309,91 @@ def build_search_param(spec):
     if spec["type"] == "categorical":
         return Categorical(spec.get("items") or [])
     raise bad_request("param type must be one of real, integer, categorical")
+
+
+#: Config key reserved for the stacking directive — it configures the automatic
+#: ``StackingEstimator`` wrappers rather than naming a pipeline component, so it
+#: is pulled out of the search space before the space is parsed.
+STACKING_KEY = "stacking"
+
+#: Accepted ``stacking`` directive fields and the AML constructor argument each maps to.
+_STACKING_FIELDS = {
+    "res": "stack_res",
+    "probs": "stack_probs",
+    "decision": "stack_decision",
+    "cv": "stack_cv",
+    "n_jobs": "stack_n_jobs",
+}
+
+
+def extract_stacking(config):
+    """Split an optional ``"stacking"`` directive out of a search-space config.
+
+    Returns ``(config, kwargs)`` where ``kwargs`` are AML constructor arguments
+    for the automatic :class:`~SKSurrogate.StackingEstimator` wrappers
+    (``stack_res``/``stack_probs``/``stack_decision``/``stack_cv``/``stack_n_jobs``).
+    Stacking is applied to intermediate estimators only; the directive therefore
+    never becomes a pipeline step and is removed from the search space.
+    """
+    if not isinstance(config, dict) or STACKING_KEY not in config:
+        return config, {}
+    directive = config.get(STACKING_KEY) or {}
+    if not isinstance(directive, dict):
+        raise bad_request("The 'stacking' directive must be an object of res/probs/decision/cv/n_jobs")
+    kwargs = {}
+    for field, target in _STACKING_FIELDS.items():
+        if field not in directive or directive[field] is None:
+            continue
+        value = directive[field]
+        if field in {"res", "probs", "decision"}:
+            if not isinstance(value, bool):
+                raise bad_request("stacking.%s must be true or false" % field)
+        elif field == "cv":
+            if not isinstance(value, int) or isinstance(value, bool) or value < 2:
+                raise bad_request("stacking.cv must be an integer of at least 2")
+        else:  # n_jobs
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise bad_request("stacking.n_jobs must be an integer or null")
+        kwargs[target] = value
+    remaining = {key: value for key, value in config.items() if key != STACKING_KEY}
+    return remaining, kwargs
+
+
+def build_conditional_map(config):
+    """Collect per-param ``depends_on`` entries into AML's conditional map.
+
+    Each entry becomes ``{param_name: {other_param: [allowed values]}}`` — the
+    form :class:`~SKSurrogate.structsearch.SurrogateRandomCV` expects, where a
+    parameter is dropped from a candidate whenever its rule does not match.
+    """
+    conditional = {}
+    for params in config.values():
+        for name, spec in params.items():
+            depends_on = spec.get("depends_on") if isinstance(spec, dict) else None
+            if depends_on:
+                conditional[name] = {other: list(values) for other, values in depends_on.items()}
+    return conditional
+
+
+def build_forbidden_rules(forbidden):
+    """Convert ``[["param", "value"], ...]`` pairs into the dict rules SurrogateRandomCV accepts.
+
+    Values may be any JSON scalar (a string, number, boolean or null) so rules
+    like ``[["max_depth", 1]]`` match the parameter's actual value.
+    """
+    if not forbidden:
+        return ()
+    rules = []
+    for pair in forbidden:
+        if len(pair) != 2:
+            raise bad_request("Each forbidden rule must be a [parameter, value] pair")
+        param, value = pair[0], pair[1]
+        if not isinstance(param, str):
+            raise bad_request("Forbidden rule parameter names must be strings")
+        if isinstance(value, (dict, list, tuple)):
+            raise bad_request("Forbidden rule values must be scalars (string, number, boolean or null)")
+        rules.append({param: value})
+    return tuple(rules)
 
 
 def fit_experiment_bundle(
@@ -313,6 +409,9 @@ def fit_experiment_bundle(
     random_state=None,
     owner=None,
     run_id=None,
+    surrogate_mode=False,
+    surrogate_itrs=None,
+    forbidden=None,
 ):
     """Run an AML/EOA pipeline search and wrap the best fitted pipeline into a ``ModelBundle``.
 
@@ -326,10 +425,14 @@ def fit_experiment_bundle(
     X = frame[feature_columns].values
     y = frame[target].values
 
+    config, stacking = extract_stacking(config)
     parsed_config = {
         estimator: {name: build_search_param(spec) for name, spec in params.items()}
         for estimator, params in config.items()
     }
+
+    conditional = build_conditional_map(config)
+    forbidden_rules = build_forbidden_rules(forbidden)
 
     cv_spec = get_stored_cv_spec(task_name)
     cv = get_stored_cv(task_name)
@@ -341,7 +444,14 @@ def fit_experiment_bundle(
         check_point=str(checkpoint_dir) + "/",
         random_state=random_state,
         cv=cv if cv is not None else 3,
+        forbidden=forbidden_rules,
+        conditional=conditional,
+        **stacking,
     )
+    if surrogate_mode:
+        # A single lightweight regressor replaces the default KRR+GPR pair; the
+        # iteration budget bounds how many candidate points each surrogate pass tries.
+        aml.add_surrogate(LinearRegression(), int(surrogate_itrs) if surrogate_itrs else 20)
     aml.eoa_fit(X, y, max_generation=max_generation, num_parents=num_parents)
     # SurrogateRandomCV refits best_estimator_ on the full dataset (refit=True),
     # so it is ready for scoring/serving without an extra fit here.
@@ -366,8 +476,117 @@ def fit_experiment_bundle(
         max_generation=max_generation,
         num_parents=num_parents,
         train_score=train_score,
+        surrogate_mode=surrogate_mode,
+        surrogate_itrs=int(surrogate_itrs) if surrogate_itrs else None,
+        forbidden=[list(list(rule.items())[0]) for rule in forbidden_rules],
+        conditional=conditional,
+        stacking=stacking or None,
     )
-    evaluation_history = [
-        {"pipeline": list(entry["pipeline"]), "score": float(entry["score"])} for entry in aml.evaluation_history_
+    # SurrogateRandomCV reports the negated objective (it maximizes internally),
+    # so scores are flipped back into the scorer's own units for display; the
+    # non-finite scores of invalid candidates become null instead of Infinity.
+    evaluation_history = []
+    for entry in aml.evaluation_history_:
+        row = {"pipeline": list(entry["pipeline"]), "score": finite_or_none(-float(entry["score"]))}
+        if entry.get("duration") is not None:
+            row["duration"] = round(float(entry["duration"]), 4)
+        evaluation_history.append(row)
+    top_pipelines = [
+        {"pipeline": list(seq), "score": finite_or_none(-float(score))} for seq, (_, score) in aml.get_top(5).items()
     ]
-    return bundle, evaluation_history
+    try:
+        pareto = _json_safe_frontier(aml.pareto_frontier())
+    except Exception:
+        pareto = None
+    return bundle, evaluation_history, top_pipelines, pareto
+
+
+def _json_safe_frontier(records):
+    """Reduce Pareto frontier records to the JSON-safe fields a job result can carry."""
+    safe = []
+    for record in records:
+        row = {}
+        pipeline = record.get("pipeline")
+        if pipeline is not None:
+            row["pipeline"] = list(pipeline)
+        score = record.get("score")
+        if score is not None:
+            row["score"] = finite_or_none(float(score))
+        duration = record.get("duration")
+        if duration is not None:
+            row["duration"] = finite_or_none(round(float(duration), 4))
+        safe.append(row)
+    return safe
+
+
+def fit_pipeline_bundle(
+    task_name,
+    *,
+    seq,
+    config=None,
+    checkpoint_dir,
+    train_partition="train",
+    scoring="accuracy",
+    random_state=None,
+    owner=None,
+    run_id=None,
+):
+    """Optimize one explicit pipeline structure and wrap the result into a ``ModelBundle``.
+
+    Unlike :func:`fit_experiment_bundle` (which searches over structures), this
+    fits a single component sequence: every name in ``seq`` is resolved through
+    the task's search-space config, tuned with a bounded surrogate search when
+    parameters are given, and wrapped into a bundle. Estimators without any
+    parameter spec fall back to plain cross-validated fitting.
+    """
+    if not seq or any(not isinstance(name, str) for name in seq):
+        raise bad_request("seq must be a non-empty list of estimator class names")
+
+    target, metadata = get_registered_target(task_name)
+    frame = load_partition(task_name, train_partition)
+    feature_columns = [column for column in frame.columns if column != target]
+    X = frame[feature_columns].values
+    y = frame[target].values
+
+    config, stacking = extract_stacking(config)
+    parsed_config = {
+        name: {param: build_search_param(spec) for param, spec in (config or {}).get(name, {}).items()}
+        for name in seq
+    }
+
+    cv_spec = get_stored_cv_spec(task_name)
+    cv = get_stored_cv(task_name)
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    aml = AML(
+        config=parsed_config,
+        length=len(seq),
+        scoring=scoring,
+        check_point=str(checkpoint_dir) + "/",
+        random_state=random_state,
+        cv=cv if cv is not None else 3,
+        **stacking,
+    )
+    # optimize_pipeline requires at least one surrogate regressor; a plain
+    # linear model with a small budget keeps the single-structure run fast.
+    aml.add_surrogate(LinearRegression(), 10)
+    pipeline, score = aml.optimize_pipeline(tuple(seq), X, y)
+
+    schema = {column: {"dtype": str(frame[column].dtype)} for column in feature_columns}
+    bundle = ModelBundle(
+        pipeline,
+        task_name=task_name,
+        schema=schema,
+        metrics={"train_score": float(score)},
+        dataset_fingerprint=metadata.get("dataset_fingerprint"),
+        owner=owner,
+        run_id=run_id,
+    )
+    bundle.record_audit_event(
+        "pipeline_optimization",
+        pipeline=list(seq),
+        scoring=scoring,
+        cv=cv_spec,
+        train_score=float(score),
+        stacking=stacking or None,
+    )
+    return bundle

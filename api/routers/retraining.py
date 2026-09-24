@@ -16,7 +16,7 @@ from SKSurrogate import ModelRegistry, RetrainingJob
 from ..config import settings
 from ..deps import bad_request
 from ..jobs import job_manager
-from ..routers.experiments import ParamSpec
+from ..routers.experiments import ParamValue, _dump_config
 from ..training import fit_baseline_bundle, fit_experiment_bundle
 
 router = APIRouter(prefix="/api/retraining", tags=["retraining"])
@@ -31,7 +31,7 @@ class BaselineTrainerConfig(BaseModel):
 
 class ExperimentTrainerConfig(BaseModel):
     kind: str = "experiment"
-    config: dict[str, dict[str, ParamSpec]]
+    config: dict[str, dict[str, ParamValue]]
     length: int = 2
     max_generation: int = 3
     num_parents: int = 4
@@ -65,11 +65,8 @@ def _make_trainer(task_name, trainer_config, checkpoint_dir, owner, run_id):
         return _train
     if trainer_config.kind == "experiment":
         def _train(context):
-            config = {
-                estimator: {name: spec.model_dump(exclude_none=True) for name, spec in params.items()}
-                for estimator, params in trainer_config.config.items()
-            }
-            bundle, _ = fit_experiment_bundle(
+            config = _dump_config(trainer_config.config)
+            bundle, _, _, _ = fit_experiment_bundle(
                 task_name,
                 config=config,
                 checkpoint_dir=checkpoint_dir,

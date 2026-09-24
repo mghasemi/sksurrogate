@@ -26,10 +26,29 @@ Control-plane API and Web UI (branch ``ui``)
   training/held-out curves per bundle for one metric via scikit-learn. The
   Evaluation page's "Metric comparison" card now has one tab per metric on top
   of the side-by-side overview chart.
+* Experiment searches gained surrogate-assisted mode
+  (``surrogate_mode``/``surrogate_itrs``), conditional parameters
+  (per-parameter ``depends_on``) and top-level ``forbidden`` rules, a per-run
+  Pareto frontier (score vs. candidate duration) and ``top_pipelines`` in the
+  job result, plus a ``POST /api/experiments/{task}/optimize-pipeline`` endpoint
+  that tunes one explicit component sequence into a bundle. The Experiments page
+  gained a search-strategy radio, live JSON validation hints, a "Top pipelines"
+  table with per-row optimization, and a Pareto scatter chart.
+* Added the ``stacking`` directive to experiment search spaces
+  (``res``/``probs``/``decision``/``cv``/``n_jobs``), which configures the
+  out-of-fold ``StackingEstimator`` wrappers ``AML`` applies to intermediate
+  estimators; ``AML`` gained the matching ``stack_cv``/``stack_n_jobs``
+  constructor parameters.
 
 Bug fixes
 ~~~~~~~~~
 
+* ``SurrogateRandomCV`` no longer refits a rejected combination. The optimizer's
+  solution can land inside a forbidden region (or in one whose folds all
+  failed), and refitting those settings either raised — e.g. ``lbfgs`` with
+  ``penalty='l1'`` — or silently returned a banned model. The best *completed*
+  trial is used instead, and the refit is skipped entirely when no trial
+  completed.
 * Fixed the experiments stage failing with ``ValueError: too many values to
   unpack (expected 2)``: the stored cross-validation spec (a JSON dictionary)
   was handed straight to ``AML``, and scikit-learn's ``check_cv`` treated that

@@ -1054,6 +1054,37 @@ class TestOptimizedPaths(unittest.TestCase):
         self.assertIn("error", search.cv_results_)
         self.assertTrue(search.pareto_frontier())
 
+    def test_surrogate_cv_never_refits_a_forbidden_combination(self):
+        # lbfgs rejects penalty='l1', so a refit of the banned settings would
+        # raise; the search must fall back to (or skip) a feasible trial instead.
+        X = np.array([[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]])
+        y = np.array([0, 1, 0, 1, 0, 1])
+        search = SurrogateRandomCV(
+            LogisticRegression(max_iter=100),
+            {
+                "penalty": Categorical(["l1", "l2"]),
+                "C": Real(0.1, 1.0),
+            },
+            forbidden=({"penalty": "l1"},),
+            cv=2,
+            n_jobs=1,
+            max_iter=2,
+            min_evals=1,
+            max_evals=2,
+            refit=True,
+        )
+
+        search.fit(X, y)
+
+        self.assertNotEqual(search.best_estimator_.get_params()["penalty"], "l1")
+        self.assertTrue(
+            all(
+                item["params"]["penalty"] == "l2"
+                for item in search.evaluation_history_
+                if item["status"] == "complete"
+            )
+        )
+
     def test_surrogate_cv_rejects_unknown_search_parameters_before_evaluation(self):
         search = SurrogateRandomCV(
             LogisticRegression(max_iter=100),

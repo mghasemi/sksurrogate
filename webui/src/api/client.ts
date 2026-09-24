@@ -1040,10 +1040,32 @@ export interface ParamSpec {
   low?: number;
   high?: number;
   items?: unknown[];
+  /** Conditional rule: {other_param: [allowed values]} — the param is dropped when the rule does not match. */
+  depends_on?: Record<string, unknown[]>;
 }
 
+/** A search-space entry: a range spec, or a scalar under the reserved "stacking" directive. */
+export type ParamValue = ParamSpec | boolean | number | null;
+
+export type SearchSpace = Record<string, Record<string, ParamValue>>;
+
+/**
+ * Reserved search-space key configuring the automatic ``StackingEstimator``
+ * wrappers (out-of-fold stacking of intermediate estimators). It is a
+ * directive, not a pipeline component, so it never becomes a step.
+ */
+export const STACKING_COMPONENT = {
+  stacking: {
+    res: true,
+    probs: true,
+    decision: true,
+    cv: 5,
+    n_jobs: null as number | null,
+  },
+};
+
 export interface RunExperimentRequest {
-  config: Record<string, Record<string, ParamSpec>>;
+  config: SearchSpace;
   length?: number;
   max_generation?: number;
   num_parents?: number;
@@ -1052,13 +1074,63 @@ export interface RunExperimentRequest {
   random_state?: number | null;
   owner?: string | null;
   run_id?: string | null;
+  /** Use a single lightweight surrogate regressor instead of the default KRR+GPR pair. */
+  surrogate_mode?: boolean;
+  /** Per-surrogate iteration budget (surrogate mode only). */
+  surrogate_itrs?: number | null;
+  /** Disallowed parameter combinations, e.g. [["penalty", "l1"]] or [["max_depth", 1]]. */
+  forbidden?: Array<[string, unknown]> | null;
+}
+
+export interface ExperimentTopPipeline {
+  pipeline: string[];
+  /** In the scorer's own units; null for candidates that could not be evaluated. */
+  score: number | null;
+}
+
+/** One non-dominated candidate of the search (score maximized, duration minimized). */
+export interface ParetoPoint {
+  pipeline: string[];
+  score: number | null;
+  duration: number | null;
+}
+
+export interface ExperimentResult {
+  model_version: string;
+  bundle_path: string;
+  train_score: number | null;
+  evaluation_history: Array<{ pipeline: string[]; score: number | null; duration?: number }>;
+  top_pipelines: ExperimentTopPipeline[];
+  /** Null when the search produced no candidates with both a score and a duration. */
+  pareto: ParetoPoint[] | null;
 }
 
 export const runExperiment = (task: string, body: RunExperimentRequest) =>
   post<{ job_id: string; status: string }>(`/api/experiments/${encodeURIComponent(task)}/run`, body);
 
+/** Optimize one explicit pipeline structure (no search over structures). */
+export interface OptimizePipelineRequest {
+  seq: string[];
+  config?: SearchSpace | null;
+  train_partition?: string;
+  scoring?: string;
+  random_state?: number | null;
+  owner?: string | null;
+  run_id?: string | null;
+}
+
+export interface OptimizePipelineResult {
+  model_version: string;
+  bundle_path: string;
+  train_score: number | null;
+  pipeline: string[];
+}
+
+export const optimizePipeline = (task: string, body: OptimizePipelineRequest) =>
+  post<{ job_id: string; status: string }>(`/api/experiments/${encodeURIComponent(task)}/optimize-pipeline`, body);
+
 /** A small, safe default search space (subset of the library's default_config). */
-export const DEFAULT_EXPERIMENT_CONFIG: Record<string, Record<string, ParamSpec>> = {
+export const DEFAULT_EXPERIMENT_CONFIG: SearchSpace = {
   "sklearn.linear_model.LogisticRegression": {
     C: { type: "real", low: 1e-6, high: 10 },
     penalty: { type: "categorical", items: ["l2"] },
@@ -1150,7 +1222,7 @@ export interface BaselineTrainerConfig {
 
 export interface ExperimentTrainerConfig {
   kind: "experiment";
-  config: Record<string, Record<string, ParamSpec>>;
+  config: SearchSpace;
   length?: number;
   max_generation?: number;
   num_parents?: number;
