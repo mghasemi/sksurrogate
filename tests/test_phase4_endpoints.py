@@ -207,7 +207,9 @@ class TestPhase4Endpoints(unittest.TestCase):
         self.assertGreaterEqual(result["top_pipelines"][0]["score"], 0.0)
         self.assertLessEqual(result["top_pipelines"][0]["score"], 1.0)
         self.assertIn("pareto", result)
-        for point in result["pareto"] or []:
+        # Every evaluated candidate is complete, so the frontier must be non-empty.
+        self.assertTrue(result["pareto"])
+        for point in result["pareto"]:
             self.assertEqual(set(point), {"pipeline", "score", "duration"})
 
     def test_run_experiment_surrogate_mode_records_audit_event(self):
@@ -246,6 +248,10 @@ class TestPhase4Endpoints(unittest.TestCase):
             max_generation=1,
             num_parents=1,
             forbidden=[["penalty", "l1"]],
+            # The search RNG is unseeded by default; with a single parent the run
+            # can sample only banned LogisticRegression candidates and end without
+            # any fitted model. A fixed seed makes this test deterministic.
+            random_state=0,
         )
         submitted = experiments_router.run_experiment(TASK, body)
         record = _wait_for_job(submitted["job_id"])

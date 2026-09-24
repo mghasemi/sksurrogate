@@ -915,6 +915,9 @@ class AML(object):
                 continue
             record = dict(entry)
             record[score_key] = -float(raw_score)
+            # AML history entries carry no status; mark them complete so the
+            # structsearch dominance filter (status == "complete") keeps them.
+            record.setdefault("status", "complete")
             records.append(record)
         holder = SimpleNamespace(evaluation_history_=records)
         return SurrogateRandomCV.pareto_frontier(holder, score_key=score_key, cost_key=cost_key)
