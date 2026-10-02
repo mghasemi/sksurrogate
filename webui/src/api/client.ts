@@ -168,6 +168,7 @@ export interface RegisterDatasetResponse {
   columns: string[];
   dataset_fingerprint: string | null;
   dataset_schema: Record<string, unknown> | null;
+  dataset_deduced_types?: Record<string, string>;
   deduced_types: Record<string, string>;
   /** Name-based PII / sensitive-column scan of the uploaded frame (Phase 2.4). */
   sensitive_scan?: SensitiveScanReport;
@@ -179,6 +180,7 @@ export interface DatasetMetadata {
   dataset_fingerprint: string | null;
   dataset_columns: string[] | null;
   dataset_schema: Record<string, unknown> | null;
+  dataset_deduced_types?: Record<string, string> | null;
   dataset_feature_count: number | null;
   partitions: Record<string, PartitionInfo>;
 }
@@ -189,21 +191,50 @@ export interface DatasetPreview {
   rows: Array<Record<string, unknown>>;
 }
 
-export async function registerDataset(
-  taskName: string,
-  target: string,
-  partition: string,
-  file: File,
-): Promise<RegisterDatasetResponse> {
-  const form = new FormData();
-  form.append("target", target);
-  form.append("partition", partition);
-  form.append("file", file);
-  const res = await fetch(`${base()}/api/datasets/${encodeURIComponent(taskName)}/register`, {
-    method: "POST",
-    headers: authHeaders(),
-    body: form,
-  });
+/** Phase 5.1: schema preview of an uploaded CSV, without persisting anything. */
+export interface DatasetInspectResponse {
+  task_name: string;
+  rows: number;
+  columns: string[];
+  deduced_types: Record<string, string>;
+  target_candidates: string[];
+  sensitive_scan?: SensitiveScanReport;
+}
+
+/** Phase 5.2: pre-flight validation result for an upload or stored partition. */
+export interface DatasetValidationResponse {
+  task_name: string;
+  source: string;
+  valid: boolean;
+}
+
+/** Phase 5.3: one generated synthetic sample file. */
+export interface SyntheticFileEntry {
+  name: string;
+  path: string;
+  rows: number;
+}
+
+export interface GenerateSyntheticResponse {
+  task_name: string;
+  path: string;
+  partition: string;
+  rows: number;
+  columns: string[];
+  preview: Array<Record<string, unknown>>;
+}
+
+export interface SyntheticListResponse {
+  task_name: string;
+  files: SyntheticFileEntry[];
+  preview: { file: string; columns: string[]; rows: Array<Record<string, unknown>> } | null;
+}
+
+async function uploadDataset(
+  path: string,
+  form: FormData,
+): Promise<unknown> {
+  const res = await fetch(`${base()}${path}`, { method: "POST", headers: authHeaders(), body: form });
   if (!res.ok) {
     let detail = res.statusText;
     try {
@@ -212,9 +243,55 @@ export async function registerDataset(
     } catch {
       /* ignore */
     }
-    throw new ApiError(res.status, `POST /api/datasets/${taskName}/register -> ${res.status}: ${detail}`);
+    throw new ApiError(res.status, `POST ${path} -> ${res.status}: ${detail}`);
   }
-  return (await res.json()) as RegisterDatasetResponse;
+  return res.json();
+}
+
+export async function inspectDataset(
+  taskName: string,
+  file: File,
+): Promise<DatasetInspectResponse> {
+  const form = new FormData();
+  form.append("file", file);
+  return (await uploadDataset(
+    `/api/datasets/${encodeURIComponent(taskName)}/inspect`,
+    form,
+  )) as DatasetInspectResponse;
+}
+
+export async function validateDataset(
+  taskName: string,
+  body: { file?: File; partition?: string },
+): Promise<DatasetValidationResponse> {
+  const form = new FormData();
+  if (body.file) form.append("file", body.file);
+  if (body.partition) form.append("partition", body.partition);
+  return (await uploadDataset(
+    `/api/datasets/${encodeURIComponent(taskName)}/validate`,
+    form,
+  )) as DatasetValidationResponse;
+}
+
+export async function registerDataset(
+  taskName: string,
+  target: string,
+  partition: string,
+  file: File,
+  options?: { type_overrides?: Record<string, string>; binarize_label?: boolean },
+): Promise<RegisterDatasetResponse> {
+  const form = new FormData();
+  form.append("target", target);
+  form.append("partition", partition);
+  form.append("file", file);
+  if (options?.type_overrides && Object.keys(options.type_overrides).length) {
+    form.append("type_overrides", JSON.stringify(options.type_overrides));
+  }
+  if (options?.binarize_label) form.append("binarize_label", "true");
+  return (await uploadDataset(
+    `/api/datasets/${encodeURIComponent(taskName)}/register`,
+    form,
+  )) as RegisterDatasetResponse;
 }
 
 export const getDatasetMetadata = (task: string) =>
@@ -224,6 +301,44 @@ export const previewDataset = (task: string, partition: string, limit = 20) =>
   get<DatasetPreview>(
     `/api/datasets/${encodeURIComponent(task)}/${encodeURIComponent(partition)}/preview?limit=${limit}`,
   );
+
+/** Phase 5.3: generate a synthetic sample from a registered partition. */
+export const generateSynthetic = (task: string, body: {
+  num?: number;
+  partition?: string | null;
+  distribution_type?: "marginal" | "joint";
+  default_rv?: string;
+  type_overrides?: Record<string, string> | null;
+}) => post<GenerateSyntheticResponse>(
+  `/api/datasets/${encodeURIComponent(task)}/synthetic`,
+  { num: 100, distribution_type: "marginal", default_rv: "uniform", ...body },
+);
+
+export const listSynthetic = (task: string, limit = 50) =>
+  get<SyntheticListResponse>(
+    `/api/datasets/${encodeURIComponent(task)}/synthetic?limit=${limit}`,
+  );
+
+export async function downloadSynthetic(task: string, filename: string): Promise<void> {
+  const path = `/api/datasets/${encodeURIComponent(task)}/synthetic/${encodeURIComponent(filename)}`;
+  const res = await fetch(`${base()}${path}`, { headers: authHeaders() });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const data = (await res.json()) as { detail?: unknown };
+      if (typeof data.detail === "string") detail = data.detail;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new ApiError(res.status, `GET ${path} -> ${res.status}: ${detail}`);
+  }
+  const objectUrl = URL.createObjectURL(await res.blob());
+  const anchor = document.createElement("a");
+  anchor.href = objectUrl;
+  anchor.download = filename;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+}
 
 /** A scikit-learn cross-validation splitter spec (see SKSurrogate.mltrace.cv_to_spec). */
 export type CVSpec = { type: string; [param: string]: unknown } | number;
@@ -578,6 +693,8 @@ export interface PredictRequest {
   partition?: string | null;
   rows?: Array<Record<string, unknown>> | null;
   request_id?: string | null;
+  /** Phase 5.2: run validate_prediction_data before predicting (400 on mismatch). */
+  preflight?: boolean;
 }
 
 export interface InferenceMetrics {

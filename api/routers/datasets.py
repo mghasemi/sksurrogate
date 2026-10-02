@@ -1,9 +1,16 @@
 """Dataset registration endpoints.
 
-Wraps ``DataProcess.DataPreprocess`` (type preview) and
-``mltrace.mltrack.RegisterData`` (schema fingerprinting) behind plain
-file-upload + JSON endpoints, per docs/ui-plan.md section 4.
+Wraps ``DataProcess.DataPreprocess`` (type preview),
+``mltrace.mltrack.RegisterData`` (schema fingerprinting), and
+``mltrack.validate_data`` (pre-flight schema validation) behind plain
+file-upload + JSON endpoints, per docs/ui-plan.md section 4 and
+docs/ui-gap-implementation-plan.md Phase 5.1/5.2.
 """
+
+import json
+import re
+from io import BytesIO
+from typing import Annotated
 
 import pandas as pd
 from fastapi import APIRouter, File, Form, UploadFile
@@ -13,17 +20,49 @@ from SKSurrogate import (
     STANDARD_CV_SPLITTERS,
     DataPreprocess,
     ModelRegistry,
-    build_cv,
     cv_param_defs,
-    cv_to_spec,
     default_cv_spec,
     sensitive_feature_report,
 )
 
 from ..config import settings
-from ..deps import bad_request, finite_or_none as _finite, not_found, open_tracker
+from ..deps import bad_request, finite_or_none as _finite, not_found, open_tracker, unprocessable
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
+
+
+def _validate_partition_name(partition):
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", partition or ""):
+        raise bad_request("partition must contain only letters, numbers, underscores, or hyphens")
+
+
+def apply_type_overrides(frame, preview, target, overrides=None, binarize_label=False):
+    """Apply user-reviewed types through DataPreprocess before registration.
+
+    ``DataPreprocess.set_type`` / ``transform_label_bin`` only record intent in the
+    deducer's bookkeeping; they do not change arbitrary feature values. Preserve
+    the uploaded feature dtypes and values, and only rewrite the target when the
+    user explicitly requests label binarization.
+
+    Returns ``(frame, pivot_types)`` where ``pivot_types`` is the deducer's final
+    per-column type map after the overrides.
+    """
+    frame = frame.copy()
+    for column, typ in (overrides or {}).items():
+        if column not in frame.columns:
+            raise bad_request("type override for unknown column %r" % column)
+        try:
+            preview.set_type(column, typ)
+        except Exception as exc:
+            raise bad_request("Invalid type override for column %r: %s" % (column, exc))
+    if binarize_label:
+        try:
+            preview.transform_label_bin(target)
+            mapping = preview.mapping.get(target) or {}
+            frame[target] = frame[target].map(mapping).astype(float)
+        except (TypeError, ValueError, KeyError) as exc:
+            raise bad_request("Could not binarize target %r: %s" % (target, exc))
+    return frame, preview.pivot_types
 
 
 class SetCVRequest(BaseModel):
@@ -79,28 +118,84 @@ def set_cv(task_name: str, body: SetCVRequest):
     return {"task_name": task_name, "cv": stored_spec}
 
 
-@router.post("/{task_name}/register")
-async def register_dataset(task_name: str, target: str = Form(...), partition: str = Form("train"),
-                            file: UploadFile = File(...)):
-    """Upload a CSV, deduce its schema, and register it for a task/partition."""
-    if not file.filename.lower().endswith(".csv"):
+@router.post("/{task_name}/inspect")
+async def inspect_dataset(task_name: str, file: UploadFile = File(...)):
+    """Preview a CSV's deduced schema without persisting anything (Phase 5.1).
+
+    Runs ``DataPreprocess.deduce_types`` and the name-based sensitive-column scan
+    so the UI can show an editable review table before the user commits the upload
+    via ``POST /{task}/register``.
+    """
+    if not (file.filename or "").lower().endswith(".csv"):
         raise bad_request("Only CSV uploads are supported")
     raw_bytes = await file.read()
-    dataset_dir = settings.task_dataset_dir(task_name)
-    dataset_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = dataset_dir / (partition + ".csv")
-    csv_path.write_bytes(raw_bytes)
+    try:
+        frame = pd.read_csv(BytesIO(raw_bytes))
+    except Exception as exc:
+        raise bad_request("Could not parse the uploaded CSV: %s" % exc)
 
-    frame = pd.read_csv(csv_path)
+    preview = DataPreprocess(frame)
+    preview.deduce_types()
+    return {
+        "task_name": task_name,
+        "rows": int(len(frame)),
+        "columns": list(frame.columns),
+        "deduced_types": preview.pivot_types,
+        # Columns the deducer flagged as label candidates (object dtype, not categorical).
+        "target_candidates": list(preview.deduced_types.get("label", [])),
+        "sensitive_scan": sensitive_feature_report(frame),
+    }
+
+
+@router.post("/{task_name}/register")
+async def register_dataset(task_name: str, target: str = Form(...), partition: str = Form("train"),
+                            file: UploadFile = File(...),
+                            type_overrides: Annotated[str | None, Form()] = None,
+                            binarize_label: Annotated[bool, Form()] = False):
+    """Upload a CSV, deduce its schema, and register it for a task/partition.
+
+    ``type_overrides`` (JSON object of column -> type) is applied via
+    ``DataPreprocess.set_type`` before registration so the user-reviewed types from
+    the inspect step win over the automatic deduction; ``binarize_label`` maps the
+    target's unique values to 0..n-1 through ``transform_label_bin`` (Phase 5.1).
+    """
+    if not (file.filename or "").lower().endswith(".csv"):
+        raise bad_request("Only CSV uploads are supported")
+    _validate_partition_name(partition)
+    raw_bytes = await file.read()
+    try:
+        frame = pd.read_csv(BytesIO(raw_bytes))
+    except Exception as exc:
+        raise bad_request("Could not parse the uploaded CSV: %s" % exc)
     if target not in frame.columns:
         raise bad_request("target column %r not found in the uploaded dataset" % target)
 
     preview = DataPreprocess(frame)
     preview.deduce_types()
+    overrides = {}
+    if isinstance(type_overrides, str) and type_overrides:
+        try:
+            overrides = json.loads(type_overrides)
+        except (TypeError, ValueError):
+            raise bad_request("type_overrides must be a JSON object of column -> type")
+        if not isinstance(overrides, dict) or not all(
+            isinstance(column, str) and isinstance(typ, str) for column, typ in overrides.items()
+        ):
+            raise bad_request("type_overrides must be a JSON object of column -> type strings")
+    frame, pivot_types = apply_type_overrides(
+        frame, preview, target, overrides=overrides or None, binarize_label=binarize_label is True
+    )
+    dataset_dir = settings.task_dataset_dir(task_name)
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = dataset_dir / (partition + ".csv")
 
     with open_tracker(task_name) as tracker:
         tracker.RegisterData(frame, target, partition=partition)
+        tracker.UpdateMetadata({"dataset_deduced_types": pivot_types})
         metadata = tracker.GetMetadata()
+
+    # Persist the materialized target values after successful tracker registration.
+    frame.to_csv(csv_path, index=False)
 
     # Phase 3.4 auto-wiring: record the stored CSV as a registry artifact so the
     # lineage rail and the artifact-cleanup UI can see it. Best-effort — a
@@ -123,10 +218,60 @@ async def register_dataset(task_name: str, target: str = Form(...), partition: s
         "columns": list(frame.columns),
         "dataset_fingerprint": metadata.get("dataset_fingerprint"),
         "dataset_schema": metadata.get("dataset_schema"),
-        "deduced_types": preview.pivot_types,
+        "dataset_deduced_types": metadata.get("dataset_deduced_types"),
+        "deduced_types": pivot_types,
         # Name-based PII / sensitive-column scan of the uploaded frame (Phase 2.4).
         "sensitive_scan": sensitive_feature_report(frame),
     }
+
+
+@router.post("/{task_name}/validate")
+async def validate_dataset(
+    task_name: str,
+    file: Annotated[UploadFile | None, File()] = None,
+    partition: Annotated[str | None, Form()] = None,
+    missing_columns: Annotated[str, Form()] = "raise",
+):
+    """Pre-flight schema validation against the registered dataset (Phase 5.2).
+
+    Accepts either a CSV upload or an existing partition name; runs
+    ``tracker.validate_data(df, target)`` and returns ``{"valid": true}`` on success
+    or a 422 carrying the library's schema-difference message.
+    """
+    if missing_columns not in ("raise", "ignore", "allow"):
+        raise bad_request("missing_columns must be one of: raise, ignore, allow")
+    if partition is not None:
+        _validate_partition_name(partition)
+
+    frame = None
+    source = None
+    if file is not None:
+        if not (file.filename or "").lower().endswith(".csv"):
+            raise bad_request("Only CSV uploads are supported")
+        raw_bytes = await file.read()
+        try:
+            frame = pd.read_csv(BytesIO(raw_bytes))
+        except Exception as exc:
+            raise bad_request("Could not parse the uploaded CSV: %s" % exc)
+        source = "upload"
+    elif partition is not None:
+        csv_path = settings.task_dataset_dir(task_name) / (partition + ".csv")
+        if not csv_path.exists():
+            raise not_found("No dataset partition %r stored for task %r" % (partition, task_name))
+        frame = pd.read_csv(csv_path)
+        source = "partition:%s" % partition
+
+    if frame is None:
+        raise bad_request("Provide a CSV upload or an existing partition name")
+
+    with open_tracker(task_name) as tracker:
+        metadata = tracker.GetMetadata()
+        target = metadata.get("target_name")
+        try:
+            tracker.validate_data(frame, target, missing_columns=missing_columns)
+        except ValueError as exc:
+            raise unprocessable(str(exc))
+    return {"task_name": task_name, "source": source, "valid": True}
 
 
 @router.get("/{task_name}")
@@ -143,6 +288,7 @@ def get_dataset_metadata(task_name: str):
         "dataset_fingerprint": metadata.get("dataset_fingerprint"),
         "dataset_columns": metadata.get("dataset_columns"),
         "dataset_schema": metadata.get("dataset_schema"),
+        "dataset_deduced_types": metadata.get("dataset_deduced_types"),
         "dataset_feature_count": metadata.get("dataset_feature_count"),
         "partitions": splits,
     }

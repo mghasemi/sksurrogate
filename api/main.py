@@ -33,6 +33,7 @@ from .routers import (
     registry,
     retraining,
     sensitivity,
+    synthdata,
 )
 
 
@@ -126,6 +127,7 @@ app.add_middleware(
 )
 
 app.include_router(datasets.router)
+app.include_router(synthdata.router)
 app.include_router(bundles.router)
 app.include_router(quality_gates.router)
 app.include_router(registry.router)

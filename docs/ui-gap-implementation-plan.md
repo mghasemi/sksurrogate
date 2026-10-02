@@ -347,6 +347,13 @@ param)` (:323); `transform()` (:337); `generate(num) -> DataFrame` (:381); `wher
    "Generate" button → result table preview + download link; a small list of previously generated
    files below.
 
+**Implementation details**: `type_overrides` is sent as a JSON multipart field on registration;
+the reviewed per-column map is retained as `dataset_deduced_types` task metadata so later
+synthetic generation can prefill its type selectors. Generated samples have their own registry
+fingerprint and can be downloaded through `GET /api/datasets/{task}/synthetic/{filename}`.
+Inference preflight is opt-in and checks the final feature frame against the registered dataset
+schema before either single or batch prediction.
+
 ---
 
 ## Phase 6 — Jobs & execution backends

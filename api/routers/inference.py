@@ -25,6 +25,22 @@ class PredictRequest(BaseModel):
     partition: str | None = None
     rows: list[dict] | None = None
     request_id: str | None = None
+    # Phase 5.2: when set, run ``validate_prediction_data`` against the registered
+    # dataset schema before predicting and surface the schema-difference message
+    # instead of a raw prediction failure.
+    preflight: bool = False
+
+
+def _preflight_error(task_name, frame):
+    """Return a validation error string for ``frame``, or None if it passes."""
+    if not settings.mltrace_db_path(task_name).exists():
+        return "No registered dataset schema found for task %r; cannot run pre-flight validation." % task_name
+    try:
+        with open_tracker(task_name) as tracker:
+            tracker.validate_prediction_data(frame)
+    except ValueError as exc:
+        return str(exc)
+    return None
 
 
 def _resolve_input_frame(task_name, body: PredictRequest, bundle):
@@ -58,6 +74,10 @@ def predict(task_name: str, body: PredictRequest):
     """Run predictions in-request and return them as JSON (no file written)."""
     bundle = resolve_bundle(task_name, model_version=body.model_version, alias=body.alias)
     frame, ignored_columns = _resolve_input_frame(task_name, body, bundle)
+    if body.preflight:
+        error = _preflight_error(task_name, frame)
+        if error is not None:
+            raise bad_request("Pre-flight validation failed: %s" % error)
     try:
         result = predict_batch(bundle, frame, request_id=body.request_id or uuid.uuid4().hex)
     except SchemaValidationError as exc:
@@ -79,6 +99,10 @@ def predict_batch_endpoint(task_name: str, body: PredictRequest):
     """Run predictions and persist them as a CSV artifact under the task's predictions folder."""
     bundle = resolve_bundle(task_name, model_version=body.model_version, alias=body.alias)
     frame, ignored_columns = _resolve_input_frame(task_name, body, bundle)
+    if body.preflight:
+        error = _preflight_error(task_name, frame)
+        if error is not None:
+            raise bad_request("Pre-flight validation failed: %s" % error)
     request_id = body.request_id or uuid.uuid4().hex
     output_dir = settings.task_predictions_dir(task_name) / bundle.model_version
     output_path = output_dir / (request_id + ".csv")

@@ -45,6 +45,7 @@ from .monitoring import (
     subgroup_performance_report,
 )
 from .retraining import RetrainingJob
+from .synthdat import SynthData
 
 __all__ = [
     "AML",
@@ -78,6 +79,7 @@ __all__ = [
     "SensAprx",
     "SphereSample",
     "StackingEstimator",
+    "SynthData",
     "SurrogateRandomCV",
     "SurrogateSearch",
     "UniformCrossover",

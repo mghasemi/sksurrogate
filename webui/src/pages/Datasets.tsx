@@ -3,16 +3,41 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { UploadCloud } from "lucide-react";
 
 import {
+  downloadSynthetic,
+  generateSynthetic,
   getDatasetCV,
   getDatasetMetadata,
   getTargetStats,
+  inspectDataset,
+  listSynthetic,
   previewDataset,
   registerDataset,
   setDatasetCV,
+  validateDataset,
 } from "../api/client";
-import type { CVParamDef, CVSpec, DatasetPreview, RegisterDatasetResponse, SensitiveScanReport } from "../api/client";
+import type {
+  CVParamDef,
+  CVSpec,
+  DatasetInspectResponse,
+  DatasetMetadata,
+  DatasetPreview,
+  RegisterDatasetResponse,
+  SensitiveScanReport,
+} from "../api/client";
 import { Card, ErrorNote, Loading, Table, Badge, fmtNum } from "../components/ui";
 import { useTask } from "../lib/task-context";
+
+const DATASET_TYPES = [
+  "float64",
+  "int64",
+  "datetime64",
+  "other",
+  "text",
+  "binary",
+  "categorical",
+  "label",
+  "obsolete",
+];
 
 /** Human-readable label for a stored CV spec, e.g. "StratifiedKFold(n_splits=5)". */
 function describeCv(spec: CVSpec): string {
@@ -31,6 +56,9 @@ export default function DatasetsPage() {
   const [target, setTarget] = useState("");
   const [partition, setPartition] = useState("train");
   const [file, setFile] = useState<File | null>(null);
+  const [typeOverrides, setTypeOverrides] = useState<Record<string, string>>({});
+  const [binarizeLabel, setBinarizeLabel] = useState(false);
+  const [validationPartition, setValidationPartition] = useState("train");
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -47,15 +75,49 @@ export default function DatasetsPage() {
     enabled: !!task && !!previewPartition,
   });
 
+  const inspectMut = useMutation({
+    mutationFn: (upload: File) => inspectDataset(task, upload),
+    onSuccess: (data: DatasetInspectResponse) => {
+      setTypeOverrides(data.deduced_types);
+      setTarget(data.target_candidates[0] ?? data.columns[0] ?? "");
+      setBinarizeLabel(false);
+    },
+  });
+
+  const validateMut = useMutation({
+    mutationFn: (body: { file?: File; partition?: string }) => validateDataset(task, body),
+  });
+  const validateStoredMut = useMutation({
+    mutationFn: (storedPartition: string) => validateDataset(task, { partition: storedPartition }),
+  });
+
   const registerMut = useMutation({
     mutationFn: (vars: { target: string; partition: string; file: File }) =>
-      registerDataset(task, vars.target, vars.partition, vars.file),
+      registerDataset(task, vars.target, vars.partition, vars.file, {
+        type_overrides: typeOverrides,
+        binarize_label: binarizeLabel,
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["dataset-meta", task] });
+      qc.invalidateQueries({ queryKey: ["target-stats", task] });
       setFile(null);
+      setTypeOverrides({});
+      setBinarizeLabel(false);
+      inspectMut.reset();
+      validateMut.reset();
       if (fileRef.current) fileRef.current.value = "";
     },
   });
+
+  const inspected = inspectMut.data ?? null;
+  const setUpload = (nextFile: File | null) => {
+    setFile(nextFile);
+    inspectMut.reset();
+    validateMut.reset();
+    registerMut.reset();
+    setTypeOverrides({});
+    setBinarizeLabel(false);
+  };
 
   const cvQ = useQuery({
     queryKey: ["dataset-cv", task],
@@ -137,11 +199,22 @@ export default function DatasetsPage() {
         <div className="error-note">Pick a task name in the top bar to work with datasets.</div>
       )}
 
-      <Card title="Register a partition" sub="Server infers dtypes and stores the CSV under var/sksurrogate-api/datasets/{task}/">
+      <Card title="Register a partition" sub="Upload, review the inferred schema, then commit the CSV as a task partition.">
         <div className="row">
           <div className="field fixed" style={{ flex: "0 1 260px", minWidth: 180 }}>
             <label>Target column</label>
-            <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="e.g. target" spellCheck={false} />
+            {inspected ? (
+              <select value={target} onChange={(e) => setTarget(e.target.value)}>
+                <option value="">— select —</option>
+                {inspected.columns.map((column) => (
+                  <option key={column} value={column}>
+                    {column}{inspected.target_candidates.includes(column) ? " (label candidate)" : ""}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <input value={target} readOnly placeholder="Choose after inspecting the CSV" spellCheck={false} />
+            )}
           </div>
           <div className="field fixed" style={{ flex: "0 1 160px", minWidth: 120 }}>
             <label>Partition</label>
@@ -157,7 +230,7 @@ export default function DatasetsPage() {
             e.preventDefault();
             setDragOver(false);
             const f = e.dataTransfer.files?.[0];
-            if (f) setFile(f);
+            if (f) setUpload(f);
           }}
           onClick={() => fileRef.current?.click()}
         >
@@ -174,9 +247,92 @@ export default function DatasetsPage() {
             type="file"
             accept=".csv,.tsv,text/csv"
             style={{ display: "none" }}
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            onChange={(e) => setUpload(e.target.files?.[0] ?? null)}
           />
         </div>
+
+        {inspectMut.isError && <ErrorNote error={inspectMut.error} />}
+        {file && (
+          <button
+            className="btn"
+            disabled={!task || inspectMut.isPending}
+            onClick={() => inspectMut.mutate(file)}
+          >
+            {inspectMut.isPending ? "Inspecting…" : "Inspect CSV"}
+          </button>
+        )}
+
+        {inspected && (
+          <>
+            <div className="hint" style={{ marginTop: 12 }}>
+              {fmtNum(inspected.rows)} rows · {fmtNum(inspected.columns.length)} columns. Review the detected type for each column before committing.
+            </div>
+            <Table<string>
+              columns={["Column", "Detected / selected type", "Sensitive flags"]}
+              rows={inspected.columns}
+              keyOf={(column) => column}
+              render={(column) => {
+                const scan = inspected.sensitive_scan;
+                const isPii = scan?.pii_columns.includes(column) ?? false;
+                const isSensitive = scan?.sensitive_columns.includes(column) ?? false;
+                return [
+                  <td key="name" className="mono">{column}</td>,
+                  <td key="type">
+                    <select
+                      aria-label={`Type for ${column}`}
+                      value={typeOverrides[column] ?? inspected.deduced_types[column] ?? "other"}
+                      onChange={(e) => setTypeOverrides((current) => ({ ...current, [column]: e.target.value }))}
+                    >
+                      {DATASET_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+                    </select>
+                  </td>,
+                  <td key="flags">
+                    {isPii && <Badge tone="warn">PII</Badge>}
+                    {isSensitive && <Badge tone="warn">sensitive</Badge>}
+                    {!isPii && !isSensitive && <span className="muted">—</span>}
+                  </td>,
+                ];
+              }}
+            />
+
+            <div className="row" style={{ alignItems: "center", marginTop: 12 }}>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={binarizeLabel}
+                  onChange={(e) => setBinarizeLabel(e.target.checked)}
+                />
+                Binarize / ordinal-encode target labels
+              </label>
+            </div>
+
+            {validateMut.isError && <ErrorNote error={validateMut.error} />}
+            {validateMut.data?.valid && (
+              <div className="success-note">CSV passed validation against the currently registered schema.</div>
+            )}
+            {!metaQ.data?.dataset_schema && (
+              <div className="hint">
+                Upload validation becomes available after the task has a registered schema.
+              </div>
+            )}
+            <div className="row">
+              <button
+                className="btn"
+                disabled={!task || !metaQ.data?.dataset_schema || validateMut.isPending}
+                onClick={() => file && validateMut.mutate({ file })}
+              >
+                {validateMut.isPending ? "Validating…" : "Validate upload"}
+              </button>
+              <button
+                className="btn primary"
+                disabled={!task || !target || !partition || !file || registerMut.isPending}
+                onClick={() => file && registerMut.mutate({ target, partition, file })}
+              >
+                {registerMut.isPending ? "Committing…" : "Commit dataset"}
+              </button>
+            </div>
+          </>
+        )}
 
         {registerMut.isError && <ErrorNote error={registerMut.error} />}
         {registerMut.isSuccess && (
@@ -189,13 +345,6 @@ export default function DatasetsPage() {
           </>
         )}
 
-        <button
-          className="btn primary"
-          disabled={!task || !target || !partition || !file || registerMut.isPending}
-          onClick={() => file && registerMut.mutate({ target, partition, file })}
-        >
-          {registerMut.isPending ? "Registering…" : "Register dataset"}
-        </button>
       </Card>
 
       <Card
@@ -310,6 +459,33 @@ export default function DatasetsPage() {
 
             {partitions.length > 0 && (
               <>
+                <div className="row" style={{ alignItems: "end", marginTop: 12 }}>
+                  <div className="field fixed" style={{ flex: "0 1 220px", minWidth: 180 }}>
+                    <label>Validate stored partition</label>
+                    <select
+                      value={partitions.includes(validationPartition) ? validationPartition : partitions[0]}
+                      onChange={(e) => setValidationPartition(e.target.value)}
+                    >
+                      {partitions.map((p) => <option key={p} value={p}>{p}</option>)}
+                    </select>
+                  </div>
+                  <button
+                    className="btn"
+                    disabled={validateStoredMut.isPending}
+                    onClick={() => validateStoredMut.mutate(
+                      partitions.includes(validationPartition) ? validationPartition : partitions[0],
+                    )}
+                  >
+                    {validateStoredMut.isPending ? "Validating…" : "Re-validate partition"}
+                  </button>
+                </div>
+                {validateStoredMut.isError && <ErrorNote error={validateStoredMut.error} />}
+                {validateStoredMut.data?.valid && (
+                  <div className="success-note">
+                    Partition <code>{validateStoredMut.data.source.replace("partition:", "")}</code> matches the registered schema.
+                  </div>
+                )}
+
                 <h3 style={{ marginTop: 16 }}>Partitions</h3>
                 <Table<string>
                   columns={["Partition", "Rows", "Ingested at", "Fingerprint"]}
@@ -366,8 +542,191 @@ export default function DatasetsPage() {
         )}
       </Card>
 
+      <SyntheticDataCard task={task} metadata={metaQ.data} partitions={partitions} />
       <TargetStatsCard task={task} enabled={partitions.length > 0} />
     </div>
+  );
+}
+
+function SyntheticDataCard({
+  task,
+  metadata,
+  partitions,
+}: {
+  task: string;
+  metadata?: DatasetMetadata;
+  partitions: string[];
+}) {
+  const qc = useQueryClient();
+  const columns = metadata?.dataset_columns ?? [];
+  const [num, setNum] = useState("100");
+  const [partition, setPartition] = useState("train");
+  const [distribution, setDistribution] = useState<"marginal" | "joint">("marginal");
+  const [types, setTypes] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!metadata) return;
+    const inferred = Object.fromEntries(columns.map((column) => {
+      const schema = metadata.dataset_schema?.[column];
+      const dtype = schema && typeof schema === "object" && "dtype" in schema
+        && typeof schema.dtype === "string"
+        ? schema.dtype.toLowerCase()
+        : "";
+      const deduced = metadata.dataset_deduced_types?.[column];
+      const deducedType: Record<string, string> = {
+        float64: "real",
+        int64: "int",
+        datetime64: "date",
+        binary: "bin",
+        label: "cat",
+        text: "cat",
+        categorical: "cat",
+        other: "cat",
+        obsolete: "cat",
+      };
+      const type = (deduced && deducedType[deduced])
+        ?? (dtype.includes("datetime") ? "date" : /int/.test(dtype) ? "int" : /float|double|decimal/.test(dtype) ? "real" : "cat");
+      return [column, type];
+    }));
+    setTypes((current) => ({ ...inferred, ...current }));
+  }, [metadata, columns]);
+
+  const filesQ = useQuery({
+    queryKey: ["synthetic-files", task],
+    queryFn: () => listSynthetic(task),
+    enabled: !!task && partitions.length > 0,
+    retry: false,
+  });
+  const generateMut = useMutation({
+    mutationFn: () => generateSynthetic(task, {
+      num: Number(num),
+      partition,
+      distribution_type: distribution,
+      type_overrides: types,
+    }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["synthetic-files", task] }),
+  });
+  const downloadMut = useMutation({ mutationFn: (filename: string) => downloadSynthetic(task, filename) });
+  const preview = generateMut.data?.preview ?? [];
+  const previewColumns = generateMut.data?.columns ?? [];
+  const rowCount = Number(num);
+  const validNum = Number.isInteger(rowCount) && rowCount > 0;
+
+  return (
+    <Card title="Synthetic data" sub="Generate and download a sample based on a registered data partition.">
+      {!partitions.length && <p className="muted">Register a dataset partition before generating synthetic data.</p>}
+      {partitions.length > 0 && (
+        <>
+          <div className="row">
+            <div className="field fixed" style={{ flex: "0 1 150px", minWidth: 120 }}>
+              <label>Rows</label>
+              <input type="number" min={1} step={1} value={num} onChange={(e) => setNum(e.target.value)} />
+            </div>
+            <div className="field fixed" style={{ flex: "0 1 220px", minWidth: 160 }}>
+              <label>Source partition</label>
+              <select value={partition} onChange={(e) => setPartition(e.target.value)}>
+                {partitions.map((p) => <option key={p} value={p}>{p}</option>)}
+              </select>
+            </div>
+            <div className="field fixed" style={{ flex: "0 1 240px", minWidth: 180 }}>
+              <label>Distribution type</label>
+              <div className="row" style={{ gap: 12 }}>
+                <label className="checkbox-row">
+                  <input type="radio" name="synthetic-distribution" checked={distribution === "marginal"} onChange={() => setDistribution("marginal")} />
+                  Marginal
+                </label>
+                <label className="checkbox-row">
+                  <input type="radio" name="synthetic-distribution" checked={distribution === "joint"} onChange={() => setDistribution("joint")} />
+                  Joint
+                </label>
+              </div>
+            </div>
+          </div>
+
+          {columns.length > 0 && (
+            <>
+              <h3 style={{ marginTop: 14 }}>Column generation types</h3>
+              <Table<string>
+                columns={["Column", "Type"]}
+                rows={columns}
+                keyOf={(column) => column}
+                render={(column) => [
+                  <td key="name" className="mono">{column}</td>,
+                  <td key="type">
+                    <select
+                      aria-label={`Synthetic type for ${column}`}
+                      value={types[column] ?? "cat"}
+                      onChange={(e) => setTypes((current) => ({ ...current, [column]: e.target.value }))}
+                    >
+                      {["bin", "int", "real", "cat", "date"].map((type) => (
+                        <option key={type} value={type}>{type}</option>
+                      ))}
+                    </select>
+                  </td>,
+                ]}
+              />
+            </>
+          )}
+
+          {generateMut.isError && <ErrorNote error={generateMut.error} />}
+          {downloadMut.isError && <ErrorNote error={downloadMut.error} />}
+          {generateMut.data && (
+            <>
+              <div className="success-note" style={{ marginTop: 12 }}>
+                Generated {fmtNum(generateMut.data.rows)} rows at <code>{generateMut.data.path}</code>
+              </div>
+              {preview.length > 0 && (
+                <Table<Record<string, unknown>>
+                  columns={previewColumns}
+                  rows={preview}
+                  keyOf={(_, i) => i}
+                  render={(row) => previewColumns.map((column) => (
+                    <td key={column} className="mono">{String(row[column] ?? "")}</td>
+                  ))}
+                />
+              )}
+              <button
+                className="btn"
+                disabled={downloadMut.isPending}
+                onClick={() => downloadMut.mutate(generateMut.data!.path.split("/").pop()!)}
+              >
+                Download generated CSV
+              </button>
+            </>
+          )}
+
+          <div className="row" style={{ marginTop: 12 }}>
+            <button
+              className="btn primary"
+              disabled={!task || !validNum || generateMut.isPending}
+              onClick={() => generateMut.mutate()}
+            >
+              {generateMut.isPending ? "Generating…" : "Generate synthetic data"}
+            </button>
+          </div>
+
+          {filesQ.isLoading && <Loading />}
+          {filesQ.isError && <ErrorNote error={filesQ.error} />}
+          {(filesQ.data?.files.length ?? 0) > 0 && (
+            <>
+              <h3 style={{ marginTop: 16 }}>Previously generated files</h3>
+              <Table
+                columns={["File", "Rows", "Download"]}
+                rows={filesQ.data!.files}
+                keyOf={(entry) => entry.name}
+                render={(entry) => [
+                  <td key="name" className="mono">{entry.name}</td>,
+                  <td key="rows">{fmtNum(entry.rows)}</td>,
+                  <td key="download">
+                    <button className="btn" onClick={() => downloadMut.mutate(entry.name)}>Download</button>
+                  </td>,
+                ]}
+              />
+            </>
+          )}
+        </>
+      )}
+    </Card>
   );
 }
 

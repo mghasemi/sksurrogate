@@ -220,6 +220,7 @@ function PredictConsole({ task, versions, partitions }: { task: string; versions
   const [source, setSource] = useState<InputSourceKind>("partition");
   const [partition, setPartition] = useState("");
   const [rowsJson, setRowsJson] = useState("");
+  const [preflight, setPreflight] = useState(false);
   const [inputError, setInputError] = useState<string | null>(null);
   const [result, setResult] = useState<PredictResponse | null>(null);
 
@@ -240,6 +241,10 @@ function PredictConsole({ task, versions, partitions }: { task: string; versions
         rowsJson={rowsJson}
         setRowsJson={setRowsJson}
       />
+      <label className="checkbox-row" style={{ marginTop: 8 }}>
+        <input type="checkbox" checked={preflight} onChange={(e) => setPreflight(e.target.checked)} />
+        Validate before run
+      </label>
 
       {inputError && <div className="error-note">{inputError}</div>}
       {mut.isError && <ErrorNote error={mut.error} />}
@@ -251,6 +256,7 @@ function PredictConsole({ task, versions, partitions }: { task: string; versions
           const { body, error } = buildBody(inputs, source, partition, rowsJson);
           setInputError(error ?? null);
           if (error) return;
+          body.preflight = preflight;
           mut.mutate(body);
         }}
       >
@@ -279,6 +285,7 @@ function BatchRun({ task, versions, partitions }: { task: string; versions: stri
   const [source, setSource] = useState<InputSourceKind>("partition");
   const [partition, setPartition] = useState("");
   const [rowsJson, setRowsJson] = useState("");
+  const [preflight, setPreflight] = useState(false);
   const [inputError, setInputError] = useState<string | null>(null);
   const [result, setResult] = useState<PredictBatchResponse | null>(null);
 
@@ -296,6 +303,10 @@ function BatchRun({ task, versions, partitions }: { task: string; versions: stri
         rowsJson={rowsJson}
         setRowsJson={setRowsJson}
       />
+      <label className="checkbox-row" style={{ marginTop: 8 }}>
+        <input type="checkbox" checked={preflight} onChange={(e) => setPreflight(e.target.checked)} />
+        Validate before run
+      </label>
 
       {inputError && <div className="error-note">{inputError}</div>}
       {mut.isError && <ErrorNote error={mut.error} />}
@@ -307,6 +318,7 @@ function BatchRun({ task, versions, partitions }: { task: string; versions: stri
           const { body, error } = buildBody(inputs, source, partition, rowsJson);
           setInputError(error ?? null);
           if (error) return;
+          body.preflight = preflight;
           mut.mutate(body);
         }}
       >
