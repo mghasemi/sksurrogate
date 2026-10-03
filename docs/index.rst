@@ -21,6 +21,8 @@ Welcome to SKSurrogate's documentation!
    modelbundles
    inference
    monitoring
+   controlplane
+   ui-manual
    phase9
    phase10
    release
