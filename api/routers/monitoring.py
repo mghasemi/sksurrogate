@@ -14,8 +14,11 @@ artifacts (``predictions/{task}/{version}/{request_id}.csv``, written by
 ad-hoc checks.
 """
 
+import json
+from datetime import datetime, timezone
+
 import pandas as pd
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from SKSurrogate import (
@@ -29,9 +32,54 @@ from SKSurrogate import (
 )
 
 from ..config import settings
-from ..deps import bad_request, load_monitor_records, not_found, open_tracker
+from ..deps import append_drift_alerts, bad_request, load_monitor_records, not_found, open_tracker
 
 router = APIRouter(prefix="/api/monitoring", tags=["monitoring"])
+
+
+@router.get("/alerts")
+def monitoring_alerts(task: str | None = None, limit: int = Query(default=20, ge=1, le=100)):
+    """Return recent persisted drift alerts and inference failures."""
+    if settings.monitoring_dir.is_dir():
+        task_dirs = sorted(
+            (path for path in settings.monitoring_dir.iterdir() if path.is_dir()),
+            key=lambda path: path.name,
+        )
+    else:
+        task_dirs = []
+    if task is not None:
+        task_dirs = [path for path in task_dirs if path.name == task]
+
+    alerts = []
+    for task_dir in task_dirs:
+        alerts_path = settings.monitor_alerts_path(task_dir.name)
+        if alerts_path.exists():
+            with alerts_path.open(encoding="utf-8") as stream:
+                alerts.extend(json.loads(line) for line in stream if line.strip())
+
+        for monitor_path in task_dir.glob("*.json"):
+            version = monitor_path.stem
+            for record in load_monitor_records(task_dir.name, version):
+                if record.get("success", True):
+                    continue
+                timestamp = record.get("timestamp")
+                if timestamp is None:
+                    timestamp = datetime.fromtimestamp(
+                        monitor_path.stat().st_mtime, tz=timezone.utc
+                    ).isoformat()
+                alerts.append(
+                    {
+                        "timestamp": timestamp,
+                        "task": task_dir.name,
+                        "version": version,
+                        "type": "inference_error",
+                        "severity": "error",
+                        "detail": "Inference request failed for %s row(s)." % record.get("rows", 0),
+                    }
+                )
+
+    alerts.sort(key=lambda alert: alert["timestamp"], reverse=True)
+    return {"alerts": alerts[:limit]}
 
 
 class DriftRequest(BaseModel):
@@ -140,13 +188,20 @@ def check_prediction_drift(task_name: str, model_version: str, body: PredictionD
     current = _resolve_prediction_series(task_name, model_version, body.current_source)
     if len(reference) < 2 or len(current) < 2:
         raise bad_request("Each prediction series needs at least two rows")
-    return prediction_distribution_report(
+    report = prediction_distribution_report(
         reference.tolist(),
         current.tolist(),
         model_version=model_version,
         threshold=body.threshold,
         bins=body.bins,
     )
+    append_drift_alerts(
+        task_name,
+        model_version,
+        report["alerts"],
+        thresholds={"psi": body.threshold, "categorical": body.threshold},
+    )
+    return report
 
 
 class SubgroupPerformanceRequest(BaseModel):
@@ -236,7 +291,7 @@ def check_drift(task_name: str, body: DriftRequest):
     """Compare two stored dataset partitions for schema/statistical drift."""
     reference = _load_partition(task_name, body.reference_partition)
     current = _load_partition(task_name, body.current_partition)
-    return drift_report(
+    report = drift_report(
         reference,
         current,
         model_version=body.model_version,
@@ -245,6 +300,18 @@ def check_drift(task_name: str, body: DriftRequest):
         missingness_threshold=body.missingness_threshold,
         range_threshold=body.range_threshold,
     )
+    append_drift_alerts(
+        task_name,
+        body.model_version,
+        report["alerts"],
+        thresholds={
+            "psi": body.psi_threshold,
+            "categorical": body.categorical_threshold,
+            "missingness": body.missingness_threshold,
+            "range": body.range_threshold,
+        },
+    )
+    return report
 
 
 class FairnessRequest(BaseModel):

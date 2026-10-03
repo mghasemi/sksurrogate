@@ -382,6 +382,15 @@ Both are exported but never used by `api/jobs.py`.
 
 ---
 
+**Implementation details**: Failed experiment job records retain the validated request, resolved
+`run_id`, and original checkpoint job ID. `POST /api/jobs/{job_id}/resume` only accepts failed
+experiment jobs with an existing `.eoa` checkpoint, and the new job points back to the same
+checkpoint directory. Cancellation is not currently implemented, so cancelled jobs cannot be
+resumed. Experiment and retraining requests accept `backend: "local" | "dask"`; local remains the
+thread-pool default, while Dask dispatches the callable through `DaskExecutionBackend` and returns
+503 when `dask.distributed` is unavailable. Scoring options report available backends to selectors
+on both the Experiments and Retraining pages.
+
 ## Phase 7 — Dashboard & loose ends
 
 ### 7.1 Drift-alerts feed on the Dashboard (plan item)
@@ -401,6 +410,14 @@ Both are exported but never used by `api/jobs.py`.
 ### 7.3 Plan §4 leftovers — already satisfied, no work needed
 - `/api/auth`: covered by the opt-in `ApiKeyMiddleware` + Settings page key field.
 - `/api/audit`: covered by `GET /api/registry/{task}/audit` rendered on Registry and Settings.
+
+**Implementation details**: Monitoring checks append each emitted drift alert to a task-scoped
+`monitoring/{task}/alerts.jsonl` log. Schema-validation failures from inference are persisted in
+the per-version monitor log and exposed as error alerts. `GET /api/monitoring/alerts` aggregates
+those records across tasks (or filters to one task) and returns the newest entries up to the
+requested limit. Dashboard alert links select the affected task and version on Monitoring.
+Registry `latest` and lifecycle aliases expose "Use in Inference" actions; the selected registered
+version is passed as the `model_version` query parameter and preselected in both inference consoles.
 
 ---
 

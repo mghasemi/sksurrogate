@@ -2,6 +2,7 @@
 
 import json
 from contextlib import contextmanager
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
 
@@ -70,7 +71,65 @@ def append_monitor_record(task_name, model_version, latency_ms, rows, success=Tr
     log_path = settings.monitor_log_path(task_name, model_version)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as stream:
-        stream.write(json.dumps({"latency_ms": float(latency_ms), "rows": int(rows), "success": bool(success)}) + "\n")
+        stream.write(
+            json.dumps(
+                {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "latency_ms": float(latency_ms),
+                    "rows": int(rows),
+                    "success": bool(success),
+                }
+            )
+            + "\n"
+        )
+
+
+def append_monitor_alert(task_name, model_version, alert_type, detail, severity="warning"):
+    """Persist a JSON-safe monitoring alert for the Dashboard feed."""
+    alert_path = settings.monitor_alerts_path(task_name)
+    alert_path.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "task": task_name,
+        "version": model_version,
+        "type": str(alert_type),
+        "severity": severity,
+        "detail": str(detail),
+    }
+    with alert_path.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(record) + "\n")
+
+
+def append_drift_alerts(task_name, model_version, alerts, thresholds=None):
+    """Store report alerts using the stable Dashboard alert shape."""
+    if not isinstance(alerts, list):
+        raise TypeError("monitoring report alerts must be a list")
+    thresholds = thresholds or {}
+    for alert in alerts:
+        if not isinstance(alert, dict) or not isinstance(alert.get("type"), str):
+            raise TypeError("monitoring report alerts must contain a string type")
+        details = []
+        column = alert.get("column")
+        if column is not None:
+            details.append(str(column))
+        value = alert.get("value")
+        if value is not None:
+            details.append("value=%s" % value)
+        threshold_key = {
+            "missingness": "missingness",
+            "numeric_drift": "psi",
+            "categorical_drift": "categorical",
+            "range_drift": "range",
+        }.get(alert["type"])
+        if threshold_key in thresholds:
+            details.append("threshold=%s" % thresholds[threshold_key])
+        append_monitor_alert(
+            task_name,
+            model_version,
+            alert["type"],
+            ", ".join(details) or alert["type"],
+            severity="warning",
+        )
 
 
 def load_monitor_records(task_name, model_version):

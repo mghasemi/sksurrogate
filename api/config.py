@@ -88,6 +88,9 @@ class Settings:
     def monitor_log_path(self, task_name, model_version):
         return self.monitoring_dir / task_name / (model_version + ".json")
 
+    def monitor_alerts_path(self, task_name):
+        return self.monitoring_dir / task_name / "alerts.jsonl"
+
     def job_record_path(self, job_id):
         return self.jobs_dir / (job_id + ".json")
 

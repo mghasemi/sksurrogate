@@ -6,6 +6,7 @@ version used (see docs/ui-plan.md section 4).
 """
 
 import uuid
+from time import perf_counter
 
 import pandas as pd
 from fastapi import APIRouter
@@ -78,9 +79,12 @@ def predict(task_name: str, body: PredictRequest):
         error = _preflight_error(task_name, frame)
         if error is not None:
             raise bad_request("Pre-flight validation failed: %s" % error)
+    started = perf_counter()
     try:
         result = predict_batch(bundle, frame, request_id=body.request_id or uuid.uuid4().hex)
     except SchemaValidationError as exc:
+        latency_ms = (perf_counter() - started) * 1000
+        append_monitor_record(task_name, bundle.model_version, latency_ms, len(frame), success=False)
         raise bad_request("; ".join(exc.errors))
     metrics = result.attrs["inference_metrics"]
     append_monitor_record(task_name, bundle.model_version, metrics["latency_ms"], metrics["rows"])
@@ -106,9 +110,12 @@ def predict_batch_endpoint(task_name: str, body: PredictRequest):
     request_id = body.request_id or uuid.uuid4().hex
     output_dir = settings.task_predictions_dir(task_name) / bundle.model_version
     output_path = output_dir / (request_id + ".csv")
+    started = perf_counter()
     try:
         result = predict_batch(bundle, frame, output_path=output_path, request_id=request_id)
     except SchemaValidationError as exc:
+        latency_ms = (perf_counter() - started) * 1000
+        append_monitor_record(task_name, bundle.model_version, latency_ms, len(frame), success=False)
         raise bad_request("; ".join(exc.errors))
     metrics = result.attrs["inference_metrics"]
     append_monitor_record(task_name, bundle.model_version, metrics["latency_ms"], metrics["rows"])

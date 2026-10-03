@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { listJobs, getEffectiveApiBase } from "../api/client";
-import type { JobRecord } from "../api/client";
-import { Card, Stat, StatusBadge, Table, ErrorNote, Loading, fmtNum } from "../components/ui";
+import { getMonitoringAlerts, listJobs, getEffectiveApiBase } from "../api/client";
+import type { JobRecord, MonitoringAlert } from "../api/client";
+import { Badge, Card, Stat, StatusBadge, Table, ErrorNote, Loading, fmtNum } from "../components/ui";
 
 const STAGES: Array<{ to: string; title: string; desc: string }> = [
   { to: "/datasets", title: "Datasets", desc: "Register data, inspect schema & fingerprint" },
@@ -17,6 +17,11 @@ const STAGES: Array<{ to: string; title: string; desc: string }> = [
 
 export default function DashboardPage() {
   const jobsQ = useQuery({ queryKey: ["jobs"], queryFn: () => listJobs(), refetchInterval: 5000 });
+  const alertsQ = useQuery({
+    queryKey: ["monitoring-alerts", "all"],
+    queryFn: () => getMonitoringAlerts(undefined, 20),
+    refetchInterval: 15000,
+  });
 
   return (
     <div className="stack">
@@ -31,6 +36,39 @@ export default function DashboardPage() {
         <Stat label="Completed" value={fmtNum(jobsQ.data?.jobs.filter((j) => j.status === "completed").length)} />
         <Stat label="Failed" value={fmtNum(jobsQ.data?.jobs.filter((j) => j.status === "failed").length)} />
       </div>
+
+      <Card title="Recent monitoring alerts" sub="Latest drift findings and inference failures across tasks.">
+        {alertsQ.isLoading && <Loading />}
+        {alertsQ.isError && <ErrorNote error={alertsQ.error} />}
+        {alertsQ.data && alertsQ.data.alerts.length === 0 && (
+          <p className="muted">No monitoring alerts have been recorded.</p>
+        )}
+        {alertsQ.data && alertsQ.data.alerts.length > 0 && (
+          <Table<MonitoringAlert>
+            columns={["Severity", "Task", "Version", "Type", "Detail", "When", ""]}
+            rows={alertsQ.data.alerts}
+            keyOf={(alert, index) => `${alert.timestamp}-${alert.task}-${alert.version ?? "none"}-${index}`}
+            render={(alert) => [
+              <td key="severity">
+                <Badge tone={alert.severity === "error" ? "err" : "warn"}>{alert.severity}</Badge>
+              </td>,
+              <td key="task">{alert.task}</td>,
+              <td key="version" className="mono">{alert.version ?? "—"}</td>,
+              <td key="type"><span className="badge info">{alert.type}</span></td>,
+              <td key="detail">{alert.detail}</td>,
+              <td key="time" className="mono">{new Date(alert.timestamp).toLocaleString()}</td>,
+              <td key="link">
+                <Link
+                  className="btn"
+                  to={`/monitoring?task=${encodeURIComponent(alert.task)}${alert.version ? `&version=${encodeURIComponent(alert.version)}` : ""}`}
+                >
+                  View monitoring
+                </Link>
+              </td>,
+            ]}
+          />
+        )}
+      </Card>
 
       <Card title="Pipeline stages">
         <div className="grid cols-4">

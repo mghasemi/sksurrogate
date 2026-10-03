@@ -1,11 +1,13 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 
 import {
   REGISTRY_STATES,
   deleteArtifacts,
   getRegistryArtifacts,
   listBundles,
+  loadRegisteredBundle,
   promoteBundle,
   registerBundle,
   registryAudit,
@@ -27,6 +29,7 @@ function countInState(versions: Record<string, string>, state: string): number {
 export default function RegistryPage() {
   const { task } = useTask();
   const qc = useQueryClient();
+  const navigate = useNavigate();
 
   const bundlesQ = useQuery({ queryKey: ["bundles-list", task], queryFn: () => listBundles(task), enabled: !!task });
   // One round-trip for the whole lifecycle: aliases + per-version states.
@@ -52,6 +55,12 @@ export default function RegistryPage() {
 
   const aliases = summaryQ.data?.aliases ?? {};
   const versionStates = summaryQ.data?.versions ?? {};
+  const loadRegisteredMut = useMutation({
+    mutationFn: (alias: string) => loadRegisteredBundle(task, alias),
+    onSuccess: (bundle) => {
+      navigate(`/inference?model_version=${encodeURIComponent(bundle.model_version)}`);
+    },
+  });
 
   // Versions the user can act on: bundles folder + registry versions + history/audit.
   const versions = useMemo(() => {
@@ -86,10 +95,20 @@ export default function RegistryPage() {
           {summaryQ.data && (
             <>
               {aliases.latest && (
-                <div style={{ marginBottom: 10 }}>
-                  <span className="muted" style={{ marginRight: 8 }}>latest →</span>
-                  <code>{aliases.latest}</code>{" "}
-                  <StatusBadge status={versionStates[aliases.latest] ?? "candidate"} />
+                <div className="row fixed" style={{ marginBottom: 10 }}>
+                  <span>
+                    <span className="muted" style={{ marginRight: 8 }}>latest →</span>
+                    <code>{aliases.latest}</code>{" "}
+                    <StatusBadge status={versionStates[aliases.latest] ?? "candidate"} />
+                  </span>
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={loadRegisteredMut.isPending}
+                    onClick={() => loadRegisteredMut.mutate("latest")}
+                  >
+                    Use in Inference
+                  </button>
                 </div>
               )}
               <div className="state-flow">
@@ -101,6 +120,17 @@ export default function RegistryPage() {
                       <div className="muted mono" style={{ fontSize: 11, marginTop: 3 }}>
                         {aliases[s] ?? (countInState(versionStates, s) > 0 ? `${countInState(versionStates, s)} version(s)` : "—")}
                       </div>
+                      {aliases[s] && (
+                        <button
+                          type="button"
+                          className="btn"
+                          style={{ marginTop: 6 }}
+                          disabled={loadRegisteredMut.isPending}
+                          onClick={() => loadRegisteredMut.mutate(s)}
+                        >
+                          Use in Inference
+                        </button>
+                      )}
                     </div>
                   </span>
                 ))}
@@ -109,6 +139,7 @@ export default function RegistryPage() {
               {[...new Set([aliases.latest, ...Object.values(aliases)].filter((v): v is string => !!v))].map((v) => (
                 <LineageRail key={v} task={task} modelVersion={v} />
               ))}
+              {loadRegisteredMut.isError && <ErrorNote error={loadRegisteredMut.error} />}
             </>
           )}
         </Card>

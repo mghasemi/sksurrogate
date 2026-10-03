@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 
 import {
   REGISTRY_STATES,
@@ -17,6 +18,8 @@ import { useTask } from "../lib/task-context";
 
 export default function InferencePage() {
   const { task } = useTask();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialVersion = searchParams.get("model_version") ?? "";
 
   const bundlesQ = useQuery({ queryKey: ["bundles-list", task], queryFn: () => listBundles(task), enabled: !!task });
   const datasetQ = useQuery({
@@ -32,6 +35,13 @@ export default function InferencePage() {
     [datasetQ.data],
   );
 
+  useEffect(() => {
+    if (!task || !initialVersion) return;
+    const params = new URLSearchParams(searchParams);
+    params.delete("model_version");
+    setSearchParams(params, { replace: true });
+  }, [initialVersion, searchParams, setSearchParams, task]);
+
   return (
     <div className="stack">
       <div className="page-head">
@@ -43,17 +53,17 @@ export default function InferencePage() {
 
       {task && (
         <>
-          <PredictConsole task={task} versions={versions} partitions={partitions} />
-          <BatchRun task={task} versions={versions} partitions={partitions} />
+          <PredictConsole key={`predict-${task}`} task={task} versions={versions} partitions={partitions} initialVersion={initialVersion} />
+          <BatchRun key={`batch-${task}`} task={task} versions={versions} partitions={partitions} initialVersion={initialVersion} />
         </>
       )}
     </div>
   );
 }
 
-function useModelInputs() {
+function useModelInputs(initialVersion: string) {
   const [mode, setMode] = useState<"version" | "alias">("version");
-  const [modelVersion, setModelVersion] = useState("");
+  const [modelVersion, setModelVersion] = useState(initialVersion);
   const [alias, setAlias] = useState<string>("production");
   return { mode, setMode, modelVersion, setModelVersion, alias, setAlias };
 }
@@ -215,8 +225,8 @@ function buildBody(
   return { body };
 }
 
-function PredictConsole({ task, versions, partitions }: { task: string; versions: string[]; partitions: string[] }) {
-  const inputs = useModelInputs();
+function PredictConsole({ task, versions, partitions, initialVersion }: { task: string; versions: string[]; partitions: string[]; initialVersion: string }) {
+  const inputs = useModelInputs(initialVersion);
   const [source, setSource] = useState<InputSourceKind>("partition");
   const [partition, setPartition] = useState("");
   const [rowsJson, setRowsJson] = useState("");
@@ -280,8 +290,8 @@ function PredictConsole({ task, versions, partitions }: { task: string; versions
   );
 }
 
-function BatchRun({ task, versions, partitions }: { task: string; versions: string[]; partitions: string[] }) {
-  const inputs = useModelInputs();
+function BatchRun({ task, versions, partitions, initialVersion }: { task: string; versions: string[]; partitions: string[]; initialVersion: string }) {
+  const inputs = useModelInputs(initialVersion);
   const [source, setSource] = useState<InputSourceKind>("partition");
   const [partition, setPartition] = useState("");
   const [rowsJson, setRowsJson] = useState("");

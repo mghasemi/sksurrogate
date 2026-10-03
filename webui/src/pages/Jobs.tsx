@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { listJobs } from "../api/client";
+import { listJobs, resumeJob } from "../api/client";
 import type { JobRecord } from "../api/client";
 import { Card, ErrorNote, Loading, StatusBadge, Table } from "../components/ui";
 import { JobTracker } from "../components/JobTracker";
@@ -10,9 +10,17 @@ const KINDS = ["sensitivity", "experiment", "retraining"] as const;
 const STATUSES = ["queued", "running", "completed", "failed"] as const;
 
 export default function JobsPage() {
+  const qc = useQueryClient();
   const [kindFilter, setKindFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const resumeMut = useMutation({
+    mutationFn: resumeJob,
+    onSuccess: (res) => {
+      setSelectedId(res.job_id);
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+    },
+  });
 
   const jobsQ = useQuery({
     queryKey: ["jobs"],
@@ -47,6 +55,7 @@ export default function JobsPage() {
       </div>
 
       {jobsQ.isError && <ErrorNote error={jobsQ.error} />}
+      {resumeMut.isError && <ErrorNote error={resumeMut.error} />}
       {jobsQ.isLoading && <Loading />}
 
       <Card title="Filters">
@@ -84,7 +93,7 @@ export default function JobsPage() {
           <p className="muted">No jobs match the current filters.</p>
         ) : (
           <Table<JobRecord>
-            columns={["Task", "Kind", "Status", "Created", "Updated"]}
+            columns={["Task", "Kind", "Status", "Backend", "Created", "Updated", ""]}
             rows={jobs}
             keyOf={(j) => j.job_id}
             onRowClick={(j) => setSelectedId(j.job_id)}
@@ -96,8 +105,25 @@ export default function JobsPage() {
               <td key="s">
                 <StatusBadge status={j.status} />
               </td>,
+              <td key="b">{j.backend ?? "local"}</td>,
               <td key="c" className="mono">{new Date(j.created_at).toLocaleString()}</td>,
               <td key="u" className="mono">{new Date(j.updated_at).toLocaleString()}</td>,
+              <td key="a">
+                {j.kind === "experiment" && j.status === "failed" && (
+                  <button
+                    className="btn"
+                    disabled={resumeMut.isPending}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (window.confirm("Resume this failed experiment using its existing checkpoint?")) {
+                        resumeMut.mutate(j.job_id);
+                      }
+                    }}
+                  >
+                    {resumeMut.isPending && resumeMut.variables === j.job_id ? "Resuming…" : "Resume"}
+                  </button>
+                )}
+              </td>,
             ]}
           />
         )}

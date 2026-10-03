@@ -6,6 +6,7 @@ import {
   DEFAULT_EXPERIMENT_CONFIG,
   REGISTRY_STATES,
   getDatasetMetadata,
+  getScoringOptions,
   listJobs,
   runRetraining,
 } from "../api/client";
@@ -38,6 +39,7 @@ export default function RetrainingPage() {
   const [maxGeneration, setMaxGeneration] = useState(3);
   const [numParents, setNumParents] = useState(4);
   const [scoring, setScoring] = useState("accuracy");
+  const [backend, setBackend] = useState<"local" | "dask">("local");
 
   /* Trigger + promotion */
   const [trigger, setTrigger] = useState<Trigger>("always");
@@ -46,6 +48,11 @@ export default function RetrainingPage() {
 
   const [jobId, setJobId] = useState<string | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
+  const backendOptionsQ = useQuery({
+    queryKey: ["scoring-options"],
+    queryFn: getScoringOptions,
+  });
+  const availableBackends = backendOptionsQ.data?.backends ?? ["local"];
 
   const datasetQ = useQuery({
     queryKey: ["dataset-meta", task],
@@ -97,6 +104,7 @@ export default function RetrainingPage() {
       }
       const body: RunRetrainingRequest = {
         trainer,
+        backend,
         trigger,
         due,
         promotion_state: promotionState || null,
@@ -156,6 +164,19 @@ export default function RetrainingPage() {
                   </option>
                 ))}
               </select>
+            </div>
+            <div className="field">
+              <label>Execution backend</label>
+              <select value={backend} onChange={(e) => setBackend(e.target.value as "local" | "dask")}>
+                <option value="local">Local</option>
+                <option value="dask" disabled={!availableBackends.includes("dask")}>Dask</option>
+              </select>
+              {backendOptionsQ.isError && (
+                <span className="hint">Could not load backend availability; local execution remains available.</span>
+              )}
+              {backendOptionsQ.data && !availableBackends.includes("dask") && (
+                <span className="hint">Dask is unavailable on this server; install dask[distributed] to enable it.</span>
+              )}
             </div>
           </div>
         ) : (

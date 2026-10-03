@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 import {
@@ -28,7 +29,21 @@ import { useTask } from "../lib/task-context";
 const CHART_COLORS = ["#4f8cff", "#7c5cff", "#34d399", "#fbbf24", "#f87171"];
 
 export default function MonitoringPage() {
-  const { task } = useTask();
+  const { task, setTask } = useTask();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const taskParam = searchParams.get("task");
+  const versionParam = searchParams.get("version") ?? "";
+
+  useEffect(() => {
+    if (!taskParam) return;
+    if (taskParam !== task) {
+      setTask(taskParam);
+      return;
+    }
+    const params = new URLSearchParams(searchParams);
+    params.delete("task");
+    setSearchParams(params, { replace: true });
+  }, [searchParams, setSearchParams, setTask, task, taskParam]);
 
   const bundlesQ = useQuery({ queryKey: ["bundles-list", task], queryFn: () => listBundles(task), enabled: !!task });
   const datasetQ = useQuery({
@@ -53,7 +68,7 @@ export default function MonitoringPage() {
 
       {task && (
         <>
-          <SummaryCard task={task} versions={versions} />
+          <SummaryCard task={task} versions={versions} initialVersion={versionParam} />
           <DriftCard task={task} partitions={partitions} versions={versions} />
           <PredictionDriftCard task={task} partitions={partitions} columns={columns} versions={versions} />
           <SubgroupPerformanceCard task={task} partitions={partitions} columns={columns} versions={versions} />
@@ -66,8 +81,8 @@ export default function MonitoringPage() {
   );
 }
 
-function SummaryCard({ task, versions }: { task: string; versions: string[] }) {
-  const [version, setVersion] = useState("");
+function SummaryCard({ task, versions, initialVersion }: { task: string; versions: string[]; initialVersion: string }) {
+  const [version, setVersion] = useState(initialVersion);
   const q = useQuery<MonitorSummary>({
     queryKey: ["monitor-summary", task, version],
     queryFn: () => monitorSummary(task, version),

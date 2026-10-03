@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CartesianGrid,
   ResponsiveContainer,
@@ -10,7 +10,7 @@ import {
   YAxis,
 } from "recharts";
 
-import { DEFAULT_EXPERIMENT_CONFIG, STACKING_COMPONENT, optimizePipeline, runExperiment } from "../api/client";
+import { DEFAULT_EXPERIMENT_CONFIG, STACKING_COMPONENT, getScoringOptions, optimizePipeline, runExperiment } from "../api/client";
 import type { ExperimentResult, ParamSpec, RunExperimentRequest, SearchSpace } from "../api/client";
 import { Card, ErrorNote, Table, fmtNum } from "../components/ui";
 import { JobTracker } from "../components/JobTracker";
@@ -122,6 +122,7 @@ export default function ExperimentsPage() {
   const [numParents, setNumParents] = useState(4);
   const [trainPartition, setTrainPartition] = useState("train");
   const [scoring, setScoring] = useState("accuracy");
+  const [backend, setBackend] = useState<"local" | "dask">("local");
   const [strategy, setStrategy] = useState<"eoa" | "surrogate">("eoa");
   const [surrogateItrs, setSurrogateItrs] = useState(20);
   const [jobId, setJobId] = useState<string | null>(null);
@@ -129,6 +130,11 @@ export default function ExperimentsPage() {
   const [pipelineJobs, setPipelineJobs] = useState<PipelineJob[]>([]);
 
   const [configError, setConfigError] = useState<string | null>(null);
+  const backendOptionsQ = useQuery({
+    queryKey: ["scoring-options"],
+    queryFn: getScoringOptions,
+  });
+  const availableBackends = backendOptionsQ.data?.backends ?? ["local"];
 
   const parsed = useMemo(() => parseSpace(configJson), [configJson]);
   const warnings = useMemo(
@@ -149,6 +155,7 @@ export default function ExperimentsPage() {
         surrogate_mode: strategy === "surrogate",
         surrogate_itrs: strategy === "surrogate" ? surrogateItrs : null,
         forbidden: parsed.forbidden,
+        backend,
       };
       return runExperiment(task, body);
     },
@@ -274,6 +281,19 @@ export default function ExperimentsPage() {
             <input value={trainPartition} onChange={(e) => setTrainPartition(e.target.value)} spellCheck={false} />
           </div>
           <ScoringSelect value={scoring} onChange={setScoring} disabled={!task} />
+          <div className="field">
+            <label>Execution backend</label>
+            <select value={backend} onChange={(e) => setBackend(e.target.value as "local" | "dask")}>
+              <option value="local">Local</option>
+              <option value="dask" disabled={!availableBackends.includes("dask")}>Dask</option>
+            </select>
+            {backendOptionsQ.isError && (
+              <span className="hint">Could not load backend availability; local execution remains available.</span>
+            )}
+            {backendOptionsQ.data && !availableBackends.includes("dask") && (
+              <span className="hint">Dask is unavailable on this server; install dask[distributed] to enable it.</span>
+            )}
+          </div>
         </div>
 
         <div className="row" style={{ marginTop: 12 }}>

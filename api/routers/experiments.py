@@ -6,14 +6,16 @@ Fitting logic is shared with the Bundles and Retraining routers via
 ``api.training``.
 """
 
-from fastapi import APIRouter
+from typing import Literal
+
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from SKSurrogate import save_bundle
 
 from ..config import settings
 from ..deps import bad_request
-from ..jobs import job_manager
+from ..jobs import dask_available, job_manager
 from ..training import fit_experiment_bundle, fit_pipeline_bundle, standard_scoring_options
 
 router = APIRouter(prefix="/api/experiments", tags=["experiments"])
@@ -57,6 +59,7 @@ class RunExperimentRequest(BaseModel):
     surrogate_mode: bool = False
     surrogate_itrs: int | None = None  # per-surrogate iteration budget (surrogate mode only)
     forbidden: list[list] | None = None  # [["param", value], ...] disallowed combinations
+    backend: Literal["local", "dask"] = "local"
 
 
 @router.get("/scoring-options")
@@ -67,12 +70,15 @@ def scoring_options():
     evolutionary search maximizes, so this is the direct source of truth for the
     Experiments/Retraining "Scoring" dropdown.
     """
-    return {"groups": standard_scoring_options(), "default": "accuracy"}
+    backends = ["local"]
+    if dask_available():
+        backends.append("dask")
+    return {"groups": standard_scoring_options(), "default": "accuracy", "backends": backends}
 
 
-@router.post("/{task_name}/run")
-def run_experiment(task_name: str, body: RunExperimentRequest):
-    """Submit an AML/EOA pipeline search job over the given search-space config."""
+def submit_experiment(task_name, body, *, checkpoint_job_id=None, run_id=None):
+    if body.backend == "dask" and not dask_available():
+        raise HTTPException(status_code=503, detail="Dask backend requested but dask.distributed is not installed")
     if body.surrogate_itrs is not None and body.surrogate_itrs < 1:
         raise bad_request("surrogate_itrs must be a positive integer")
     config = _dump_config(body.config)
@@ -82,7 +88,7 @@ def run_experiment(task_name: str, body: RunExperimentRequest):
             bundle, evaluation_history, top_pipelines, pareto = fit_experiment_bundle(
                 task_name,
                 config=config,
-                checkpoint_dir=settings.task_checkpoint_dir(task_name, job_id),
+                checkpoint_dir=settings.task_checkpoint_dir(task_name, checkpoint_job_id or job_id),
                 length=body.length,
                 max_generation=body.max_generation,
                 num_parents=body.num_parents,
@@ -90,7 +96,7 @@ def run_experiment(task_name: str, body: RunExperimentRequest):
                 scoring=body.scoring,
                 random_state=body.random_state,
                 owner=body.owner,
-                run_id=body.run_id,
+                run_id=run_id or body.run_id or job_id,
                 surrogate_mode=body.surrogate_mode,
                 surrogate_itrs=body.surrogate_itrs,
                 forbidden=body.forbidden,
@@ -109,8 +115,44 @@ def run_experiment(task_name: str, body: RunExperimentRequest):
 
         return _run
 
-    job_id = job_manager.submit(task_name, "experiment", make_job)
+    def metadata_for_job(job_id):
+        effective_run_id = run_id or body.run_id or job_id
+        request = body.model_dump(mode="json")
+        request["run_id"] = effective_run_id
+        return {
+            "resume": {
+                "request": request,
+                "checkpoint_job_id": checkpoint_job_id or job_id,
+                "run_id": effective_run_id,
+            }
+        }
+
+    job_id = job_manager.submit(
+        task_name,
+        "experiment",
+        make_job,
+        backend=body.backend,
+        metadata_factory=metadata_for_job,
+    )
     return {"job_id": job_id, "status": "queued"}
+
+
+@router.post("/{task_name}/run")
+def run_experiment(task_name: str, body: RunExperimentRequest):
+    """Submit an AML/EOA pipeline search job over the given search-space config."""
+    return submit_experiment(task_name, body)
+
+
+def resume_experiment(record):
+    """Re-submit a failed experiment against its existing EOA checkpoint."""
+    resume = record["resume"]
+    body = RunExperimentRequest.model_validate(resume["request"])
+    return submit_experiment(
+        record["task_name"],
+        body,
+        checkpoint_job_id=resume["checkpoint_job_id"],
+        run_id=resume["run_id"],
+    )
 
 
 class OptimizePipelineRequest(BaseModel):

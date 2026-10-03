@@ -8,14 +8,16 @@ Runs as a background job since the underlying trainer may be a full AML
 search.
 """
 
-from fastapi import APIRouter
+from typing import Literal
+
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from SKSurrogate import ModelRegistry, RetrainingJob
 
 from ..config import settings
 from ..deps import bad_request
-from ..jobs import job_manager
+from ..jobs import dask_available, job_manager
 from ..routers.experiments import ParamValue, _dump_config
 from ..training import fit_baseline_bundle, fit_experiment_bundle
 
@@ -48,6 +50,7 @@ class RunRetrainingRequest(BaseModel):
     context: dict = {}
     owner: str | None = None
     run_id: str | None = None
+    backend: Literal["local", "dask"] = "local"
 
 
 def _make_trainer(task_name, trainer_config, checkpoint_dir, owner, run_id):
@@ -90,6 +93,8 @@ def run_retraining(task_name: str, body: RunRetrainingRequest):
     """Submit a retraining job: fits a bundle (if triggered) and registers it."""
     if body.trigger not in {"always", "scheduled", "on_data"}:
         raise bad_request("trigger must be one of always, scheduled, on_data")
+    if body.backend == "dask" and not dask_available():
+        raise HTTPException(status_code=503, detail="Dask backend requested but dask.distributed is not installed")
 
     def make_job(job_id):
         checkpoint_dir = settings.task_checkpoint_dir(task_name, job_id)
@@ -103,5 +108,5 @@ def run_retraining(task_name: str, body: RunRetrainingRequest):
 
         return _run
 
-    job_id = job_manager.submit(task_name, "retraining", make_job)
+    job_id = job_manager.submit(task_name, "retraining", make_job, backend=body.backend)
     return {"job_id": job_id, "status": "queued"}

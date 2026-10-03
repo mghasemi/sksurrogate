@@ -7,8 +7,10 @@ persisted as JSON so ``GET /api/jobs/{id}`` keeps working across restarts;
 this intentionally stays file-based rather than pulling in Celery/Redis.
 """
 
+import importlib
 import json
 import threading
+import time
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -22,6 +24,15 @@ _write_lock = threading.Lock()
 
 def _now():
     return datetime.now(timezone.utc).isoformat()
+
+
+def dask_available():
+    """Return whether the optional Dask distributed client can be imported."""
+    try:
+        importlib.import_module("dask.distributed")
+    except (ImportError, ModuleNotFoundError):
+        return False
+    return True
 
 
 class JobManager:
@@ -49,19 +60,22 @@ class JobManager:
             records = [record for record in records if record["task_name"] == task_name]
         return sorted(records, key=lambda record: record["created_at"], reverse=True)
 
-    def submit(self, task_name, kind, fn_factory):
+    def submit(self, task_name, kind, fn_factory, *, backend="local", metadata_factory=None):
         """Run ``fn_factory(job_id)()`` in the background; result must be a JSON-safe dict."""
         job_id = uuid.uuid4().hex
         record = {
             "job_id": job_id,
             "task_name": task_name,
             "kind": kind,
+            "backend": backend,
             "status": "queued",
             "created_at": _now(),
             "updated_at": _now(),
             "result": None,
             "error": None,
         }
+        if metadata_factory is not None:
+            record.update(metadata_factory(job_id))
         self._write(record)
 
         def _run():
@@ -69,7 +83,34 @@ class JobManager:
             record["updated_at"] = _now()
             self._write(record)
             try:
-                record["result"] = fn_factory(job_id)()
+                fn = fn_factory(job_id)
+                if backend == "dask":
+                    from SKSurrogate.execution import DaskExecutionBackend
+
+                    execution = DaskExecutionBackend(
+                        settings.jobs_dir / "execution",
+                        task_name=job_id,
+                    )
+                    try:
+                        def invoke(_params):
+                            _ = _params
+                            return fn()
+
+                        trial_id = execution.submit_trial(None, invoke)
+                        execution.execute_pending(limit=1)
+                        while True:
+                            trial = execution.get_trial(trial_id)
+                            if trial["status"] == "completed":
+                                record["result"] = trial["result"]
+                                break
+                            if trial["status"] == "failed":
+                                detail = trial.get("traceback") or trial.get("error") or "Unknown Dask task failure"
+                                raise RuntimeError(detail)
+                            time.sleep(0.1)
+                    finally:
+                        execution.client.close()
+                else:
+                    record["result"] = fn()
                 record["status"] = "completed"
             except Exception:
                 record["status"] = "failed"

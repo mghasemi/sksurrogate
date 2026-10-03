@@ -113,6 +113,7 @@ export interface JobRecord {
   job_id: string;
   task_name: string;
   kind: "sensitivity" | "experiment" | "retraining" | string;
+  backend?: "local" | "dask";
   status: "queued" | "running" | "completed" | "failed";
   created_at: string;
   updated_at: string;
@@ -825,6 +826,21 @@ export interface MonitorSummary {
   throughput_rows_per_second: number;
 }
 
+export interface MonitoringAlert {
+  timestamp: string;
+  task: string;
+  version: string | null;
+  type: string;
+  severity: "warning" | "error";
+  detail: string;
+}
+
+export const getMonitoringAlerts = (task?: string, limit = 20) => {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (task) params.set("task", task);
+  return get<{ alerts: MonitoringAlert[] }>(`/api/monitoring/alerts?${params.toString()}`);
+};
+
 export const monitorSummary = (task: string, modelVersion: string) =>
   get<MonitorSummary>(`/api/monitoring/${encodeURIComponent(task)}/${encodeURIComponent(modelVersion)}/summary`);
 
@@ -1197,6 +1213,7 @@ export interface RunExperimentRequest {
   surrogate_itrs?: number | null;
   /** Disallowed parameter combinations, e.g. [["penalty", "l1"]] or [["max_depth", 1]]. */
   forbidden?: Array<[string, unknown]> | null;
+  backend?: "local" | "dask";
 }
 
 export interface ExperimentTopPipeline {
@@ -1283,6 +1300,7 @@ export interface ScoringGroup {
 export interface ScoringOptionsResponse {
   groups: ScoringGroup[];
   default: string;
+  backends: Array<"local" | "dask">;
 }
 
 /**
@@ -1301,6 +1319,9 @@ export const listJobs = (task?: string) =>
   get<{ jobs: JobRecord[] }>(`/api/jobs${task ? `?task_name=${encodeURIComponent(task)}` : ""}`);
 
 export const getJob = (jobId: string) => get<JobRecord>(`/api/jobs/${encodeURIComponent(jobId)}`);
+
+export const resumeJob = (jobId: string) =>
+  post<{ job_id: string; status: string }>(`/api/jobs/${encodeURIComponent(jobId)}/resume`);
 
 /** Subscribe to a job's WebSocket progress stream. Returns an unsubscribe fn. */
 export function subscribeToJob(
@@ -1358,6 +1379,7 @@ export interface RunRetrainingRequest {
   context?: Record<string, unknown>;
   owner?: string | null;
   run_id?: string | null;
+  backend?: "local" | "dask";
 }
 
 export const runRetraining = (task: string, body: RunRetrainingRequest) =>
