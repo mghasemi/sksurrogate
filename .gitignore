@@ -42,3 +42,7 @@ example*-checkpoints/
 # OS metadata
 .DS_Store
 Thumbs.db
+HANDOFF.md
+
+# SKSurrogate API runtime state (bundles, jobs, datasets, predictions, registry, mltrace DBs)
+/var/

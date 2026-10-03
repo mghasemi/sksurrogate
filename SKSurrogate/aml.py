@@ -213,7 +213,8 @@ except ImportError:
     Integer = lambda a, b: None
     Categorical = lambda a: None
     HDReal = lambda a, b: None
-    default_config = {
+
+default_config = {
         # Classifiers
         "sklearn.naive_bayes.BernoulliNB": {
             "alpha": Real(10.0e-5, 100.0),
@@ -396,6 +397,9 @@ class AML(object):
     :param stack_res: default=True; `StackingEstimator`s `res`
     :param stack_probs: default=True; `StackingEstimator`s `probs`
     :param stack_decision: default=True; `StackingEstimator`s `decision`
+    :param stack_cv: default=5; cross-validation splitter used to build the out-of-fold
+        features of the automatic `StackingEstimator` wrappers
+    :param stack_n_jobs: default=None; parallel jobs used for those out-of-fold predictions
     :param verbose: default=1; Level of output details
     :param n_jobs: int, default=-1; number of processes to run in parallel
     :param cpu_limit: Optional maximum CPU parallelism to respect for each surrogate search.
@@ -403,6 +407,10 @@ class AML(object):
     :param random_state: Optional seed for the default CV and evolutionary search.
     :param time_limit: Optional wall-clock limit in seconds for each surrogate search.
     :param max_evals: Optional maximum objective evaluations for each surrogate search.
+    :param forbidden: Iterable of forbidden parameter rules forwarded to every
+        ``SurrogateRandomCV`` (dicts mapping param name -> disallowed value, or callables).
+    :param conditional: Mapping of param name -> rule describing when the parameter is active;
+        inactive parameters are dropped from each candidate before evaluation.
     """
 
     def __init__(
@@ -418,6 +426,8 @@ class AML(object):
             stack_res=True,
             stack_probs=True,
             stack_decision=True,
+            stack_cv=5,
+            stack_n_jobs=None,
             verbose=1,
             n_jobs=-1,
             random_state=None,
@@ -425,6 +435,8 @@ class AML(object):
             max_evals=None,
             cpu_limit=None,
             memory_limit=None,
+            forbidden=(),
+            conditional=(),
     ):
         from collections import OrderedDict
 
@@ -473,24 +485,38 @@ class AML(object):
         self.stack_res = stack_res
         self.stack_probs = stack_probs
         self.stack_decision = stack_decision
+        self.stack_cv = stack_cv
+        self.stack_n_jobs = stack_n_jobs
         self.verbose = verbose
         self.num_features = 2
         self.cpu_limit = cpu_limit
         self.memory_limit = memory_limit
+        self.forbidden = tuple(forbidden)
+        self.conditional = dict(conditional)
         self.n_jobs = n_jobs
         self.random_state = random_state
         self.time_limit = time_limit
         self.max_evals = max_evals
         self._apply_resource_limits()
-        # TBD: check cv
         if cv is None:
             self.cv = 3
+        elif isinstance(cv, dict):
+            # Accept a JSON spec as produced by ``mltrace.cv_to_spec`` /
+            # ``mltrace.GetCVSpec`` and rebuild the splitter. A raw dict has no
+            # ``split`` method, so scikit-learn's ``check_cv`` would treat it as
+            # an iterable of pre-computed (train, test) folds and fail with a
+            # confusing "too many values to unpack" error.
+            from .mltrace import build_cv
+
+            rebuilt = build_cv(cv)
+            self.cv = 3 if rebuilt is None else rebuilt
         else:
             self.cv = cv
         self.types()
         self.words = Words(self.letters, last=self.couldBlast, first=self.couldBfirst)
         self.models = OrderedDict([])
         self.evaluation_history_ = []
+        self.last_candidate_duration_ = None
         self.best_estimator_ = None
         self.best_estimator_score = 0.0
         self.termination_reason = None
@@ -826,7 +852,12 @@ class AML(object):
                 if seq not in self.models:
                     self.models[seq] = (best_mdl, best_scr)
                     self.evaluation_history_.append(
-                        {"pipeline": seq, "estimator": best_mdl, "score": best_scr}
+                        {
+                            "pipeline": seq,
+                            "estimator": best_mdl,
+                            "score": best_scr,
+                            "duration": getattr(self, "last_candidate_duration_", None),
+                        }
                     )
                 if self.verbose > 0:
                     print("score:%f" % best_scr)
@@ -862,6 +893,35 @@ class AML(object):
 
         return OrderedDict(sorted(self.models.items(), key=lambda x: x[1][1])[:num])
 
+    def pareto_frontier(self, score_key="score", cost_key="duration"):
+        """Return the non-dominated candidates across ``evaluation_history_``.
+
+        Scores are maximized and costs (per-candidate wall-clock duration) are
+        minimized, mirroring :meth:`SurrogateRandomCV.pareto_frontier`. Entries
+        missing either metric are skipped. Stored scores are the negated search
+        objective, so they are flipped back to the scorer's higher-is-better
+        units before dominance testing; the returned records carry that flipped
+        value under ``score_key``.
+        """
+        from types import SimpleNamespace
+
+        from .structsearch import SurrogateRandomCV
+
+        records = []
+        for entry in self.evaluation_history_:
+            raw_score = entry.get(score_key)
+            cost = entry.get(cost_key)
+            if raw_score is None or cost is None:
+                continue
+            record = dict(entry)
+            record[score_key] = -float(raw_score)
+            # AML history entries carry no status; mark them complete so the
+            # structsearch dominance filter (status == "complete") keeps them.
+            record.setdefault("status", "complete")
+            records.append(record)
+        holder = SimpleNamespace(evaluation_history_=records)
+        return SurrogateRandomCV.pareto_frontier(holder, score_key=score_key, cost_key=cost_key)
+
     def _require_fitted(self):
         if self.best_estimator_ is None:
             raise RuntimeError("AML has not been fitted")
@@ -896,6 +956,8 @@ class AML(object):
             "stack_res": self.stack_res,
             "stack_probs": self.stack_probs,
             "stack_decision": self.stack_decision,
+            "stack_cv": self.stack_cv,
+            "stack_n_jobs": self.stack_n_jobs,
             "verbose": self.verbose,
             "n_jobs": self.n_jobs,
             "cpu_limit": self.cpu_limit,
@@ -903,6 +965,8 @@ class AML(object):
             "random_state": self.random_state,
             "time_limit": self.time_limit,
             "max_evals": self.max_evals,
+            "forbidden": self.forbidden,
+            "conditional": self.conditional,
         }
 
     def set_params(self, **params):
@@ -964,6 +1028,8 @@ class AML(object):
                             res=self.stack_res,
                             probs=self.stack_probs,
                             decision=self.stack_decision,
+                            cv=self.stack_cv,
+                            n_jobs=self.stack_n_jobs,
                         ),
                     )
                 )
@@ -1023,6 +1089,9 @@ class AML(object):
             print("=" * 90)
             print(seq)
             print("-" * 90)
+        from time import perf_counter
+
+        started = perf_counter()
         if not config:
             from sklearn.model_selection import cross_val_score
 
@@ -1051,6 +1120,7 @@ class AML(object):
                 },
                 "current_value": None,
             }
+            self.last_candidate_duration_ = perf_counter() - started
             return ppln, score
         for srgt in surrogates:
             OPTIM = SurrogateRandomCV(
@@ -1071,6 +1141,8 @@ class AML(object):
                 time_limit=self.time_limit,
                 max_evals=self.max_evals,
                 random_state=self.random_state,
+                forbidden=self.forbidden,
+                conditional=self.conditional,
             )
             OPTIM.fit(X, y)
             if getattr(OPTIM, "summary_", None):
@@ -1080,4 +1152,5 @@ class AML(object):
                 self.summary_ = dict(OPTIM.summary_)
         if OPTIM is None:
             raise RuntimeError("No surrogate search was executed")
+        self.last_candidate_duration_ = perf_counter() - started
         return OPTIM.best_estimator_, OPTIM.best_estimator_score

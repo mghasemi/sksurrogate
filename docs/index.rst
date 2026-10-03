@@ -21,10 +21,14 @@ Welcome to SKSurrogate's documentation!
    modelbundles
    inference
    monitoring
+   controlplane
+   ui-manual
    phase9
    phase10
    release
    code
+
+See also `the Web UI & API design plan <ui-plan.md>`_.
 
 Indices and tables
 ==================

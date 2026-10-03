@@ -419,7 +419,9 @@ class SynthData(object):
 
                 self.cov = cov(transpose(v))
                 self.rv = multivariate_normal(self.mean, self.cov, allow_singular=True)
-            X = self.rv.rvs(num)
+            X = array(self.rv.rvs(num))
+            if X.ndim == 1:
+                X = X.reshape(num, -1)
             idx = 0
             for clm in self.columns:
                 data = list(X[:, idx])

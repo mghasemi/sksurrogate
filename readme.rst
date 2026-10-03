@@ -53,6 +53,10 @@ Documentation
 The documentation is produced by `Sphinx <http://www.sphinx-doc.org/en/stable/>`_ and is intended to cover code usage
 as well as a bit of theory to explain each method briefly.
 For more details refer to the documentation at `sksurrogate.rtfd.io <http://sksurrogate.readthedocs.io/>`_.
+The optional web UI and control-plane API are documented in the
+`Web UI and Control-Plane API guide <https://sksurrogate.readthedocs.io/en/latest/controlplane.html>`_.
+The `step-by-step UI manual <https://sksurrogate.readthedocs.io/en/latest/ui-manual.html>`_
+includes screenshots and example CSV files.
 
 License
 ================

@@ -509,6 +509,48 @@ class ModelRegistry:
         self._write_index(index)
         return deleted
 
+    def artifacts(self, task_name):
+        """List the dataset and prediction artifacts registered for a task.
+
+        Returns a plain, JSON-serializable view with one entry per artifact
+        (``kind`` is ``"dataset"`` or ``"prediction"``), each carrying the
+        stored path, registration timestamp, free-form metadata and the
+        on-disk size, so a retention/cleanup UI can show exactly what a call
+        to :meth:`delete_artifacts` would remove. Raises KeyError if the task
+        is unknown to the registry.
+        """
+        index = self._read_index()
+        task = index["models"].get(task_name)
+        if task is None:
+            raise KeyError("Unknown model task: %r" % task_name)
+
+        def _entry(kind, path, registered_at, metadata, **extra):
+            absolute = self.root / path
+            return {
+                "kind": kind,
+                "path": path,
+                "exists": absolute.exists(),
+                "size_bytes": absolute.stat().st_size if absolute.exists() else 0,
+                "registered_at": registered_at,
+                "metadata": metadata or {},
+                **extra,
+            }
+
+        datasets = [
+            _entry("dataset", entry["path"], entry.get("registered_at"), entry.get("metadata"),
+                   dataset_fingerprint=fingerprint, source_path=entry.get("source_path"))
+            for fingerprint, entry in sorted(task.get("datasets", {}).items())
+        ]
+        predictions = [
+            _entry("prediction", entry["path"], entry.get("registered_at"), entry.get("metadata"),
+                   model_version=model_version, dataset_fingerprint=dataset_fingerprint,
+                   prediction_id=prediction_id)
+            for model_version, by_dataset in sorted(task.get("predictions", {}).items())
+            for dataset_fingerprint, by_id in sorted(by_dataset.items())
+            for prediction_id, entry in sorted(by_id.items())
+        ]
+        return {"datasets": datasets, "predictions": predictions}
+
     def load(self, task_name, alias="production", **kwargs):
         index = self._read_index()
         task = index["models"].get(task_name)
@@ -523,3 +565,36 @@ class ModelRegistry:
         if task is None:
             raise KeyError("Unknown model task: %r" % task_name)
         return list(task.get("history", []))
+
+    def version_state(self, task_name, model_version):
+        """Return the current lifecycle state of a registered version.
+
+        The authoritative value lives in ``versions`` (set by register/promote);
+        promotion history alone is empty for freshly-registered candidates.
+        Raises KeyError if the task or version is unknown to the registry.
+        """
+        index = self._read_index()
+        task = index["models"].get(task_name)
+        if task is None:
+            raise KeyError("Unknown model task: %r" % task_name)
+        versions = task.get("versions", {})
+        if model_version not in versions:
+            raise KeyError("Unknown model version %r for task %r" % (model_version, task_name))
+        return versions[model_version]["state"]
+
+    def summary(self, task_name):
+        """Return the registry state of one task as a plain dict.
+
+        Includes every lifecycle alias (``latest`` plus any promoted states)
+        and the current state of each registered version, so clients can
+        render the full lifecycle in a single round-trip instead of probing
+        aliases one by one. Raises KeyError if the task is unknown.
+        """
+        index = self._read_index()
+        task = index["models"].get(task_name)
+        if task is None:
+            raise KeyError("Unknown model task: %r" % task_name)
+        return {
+            "aliases": dict(task.get("aliases", {})),
+            "versions": {v: meta.get("state") for v, meta in task.get("versions", {}).items()},
+        }

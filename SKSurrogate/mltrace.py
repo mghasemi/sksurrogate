@@ -32,6 +32,153 @@ from datetime import datetime
 
 MLTRACK_DB = SqliteDatabase(None)
 
+#: Metadata key under which the task's cross-validation splitter is stored.
+CV_METADATA_KEY = "cv_splitter"
+
+#: scikit-learn splitters offered as standard options for partitioning data
+#: into train/test folds (see ``sklearn.model_selection``).
+STANDARD_CV_SPLITTERS = [
+    "KFold",
+    "StratifiedKFold",
+    "LeaveOneOut",
+    "LeavePOut",
+    "ShuffleSplit",
+    "StratifiedShuffleSplit",
+    "TimeSeriesSplit",
+]
+
+
+def cv_to_spec(cv):
+    """Serialize a cross-validation splitter into a JSON-serializable spec.
+
+    Accepts an integer (number of ``(Stratified)KFold`` folds, the scikit-learn
+    convention), ``None`` (the library default), or any object exposing
+    ``get_params()`` such as the splitters in ``sklearn.model_selection``.
+    """
+    if cv is None:
+        return {"type": "default"}
+    if isinstance(cv, (int, numpy.integer)):
+        value = int(cv)
+        if value < 2:
+            raise ValueError("cv must be an integer >= 2 when given as a fold count")
+        return {"type": "n_splits", "value": value}
+    params = _splitter_params(cv)
+    spec = {key: (list(value) if isinstance(value, tuple) else value) for key, value in params.items()}
+    spec["type"] = type(cv).__name__
+    return spec
+
+
+def _splitter_params(splitter):
+    """Collect the constructor parameters of a cross-validation splitter.
+
+    Estimator-like objects expose ``get_params``; plain splitters from
+    ``sklearn.model_selection`` do not, so fall back to reading the attributes
+    named in their ``__init__`` signature.
+    """
+    if hasattr(splitter, "get_params"):
+        return splitter.get_params()
+    import inspect
+
+    params = {}
+    try:
+        signature = inspect.signature(type(splitter).__init__)
+    except (TypeError, ValueError):
+        return params
+    for name, param in signature.parameters.items():
+        if name == "self" or param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
+            continue
+        value = getattr(splitter, name, None)
+        if value is not None and not callable(value):
+            params[name] = value
+    return params
+
+
+def build_cv(spec):
+    """Rebuild a cross-validation splitter from a spec produced by :func:`cv_to_spec`.
+
+    Accepts an integer (number of ``(Stratified)KFold`` folds), ``None``, or a
+    dictionary with a ``type`` key naming a class in ``sklearn.model_selection``
+    plus its constructor parameters.
+    """
+    if spec is None:
+        return None
+    if isinstance(spec, (int, numpy.integer)):
+        value = int(spec)
+        if value < 2:
+            raise ValueError("cv must be an integer >= 2 when given as a fold count")
+        return value
+    if not isinstance(spec, dict):
+        raise ValueError("cv spec must be None, an integer, or a dictionary with a 'type' key")
+    name = spec.get("type")
+    if name == "default":
+        return None
+    if name == "n_splits":
+        value = int(spec["value"])
+        if value < 2:
+            raise ValueError("cv must be an integer >= 2 when given as a fold count")
+        return value
+    import sklearn.model_selection
+
+    cls = getattr(sklearn.model_selection, name, None)
+    if cls is None or not isinstance(cls, type):
+        raise ValueError(
+            "Unknown cv splitter %r; expected one of %s" % (name, ", ".join(STANDARD_CV_SPLITTERS))
+        )
+    params = {key: value for key, value in spec.items() if key != "type"}
+    return cls(**params)
+
+
+def default_cv_spec():
+    """Spec describing the library's default splitter."""
+    from sklearn.model_selection import ShuffleSplit
+
+    return cv_to_spec(ShuffleSplit(n_splits=3, test_size=0.25))
+
+
+def cv_param_defs(splitter_name):
+    """Constructor parameter definitions for a standard CV splitter.
+
+    Returns a list of ``{"name", "kind", "default"}`` entries (``kind`` is one
+    of ``"int"``, ``"float"``, or ``"bool"``) covering the scalar parameters
+    whose defaults are non-None, e.g. ``n_splits``, ``shuffle``, and ``gap``.
+    ``test_size`` is included even when its default is ``None`` (scikit-learn's
+    "auto"), in which case ``default`` is ``null`` — a UI can render it as an
+    optional field where leaving it blank keeps the auto behavior. The result
+    is JSON-serializable so an API can render editable form fields for each
+    parameter.
+    """
+    import inspect
+
+    import sklearn.model_selection
+
+    cls = getattr(sklearn.model_selection, splitter_name, None)
+    if cls is None or not isinstance(cls, type):
+        return []
+    try:
+        signature = inspect.signature(cls.__init__)
+        instance = cls()
+    except (TypeError, ValueError):
+        return []
+    defs = []
+    for name in signature.parameters:
+        if name == "self":
+            continue
+        value = getattr(instance, name, None)
+        # test_size defaults to None ("auto") on the (Stratified)ShuffleSplit
+        # splitters; surface it as an optional field with a null default.
+        if value is None and name != "test_size":
+            continue
+        if isinstance(value, bool):
+            kind = "bool"
+        elif isinstance(value, int):
+            kind = "int"
+        elif isinstance(value, float) or (value is None and name == "test_size"):
+            kind = "float"
+        else:
+            continue
+        defs.append({"name": name, "kind": kind, "default": value})
+    return defs
+
 
 class np2df(object):
     """
@@ -236,9 +383,22 @@ class mltrack(object):
 
         self.conn = sqlite3.connect(self.db_name)
         if cv is None:
-            from sklearn.model_selection import ShuffleSplit
+            # Restore the splitter persisted for this task (if any), so every
+            # tracker opened later keeps using the same partitioning method.
+            stored_spec = self.GetMetadata().get(CV_METADATA_KEY)
+            if stored_spec is not None:
+                try:
+                    self.cv = build_cv(stored_spec)
+                except Exception:
+                    from sklearn.model_selection import ShuffleSplit
 
-            self.cv = ShuffleSplit(n_splits=3, test_size=0.25)
+                    self.cv = ShuffleSplit(n_splits=3, test_size=0.25)
+            else:
+                from sklearn.model_selection import ShuffleSplit
+
+                self.cv = ShuffleSplit(n_splits=3, test_size=0.25)
+        elif isinstance(cv, dict):
+            self.cv = build_cv(cv)
         else:
             self.cv = cv
         self.X: Any = None
@@ -305,6 +465,28 @@ class mltrack(object):
             record.key: json.loads(record.value or "null")
             for record in TaskMetadata.select().where(TaskMetadata.task_id == self.task_id)
         }
+
+    def SetCV(self, cv):
+        """
+        Persist the task's cross-validation splitter and activate it on this tracker.
+
+        :param cv: an integer fold count, ``None`` (library default), or a
+            scikit-learn splitter from ``sklearn.model_selection``; also accepts
+            a spec dictionary as produced by :func:`cv_to_spec`.
+        :return: the JSON-serializable spec that was stored.
+        """
+        if isinstance(cv, dict):
+            splitter = build_cv(cv)
+        else:
+            splitter = cv
+        self.cv = splitter
+        spec = cv_to_spec(splitter)
+        self.UpdateMetadata({CV_METADATA_KEY: spec})
+        return spec
+
+    def GetCVSpec(self):
+        """Return the stored cross-validation spec, or ``None`` if never set."""
+        return self.GetMetadata().get(CV_METADATA_KEY)
 
     def UpdateTask(self, data):
         """
@@ -1172,19 +1354,18 @@ class mltrack(object):
         :return: None
         """
 
+        import io
+
         if "mltrack_id" not in mdl.__dict__:
             mdl = self.LogModel(mdl)
         mdl_id = mdl.mltrack_id
-        file = open("track_ml_tmp_mdl.joblib", "wb")
-        joblib.dump(mdl, file)
-        file.close()
-        file = open("track_ml_tmp_mdl.joblib", "rb")
-        str_cntnt = file.read()
-        Saved.create(model_id=mdl_id, pickle=str_cntnt)
-        file.close()
-        import os
-
-        os.remove("track_ml_tmp_mdl.joblib")
+        # Serialize straight into memory: staging through a file in the process
+        # working directory used a fixed name, which both raced between
+        # concurrent requests and littered leftover files wherever the caller
+        # happened to run from.
+        buffer = io.BytesIO()
+        joblib.dump(mdl, buffer)
+        Saved.create(model_id=mdl_id, pickle=buffer.getvalue())
 
     def RecoverModel(self, mdl_id):
         """
@@ -1194,21 +1375,15 @@ class mltrack(object):
         :return: a fitted model
         """
 
+        import io
+
         res = (
             Saved.select()
             .where(Saved.model_id == mdl_id)
             .order_by(Saved.init_date.desc())
             .dicts()
         )
-        file = open("track_ml_tmp_mdl.joblib", "wb")
-        file.write(res[0]["pickle"])
-        file.close()
-        file = open("track_ml_tmp_mdl.joblib", "rb")
-        mdl = joblib.load(file)
-        file.close()
-        import os
-
-        os.remove("track_ml_tmp_mdl.joblib")
+        mdl = joblib.load(io.BytesIO(res[0]["pickle"]))
         if mdl_id not in self.Recovered:
             self.Recovered.append(mdl_id)
         return mdl

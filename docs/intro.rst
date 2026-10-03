@@ -64,7 +64,12 @@ Installation
 =============================
 To install `SKSurrogate`, run the following in terminal::
 
-    sudo python setup.py install
+    python -m pip install .
+
+The optional FastAPI control plane and React web UI are run from a source
+checkout and have additional dependencies. See :doc:`controlplane` for setup
+and configuration instructions, and :doc:`ui-manual` for the step-by-step
+walkthrough with screenshots.
 
 Documentation
 =============================

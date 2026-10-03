@@ -1,0 +1,11 @@
+services:
+  sksurrogate-dev:
+    build: .
+    container_name: sksurrogate-dev
+    ports:
+      - "5174:5173"   # Web UI (Vite dev server; proxies /api to the backend) — 5174 because host 5173 is used by a local Vite instance
+      - "8013:8013"   # FastAPI backend, direct access
+    volumes:
+      - .:/app        # live source + var/ data; node_modules re-linked by entrypoint
+    environment:
+      SKSURROGATE_API_HOME: /app/var/sksurrogate-api
