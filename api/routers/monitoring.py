@@ -74,7 +74,8 @@ def monitoring_alerts(task: str | None = None, limit: int = Query(default=20, ge
                         "version": version,
                         "type": "inference_error",
                         "severity": "error",
-                        "detail": "Inference request failed for %s row(s)." % record.get("rows", 0),
+                        "detail": record.get("error")
+                        or "Inference request failed for %s row(s)." % record.get("rows", 0),
                     }
                 )
 

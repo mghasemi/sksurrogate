@@ -66,22 +66,20 @@ def resolve_bundle(task_name, *, model_version=None, alias=None, strict_dependen
     raise bad_request("Either model_version or alias must be provided")
 
 
-def append_monitor_record(task_name, model_version, latency_ms, rows, success=True):
+def append_monitor_record(task_name, model_version, latency_ms, rows, success=True, error=None):
     """Persist one inference-monitor observation as a JSON line, appended atomically."""
     log_path = settings.monitor_log_path(task_name, model_version)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as stream:
-        stream.write(
-            json.dumps(
-                {
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "latency_ms": float(latency_ms),
-                    "rows": int(rows),
-                    "success": bool(success),
-                }
-            )
-            + "\n"
-        )
+        record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "latency_ms": float(latency_ms),
+            "rows": int(rows),
+            "success": bool(success),
+        }
+        if error is not None:
+            record["error"] = str(error)
+        stream.write(json.dumps(record) + "\n")
 
 
 def append_monitor_alert(task_name, model_version, alert_type, detail, severity="warning"):

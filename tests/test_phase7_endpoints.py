@@ -3,13 +3,17 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
+from fastapi import HTTPException
 
 from api.config import settings
 from api.deps import append_monitor_alert, append_monitor_record
+from api.routers import inference as inference_router
 from api.routers import monitoring as monitoring_router
+from api.routers.inference import PredictRequest
 from api.routers.monitoring import DriftRequest, PredictionDriftRequest, PredictionSource
 
 
@@ -103,6 +107,26 @@ class TestPhase7MonitoringAlerts(unittest.TestCase):
 
         operation = app.openapi()["paths"]["/api/monitoring/alerts"]["get"]
         self.assertEqual(operation["operationId"], "monitoring_alerts_api_monitoring_alerts_get")
+
+    def test_inference_preflight_failures_are_logged_as_alerts_for_both_paths(self):
+        bundle = SimpleNamespace(model_version="model-preflight")
+        frame = pd.DataFrame({"unexpected": [1]})
+        with (
+            patch.object(inference_router, "resolve_bundle", return_value=bundle),
+            patch.object(inference_router, "_resolve_input_frame", return_value=(frame, [])),
+            patch.object(inference_router, "_preflight_error", return_value="missing feature"),
+        ):
+            for endpoint in (inference_router.predict, inference_router.predict_batch_endpoint):
+                with self.subTest(endpoint=endpoint.__name__):
+                    with self.assertRaises(HTTPException) as ctx:
+                        endpoint("preflight-task", PredictRequest(rows=[{"unexpected": 1}], preflight=True))
+                    self.assertEqual(ctx.exception.status_code, 400)
+
+        alerts = monitoring_router.monitoring_alerts(task="preflight-task", limit=20)["alerts"]
+        self.assertEqual(len(alerts), 2)
+        self.assertTrue(all(alert["type"] == "inference_error" for alert in alerts))
+        self.assertTrue(all(alert["version"] == "model-preflight" for alert in alerts))
+        self.assertTrue(all(alert["detail"] == "missing feature" for alert in alerts))
 
 
 if __name__ == "__main__":
