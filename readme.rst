@@ -1,4 +1,4 @@
-|Quality| |Travis| |Doc| |Binder| |Licence|
+|Quality| |Doc| |Licence|
 
 |Logo|
 
@@ -15,6 +15,19 @@ regressors are accepted for optimization.
 Finding an optimized pipeline -based on a given list of transformers and estimators is
 a time-consuming task. A version of evolutionary optimization has been implemented to reduce
 its time in lieu of global optimality.
+
+``SKSurrogate`` is positioned as a scientific/research library: the numerical methods are
+validated against benchmarks, but the API surface evolves with ongoing research work.
+
+Installation
+------------
+From PyPI::
+
+    pip install sksurrogate
+
+or from source (development)::
+
+    pip install git+https://github.com/mghasemi/sksurrogate.git
 
 Data identity and schema validation
 -----------------------------------
@@ -93,7 +106,3 @@ MIT License
     :alt: Documentation Status
 .. |Licence| image:: https://img.shields.io/badge/license-MIT-blue.svg
    :target: https://github.com/mghasemi/sksurrogate/blob/master/License.txt
-.. |Travis| image:: https://travis-ci.org/mghasemi/sksurrogate.svg?branch=master
-   :target: https://travis-ci.org/mghasemi/sksurrogate
-.. |Binder| image:: https://mybinder.org/badge_logo.svg
-   :target: https://mybinder.org/v2/gh/mghasemi/sksurrogate/master?filepath=examples%2FClassification.ipynb
