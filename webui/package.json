@@ -9,6 +9,9 @@
     "lint": "oxlint",
     "preview": "vite preview"
   },
+  "overrides": {
+    "source-map-js": "^1.2.2"
+  },
   "dependencies": {
     "@tanstack/react-query": "^5.103.2",
     "lucide-react": "^1.47.0",
