@@ -7,12 +7,12 @@ Description = "A python package that implements or wraps a few machine learning 
 
 setup(
     name="SKSurrogate",
-    version="0.1.0",
+    version="0.1.1",
     author="Mehdi Ghasemi",
     author_email="mehdi.ghasemi@gmail.com",
     packages=["SKSurrogate"],
     url="https://github.com/mghasemi/sksurrogate.git",
-    license="MIT License",
+    license="MIT",
     description=Description,
     long_description=open("./readme.rst").read(),
     keywords=[
