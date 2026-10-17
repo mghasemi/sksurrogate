@@ -229,7 +229,12 @@ default_config = {
             "class_weight": HDReal((1.0e-5, 1.0e-5), (20.0, 20.0)),
         },
         "sklearn.linear_model.LogisticRegression": {
-            "penalty": Categorical(["l1", "l2"]),
+            # sklearn >= 1.8: 'penalty' is deprecated (removed in 1.10); L1/L2
+            # are now selected via l1_ratio, which constrains the solver
+            # (L1 needs liblinear/saga). The invalid (lbfgs, l1) cell is a
+            # forbidden combination handled by structsearch's fallback.
+            "solver": Categorical(["lbfgs", "liblinear"]),
+            "l1_ratio": Categorical([0.0, 1.0]),
             "C": Real(1.0e-6, 10.0),
             "class_weight": HDReal((1.0e-5, 1.0e-5), (20.0, 20.0))
             # 'dual': Categorical([True, False])

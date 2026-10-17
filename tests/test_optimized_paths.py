@@ -1055,17 +1055,19 @@ class TestOptimizedPaths(unittest.TestCase):
         self.assertTrue(search.pareto_frontier())
 
     def test_surrogate_cv_never_refits_a_forbidden_combination(self):
-        # lbfgs rejects penalty='l1', so a refit of the banned settings would
-        # raise; the search must fall back to (or skip) a feasible trial instead.
+        # In sklearn >= 1.8 the 'penalty' axis is gone: L1 (l1_ratio=1) with
+        # solver='lbfgs' raises, so a refit of that banned cell would fail; the
+        # search must fall back to (or skip) a feasible trial instead.
         X = np.array([[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]])
         y = np.array([0, 1, 0, 1, 0, 1])
         search = SurrogateRandomCV(
             LogisticRegression(max_iter=100),
             {
-                "penalty": Categorical(["l1", "l2"]),
+                "solver": Categorical(["lbfgs", "liblinear"]),
+                "l1_ratio": Categorical([0.0, 1.0]),
                 "C": Real(0.1, 1.0),
             },
-            forbidden=({"penalty": "l1"},),
+            forbidden=({"solver": "lbfgs", "l1_ratio": 1.0},),
             cv=2,
             n_jobs=1,
             max_iter=2,
@@ -1076,10 +1078,11 @@ class TestOptimizedPaths(unittest.TestCase):
 
         search.fit(X, y)
 
-        self.assertNotEqual(search.best_estimator_.get_params()["penalty"], "l1")
+        best = search.best_estimator_.get_params()
+        self.assertNotEqual((best["solver"], best["l1_ratio"]), ("lbfgs", 1.0))
         self.assertTrue(
             all(
-                item["params"]["penalty"] == "l2"
+                not (item["params"]["solver"] == "lbfgs" and item["params"]["l1_ratio"] == 1.0)
                 for item in search.evaluation_history_
                 if item["status"] == "complete"
             )
@@ -1151,10 +1154,10 @@ class TestOptimizedPaths(unittest.TestCase):
         search = SurrogateRandomCV(
             LogisticRegression(max_iter=100),
             {
-                "penalty": Categorical(["l2"]),
+                "solver": Categorical(["lbfgs"]),
                 "l1_ratio": Real(0.1, 0.9),
             },
-            conditional={"l1_ratio": {"penalty": "elasticnet"}},
+            conditional={"l1_ratio": {"solver": "liblinear"}},
             cv=2,
             n_jobs=1,
             max_iter=1,
@@ -1267,7 +1270,7 @@ class TestOptimizedPaths(unittest.TestCase):
         y = np.array([0, 1, 0, 1])
         search = SurrogateRandomCV(
             LogisticRegression(max_iter=100),
-            {"penalty": Categorical(["invalid"])},
+            {"solver": Categorical(["invalid_solver"])},
             cv=2,
             n_jobs=1,
             max_iter=1,
@@ -1284,7 +1287,7 @@ class TestOptimizedPaths(unittest.TestCase):
         failure = trial["failure_records"][0]
         self.assertEqual(failure["type"], "FitError")
         self.assertIn("invalid", failure["message"])
-        self.assertEqual(failure["parameters"], {"penalty": "invalid"})
+        self.assertEqual(failure["parameters"], {"solver": "invalid_solver"})
         self.assertEqual(search.cv_results_["failure_records"][0], trial["failure_records"])
         self.assertEqual(
             search.failure_summary_["by_estimator"]["LogisticRegression"]["failed_trials"],
@@ -1292,10 +1295,15 @@ class TestOptimizedPaths(unittest.TestCase):
         )
 
     def test_surrogate_cv_rejects_forbidden_combinations_before_fitting(self):
+        # The single cell of this space is the invalid (lbfgs, L1) combination;
+        # every candidate must be rejected before any fit attempt.
         search = SurrogateRandomCV(
             LogisticRegression(max_iter=100),
-            {"penalty": Categorical(["l1"])},
-            forbidden=({"penalty": "l1"},),
+            {
+                "solver": Categorical(["lbfgs"]),
+                "l1_ratio": Categorical([1.0]),
+            },
+            forbidden=({"solver": "lbfgs", "l1_ratio": 1.0},),
             cv=2,
             max_iter=1,
             min_evals=1,

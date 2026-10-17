@@ -236,7 +236,7 @@ class TestPhase4Endpoints(unittest.TestCase):
     def test_run_experiment_excludes_forbidden_candidates(self):
         config = {
             "sklearn.linear_model.LogisticRegression": {
-                "penalty": {"type": "categorical", "items": ["l1"]},
+                "l1_ratio": {"type": "categorical", "items": [1.0]},
             },
             "sklearn.tree.DecisionTreeClassifier": {
                 "max_depth": {"type": "integer", "low": 1, "high": 3},
@@ -247,7 +247,7 @@ class TestPhase4Endpoints(unittest.TestCase):
             length=1,
             max_generation=1,
             num_parents=1,
-            forbidden=[["penalty", "l1"]],
+            forbidden=[["l1_ratio", 1.0]],
             # The search RNG is unseeded by default; with a single parent the run
             # can sample only banned LogisticRegression candidates and end without
             # any fitted model. A fixed seed makes this test deterministic.
@@ -266,7 +266,7 @@ class TestPhase4Endpoints(unittest.TestCase):
 
         bundle = load_bundle(Path(record["result"]["bundle_path"]))
         event = [e for e in bundle.audit_events if e["event_type"] == "experiment"][-1]
-        self.assertEqual(event["details"]["forbidden"], [["penalty", "l1"]])
+        self.assertEqual(event["details"]["forbidden"], [["l1_ratio", 1.0]])
 
     def test_run_experiment_reports_when_every_candidate_is_forbidden(self):
         # The only value of the only parameter is banned, so no candidate can
@@ -274,7 +274,7 @@ class TestPhase4Endpoints(unittest.TestCase):
         # opaque NotFittedError leaking out of aml.score().
         config = {
             "sklearn.linear_model.LogisticRegression": {
-                "penalty": {"type": "categorical", "items": ["l1"]},
+                "l1_ratio": {"type": "categorical", "items": [1.0]},
             },
         }
         body = RunExperimentRequest(
@@ -282,7 +282,7 @@ class TestPhase4Endpoints(unittest.TestCase):
             length=1,
             max_generation=1,
             num_parents=1,
-            forbidden=[["penalty", "l1"]],
+            forbidden=[["l1_ratio", 1.0]],
         )
         submitted = experiments_router.run_experiment(TASK, body)
         record = _wait_for_job(submitted["job_id"])
@@ -292,8 +292,13 @@ class TestPhase4Endpoints(unittest.TestCase):
     def test_run_experiment_records_conditional_parameters(self):
         config = {
             "sklearn.linear_model.LogisticRegression": {
-                "penalty": {"type": "categorical", "items": ["l2"]},
-                "C": {"type": "real", "low": 0.1, "high": 1.0, "depends_on": {"penalty": ["elasticnet"]}},
+                "solver": {"type": "categorical", "items": ["lbfgs"]},
+                "C": {
+                    "type": "real",
+                    "low": 0.1,
+                    "high": 1.0,
+                    "depends_on": {"solver": ["liblinear"]},
+                },
             }
         }
         body = RunExperimentRequest(
@@ -310,7 +315,7 @@ class TestPhase4Endpoints(unittest.TestCase):
 
         bundle = load_bundle(Path(record["result"]["bundle_path"]))
         event = [e for e in bundle.audit_events if e["event_type"] == "experiment"][-1]
-        self.assertEqual(event["details"]["conditional"], {"C": {"penalty": ["elasticnet"]}})
+        self.assertEqual(event["details"]["conditional"], {"C": {"solver": ["liblinear"]}})
 
     def test_run_experiment_accepts_non_string_forbidden_values(self):
         body = RunExperimentRequest(

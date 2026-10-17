@@ -1307,9 +1307,10 @@ class SurrogateRandomCV(BaseSearchCV):
                 best_params_[param] = cls_dict
         # The optimizer's solution can land inside a region every trial rejected
         # (a forbidden combination, or a candidate whose folds all failed).
-        # Refitting those settings either raises (e.g. lbfgs with penalty='l1')
-        # or silently returns a banned model, so fall back to the best trial that
-        # was actually completed; when no trial was, skip the refit entirely.
+        # Refitting those settings either raises (e.g. an invalid
+        # solver/regularization combination) or silently returns a banned
+        # model, so fall back to the best trial that was actually completed;
+        # when no trial was, skip the refit entirely.
         from numpy import isfinite
 
         feasible = [
