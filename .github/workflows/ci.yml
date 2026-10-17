@@ -44,6 +44,30 @@ jobs:
           name: dist-py${{ matrix.python-version }}
           path: dist/
 
+  # Acceptance for task A2: `pip install sksurrogate` from the built
+  # wheel must succeed on Python 3.13 with current dependencies, and the
+  # package must import in a clean environment (i.e. install_requires is
+  # complete). Runs after `build` so it installs what CI itself produced.
+  install-smoke:
+    name: "Install smoke (py3.13, from built wheel)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Build wheel (py3.13, isolated PEP 517)
+        run: |
+          pip install --upgrade pip build
+          python -m build --wheel
+      - name: Install built wheel into a clean venv and import it
+        run: |
+          python -m venv smoke-venv
+          ./smoke-venv/bin/pip install --quiet dist/*.whl
+          ./smoke-venv/bin/python -c "import SKSurrogate; assert SKSurrogate.__version__; print('OK', SKSurrogate.__version__)"
+
   tests:
     name: "Tests + smoke (py3.12, current deps)"
     runs-on: ubuntu-latest

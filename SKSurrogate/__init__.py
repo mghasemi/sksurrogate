@@ -47,6 +47,8 @@ from .monitoring import (
 from .retraining import RetrainingJob
 from .synthdat import SynthData
 
+__version__ = "0.1.1"
+
 __all__ = [
     "AML",
     "BoxSample",

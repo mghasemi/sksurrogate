@@ -1,13 +1,25 @@
-try:
-    from setuptools import setup
-except ImportError:
-    from distutils.core import setup
+import os
+import re
+
+from setuptools import setup
+
+
+def _read_version():
+    init_py = os.path.join(os.path.dirname(__file__), "SKSurrogate", "__init__.py")
+    with open(init_py, encoding="utf-8") as f:
+        match = re.search(r'^__version__\s*=\s*[\'"]([^\'"]+)[\'"]', f.read(), re.MULTILINE)
+    if match is None:
+        raise RuntimeError("Cannot determine version: __version__ missing in SKSurrogate/__init__.py")
+    return match.group(1)
+
 
 Description = "A python package that implements or wraps a few machine learning tools Scikit-Learn style."
 
 setup(
     name="SKSurrogate",
-    version="0.1.1",
+    # Single source of truth: SKSurrogate.__version__ (kept equal to the
+    # GitHub release tag on every upload).
+    version=_read_version(),
     author="Mehdi Ghasemi",
     author_email="mehdi.ghasemi@gmail.com",
     packages=["SKSurrogate"],
@@ -15,6 +27,7 @@ setup(
     license="MIT",
     description=Description,
     long_description=open("./readme.rst").read(),
+    long_description_content_type="text/x-rst",
     keywords=[
         "Auto Machine Learning",
         "AutoML",
@@ -39,6 +52,18 @@ setup(
         "tqdm",
         "peewee",
         "category_encoders",
+    ],
+    python_requires=">=3.10",
+    classifiers=[
+        "Development Status :: 4 - Beta",
+        "Intended Audience :: Science/Research",
+        "License :: OSI Approved :: MIT License",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Topic :: Scientific/Engineering",
     ],
     entry_points={
         "console_scripts": [
