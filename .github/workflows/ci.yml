@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Notes on design (see Vikunja project "SKSurrogate", task A1):
+# - The legacy .travis.yml never ran the test suite; it only installed
+#   requirements and executed examples/example02.py. Both behaviours are
+#   preserved, plus a real pytest run and packaging checks.
+# - `build` covers the Python version matrix with an isolated PEP 517 build
+#   (no dependencies installed), so it stays green even while individual
+#   third-party wheels lag behind on newest interpreters.
+# - `tests` runs on one modern interpreter with current unpinned
+#   requirements (requirements.txt carries no pins; pinning/sklearn-matrix
+#   is follow-up work). A3 fixes any deprecations this surfaces.
+
+jobs:
+  build:
+    name: "Build sdist+wheel (py${{ matrix.python-version }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install build backend
+        run: pip install --upgrade pip build
+      - name: Build sdist and wheel
+        run: python -m build
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-py${{ matrix.python-version }}
+          path: dist/
+
+  tests:
+    name: "Tests + smoke (py3.12, current deps)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt pytest pygments
+          pip install .
+      - name: Run test suite
+        # `python -m pytest` (not bare `pytest`) so the repo root is on
+        # sys.path and the `api.*` package is importable.
+        run: python -m pytest tests/ -q
+      - name: "Smoke: examples/example02.py (legacy Travis check)"
+        run: python examples/example02.py
