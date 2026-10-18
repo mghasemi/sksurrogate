@@ -5,10 +5,10 @@ by name, and downloaded once into a local cache
 (``$SKSURROGATE_BENCH_CACHE`` or ``~/.cache/sksurrogate-benchmarks``).
 Galaxy3 is bundled with the repository under ``data/``.
 
-The last column of every pinned dataset is the target; the nominal features
-of the five OpenML datasets are at most a single binary attribute (ionosphere),
-which is ordinal-encoded at load time so all methods see identical numeric
-inputs.
+The last column of every pinned dataset is the target. Non-numeric feature columns
+(credit-g has 13 nominal string attributes; all other pinned sets are fully numeric)
+are one-hot encoded at load time with deterministic sorted categories, so all methods
+see identical numeric inputs (DESIGN.md section 4 and v1.5 errata).
 """
 
 from __future__ import annotations
@@ -129,11 +129,21 @@ def load_dataset(name: str) -> tuple[pd.DataFrame, pd.Series]:
         y = df[target_column]
         X = df.drop(columns=[target_column]).copy()
 
-    # Ordinal-encode any nominal feature columns (only ionosphere has one).
-    for column in X.columns:
-        if X[column].dtype == object:
-            codes, _ = pd.factorize(X[column])
-            X[column] = codes.astype(int)
+    # One-hot-encode any non-numeric feature columns (credit-g has 13 nominal string
+    # attributes; every other pinned set is fully numeric). Detection must NOT rely on
+    # `dtype == object`: modern pandas returns StringDtype (Arrow-backed) for string
+    # columns, which the old check silently let through to a numeric pipeline. Dummy
+    # columns are appended in lexicographic order and fitted on the full dataset before
+    # any train/test split, so every method and seed sees an identical column set
+    # (DESIGN.md v1.5 errata).
+    non_numeric = [c for c in X.columns if not pd.api.types.is_numeric_dtype(X[c])]
+    if non_numeric:
+        enc = pd.get_dummies(X[non_numeric], dtype=int)
+        X = X.drop(columns=non_numeric)
+        # Deterministic layout regardless of this pandas version's internal category
+        # ordering: original numeric columns keep their exact order, one-hot dummies are
+        # appended in lexicographic column-name order.
+        X = pd.concat([X, enc[sorted(enc.columns.tolist())]], axis=1)
 
     # Guard against layout drift vs the pinned metadata.
     expected_n = int(entry["n"])
