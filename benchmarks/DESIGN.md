@@ -1,6 +1,6 @@
 # SKSurrogate Benchmark Suite — Design (B1)
 
-Status: **v1.5** (2026-10-18; credit-g encoding fix errata). Datasets and baselines are pinned below; this doc is the
+Status: **v1.6** (2026-10-18; full B=30 suite complete, metric recalibrated, B=60 extension launched). Datasets and baselines are pinned below; this doc is the
 contract for B2 (runner), B3 (ablation), B4 (publication). Changes after B2 starts require a
 version bump here.
 
@@ -63,6 +63,24 @@ v1.5 errata (first full-run launch aborted 2026-10-18; caught by pre-launch veri
 - **Standing pre-launch gate:** before any full run, load every dataset and do one quick fit of
   the actual pipeline on its train split; a dataset that cannot fit never reaches a long run
   (this is what caught the credit-g bug).
+
+v1.6 (full B=30 suite complete 2026-10-18; metric recalibration + budget-extension run):
+- **First full results.** Canonical directory `benchmarks/results/20261018T003121Z` (git `0d81fd5`,
+  dirty=false), 210 records = 6 datasets × 5 methods × 7 seeds. Two launches were merged after the primary was
+  SIGTERM-killed mid-optdigits by a session lifecycle event (supplemental launch `20261018T021331Z`, same commit,
+  annotated in its manifest); all cells reproducible per v1.3–v1.5.
+- **Primary metric recalibrated (§6).** The fractional target saturated: at "95% of own final best" every
+  method/dataset converged at median ≤ 5/30 evals with converged_share = 1.0 — no discriminative power. Even the
+  absolute 1-pt gap left converged_share = 1.0 for all 24 cells with no consistent method ordering (random search
+  reached target as fast or faster than guided arms on several datasets). Interpretation: RF(50) on these sets
+  reaches within ~0.5 pt of its own final best inside ~10–18 evals *by any* search — the near-optimum landscape is
+  flat enough at B=30 that "how fast" does not separate methods. v1.6 therefore: (a) gap target `g = 0.01` primary
+  with a `g = 0.005` variant; (b) converged_share reported as data, never masked; (c) the decisive question moved to
+  the B=60 extension below, where each run's self-target is set by a higher final best and the surrogate arm gets
+  ~40 guided evaluations instead of 10.
+- **B=60 SRS-arm extension run.** `--methods sksurrogate,srs-no-surrogate --budget 60`, all six datasets, 7 seeds:
+  tests whether surrogate guidance *compounds* once it has a real window (k ≥ 20 out of 60). Baselines (random/TPE)
+  remain at B=30 for context; a full-method B=60 comparison is contingent on this run showing a signal.
 
 ## 1. Goal
 
@@ -182,8 +200,12 @@ pandas StringDtype columns do not satisfy).
 
 Primary (evaluation-budget axis):
 1. **Best-so-far curve** per run: eval count k → best CV score seen by k. Plotted for all methods/datasets.
-2. **Evaluations-to-reach-target**: smallest k such that best-so-far ≥ 95% of that run's own final
-   best (self-contained target, robust to dataset difficulty). Reported median across seeds.
+2. **Evaluations-to-reach-target** (v1.6): smallest k such that the running-best CV is within an absolute gap
+   `g` of that run's own final best; suite-calibrated default `g = 0.01`, with a tighter `g = 0.005` variant
+   reported alongside (`plot.py --abs-gap`). Self-contained per run, robust to dataset difficulty. The pre-v1.6
+   target (95% *of* the final-best score) saturated on this suite — every method converged at median ≤ 5/30 evals —
+   and is retained only as a legacy mode (`plot.py --target fraction`). Reported: median k across seeds, plus the
+   share of seeds that converged within budget (a share < 1.0 is reported honestly as non-convergence, not masked).
 
 Secondary (wall-clock axis):
 3. Wall time to the same target; total wall time per budget.
