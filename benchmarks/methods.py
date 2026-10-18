@@ -160,6 +160,18 @@ def _run_srs(
     # off-by-one) and the x0 initial point is evaluated in __init__, so a naive
     # max_iter=budget would spend budget+2 evaluations. `max_evals` is checked
     # before every iteration and caps *total* objective calls exactly.
+    # DESIGN v1.7 errata: when the surrogate engages (k >= 20), each SRS
+    # iteration runs a local optimization of the fitted response surface; if
+    # scipy's minimize fails, that iteration evaluates NOTHING but still
+    # increments the iteration counter (structsearch.py __iterate). With
+    # max_iter == budget such no-op iterations can therefore terminate the run
+    # via `max_iter` before `max_evals` is reached (observed 2026-10-18: two
+    # seed-4 B=60 runs stopped after 50/56 evaluations, zero failures). The
+    # binding constraint must be max_evals, so max_iter is raised to a safe
+    # ceiling (4*budget): no-op iterations then cost wall time only. This is a
+    # library defect to report upstream, not a benchmark workaround — the
+    # number of no-op iterations per run is recorded in RunRecord.extra for
+    # transparency.
     # warm_start/Continue must be OFF: by default SRS persists state to a .pkl
     # in the CWD after every iteration and silently restores it, which would
     # contaminate independent benchmark runs (verified 2026-10-17).
@@ -172,7 +184,7 @@ def _run_srs(
     search = SurrogateRandomCV(
         estimator=make_pipeline(seed, n_estimators),
         params=params,
-        max_iter=budget,
+        max_iter=4 * budget,  # DESIGN v1.7: safe ceiling; max_evals is the binding cap (see errata above)
         max_evals=budget,
         min_evals=min_evals,
         scoring=None,
@@ -247,6 +259,9 @@ def _run_srs(
         extra={
             "termination_reason": getattr(search, "termination_reason", None),
             "failure_summary": getattr(search, "failure_summary_", {}),
+            # DESIGN v1.7: SRS loop-iteration count vs n_evals exposes no-op
+            # iterations (failed local optimizations of the surrogate surface).
+            "n_iterations": int(getattr(search.OPTIM, "iteration", 0)) if hasattr(search, "OPTIM") else None,
         },
     )
 

@@ -1,6 +1,6 @@
 # SKSurrogate Benchmark Suite — Design (B1)
 
-Status: **v1.6** (2026-10-18; full B=30 suite complete, metric recalibrated, B=60 extension launched). Datasets and baselines are pinned below; this doc is the
+Status: **v1.7** (2026-10-18; SRS no-op-iteration defect fixed in runner; B=60 regeneration in progress). Datasets and baselines are pinned below; this doc is the
 contract for B2 (runner), B3 (ablation), B4 (publication). Changes after B2 starts require a
 version bump here.
 
@@ -80,7 +80,28 @@ v1.6 (full B=30 suite complete 2026-10-18; metric recalibration + budget-extensi
   ~40 guided evaluations instead of 10.
 - **B=60 SRS-arm extension run.** `--methods sksurrogate,srs-no-surrogate --budget 60`, all six datasets, 7 seeds:
   tests whether surrogate guidance *compounds* once it has a real window (k ≥ 20 out of 60). Baselines (random/TPE)
-  remain at B=30 for context; a full-method B=60 comparison is contingent on this run showing a signal.
+  remains at B=30 for context; a full-method B=60 comparison is contingent on this run showing a signal.
+
+v1.7 (2026-10-18; SRS no-op-iteration defect found in the first B=60 launch, runner cap fixed):
+- **Defect.** In `SurrogateSearch.__iterate`, once the surrogate engages (k ≥ 20) each pass runs a local
+  optimization of the fitted response surface; if scipy's minimize fails (`min_res.success == False`), that
+  pass evaluates NOTHING but still increments the loop counter. With `max_iter = budget` (the original runner
+  setting) such no-op passes can terminate a run via `max_iter` before `max_evals` is reached — observed in
+  the first B=60 launch: two seed-4 sksurrogate runs stopped after 50/56 of 60 evaluations
+  (`termination_reason=max_iter`, zero failed CV records). Verified the B=30 canonical suite is unaffected
+  (all SRS cells have n_evals == budget, i.e. no no-op pass ever occurred there — at B=30 the surrogate has
+  only ~10 engaged passes and none of them failed local optimization on any seed/dataset).
+- **Runner fix.** `max_iter` raised to a safe ceiling of `4*budget`; `max_evals = budget` is now the sole
+  binding constraint, so every run consumes exactly B candidate-model evaluations and failed local
+  optimizations cost wall time only. Per-run `n_iterations` is recorded in `RunRecord.extra`, exposing no-op
+  passes (e.g. credit-g seed-4 regenerated: 78 iterations / 60 evaluations = 18 no-ops; arm A unchanged at
+  ~59–60, confirming the off-by-one x0 accounting of v1.1).
+- **Upstream.** Silent budget consumption on failed local optimization is a SKSurrogate library defect to be
+  reported upstream; per the v1.4 principle the benchmark does not patch library code — it enforces
+  equal-budget and records what happened.
+- **Invalidation.** First B=60 launch directory `20261018T044037Z` moved to `_superseded/` (kept for
+  forensics); the full SRS-arm B=60 suite is regenerated under the fixed runner — single code SHA per
+  canonical directory, as always.
 
 ## 1. Goal
 
