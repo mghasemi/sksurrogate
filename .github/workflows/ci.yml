@@ -88,3 +88,26 @@ jobs:
         run: python -m pytest tests/ -q
       - name: "Smoke: examples/example02.py (legacy Travis check)"
         run: python examples/example02.py
+
+  bench-smoke:
+    name: "Benchmark smoke (ionosphere)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt pytest pygments
+          pip install .[benchmark]
+      - name: Run benchmark smoke subset (ionosphere, budget 8, 2 seeds)
+        run: python -m benchmarks.run --smoke
+      - name: Verify outputs exist
+        run: |
+          out=$(ls -d benchmarks/results/*/ | head -1)
+          test -n "$out" || { echo "no results dir"; exit 1; }
+          ls "$out" | grep -q 'results.jsonl' || { echo "missing results.jsonl"; exit 1; }
+          echo "bench smoke outputs OK: $out"

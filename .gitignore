@@ -46,3 +46,6 @@ HANDOFF.md
 
 # SKSurrogate API runtime state (bundles, jobs, datasets, predictions, registry, mltrace DBs)
 /var/
+
+# Benchmark raw results (aggregates in docs/benchmarks are committed; raw data goes to Zenodo)
+benchmarks/results/

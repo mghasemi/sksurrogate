@@ -53,6 +53,10 @@ setup(
         "peewee",
         "category_encoders",
     ],
+    extras_require={
+        "test": ["pytest", "pygments"],
+        "benchmark": ["openml>=0.15,<0.16", "optuna"],
+    },
     python_requires=">=3.10",
     classifiers=[
         "Development Status :: 4 - Beta",

@@ -1,0 +1,20 @@
+{
+  "verified": "2026-10-17",
+  "note": "OpenML datasets pinned by data id (did), never by name. Verified live against api/v1/xml/data/list on 2026-10-17.",
+  "datasets": {
+    "ionosphere": {"did": 59,   "n": 351,  "d": 35,  "classes": 2,  "note": "CC18; one binary nominal feature (ordinal-encoded at load)"},
+    "credit-g":   {"did": 31,   "n": 1000, "d": 21,  "classes": 2,  "note": "CC18"},
+    "arrhythmia": {"did": 5,    "n": 452,  "d": 280, "classes": 13, "note": "CC18; imbalanced (minority class ~26 samples); report balanced accuracy alongside"},
+    "spambase":   {"did": 44,   "n": 4601, "d": 58,  "classes": 2,  "note": "CC18"},
+    "optdigits":  {"did": 28,   "n": 5620, "d": 65,  "classes": 10, "note": "OpenML classic (not confirmed CC18 member)"}
+  },
+  "local": {
+    "galaxy3": {
+      "path": "data/Galaxy3-[GAMETES_Epistasis_2-Way_20atts_0.4H_EDM-1_1.tsv.gz].tabular",
+      "n": 1600,
+      "d": 20,
+      "classes": 2,
+      "target_column": "target"
+    }
+  }
+}

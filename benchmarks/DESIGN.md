@@ -1,8 +1,51 @@
 # SKSurrogate Benchmark Suite — Design (B1)
 
-Status: **v1 fixed** (2026-10-17). Datasets and baselines are pinned below; this doc is the
+Status: **v1.4** (2026-10-17; pre-full-run audit errata). Datasets and baselines are pinned below; this doc is the
 contract for B2 (runner), B3 (ablation), B4 (publication). Changes after B2 starts require a
 version bump here.
+
+v1.1 errata (found while building the runner, verified against `structsearch.py`):
+- Budget enforcement for `SurrogateRandomCV` is via `max_evals=B`, not `max_iter=B` (§2) — SRS's
+  iteration counter has an inclusive off-by-one and its initial point is evaluated in `__init__`.
+
+v1.2 errata (B3 implementation, verified against live runs 2026-10-17):
+- The §9 ablation arms are runner methods: Arm B = `sksurrogate` (default engagement),
+  Arm A = `srs-no-surrogate` (`min_evals=B`, surrogate never engages; same SRS machinery).
+- Risk #2 parity check is enforced in the runner: an Optuna run whose trial count differs from
+  the budget returns a recorded `error` instead of silently proceeding.
+- The plot.py convergence fraction now matches §6 (95%); v1.1 code had 0.98 — superseded.
+
+v1.3 errata (pre-full-run audit, verified by re-reading `structsearch.py` and the live smoke records):
+- **Runner bug (§9 ablation contract was silently broken):** `_run_srs` hardcoded Arm B's default
+  engagement formula into the `SurrogateRandomCV` call, discarding the per-arm `min_evals`
+  override — so pre-fix runs gave *both* arms Arm B's requested threshold; at suite budget
+  B = 30 that would have let even Arm A engage (at the clamped threshold of 20, see v1.4),
+  violating §9's "never engages" contract. Fixed in `methods.py`; all SRS-arm results from
+  result directories dated before this erratum are void and were re-run. (The bit-identical
+  Arm A/B smoke curves at budget 8 have a *different* cause — the MinEvals clamping, v1.4.)
+- **SRS initial point reproducibility:** `SurrogateRandomCV.fit` draws the starting point
+  `x0` from CPython's *module-level* `random` state (ignoring the estimator's
+  `random_state`). The runner now pins that global RNG deterministically per seed — same salt
+  for both arms, so they share one identical starting point per seed — and restores the
+  caller's state afterwards. Every SRS run is bit-reproducible across processes; noted as an
+  upstream quirk (no library behavior changed).
+- `skopt` failures at fit time (archived dependency vs modern sklearn) are now recorded as
+  `skipped_archived`, not hard errors, so a broken baseline cannot fail the suite's exit code.
+
+v1.4 errata (pre-full-run audit 2026-10-17; verified empirically by constructing live
+`SurrogateRandomCV` objects exactly as `_run_srs` does):
+- **MinEvals constructor clamping (§9 engagement is coarser than the requested `min_evals`).**
+  `SurrogateSearch.__init__` (structsearch.py) raises the effective threshold to
+  `C(n_params + deg, n_params)` whenever the default cubic Hilbert regressor is in use: with our
+  3-parameter space that is **20**, so any requested `min_evals < 20` is silently raised to 20.
+  Consequences at suite budget B = 30: Arm B engages only once 20 points have been evaluated —
+  i.e., records k ≥ 20 get surrogate-guided candidates (10 of the 30 evaluations); for any
+  budget < 21 neither arm ever engages and both SRS-arm curves are bit-identical *by construction*
+  (this, not the v1.3 runner bug, is why the budget-8 smoke arms matched exactly). Arm A's
+  `min_evals = B` is never clamped down (it is ≥ 20 for every suite budget), so its "never
+  engages" contract holds at all budgets in this suite. No library code changed; engagement
+  behavior is reported as-is, and any table comparing the two SRS arms must state that they
+  coincide by design when B < 21.
 
 ## 1. Goal
 
@@ -27,18 +70,31 @@ All methods optimize the **same estimator over the same parameter space** with t
 | Method | Entry point | Notes |
 |---|---|---|
 | `SKSurrogate` | `SKSurrogate.structsearch.SurrogateRandomCV` (sklearn-native) | Default surrogate configuration. Primary method. |
-| `random` | `sklearn.model_selection.RandomizedSearchCV` | Same parameter distributions, `n_iter = budget`. |
+| `random` | Uniform random sampling over the shared discrete space — algorithmically identical to `sklearn.model_selection.RandomizedSearchCV(param_grid=SPACE, n_iter=budget)` for categorical list spaces; implemented directly in `methods.py` so per-evaluation wall time is logged with SKSurrogate's semantics. |
 | `optuna-tpe` | `optuna.create_study(direction="maximize", sampler=TPESampler(seed=s))` | One objective call = one model evaluation. Counted exactly. |
 | `skopt-bayes` (conditional) | `skopt.BayesSearchCV` via `RandomForestClassifier` wrapper | **Expected to fail import** on modern scikit-learn: the repo is archived (GitHub `archived=true`, last push 2024-02, verified 2026-10-17). Protocol: attempt import; on failure record `"skopt": {"status": "unavailable", "reason": "<ImportError>"}` in the results JSON and note it in docs as positioning evidence. If it imports cleanly, include normally. |
 
-Budget **B = 30 model evaluations per (method, dataset, seed)**. For `SurrogateRandomCV` this is
-`max_iter=B`; for `random`, `n_iter=B`; for Optuna, exactly B trials; skopt equivalent if alive.
+Budget **B = 30 model evaluations per (method, dataset, seed)** — a hard cap on candidate-model
+evaluations, verified post-run as `n_evals == budget` for every arm:
+
+- `SurrogateRandomCV`: `max_evals=B`. Not `max_iter=B`: SRS loops while
+  `iteration <= max_iter` (inclusive off-by-one) and evaluates its initial point `x0` inside
+  `__init__`, so a naive `max_iter=B` spends B+2 evaluations. `max_evals` is checked before each
+  iteration and caps *total* objective calls exactly. Arm B requests
+  `min_evals = min(max(5, B // 5), B)`; note the constructor clamping documented in the v1.4
+  errata — with the default cubic regressor the effective engagement threshold is
+  `max(requested, C(n_params + 3, n_params))` = **20** for this 3-parameter space (an earlier draft
+  figure of `C(n+3, n) = 56` does not hold here), so at B = 30 the surrogate engages from record
+  k ≥ 20. Arm A passes `min_evals = B`, which is never clamped down, so it never engages.
+- `random`: exactly B uniform draws (with replacement) from the shared lists.
+- Optuna: `study.optimize(..., n_trials=B)` — exactly B trials.
+- skopt: `n_iter=B`, if it imports at all (it does not — see above).
 
 ## 3. Datasets (fixed)
 
 Five OpenML datasets + the repo-bundled Galaxy3. All sizes verified live against the OpenML XML
 API (`api/v1/xml/data/list`) on **2026-10-17**; `did` values are pinned and recorded in
-`benchmarks/datasets.yaml` at B2 (download is by `did`, never by name, to avoid version drift).
+`benchmarks/datasets.json` at B2 (download is by `did`, never by name, to avoid version drift).
 
 | # | Dataset | OpenML did | n rows | d feats | Classes | Role |
 |---|---|---:|---:|---:|---|---|
@@ -75,6 +131,11 @@ Space (identical for every method; distributions expressed once in `benchmarks/m
 | `rf__min_samples_leaf` | log-uniform float, 1e-2 – 0.25 |
 | `rf__criterion` | {gini, entropy} |
 
+B2 implements this space as the **discrete grid** in `benchmarks/methods.py::SPACE`: max_depth on
+the 14 integer values 3..16 (None excluded so every method shares one bit-identical candidate
+set), min_samples_leaf on an 8-point log-spaced grid in [0.01, 0.25], criterion as-is —
+14 × 8 × 2 = 224 configurations.
+
 Preprocessing (scaler fit) is **inside** the pipeline, so its cost is included in every timing —
 per GPT's design note that timings must reflect real usage.
 
@@ -110,7 +171,7 @@ arrhythmia (imbalanced 13-class) so class imbalance is visible but not allowed t
 ```
 benchmarks/
 ├── __init__.py
-├── datasets.yaml      # pinned dids + local Galaxy3 path (B2)
+├── datasets.json      # pinned dids + local Galaxy3 path (B2)
 ├── datasets.py        # download-by-did into ~/.cache/sksurrogate-benchmarks; load → DataFrame, y
 ├── methods.py         # parameter space definition; run_method(method, dataset, budget, seed) -> records
 ├── run.py             # CLI: python -m benchmarks.run --dataset all|ionosphere,... --budget 30 --seeds 7 [--smoke]
@@ -141,7 +202,10 @@ Same `SurrogateRandomCV` outer loop twice, identical space/estimator/budget/seed
   engages; search degenerates to pure random sampling through the SRS machinery. This keeps the
   comparison *inside one code path* (only knob changed), isolating exactly the surrogate's
   contribution.
-- **Arm B (surrogate on)**: default engagement (`min_evals = max(5, budget // 5)`).
+- **Arm B (surrogate on)**: default engagement request (`min_evals = max(5, budget // 5)`), subject to
+  the constructor clamping of the v1.4 errata — effective threshold 20 in this space, so at B = 30
+  the surrogate guides records k ≥ 20 only (and for B < 21 Arms A and B are identical by
+  construction).
 
 Reported per arm: evaluations-to-reach-target (§6) and wall time; plus Arm-B overhead breakdown
 (§6.4). A plain `RandomizedSearchCV` run from §2 serves as a cross-check that Arm A behaves like
