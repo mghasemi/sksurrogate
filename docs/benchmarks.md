@@ -6,8 +6,7 @@ budgets**, plus a decisive ablation isolating the value of the surrogate compone
 the published evidence behind the README's "validated against benchmarks" claim; the full protocol
 contract, errata history, and acceptance mapping live in [`benchmarks/DESIGN.md`](../benchmarks/DESIGN.md) (v1.9).
 
-Raw per-run records are git-ignored by design and archived on Zenodo (DOI: _pending — see Reproducibility_);
-everything below is reproducible from the committed harness + those archives.
+Raw per-run records are git-ignored by design and archived on Zenodo at DOI [10.5281/zenodo.23629024](https://doi.org/10.5281/zenodo.23629024); everything below is reproducible from the committed harness + that archive.
 
 ## Protocol
 
@@ -183,6 +182,6 @@ python -m benchmarks.analyze_surrogates \
 | `benchmarks/results/20261024T224454Z` | B=30 surface arms GP/KRR (84 cells) | DESIGN v1.8; manifests record base `eec6de9`, dirty tree at launch — reproducible from harness at commit `0e9850b` |
 | `benchmarks/results/20261024T224524Z` | B=60 surface arms GP/KRR (84 cells) | as above; all cells `n_evals == 60`, terminated by `max_evals` |
 
-Raw per-run JSON + run manifests are archived on Zenodo: _DOI pending_ (see `benchmarks/DESIGN.md` §12 for the
+Raw per-run JSON + run manifests are archived on Zenodo as DOI [10.5281/zenodo.23629024](https://doi.org/10.5281/zenodo.23629024) (all four run directories, 462 records + README; see `benchmarks/DESIGN.md` §12 for the
 full errata/provenance history of each directory, including two invalidated early launches kept under
 `benchmarks/results/_superseded/`).

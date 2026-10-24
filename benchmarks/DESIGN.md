@@ -284,7 +284,7 @@ benchmarks/
   check, not part of this HPO suite.
 - Outputs per run land in `benchmarks/results/<UTC-date>/`: one JSON per (method, dataset, seed),
   an aggregate CSV, and PNGs. The **aggregates + figures are version-controlled** under
-  `docs/benchmarks/`; raw per-run JSON goes to Zenodo (B4) rather than the repo.
+  `docs/benchmarks/`; raw per-run JSON goes to Zenodo (B4) — archived as DOI [10.5281/zenodo.23629024](https://doi.org/10.5281/zenodo.23629024), 2026-10-25, all four run directories — rather than the repo.
 
 ## 8. Runtime expectations and CI policy
 
