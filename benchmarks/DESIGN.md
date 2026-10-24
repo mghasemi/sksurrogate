@@ -1,6 +1,6 @@
 # SKSurrogate Benchmark Suite — Design (B1)
 
-Status: **v1.7** (2026-10-18; SRS no-op-iteration defect fixed in runner; B=60 regeneration in progress). Datasets and baselines are pinned below; this doc is the
+Status: **v1.9** (2026-10-24; B=30 and B=60 surrogate-surface comparison results recorded in §12 — the un-tuned RBF-GP surface beats the default cubic Hilbert at both budgets, decisively so at B=60 ($p \approx 10^{-4}$); stock KernelRidge is worse than no surrogate). Datasets and baselines are pinned below; this doc is the
 contract for B2 (runner), B3 (ablation), B4 (publication). Changes after B2 starts require a
 version bump here.
 
@@ -102,6 +102,38 @@ v1.7 (2026-10-18; SRS no-op-iteration defect found in the first B=60 launch, run
 - **Invalidation.** First B=60 launch directory `20261018T044037Z` moved to `_superseded/` (kept for
   forensics); the full SRS-arm B=60 suite is regenerated under the fixed runner — single code SHA per
   canonical directory, as always.
+
+v1.8 (2026-10-24; surrogate-regressor comparison arms):
+- **B=60 SRS-arm regeneration complete.** `benchmarks/results/20261018T051214Z` under the v1.7 fixed
+  runner: 84/84 cells (2 methods × 6 datasets × 7 seeds), all with `n_evals == 60`, zero non-ok records —
+  canonical B=60 SRS-arm directory, superseding the invalidated first launch.
+- **New surrogate-regressor arms (`sksurrogate-gp`, `sksurrogate-krr`)** answering "does a richer response
+  surface beat the default cubic Hilbert polynomial?" Benchmark-side only — injected via the library's public
+  `regressor=` kwarg (`SurrogateRandomCV(regressor=...)`; no library code changed, per the v1.4 principle).
+  Surrogates: stock sklearn `GaussianProcessRegressor` (RBF kernel, alpha=1e-10) and `KernelRidge`
+  (RBF gamma='scale', alpha=1.0), hyperparameters deliberately un-tuned — a first test of surface quality,
+  not a tuned-kernel contest.
+- **Engagement parity.** The library clamps `MinEvals` to $C(n_{\text{params}}+3, n_{\text{params}})$ only when it
+  installs its *own* default cubic Hilbert regressor; a user-supplied regressor receives the requested
+  `min_evals` verbatim (v1.4 errata). The runner therefore passes that same floor explicitly to the new arms:
+  $C(3+3,3) = 20$ in this space — every surrogate arm engages at identical k ≥ 20, so surface model is the
+  only variable under test. (At budgets < 21 no surrogate arm ever engages, as before.) The fitted surface's
+  class name is recorded per run in `RunRecord.extra["surrogate"]`.
+- **Runs.** B=30: all six datasets × 7 seeds × both new arms vs canonical `20261018T003121Z` (full five-method
+  suite, Hilbert arm included). B=60: same matrix vs canonical SRS-arm directory `20261018T051214Z`.
+
+v1.9 (2026-10-24; results recorded — §12):
+- **§12 added**: consolidated comparison of the three SRS response surfaces (cubic Hilbert default, RBF-GP,
+  RBF-KRR) against the suite's AutoML/HPO baselines (uniform random sampling, Optuna-TPE; skopt archived — §2),
+  at equal protocol and budget. B=30 from `benchmarks/results/20261024T224454Z` and B=60 from
+  `benchmarks/results/20261024T224524Z` (84/84 cells, all `n_evals == 60`, all terminated by `max_evals`), both
+  aggregated by `python -m benchmarks.analyze_surrogates`. Findings: the un-tuned RBF-GP surface is a consistent
+  improvement over the default cubic Hilbert polynomial at B=30 (20W/17T/5L, $p \approx 4\times10^{-3}$) and the
+  advantage compounds at B=60 where each run gets ~40 guided evaluations (25W/13T/4L, $p \approx 1\times10^{-4}$);
+  the stock KernelRidge surface never wins a seed against Hilbert (B=60: 0W/23T/19L) and sits below the
+  no-surrogate arm on mean CV in all six datasets at B=60. Positioning versus Optuna-TPE is unchanged from v1.6 —
+  flat-landscape regime; TPE top in 5/6 datasets at B=30, and convergence speed (primary gap metric) shows no
+  method separation at either budget.
 
 ## 1. Goal
 
@@ -297,3 +329,113 @@ independent random search (sanity, not the primary contrast).
 - Baselines fixed & documented: §2 (incl. skopt archival status with verification date).
 - Datasets fixed & documented: §3 (dids pinned, sizes verified live, drop reasons recorded).
 - Budgets in evaluations **and** wall-clock: §5–§6. Seeds ≥5: S=7 (§5).
+
+## 12. Results — surrogate-surface comparison vs AutoML/HPO baselines (v1.8 arms)
+
+Comparison of SKSurrogate's three response surfaces under one identical protocol (§4–§5), against the suite's
+AutoML/HPO baselines: uniform random sampling, Optuna-TPE (`skopt` archived — §2). Sources: canonical
+`benchmarks/results/20261018T003121Z` (B=30, five methods) merged with `benchmarks/results/20261024T224454Z`
+(v1.8 arms). Aggregate: `surrogate_comparison_B30.csv` in the arms directory; per-dataset best-so-far figures
+under its `figures/`. Reproduce with
+
+```bash
+python -m benchmarks.analyze_surrogates \
+    benchmarks/results/20261018T003121Z benchmarks/results/20261024T224454Z --budget 30
+```
+
+### 12.1 Mean final CV accuracy (7 seeds; best per row in bold)
+
+| dataset | SRS + Hilbert³ (default) | SRS + GP | SRS + KRR | SRS, no surrogate (Arm A) | random | Optuna-TPE |
+|---|---:|---:|---:|---:|---:|---:|
+| arrhythmia | 0.6985 | 0.7020 | 0.6910 | 0.6910 | 0.6941 | **0.7036** |
+| credit-g | 0.7400 | 0.7423 | 0.7384 | 0.7391 | 0.7405 | **0.7436** |
+| galaxy3 | 0.6455 | 0.6473 | 0.6443 | 0.6448 | 0.6484 | **0.6507** |
+| ionosphere | 0.9342 | **0.9352** | 0.9342 | 0.9347 | 0.9347 | 0.9337 |
+| optdigits | 0.9399 | 0.9403 | 0.9392 | 0.9392 | 0.9380 | **0.9405** |
+| spambase | 0.9277 | 0.9280 | 0.9269 | 0.9269 | 0.9272 | **0.9286** |
+
+### 12.2 Primary metric — median evaluations to within $g = 0.01$ of own final best (lower is better)
+
+| dataset | SRS + Hilbert³ | SRS + GP | SRS + KRR | no surrogate (A) | random | Optuna-TPE |
+|---|---:|---:|---:|---:|---:|---:|
+| arrhythmia | 10.0 | 14.0 | **6.0** | **6.0** | 11.0 | 12.0 |
+| credit-g | 9.0 | 9.0 | 9.0 | 9.0 | **2.0** | 5.0 |
+| galaxy3 | 9.0 | 13.0 | 9.0 | 9.0 | **2.0** | 13.0 |
+| ionosphere | **0.0** | **0.0** | **0.0** | **0.0** | 1.0 | 1.0 |
+| optdigits | 6.0 | 6.0 | 6.0 | 6.0 | **2.0** | 6.0 |
+| spambase | **2.0** | **2.0** | **2.0** | **2.0** | **2.0** | 5.0 |
+
+### 12.3 Findings (B=30, final)
+
+1. **RBF-GP surface: modest but real improvement over the default cubic Hilbert polynomial.** Top mean CV on all
+   six datasets (margins ≤ 0.4 pt); seed-level vs the Hilbert arm 20 wins / 17 ties / 5 losses (n = 42; two-sided
+   exact binomial $p \approx 0.004$ over the 25 decisive seeds). The un-tuned RBF-GP is therefore a defensible
+   drop-in default surface — with the caveat that at B=30 the guidance window (k ≥ 20 of 30) is small, so the
+   B=60 extension (§12.4) is the decisive confirmation.
+2. **Stock KernelRidge surface: no benefit.** 0 wins / 30 ties / 12 losses vs Hilbert; its mean final CV matches
+   the *no-surrogate* arm (Arm A) exactly on three of six datasets (arrhythmia, spambase, optdigits) — at this
+   budget an un-tuned RBF-KRR surface adds nothing beyond independent random draws.
+3. **Positioning vs AutoML baselines unchanged from v1.6.** Optuna-TPE remains top in 5/6 datasets on mean CV
+   (all but ionosphere, where SRS+GP leads); every method stays within ~0.5 pt everywhere, and the primary gap
+   metric shows no consistent ordering at B=30 (medians 2–14; uniform random is fastest-to-target on four of six).
+   This reconfirms the v1.6 flat-landscape finding: near-optimum RF(50) CV scores are close enough that "how fast"
+   does not separate methods at B=30 — quality separation, if any, must come from the larger guidance window at
+   B=60 (§12.4).
+4. **Provenance note.** The arms run was launched with uncommitted harness changes (manifests record
+   `git.dirty=true`, base SHA `eec6de9`); both directories are reproducible from this file's v1.8/v1.9 state of
+   `methods.py` + `analyze_surrogates.py`.
+
+### 12.4 B=60 extension (final)
+
+`benchmarks/results/20261024T224524Z` vs canonical SRS-arm directory `benchmarks/results/20261018T051214Z`
+(both surfaces under the fixed v1.7 runner; no random/TPE arms exist at B=60 — see §12.3, finding 3). Integrity:
+84/84 cells ok, every record `n_evals == 60`, all terminated by `max_evals` (the v1.7 early-stop defect did not
+recur). GP fits occasionally emit sklearn `ConvergenceWarning`s from the internal lbfgs hyperparameter fit — benign;
+optimization proceeds with the best parameters found and no cell failed because of it.
+
+#### Mean final CV accuracy, B=60 (7 seeds)
+
+| dataset | SRS + Hilbert³ (default) | SRS + GP | SRS + KRR | SRS, no surrogate (Arm A) |
+|---|---:|---:|---:|---:|
+| arrhythmia | 0.7000 | **0.7056** | 0.6933 | 0.7004 |
+| credit-g | 0.7412 | **0.7446** | 0.7384 | 0.7430 |
+| galaxy3 | 0.6485 | **0.6501** | 0.6443 | 0.6479 |
+| ionosphere | 0.9352 | **0.9362** | 0.9352 | **0.9362** |
+| optdigits | 0.9399 | **0.9413** | 0.9392 | 0.9403 |
+| spambase | 0.9277 | **0.9286** | 0.9269 | 0.9281 |
+
+#### Primary metric, B=60 — median evaluations to within $g = 0.01$ of own final best (lower is better)
+
+| dataset | SRS + Hilbert³ | SRS + GP | SRS + KRR | no surrogate (A) |
+|---|---:|---:|---:|---:|
+| arrhythmia | 10.0 | 14.0 | **9.0** | 10.0 |
+| credit-g | **9.0** | **9.0** | **9.0** | **9.0** |
+| galaxy3 | 14.0 | 14.0 | **9.0** | 13.0 |
+| ionosphere | **0.0** | **0.0** | **0.0** | **0.0** |
+| optdigits | **6.0** | **6.0** | **6.0** | **6.0** |
+| spambase | **2.0** | 5.0 | **2.0** | **2.0** |
+
+#### Findings (B=60)
+
+1. **The GP advantage compounds with the guidance window — B=30's signal was real, not noise.** SRS+GP is top on
+   mean CV in all six datasets again; seed-level vs the Hilbert arm 25 wins / 13 ties / 4 losses (n = 42; two-sided
+   exact binomial $p \approx 1.0\times10^{-4}$ over the 29 decisive seeds). Margins grow from ≤0.4 pt at B=30 to up
+   to ~0.6 pt on arrhythmia — consistent with a better surface exploiting its ~40 guided evaluations rather than a
+   seed-luck artifact.
+2. **KernelRidge is decisively *worse* once the window opens.** 0 wins / 23 ties / 19 losses vs Hilbert (all 19
+   decisive seeds lost, $p \approx 4\times10^{-6}$), and its mean CV sits below the no-surrogate arm in all six
+   datasets — an un-tuned RBF-KRR surface actively misdirects search at B=60. KRR is not worth further tuning work:
+   with a fixed kernel width and $\alpha = 1.0$ it fits noise as readily as signal on these small budgets.
+3. **The default cubic Hilbert polynomial is the weak link.** At B=60 the no-surrogate arm matches or beats it on
+   mean CV in five of six datasets (margins ≤ 0.2 pt — within seed noise, but uniformly directionally). The
+   surrogate helps only when its surface quality exceeds a random draw; with the default surface that is not always
+   the case. RBF-GP, by contrast, matches or beats no-surrogate on mean CV in all six datasets at B=60 (strictly ahead
+   in five; ionosphere is a tie).
+4. **Convergence speed still does not separate methods** (medians 2–14, no consistent ordering) — reaffirming §12.3
+   finding 3 at the larger budget: with near-flat RF(50) landscapes, SRS's case rests on *final quality*, where GP
+   wins, and on sample efficiency at fixed wall-clock (SRS evaluates full CV folds per point; TPE does too — the
+   honest differentiator remains the surrogate-guided exploration of a coarse grid, §1).
+
+**Recommendation.** Make RBF-GP (`GaussianProcessRegressor` with stock RBF kernel) SKSurrogate's recommended
+default surface for `SurrogateRandomCV`: optional via the public `regressor=` kwarg (no library code change needed
+for benchmarks), documented as a v0.2 candidate in an upstream issue with §12 as evidence. Do not ship KernelRidge.

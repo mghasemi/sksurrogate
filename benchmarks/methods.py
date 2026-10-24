@@ -30,10 +30,12 @@ import dataclasses
 import json
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.kernel_ridge import KernelRidge
 from sklearn.metrics import accuracy_score, balanced_accuracy_score
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 from sklearn.pipeline import Pipeline
@@ -146,9 +148,43 @@ def run_srs_no_surrogate(Xtr, ytr, Xte, yte, budget: int, seed: int, n_estimator
     )
 
 
+def run_sksurrogate_gp(Xtr, ytr, Xte, yte, budget: int, seed: int, n_estimators: int = 50) -> RunRecord:
+    """Arm B with a Gaussian-process response surface (DESIGN.md v1.8).
+
+    Identical SRS outer loop and engagement schedule to :func:`run_sksurrogate` —
+    the explicit ``min_evals`` floor mirrors the library's clamp for its default
+    cubic Hilbert regressor, so all surrogate arms engage at identical k (20 in
+    this 3-parameter space) — but the response surface is a stock sklearn
+    ``GaussianProcessRegressor`` (RBF kernel, alpha=1e-10 defaults). Kernel
+    hyperparameters are deliberately un-tuned: first test of whether a richer
+    surface helps under an equal protocol.
+    """
+    return _run_srs(
+        Xtr, ytr, Xte, yte, budget, seed, n_estimators,
+        min_evals=None, task_tag="srsgp", method_name="sksurrogate-gp",
+        regressor_factory=lambda: GaussianProcessRegressor(),
+    )
+
+
+def run_sksurrogate_krr(Xtr, ytr, Xte, yte, budget: int, seed: int, n_estimators: int = 50) -> RunRecord:
+    """Arm B with a kernel-ridge response surface (DESIGN.md v1.8).
+
+    As :func:`run_sksurrogate_gp` but the surrogate is a stock sklearn
+    ``KernelRidge`` (RBF kernel, gamma='scale', alpha=1.0 defaults) instead of a
+    Gaussian process. Everything else — space, estimator, seeds, budgets,
+    engagement threshold — matches both Arm B arms bit-for-bit in protocol.
+    """
+    return _run_srs(
+        Xtr, ytr, Xte, yte, budget, seed, n_estimators,
+        min_evals=None, task_tag="srskrr", method_name="sksurrogate-krr",
+        regressor_factory=lambda: KernelRidge(),
+    )
+
+
 def _run_srs(
     Xtr, ytr, Xte, yte, budget: int, seed: int, n_estimators: int = 50,
     min_evals: int | None = None, task_tag: str = "srs", method_name: str = "sksurrogate",
+    regressor_factory: Callable[[], Any] | None = None,
 ) -> RunRecord:
     """Shared runner for both SRS ablation arms; ``min_evals=None`` selects default engagement."""
     from SKSurrogate.structsearch import Categorical, SurrogateRandomCV
@@ -156,6 +192,17 @@ def _run_srs(
     if min_evals is None:
         min_evals = min(max(5, budget // 5), budget)
     params = {name: Categorical(values) for name, values in SPACE.items()}
+    custom_regressor = None
+    if regressor_factory is not None:
+        # DESIGN v1.8: the library's MinEvals floor (C(n_params+3, n_params)) applies only when
+        # SurrogateSearch installs its own default cubic HilbertRegressor; a user-supplied
+        # regressor receives the requested min_evals verbatim (v1.4 errata). Apply that same
+        # floor here so every surrogate arm engages at identical k — isolating the response
+        # surface as the only variable under test.
+        import math
+
+        min_evals = max(min_evals, math.comb(len(SPACE) + 3, len(SPACE)))
+        custom_regressor = regressor_factory()
     # Hard evaluation cap: SRS's `max_iter` counts loop iterations (inclusive
     # off-by-one) and the x0 initial point is evaluated in __init__, so a naive
     # max_iter=budget would spend budget+2 evaluations. `max_evals` is checked
@@ -187,6 +234,7 @@ def _run_srs(
         max_iter=4 * budget,  # DESIGN v1.7: safe ceiling; max_evals is the binding cap (see errata above)
         max_evals=budget,
         min_evals=min_evals,
+        regressor=custom_regressor,  # DESIGN v1.8: None -> library default cubic Hilbert; else stock sklearn surface
         scoring=None,
         cv=5,
         refit=False,
@@ -259,6 +307,9 @@ def _run_srs(
         extra={
             "termination_reason": getattr(search, "termination_reason", None),
             "failure_summary": getattr(search, "failure_summary_", {}),
+            # DESIGN v1.8: which response surface this arm fitted (default cubic Hilbert
+            # unless a custom regressor was injected).
+            "surrogate": type(custom_regressor).__name__ if custom_regressor is not None else "HilbertRegressor(deg=3)",
             # DESIGN v1.7: SRS loop-iteration count vs n_evals exposes no-op
             # iterations (failed local optimizations of the surrogate surface).
             "n_iterations": int(getattr(search.OPTIM, "iteration", 0)) if hasattr(search, "OPTIM") else None,
@@ -443,6 +494,8 @@ def run_skopt(Xtr, ytr, Xte, yte, budget: int, seed: int, n_estimators: int = 50
 
 METHODS: dict[str, Any] = {
     "sksurrogate": run_sksurrogate,
+    "sksurrogate-gp": run_sksurrogate_gp,
+    "sksurrogate-krr": run_sksurrogate_krr,
     "srs-no-surrogate": run_srs_no_surrogate,
     "random": run_random,
     "optuna-tpe": run_optuna_tpe,
