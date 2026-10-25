@@ -11,7 +11,7 @@ authors:
     given-names: Mehdi
     orcid: https://orcid.org/0000-0000-0000-0000   # TODO: fill real ORCID before submission
 version: "0.2.0"
-doi: 10.5281/zenodo.23325033   # TODO: update to the v0.2.0 version-specific DOI after Zenodo newversion
+doi: 10.5281/zenodo.23631823
 date-released: 2026-10-25
 license: MIT
 keywords:
