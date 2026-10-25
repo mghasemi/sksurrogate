@@ -21,8 +21,11 @@ optimization problem with :math:`f` replaced by :math:`\hat{f}` one gets a more 
 :math:`x_i` for the next iteration. If a certain number of iterations do not result in a better candidate,
 the method returns to random sampling to collect more information about :math:`f`. The surrogate
 function :math:`\hat{f}_i` can be found in many ways such as (non)linear regression, Gaussian
-process regression, etc. and  `SurrogateSearch` do not have a preference. But by default it uses a polynomial
-regression of degree 3 if no regressor is provided. Any regressor following the architecture of `scikit-learn`
+process regression, etc. and  `SurrogateSearch` do not have a preference. But by default (since v0.2) it fits an
+un-tuned RBF Gaussian process (`sklearn.gaussian_process.GaussianProcessRegressor`), chosen over the legacy cubic
+Hilbert polynomial on the evidence of the equal-budget benchmark suite — see `benchmarks/DESIGN.md` sec. 12 and raw
+records DOI 10.5281/zenodo.23629024; the Hilbert surface remains available via
+`regressor=HilbertRegressor(deg=...)`. Any regressor following the architecture of `scikit-learn`
 is acceptable. Note that regressors usually require a minimum number of data points to function properly.
 
 There are various ways for sampling a random point in feasible space which affects the performance of SRS.
@@ -195,10 +198,12 @@ class SurrogateSearch(object):
     :param sampling: the sampling method either `BoxSample` or `SphereSample` (default `SphereSample`)
     :param search_sphere: `boolean` whether to fit the surrogate function on a neighbourhood of current candidate or
         over all sampled points (default: False)
-    :param deg: `int` degree of polynomial regressor if one chooses to fit polynomial surrogates (default: 3)
+    :param deg: `int` degree used to compute the default minimum number of evaluations (default: 3); if you pass your own
+        polynomial surface, e.g. `regressor=HilbertRegressor(deg=...)`, that object's degree governs instead
     :param min_evals: `int` minimum number of samples before fitting a surrogate (default will be calculated as if the
         surrogate is a polynomial of degree 3)
-    :param regressor: a regressor (scikit-learn style) to find a surrogate
+    :param regressor: a regressor (scikit-learn style) to find a surrogate; default since v0.2 is an un-tuned RBF
+        `GaussianProcessRegressor` — pass e.g. `HilbertRegressor(deg=3)` for the legacy cubic polynomial surface
     :param scipy_solver: `str` the scipy solver ('COBYLA' or 'SLSQP') to solve the local optimization problem at each
         iteration (default: 'COBYLA')
     :param max_itr_no_prog: `int` maximum number of iterations with no progress (default: infinity)
@@ -265,9 +270,16 @@ class SurrogateSearch(object):
         self.termination_reason = None
         self.summary_ = {}
         if self.regressor is None:
-            from .NpyProximation import HilbertRegressor
+            # Default response surface since v0.2: stock, un-tuned RBF Gaussian process.
+            # Evidence: equal-budget benchmark suite (benchmarks/DESIGN.md sec. 12; raw
+            # records DOI 10.5281/zenodo.23629024) -- top mean CV on all six datasets at
+            # both B=30 and B=60 vs the legacy cubic Hilbert default (seed-level wins
+            # 20W/17T/5L and 25W/13T/4L). The MinEvals combinatorial floor below is kept
+            # identical to v0.1 so surrogate firing matches that benchmark configuration;
+            # pass regressor=HilbertRegressor(deg=<deg>) for the legacy surface.
+            from sklearn.gaussian_process import GaussianProcessRegressor
 
-            self.regressor = HilbertRegressor(deg=3)
+            self.regressor = GaussianProcessRegressor()
             new_n_evals = binom(n_ + 3, n_)
             if self.MinEvals < new_n_evals:
                 self.MinEvals = new_n_evals
@@ -677,6 +689,9 @@ class SurrogateRandomCV(BaseSearchCV):
         ``n_points`` if you want to try more parameter settings in parallel.
     :param min_evals: int, default=25; Number of random evaluations before employing an approximation for the
         response surface.
+    :param regressor: scikit-learn-style regressor used to fit the surrogate response surface;
+        default since v0.2 is an un-tuned RBF `GaussianProcessRegressor` (see
+        `benchmarks/DESIGN.md` sec. 12), pass e.g. `HilbertRegressor(deg=3)` for the legacy cubic polynomial.
     :param n_jobs: int, default=-1; number of processes to run in parallel
     :param fit_params: dict, optional; Parameters to pass to the fit method.
     :param pre_dispatch: int, or string, optional;
