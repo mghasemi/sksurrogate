@@ -12,6 +12,21 @@
 
 ---
 
+## Abstract
+
+`SKSurrogate` provides a lightweight, `scikit-learn`-native surrogate-guided search for
+hyperparameter optimization and AutoML pipeline design. We evaluate the search against uniform
+random sampling and Optuna-TPE at **equal evaluation budgets** on six OpenML/bundled datasets, and
+isolate the value of the surrogate component with a controlled ablation (identical search with the
+surrogate engaged vs never engaged). At a fixed budget of 30 candidate-model evaluations, SKSurrogate
+with its default RBF-GP surface matches Optuna-TPE within ~0.002 in cross-validated accuracy on five
+of six datasets and surpasses it on the hardest imbalanced high-dimensional case; at a budget of 60
+it leads all six. The ablation shows the surrogate matches or improves final accuracy on every
+dataset. A one-command harness and a Zenodo-archived raw-results record make every result
+reproducible.
+
+---
+
 ## Summary
 
 `SKSurrogate` is a suite of `scikit-learn`-style tools that implements *surrogate-guided
@@ -40,6 +55,20 @@ loops:
 
 `min_evals = B` degrades the search to plain random sampling through the *same* code path — this is
 the mechanism used for the ablation (§Results), isolating the surrogate's contribution exactly.
+
+## Related work
+
+Mainstream HPO is dominated by Bayesian/surrogate methods: TPE (Hyperopt), SMAC, Optuna, and (until
+archival) scikit-optimize; AutoML systems layer these onto pipeline construction (e.g., Auto-Sklearn)
+and early-stopping. SKSurrogate's niche is (i) `scikit-learn`-native **typed search spaces**
+(`Categorical`/`Integer`/`Real`/`HDReal`) with a `BaseSearchCV`-style interface, (ii) a lightweight
+**evolutionary outer loop with a surrogate-guided inner step** rather than a global
+acquisition-function optimization, and (iii) an explicitly frozen, version-controlled **equal-budget
+benchmark suite** with archived raw results — so claims are tied to a reproducible evaluation rather
+than to ad-hoc configs.
+
+> **Citations to add before submission** (placeholders; not fabricated here): Optuna; TPE/Hyperopt;
+> SMAC; Auto-Sklearn; scikit-optimize (archived); surrogate-model HPO surveys.
 
 ## Benchmark protocol
 
@@ -124,6 +153,36 @@ Mean final cross-validated accuracy over 7 seeds, **B = 30** (best per row in bo
 clean ablation to **never hurt and to raise final accuracy**, and which ships with a fully
 reproducible benchmark suite. This is positioned as a research contribution in software and
 methodology (JOSS-style), with explicit and honest limitations.
+
+## Appendix A — Evaluations to reach target (reported, but not a headline claim)
+
+Median model evaluations to reach within an absolute gap $g = 0.01$ of a run's *own* final best CV
+(lower is better; self-anchored, so dataset difficulty does not confound). **B = 30:**
+
+| dataset | SRS (RBF-GP) | no surrogate | random | Optuna-TPE |
+|---|---|---:|---:|---:|
+| arrhythmia | 14 | 6 | 11 | 12 |
+| credit-g | 9 | 9 | 2 | 5 |
+| galaxy3 | 13 | 9 | 2 | 13 |
+| ionosphere | 0 | 0 | 1 | 1 |
+| optdigits | 6 | 6 | 2 | 6 |
+| spambase | 2 | 2 | 2 | 5 |
+
+**B = 60** (SRS arms: cubic Hilbert / RBF-GP / RBF-KRR / no surrogate):
+
+| dataset | Hilbert³ | RBF-GP | RBF-KRR | no surrogate |
+|---|---|---:|---:|---:|---:|
+| arrhythmia | 10 | 14 | **9** | 10 |
+| credit-g | **9** | **9** | **9** | **9** |
+| galaxy3 | 14 | 14 | **9** | 13 |
+| ionosphere | **0** | **0** | **0** | **0** |
+| optdigits | **6** | **6** | **6** | **6** |
+| spambase | **2** | 5 | **2** | **2** |
+
+These medians are **mixed**: `random` occasionally reaches its own near-best in very few evaluations
+(e.g., 2 on credit-g/galaxy3), and the surrogate is not consistently faster to threshold. This is why
+the note claims *equal-budget accuracy* rather than *sample efficiency*. A defensible
+sample-efficiency claim would require a target-anchored protocol across a larger dataset matrix.
 
 ---
 
