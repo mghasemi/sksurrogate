@@ -1,0 +1,34 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "SKSurrogate: a Python toolkit for surrogate-based optimization of expensive functions"
+abstract: >-
+  A scikit-learn-native suite implementing surrogate-guided optimization for expensive
+  objectives, primarily hyperparameter and AutoML pipeline search. Since v0.2.0 the default
+  response surface is an un-tuned RBF GaussianProcessRegressor; an equal-budget benchmark suite
+  and a with-vs-without surrogate ablation are published and reproducible.
+authors:
+  - family-names: Ghasemi
+    given-names: Mehdi
+    orcid: https://orcid.org/0000-0000-0000-0000   # TODO: fill real ORCID before submission
+version: "0.2.0"
+doi: 10.5281/zenodo.23325033   # TODO: update to the v0.2.0 version-specific DOI after Zenodo newversion
+date-released: 2026-10-25
+license: MIT
+keywords:
+  - machine-learning
+  - hyperparameter-optimization
+  - surrogate-optimization
+  - automl
+  - python
+  - scikit-learn
+references:
+  - type: dataset
+    title: >-
+      SKSurrogate benchmark raw results --- equal-budget HPO suite (B=30/B=60), DESIGN v1.9
+    authors:
+      - family-names: Ghasemi
+        given-names: Mehdi
+    year: 2026
+    doi: 10.5281/zenodo.23629024
+    license: MIT
+    repository: https://doi.org/10.5281/zenodo.23629024
