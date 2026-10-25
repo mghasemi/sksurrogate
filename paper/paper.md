@@ -9,8 +9,8 @@ tags:
   - benchmark
 authors:
   - name: "Mehdi Ghasemi"
-    orcid: 0000-0000-0000-0000   # TODO: fill real ORCID before submission
-    affiliation: "Independent researcher"  # TODO: confirm affiliation
+    orcid: 0000-0002-9551-1780
+    affiliation: "Edmonton Police Service"
 date: 25 October 2026
 bibliography: paper.bib
 ---
