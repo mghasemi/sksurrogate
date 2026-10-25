@@ -20,6 +20,36 @@ its time in lieu of global optimality.
 ``SKSurrogate`` is positioned as a scientific/research library: the numerical methods are
 validated against benchmarks, but the API surface evolves with ongoing research work.
 
+Benchmarks
+----------
+The surrogate-guided search is validated against strong HPO/AutoML baselines at **equal evaluation
+budgets** (candidate-model evaluations, not wall-clock). Mean final cross-validated accuracy over 7
+seeds at a budget of 30 evaluations (full protocol, figures, and the raw-results archive DOI
+`10.5281/zenodo.23629024 <https://doi.org/10.5281/zenodo.23629024>`_ are in
+`docs/benchmarks.md <docs/benchmarks.md>`_):
+
++------------+----------------------------+--------------+--------+------------+
+| dataset    | SKSurrogate (RBF-GP, v0.2) | no surrogate | random | Optuna-TPE |
++============+============================+==============+========+============+
+| arrhythmia | 0.7020                     | 0.6910       | 0.6941 | **0.7036** |
++------------+----------------------------+--------------+--------+------------+
+| credit-g   | 0.7423                     | 0.7391       | 0.7405 | **0.7436** |
++------------+----------------------------+--------------+--------+------------+
+| galaxy3    | 0.6473                     | 0.6448       | 0.6484 | **0.6507** |
++------------+----------------------------+--------------+--------+------------+
+| ionosphere | **0.9352**                 | 0.9347       | 0.9347 | 0.9337     |
++------------+----------------------------+--------------+--------+------------+
+| optdigits  | 0.9403                     | 0.9392       | 0.9380 | **0.9405** |
++------------+----------------------------+--------------+--------+------------+
+| spambase   | 0.9280                     | 0.9269       | 0.9272 | **0.9286** |
++------------+----------------------------+--------------+--------+------------+
+
+The RBF-GP response surface matches the top baseline within ~0.002 on every dataset and edges it out on
+the hardest case (ionosphere); the with-vs-without surrogate ablation (``srs-no-surrogate``) shows the
+surrogate raises or matches final accuracy on every dataset. At the extended budget of 60 evaluations,
+SKSurrogate (RBF-GP) leads all six datasets. Median-evaluations-to-target and seed-averaged best-so-far
+curves are in the benchmark report.
+
 Installation
 ------------
 From PyPI::
