@@ -13,7 +13,10 @@ def _read_version():
     return match.group(1)
 
 
-Description = "A python package that implements or wraps a few machine learning tools Scikit-Learn style."
+Description = (
+    "Lightweight, maintained, scikit-learn-native surrogate tuner for hyperparameter and "
+    "AutoML pipeline search; a drop-in replacement for BayesSearchCV."
+)
 
 setup(
     name="SKSurrogate",
@@ -23,21 +26,33 @@ setup(
     author="Mehdi Ghasemi",
     author_email="mehdi.ghasemi@gmail.com",
     packages=["SKSurrogate"],
-    url="https://github.com/mghasemi/sksurrogate.git",
+    url="https://github.com/mghasemi/sksurrogate",
     license="MIT",
     description=Description,
     long_description=open("./readme.rst").read(),
     long_description_content_type="text/x-rst",
     keywords=[
-        "Auto Machine Learning",
+        "hyperparameter optimization",
+        "surrogate",
+        "scikit-learn",
         "AutoML",
+        "Bayesian optimization",
+        "trust region",
+        "evolutionary optimization",
+        "drift detection",
+        "Auto Machine Learning",
         "Optimization",
         "Surrogate Optimization",
-        "Numerical",
         "Machine Learning",
         "Regression",
         "Random Search",
     ],
+    project_urls={
+        "Source": "https://github.com/mghasemi/sksurrogate",
+        "Documentation": "https://sksurrogate.readthedocs.io/",
+        "Zenodo (software)": "https://doi.org/10.5281/zenodo.23631823",
+        "Zenodo (benchmark data)": "https://doi.org/10.5281/zenodo.23629024",
+    },
     install_requires=[
         "numpy>=1.22",
         "scipy>=1.10",
