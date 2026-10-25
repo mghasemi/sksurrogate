@@ -1,18 +1,22 @@
+# Development / API-stack requirements (CI `tests` job). Lower bounds exclude all
+# historically vulnerable ranges per the GitHub Advisory Database (Dependabot triage,
+# 2026-10-24: unpinned manifests allowed pre-fix versions of several packages);
+# no upper pins -- CI intentionally tracks current releases.
 category-encoders
 eli5
-fastapi
+fastapi>0.109
 imbalanced-learn
-joblib
+joblib>=1.2
 matplotlib
-numpy
+numpy>=1.22
 pandas
 peewee
-python-multipart
+python-multipart>=0.0.31
 SALib
-scikit-learn
-scipy
+scikit-learn>=1.5
+scipy>=1.10
 six
 skrebate
-tqdm
-lightgbm
-uvicorn[standard]
+tqdm>=4.66.3
+lightgbm>=4.6
+uvicorn[standard]>=0.11.7
