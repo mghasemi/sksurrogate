@@ -96,14 +96,14 @@ optdigits (28), Galaxy3 (bundled; synthetic epistasis).
 
 Mean final cross-validated accuracy over 7 seeds, **B = 30** (best per row in bold):
 
-| dataset | SRS (RBF-GP) | no surrogate | random | Optuna-TPE |
-|---|---|---|---:|
-| arrhythmia | 0.7020 | 0.6910 | 0.6941 | **0.7036** |
-| credit-g | 0.7423 | 0.7391 | 0.7405 | **0.7436** |
-| galaxy3 | 0.6473 | 0.6448 | 0.6484 | **0.6507** |
-| ionosphere | **0.9352** | 0.9347 | 0.9347 | 0.9337 |
-| optdigits | 0.9403 | 0.9392 | 0.9380 | **0.9405** |
-| spambase | 0.9280 | 0.9269 | 0.9272 | **0.9286** |
+| dataset    | SRS (RBF-GP) | no surrogate | random | Optuna-TPE |
+|------------|--------------|--------------|--------|------------|
+| arrhythmia | 0.7020       | 0.6910       | 0.6941 | **0.7036** |
+| credit-g   | 0.7423       | 0.7391       | 0.7405 | **0.7436** |
+| galaxy3    | 0.6473       | 0.6448       | 0.6484 | **0.6507** |
+| ionosphere | **0.9352**   | 0.9347       | 0.9347 | 0.9337     |
+| optdigits  | 0.9403       | 0.9392       | 0.9380 | **0.9405** |
+| spambase   | 0.9280       | 0.9269       | 0.9272 | **0.9286** |
 
 **B = 60** (SRS arms):
 
@@ -170,14 +170,14 @@ Median model evaluations to reach within an absolute gap $g = 0.01$ of a run's *
 
 **B = 60** (SRS arms: cubic Hilbert / RBF-GP / RBF-KRR / no surrogate):
 
-| dataset | Hilbert³ | RBF-GP | RBF-KRR | no surrogate |
-|---|---|---:|---:|---:|---:|
-| arrhythmia | 10 | 14 | **9** | 10 |
-| credit-g | **9** | **9** | **9** | **9** |
-| galaxy3 | 14 | 14 | **9** | 13 |
-| ionosphere | **0** | **0** | **0** | **0** |
-| optdigits | **6** | **6** | **6** | **6** |
-| spambase | **2** | 5 | **2** | **2** |
+| dataset    | Hilbert³ | RBF-GP | RBF-KRR | no surrogate |
+|------------|----------|--------|---------|-------------:|
+| arrhythmia | 10       | 14     | **9**   |           10 |
+| credit-g   | **9**    | **9**  | **9**   |            **9** |
+| galaxy3    | 14       | 14     | **9**   |           13 |
+| ionosphere | **0**    | **0**  | **0**   |            **0** |
+| optdigits  | **6**    | **6**  | **6**   |            **6** |
+| spambase   | **2**    | 5      | **2**   |            **2** |
 
 These medians are **mixed**: `random` occasionally reaches its own near-best in very few evaluations
 (e.g., 2 on credit-g/galaxy3), and the surrogate is not consistently faster to threshold. This is why
