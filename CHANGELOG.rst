@@ -4,6 +4,22 @@ Changelog
 Unreleased
 ----------
 
+Response-surface default change (v0.2)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* ``SurrogateSearch`` now defaults its response surface to a stock, un-tuned RBF
+  Gaussian process (`sklearn.gaussian_process.GaussianProcessRegressor`) instead of the
+  legacy cubic Hilbert polynomial (`HilbertRegressor(deg=3)`). Evidence: equal-budget
+  benchmark suite -- the RBF-GP surface attains top mean CV on all six datasets at both
+  B=30 and B=60, with seed-level win rates of 20W/17T/5L (B=30) and 25W/13T/4L (B=60)
+  against Hilbert (two-sided exact binomial p approx. 4e-3 / 1e-4); the un-tuned RBF-KRR
+  alternative never wins a seed at either budget. See ``benchmarks/DESIGN.md`` sec. 12;
+  raw per-run records are archived at DOI 10.5281/zenodo.23629024 (software:
+  DOI 10.5281/zenodo.23325033). The surrogate-firing floor (`MinEvals`) is unchanged, so
+  the firing behavior matches that benchmark configuration exactly.
+* Restore the v0.1 behaviour with `regressor=HilbertRegressor(deg=...)`; no new dependency
+  (scikit-learn was already required).
+
 Control-plane API and Web UI (branch ``ui``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
