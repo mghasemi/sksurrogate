@@ -5,6 +5,7 @@
 > **Status:** standalone research note (D3 deliverable). Raw data and full regime
 > tables in `docs/benchmarks/dtrack.md`; reproducible from
 > `python -m benchmarks.dtrack.d1_approx` and `python -m benchmarks.dtrack.d2_compare`.
+> Raw results archived at DOI [10.5281/zenodo.23652613](https://doi.org/10.5281/zenodo.23652613) (Zenodo, 2026-10-25).
 
 ---
 
