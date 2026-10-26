@@ -1,6 +1,6 @@
 # SKSurrogate MLOps Roadmap
 
-Status: in progress
+Status: complete
 
 This document tracks the work needed to evolve SKSurrogate from an offline AutoML and experiment-tracking library into a reproducible, deployable, and monitorable MLOps system.
 
@@ -283,7 +283,7 @@ Dependencies: Phases 3, 5, 7, and 8.
 
 ## Phase 10: Documentation and Release Hardening
 
-Status: in progress
+Status: complete
 
 Goal: make the operational features discoverable and maintainable.
 
