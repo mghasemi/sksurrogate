@@ -175,6 +175,12 @@ These systems choose their own pipelines and their own number of internal fits, 
 held-out accuracy is comparable; `n_evals = None` is recorded honestly. **Protocol C results are
 never pooled with A/B** and no cross-protocol significance test is run.
 
+**The wall budget is a cap, not a consumed budget.** Verified on galaxy3 at `T = 20 s`: FLAML
+consumed all 20 s (chose CatBoost), while AutoGluon trained its fixed `medium_quality` portfolio
+and stopped after **2.6 s**. The table therefore reports each system's *actual* wall and is
+described as "best model produced within the cap" — not as equal compute. Forcing AutoGluon to
+consume the cap would require changing its presets, which would confound the comparison.
+
 ---
 
 ## 4. Arms
