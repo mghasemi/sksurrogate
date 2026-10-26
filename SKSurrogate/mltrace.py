@@ -768,6 +768,7 @@ class mltrack(object):
         source_uri=None,
         partition=None,
         ingestion_timestamp=None,
+        preprocess_kwargs=None,
     ):
         """
         Registers a pandas DataFrame into the SQLite database.
@@ -778,6 +779,9 @@ class mltrack(object):
         :param source_uri: optional dataset source identifier or URI
         :param partition: optional partition label such as train/validation/test
         :param ingestion_timestamp: optional timestamp for the dataset ingestion event
+        :param preprocess_kwargs: optional keyword arguments forwarded to
+            ``DataPreprocess`` (e.g. ``bin_threshold``, ``cat_threshold``,
+            ``force_impute``) when encoding is enabled; defaults are unchanged
         :return: None
         """
         # TBM
@@ -788,9 +792,8 @@ class mltrack(object):
         self.target = target
         self._split_cache.clear()
         if self.encode:
-            # TODO: Input parameters for DataPreprocess
             from .DataProcess import DataPreprocess
-            encoder = DataPreprocess(source_df)
+            encoder = DataPreprocess(source_df, **(preprocess_kwargs or {}))
             encoder.encode()
             source_df = encoder.transformed_df
         clmns = list(source_df.columns)
