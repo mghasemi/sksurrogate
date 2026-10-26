@@ -1,6 +1,6 @@
 # SKSurrogate Pipeline-Space Benchmark — Contract (C1)
 
-Status: **v0.1 (pre-run, 2026-10-26)**. This document is the contract for the pipeline-space
+Status: **v0.2 (pre-run, 2026-10-26)**. This document is the contract for the pipeline-space
 track (C1 spec, C2 runner, C3 pilot, C4 full runs, C5 results page). It is separate from
 `benchmarks/DESIGN.md`, which stays frozen at v1.9 and keeps governing the *fixed-pipeline*
 suite; nothing here invalidates those results.
@@ -81,13 +81,18 @@ Defined once in `benchmarks/cspace.py`; every arm consumes that module.
 |---|---|
 | `prep` | `identity` (`FunctionTransformer`), `standard` (`StandardScaler`), `robust` (`RobustScaler`), `quantile` (`QuantileTransformer(output_distribution="normal")`) — 4 |
 | `reduce` | `identity`, `pca4`, `pca8`, `pca16`, `kbest16` (`SelectKBest(f_classif, k=16)`) — 5 |
-| `clf` | `logreg` (C ∈ 4), `rf` (max_depth ∈ {4,8,16,None} × min_samples_leaf ∈ {1,5,20}), `et` (same), `hgb` (learning_rate ∈ 3 × max_leaf_nodes ∈ 3), `svc` (C ∈ 4 × gamma ∈ {scale,0.01,0.1}), `knn` (n_neighbors ∈ 4 × weights ∈ 2) — 57 |
+| `clf` | `logreg` (C ∈ 5), `rf` (max_depth ∈ {4,8,16,None} × min_samples_leaf ∈ {1,5,20}), `et` (same), `hgb` (learning_rate ∈ 3 × max_leaf_nodes ∈ 3), `svc` (C ∈ 5 × gamma ∈ {scale,0.01,0.1}), `knn` (n_neighbors ∈ 4 × weights ∈ 2) — 61 |
 
-**Cardinality:** $4 \times 5 \times 57 = \mathbf{1140}$ distinct pipelines. Asserted by
+**Cardinality:** $4 \times 5 \times 61 = \mathbf{1220}$ distinct pipelines. Asserted by
 `tests/test_cspace_space.py::test_cardinality_is_frozen`.
 
 Notes.
 - `max_depth = 0` encodes `None` (the flat space needs a numeric coordinate).
+- **Shared knobs declare union value sets.** `C` is shared by `logreg` and `svc`, so both
+  branches list the same five values `{0.01, 0.1, 1.0, 10.0, 100.0}`. The flat space has one
+  `C` coordinate; if a branch excluded a value, a legitimate sampler draw would become an
+  invalid candidate. Validity depends on *which* knob is active, never on which value it
+  holds — anything else would be an artifact of the encoding rather than the effect under test.
 - PCA stops at 16 components: the smallest dataset has 20 features, so a larger count would be a
   guaranteed fit failure rather than a search decision.
 - `kbest16` requires `y`; `Pipeline` forwards `y` to intermediate `fit_transform`, so this is
@@ -95,8 +100,8 @@ Notes.
   selection is the leakage-free behaviour.
 - The flat space has **11 coordinates**: `prep`, `reduce`, `clf` + 8 branch knobs (`C`,
   `max_depth`, `min_samples_leaf`, `learning_rate`, `max_leaf_nodes`, `gamma`, `n_neighbors`,
-  `weights`). Its raw product is strictly larger than 1140 and mostly invalid — that gap is the
-  subject of H3.
+  `weights`). Its raw product is strictly larger than 1220 and mostly invalid; the `invalid_rate`
+  metric monitors whether an arm pays for that product rather than for the space.
 
 ### 2.1 Branch gating
 
@@ -229,9 +234,8 @@ sampling KNN, the table must say so.
 |---|---|---|---|
 | H1 | Same C-space and budget: does surrogate guidance beat TPE? | With ordinal categorical encoding, `srs-cspace` is **not** better than `optuna-tpe-cspace`: mean best-CV difference ≤ 0 in ≥ 4 of 6 datasets. | `srs-cspace` strictly better in ≥ 4/6 datasets. |
 | H2 | Is the ordinal encoding the cause? | `srs-onehot-cspace` improves mean best-CV by ≥ 0.3 pt over `srs-cspace` in ≥ 4/6 datasets. | Improvement < 0.1 pt in ≥ 4/6 datasets — the encoding is not the bottleneck. |
-| H3 | Do conditional coordinates cost budget? | `invalid_rate` is strictly positive for SRS arms on every dataset, and ≈ 0 for `optuna-tpe-cspace`. | SRS `invalid_rate` = 0 everywhere. |
-| H4 | System level: what does a single-pipeline search lose to portfolio AutoML? | At equal $T$, FLAML and AutoGluon each beat `srs-cspace` on mean held-out accuracy in ≥ 4/6 datasets; the **gap in points** is the reported quantity. | `srs-cspace` ≥ both systems in ≥ 4/6 datasets. |
-| H5 | (descriptive) Does the ranking survive cost heterogeneity? | No directional claim; report any ordering change between Protocol A and B. | — |
+| H3 | System level: what does a single-pipeline search lose to portfolio AutoML? | At equal $T$, FLAML and AutoGluon each beat `srs-cspace` on mean held-out accuracy in ≥ 4/6 datasets; the **gap in points** is the reported quantity. | `srs-cspace` ≥ both systems in ≥ 4/6 datasets. |
+| H4 | (descriptive) Does the ranking survive cost heterogeneity? | No directional claim; report any ordering change between Protocol A and B and the `family_mix` behind it. | — |
 
 Outcomes are reported as *confirmed / refuted / inconclusive* against the falsifier column. A
 refuted hypothesis is a result, not a failure.
@@ -243,7 +247,7 @@ refuted hypothesis is a result, not a failure.
 | Gate | Check | Failure action |
 |---|---|---|
 | G0 provisioning | `optuna`, `flaml`, `autogluon`, `scikit-posthocs`, `pytest` import; versions in the manifest | abort before any run |
-| G1 space parity | cardinality = 1140; every enumerated config valid; 1,000 uniform draws valid; masked SRS params resolve to valid configs | abort |
+| G1 space parity | cardinality = 1220; every enumerated config valid; 1,000 uniform draws valid; masked SRS params resolve to valid configs | abort |
 | G2 count parity | Protocol B: `n_evals == B` for every arm; Optuna trial count == B; SRS `engaged_at` not `None` | record `status="error"`, never silently proceed |
 | G3 pre-launch fit gate | all 1140 configs fit on every dataset's train split (5-fold) | space is broken — fix the spec, bump this document |
 | G4 engagement | every SRS cell records `extra["surrogate"]` and `extra["engaged_at"]` | re-run the cell |
@@ -268,7 +272,7 @@ Nothing is deleted.
 | Protocol B (C4) | 6 datasets × 7 seeds × 6 search arms × 40 evals × 5 folds ≈ 50,000 CV fits | 10–16 h |
 | Protocol A (C4) | 6 × 7 × 6 arms × 120 s ≈ 8.5 h wall | ~8.5 h |
 | Protocol C (C4) | 6 × 7 × 3 systems × 120 s ≈ 2.5 h (+ AutoGluon overhead) | 3–5 h |
-| Optional oracle | 1140 configs × 5 folds on 3 datasets × 1 seed, for a true regret normalizer | 4–6 h |
+| Optional oracle | 1220 configs × 5 folds on 3 datasets × 1 seed, for a true regret normalizer | 4–6 h |
 
 Full matrix ≈ 2–3 overnight runs. The pilot re-estimates these numbers before the full launch;
 a >2× deviation triggers a re-scope (`T = 90` s, or Protocol B on 4 datasets) and a version bump.
@@ -286,6 +290,26 @@ a >2× deviation triggers a re-scope (`T = 90` s, or Protocol B on 4 datasets) a
 
 ---
 
-## 11. Errata
+## 11. Revision log
+
+**v0.1 → v0.2 (2026-10-26, pre-run — no benchmark number exists yet).** Three corrections made
+while implementing `benchmarks/cspace.py` and `benchmarks/pipelines.py`, all before any run:
+
+1. `C` was declared with *different* value sets in the `logreg` (4 values) and `svc` (4 values,
+   different endpoints) branches while the flat space exposes one `C` coordinate. A legitimate
+   sampler draw would then have been an invalid candidate — an artifact of the encoding, not the
+   defect under test. Both branches now declare the same five values; cardinality 1140 → **1220**.
+2. The earlier H3 ("SRS wastes budget on invalid candidates") is **not falsifiable as stated**:
+   `_apply_conditional_parameters` runs before `set_params`, so SRS does produce valid
+   candidates whenever the value sets are unions. `invalid_rate` is retained as a *monitored
+   metric* (expectation ≈ 0 for every arm; anything else must be explained before publishing),
+   and the hypotheses are renumbered H1–H4.
+3. `MixedCategoricalSurface` was first written to round coordinates before the circular
+   embedding, which made its surface piecewise constant like one-hot and would have confounded
+   H2 with a mechanical optimiser failure. The embedding is now continuous in the raw
+   coordinate, and categorical columns are *replaced* by their embedding rather than appended
+   next to the raw ordinal column (which had leaked the ordinal signal straight back in).
+
+## 12. Errata
 
 *(empty — no run has been launched)*

@@ -1,8 +1,8 @@
 """Frozen pipeline C-space for the pipeline-space benchmark (DESIGN-cspace.md).
 
 One source of truth for six heterogeneous search arms.  The space is
-**enumerable** — 4 preprocessors x 5 reducers x 57 classifier configurations =
-1140 distinct pipelines — which is what makes an exact oracle possible and
+**enumerable** — 4 preprocessors x 5 reducers x 61 classifier configurations =
+1220 distinct pipelines — which is what makes an exact oracle possible and
 keeps "space search" honest (no method is credited for exploring pipelines the
 space does not contain).
 
@@ -55,19 +55,27 @@ __all__ = [
     "srs_conditional",
     "sample_uniform",
     "optuna_suggest",
+    "srs_categorical_columns",
     "canonical_key",
 ]
 
 PREP_OPTIONS: list[str] = ["identity", "standard", "robust", "quantile"]
 REDUCE_OPTIONS: list[str] = ["identity", "pca4", "pca8", "pca16", "kbest16"]
 
-#: Per-family knob grids. Cardinalities: 4 + 12 + 12 + 9 + 12 + 8 = 57.
+#: Per-family knob grids. Cardinalities: 5 + 12 + 12 + 9 + 15 + 8 = 61.
+#:
+#: ``C`` is shared by ``logreg`` and ``svc``. Both branches must declare the *same*
+#: value set: the flat SRS space has one ``C`` coordinate with the union grid, so a
+#: branch that excludes a value would turn "the sampler drew 100.0 for logreg" into an
+#: invalid candidate. That mismatch would be an artifact of the encoding, not the
+#: effect under test — validity depends on *which* knob is active, never on which
+#: value it holds.
 CLF_GRID: dict[str, dict[str, list[Any]]] = {
-    "logreg": {"C": [0.01, 0.1, 1.0, 10.0]},
+    "logreg": {"C": [0.01, 0.1, 1.0, 10.0, 100.0]},
     "rf": {"max_depth": [4, 8, 16, 0], "min_samples_leaf": [1, 5, 20]},
     "et": {"max_depth": [4, 8, 16, 0], "min_samples_leaf": [1, 5, 20]},
     "hgb": {"learning_rate": [0.03, 0.1, 0.3], "max_leaf_nodes": [15, 31, 63]},
-    "svc": {"C": [0.1, 1.0, 10.0, 100.0], "gamma": ["scale", 0.01, 0.1]},
+    "svc": {"C": [0.01, 0.1, 1.0, 10.0, 100.0], "gamma": ["scale", 0.01, 0.1]},
     "knn": {"n_neighbors": [1, 5, 15, 35], "weights": ["uniform", "distance"]},
 }
 
@@ -81,7 +89,7 @@ _N_CLF_CONFIGS = sum(
     int(np.prod([len(v) for v in knobs.values()])) for knobs in CLF_GRID.values()
 )
 
-#: 4 x 5 x 57
+#: 4 x 5 x 61
 CARDINALITY: int = len(PREP_OPTIONS) * len(REDUCE_OPTIONS) * _N_CLF_CONFIGS
 
 #: Keys that are not classifier knobs.
@@ -277,6 +285,19 @@ def to_srs_space() -> dict[str, Any]:
     for name, values in _KNOB_GRID.items():
         space[name] = Categorical(list(values))
     return space
+
+
+def srs_categorical_columns() -> list[tuple[int, int]]:
+    """``(column_index, cardinality)`` for every coordinate of the flat SRS space.
+
+    Order matches :func:`to_srs_space` insertion order, which is also the order
+    ``SurrogateRandomCV.fit`` walks ``params_list`` in — so column ``i`` of the
+    surrogate's input vector is exactly ``items[i]`` of this list.
+    """
+    return [
+        (index, len(params.items))
+        for index, params in enumerate(to_srs_space().values())
+    ]
 
 
 def srs_conditional() -> dict[str, Callable[[dict[str, Any]], bool]]:
