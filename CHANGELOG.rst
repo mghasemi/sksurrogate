@@ -4,8 +4,35 @@ Changelog
 Unreleased
 ----------
 
-Response-surface default change (v0.2)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+JOSS submission and documentation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Opened the JOSS submission (``paper/paper.md``, ``paper/paper.bib``) as PR
+  #8633 on ``openjournals/joss-papers``; added ``CITATION.cff`` pointing at the
+  software record DOI 10.5281/zenodo.23631823 and the technical note
+  ``docs/technical-note-rbf-gp-default.md``.
+* D-track Hilbert-space surrogate study: new benchmark modules
+  (``benchmarks/dtrack/{d1_approx,d2_compare,analyze}.py``), generated report
+  ``docs/benchmarks/dtrack.md``, and standalone write-up
+  ``docs/dtrack-study.md``; raw results (D1: 3816 cells, D2: 2160 cells) are
+  archived at DOI 10.5281/zenodo.23652613.
+* Phase C README rewrite with PyPI metadata polish; ORCID and affiliation
+  filled in across docs; benchmark archive pointer updated to the v0.2.0
+  software record (DOI 10.5281/zenodo.23631823).
+* WebUI dependency bump: vite 8.3.4.
+
+API
+~~~
+
+* ``RegisterData`` accepts an optional ``preprocess_kwargs`` mapping, forwarded
+  to ``DataPreprocess`` (e.g. ``bin_threshold``, ``cat_threshold``,
+  ``force_impute``) when encoding is enabled; defaults are unchanged.
+
+[0.2.0] - 2026-10-24
+--------------------
+
+Response-surface default change
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 * ``SurrogateSearch`` now defaults its response surface to a stock, un-tuned RBF
   Gaussian process (`sklearn.gaussian_process.GaussianProcessRegressor`) instead of the
@@ -15,10 +42,27 @@ Response-surface default change (v0.2)
   against Hilbert (two-sided exact binomial p approx. 4e-3 / 1e-4); the un-tuned RBF-KRR
   alternative never wins a seed at either budget. See ``benchmarks/DESIGN.md`` sec. 12;
   raw per-run records are archived at DOI 10.5281/zenodo.23629024 (software:
-  DOI 10.5281/zenodo.23325033). The surrogate-firing floor (`MinEvals`) is unchanged, so
+  DOI 10.5281/zenodo.23631823). The surrogate-firing floor (`MinEvals`) is unchanged, so
   the firing behavior matches that benchmark configuration exactly.
 * Restore the v0.1 behaviour with `regressor=HilbertRegressor(deg=...)`; no new dependency
   (scikit-learn was already required).
+
+Dependencies and packaging
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Lower-bound dependency pins in ``setup.py``/``requirements.txt`` exclude the
+  vulnerable ranges flagged by Dependabot (numpy <1.22, scipy <1.10,
+  scikit-learn <1.5, joblib <1.2, tqdm <4.66.3, fastapi <=0.109.0, lightgbm
+  <4.6, uvicorn <0.11.7, python-multipart <0.0.31); bounds sit far below the
+  versions CI currently installs and no upper pins were added.
+* WebUI lockfile: source-map-js pinned to a non-vulnerable version
+  (CVE-2026-93749).
+
+[0.1.1] - 2026-10-11
+--------------------
+
+Republished from 0.1.0 with canonical MIT license metadata; code is identical
+to 0.1.0.
 
 Control-plane API and Web UI (branch ``ui``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -110,7 +154,7 @@ Phase 9: Distributed execution and CI/CD integration
 * Added Phase 9 operational documentation.
 
 Phase 8: Governance, fairness, and security
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 * Added audit events, ownership metadata, sensitive-feature reports, fairness
   and subgroup reports, and retention-aware artifact deletion.
