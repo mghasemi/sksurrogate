@@ -175,6 +175,27 @@ These systems choose their own pipelines and their own number of internal fits, 
 held-out accuracy is comparable; `n_evals = None` is recorded honestly. **Protocol C results are
 never pooled with A/B** and no cross-protocol significance test is run.
 
+**Measured basis for making wall-clock primary.** On `optdigits` (5,620 × 64, 10 classes) at
+`B = 40`, the *same* number of evaluations costs very different wall time depending on which
+region of the space an arm visits:
+
+| arm | 40 evaluations | per-eval | duplicates | final acc |
+|---|---:|---:|---:|---:|
+| Optuna-TPE | **178 s** | 4.45 s | **27.5 %** | 0.9795 |
+| SRS (default GP) | **65 s** | 1.63 s | 5.0 % | 0.9786 |
+
+SVC is one-vs-one, so 10 classes means 45 binary problems per fit; arms that spend their budget
+there pay ~3× more per evaluation. Equal-evaluation is therefore **not** equal-cost once the
+label count exceeds two, and it cannot be the primary currency. Two consequences are recorded
+before the full run rather than discovered afterwards:
+
+1. Protocol A (equal wall-clock) is primary; Protocol B is retained as a secondary view and
+   must carry the per-arm evaluation-count column in every table.
+2. TPE re-proposes already-evaluated configurations on a coarse categorical space and does not
+   resample — 27.5 % of a 40-evaluation budget was wasted on `optdigits`. That is a property of
+   default TPE on discrete spaces, not a defect in our harness, and it is reported as a
+   budget-efficiency finding rather than corrected.
+
 **The wall budget is a cap, not a consumed budget.** Verified on galaxy3 at `T = 20 s`: FLAML
 consumed all 20 s (chose CatBoost), while AutoGluon trained its fixed `medium_quality` portfolio
 and stopped after **2.6 s**. The table therefore reports each system's *actual* wall and is
