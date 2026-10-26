@@ -162,3 +162,31 @@ def test_srs_categorical_columns_match_the_flat_space_order():
     assert cardinalities["reduce"] == 5
     assert cardinalities["clf"] == len(CLF_GRID)
     assert cardinalities["weights"] == 2
+
+
+def test_every_family_tolerates_missing_values():
+    """Arrhythmia has 408 missing cells; NaN-intolerant families must still fit.
+
+    Without the fixed leading SimpleImputer, LogReg/SVC/KNN (and anything after
+    PCA/SelectKBest) fail on that dataset, and the arms' error handling rather
+    than their search quality would decide the benchmark.
+    """
+    from benchmarks.cspace import enumerate_space
+
+    Xnan = Xtr.astype(float).copy()
+    Xnan[::7, :4] = np.nan                     # scattered missingness
+    families = {}
+    for cfg in enumerate_space():
+        families.setdefault(cfg["clf"], cfg)
+    assert set(families) == {"logreg", "rf", "et", "hgb", "svc", "knn"}
+    for family, cfg in families.items():
+        model = PipelineFactory().set_params(**cfg).fit(Xnan, ytr)
+        prediction = model.predict(Xte)
+        assert prediction.shape == (Xte.shape[0],), family
+
+
+def test_imputer_is_the_first_pipeline_step():
+    from benchmarks.cspace import enumerate_space, to_sklearn
+
+    steps = [name for name, _ in to_sklearn(enumerate_space()[0]).steps]
+    assert steps == ["impute", "prep", "reduce", "clf"]

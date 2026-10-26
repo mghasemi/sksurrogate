@@ -252,12 +252,26 @@ def _clf(cfg: dict[str, Any], random_state: int):
 
 
 def to_sklearn(cfg: dict[str, Any], random_state: int = 0):
-    """Build ``Pipeline([('prep', ...), ('reduce', ...), ('clf', ...)])``."""
+    """Build the concrete pipeline for ``cfg``.
+
+    Steps: ``impute -> prep -> reduce -> clf``.
+
+    The leading ``SimpleImputer`` is **fixed**, not a search axis: arrhythmia (the
+    hard 13-class dataset) carries 408 missing cells in 5 columns, one of them
+    missing in 376/452 rows. Without a uniform imputer, NaN-intolerant estimators
+    (LogReg, SVC, KNN, and anything downstream of PCA/SelectKBest) fail there and
+    the arms' failure handling — not their search quality — would decide the
+    comparison. ``add_indicator=True`` keeps the missingness pattern as signal,
+    which is standard for this clinical dataset. Fitting inside the pipeline keeps
+    it per-fold, so no leakage.
+    """
+    from sklearn.impute import SimpleImputer
     from sklearn.pipeline import Pipeline
 
     cfg = normalise(cfg)
     return Pipeline(
         [
+            ("impute", SimpleImputer(strategy="median", add_indicator=True)),
             ("prep", _prep(cfg["prep"])),
             ("reduce", _reduce(cfg["reduce"])),
             ("clf", _clf(cfg, random_state)),

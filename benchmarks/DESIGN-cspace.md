@@ -1,6 +1,6 @@
 # SKSurrogate Pipeline-Space Benchmark — Contract (C1)
 
-Status: **v0.2 (pre-run, 2026-10-26)**. This document is the contract for the pipeline-space
+Status: **v0.3 (pre-run, 2026-10-26)**. This document is the contract for the pipeline-space
 track (C1 spec, C2 runner, C3 pilot, C4 full runs, C5 results page). It is separate from
 `benchmarks/DESIGN.md`, which stays frozen at v1.9 and keeps governing the *fixed-pipeline*
 suite; nothing here invalidates those results.
@@ -77,6 +77,9 @@ one config out) so it can be added later without re-running other arms.
 
 Defined once in `benchmarks/cspace.py`; every arm consumes that module.
 
+Every pipeline is `impute -> prep -> reduce -> clf`. The leading
+`SimpleImputer(strategy="median", add_indicator=True)` is **fixed, not a search axis**.
+
 | Axis | Options |
 |---|---|
 | `prep` | `identity` (`FunctionTransformer`), `standard` (`StandardScaler`), `robust` (`RobustScaler`), `quantile` (`QuantileTransformer(output_distribution="normal")`) — 4 |
@@ -87,6 +90,12 @@ Defined once in `benchmarks/cspace.py`; every arm consumes that module.
 `tests/test_cspace_space.py::test_cardinality_is_frozen`.
 
 Notes.
+- **Missing values are imputed uniformly.** arrhythmia carries 408 missing cells in 5 columns
+  (one column missing in 376 of 452 rows). Without a fixed imputer, LogReg/SVC/KNN — and every
+  pipeline whose reducer needs complete data (`PCA`, `SelectKBest`) — fail there, so the arms'
+  *failure handling* rather than their search quality would decide the comparison. One fixed step
+  keeps the 1,220-pipeline count and the equality of arms; `add_indicator=True` retains the
+  missingness pattern, and fitting inside the pipeline keeps it per-fold (no leakage).
 - `max_depth = 0` encodes `None` (the flat space needs a numeric coordinate).
 - **Shared knobs declare union value sets.** `C` is shared by `logreg` and `svc`, so both
   branches list the same five values `{0.01, 0.1, 1.0, 10.0, 100.0}`. The flat space has one
@@ -249,7 +258,7 @@ refuted hypothesis is a result, not a failure.
 | G0 provisioning | `optuna`, `flaml`, `autogluon`, `scikit-posthocs`, `pytest` import; versions in the manifest | abort before any run |
 | G1 space parity | cardinality = 1220; every enumerated config valid; 1,000 uniform draws valid; masked SRS params resolve to valid configs | abort |
 | G2 count parity | Protocol B: `n_evals == B` for every arm; Optuna trial count == B; SRS `engaged_at` not `None` | record `status="error"`, never silently proceed |
-| G3 pre-launch fit gate | all 1140 configs fit on every dataset's train split (5-fold) | space is broken — fix the spec, bump this document |
+| G3 pre-launch fit gate | every config fits and predicts on every dataset (`python -m benchmarks.gate_cspace_fit`) | space is broken — fix the spec, bump this document |
 | G4 engagement | every SRS cell records `extra["surrogate"]` and `extra["engaged_at"]` | re-run the cell |
 | G5 provenance | `run_manifest.json`: git SHA + dirty flag + package versions + CPU model | dirt is recorded, not hidden |
 | G6 determinism | one fixed cell re-run must be bit-identical in `(k, cv_score)` | abort; do not publish |
@@ -309,6 +318,18 @@ while implementing `benchmarks/cspace.py` and `benchmarks/pipelines.py`, all bef
    H2 with a mechanical optimiser failure. The embedding is now continuous in the raw
    coordinate, and categorical columns are *replaced* by their embedding rather than appended
    next to the raw ordinal column (which had leaked the ordinal signal straight back in).
+
+**v0.2 → v0.3 (2026-10-26, pre-run).** The G3 gate found that arrhythmia contains 408 missing
+cells in 5 columns, so LogReg, SVC, KNN and every `PCA`/`SelectKBest` pipeline failed there while
+RF/ET/HGB survived on the identity branches. That is a confound of the first order: arms would
+differ in *robustness to NaN*, not in search quality. A single fixed leading
+`SimpleImputer(strategy="median", add_indicator=True)` was added to every pipeline. It is not a
+search axis, the cardinality stays 1,220, and every arm sees it identically.
+
+The pre-v0.3 pilot directory `benchmarks/results/cspace-B-20261026T222230Z` (36 cells, B=20) ran
+before this change and **is not citable**; it is retained only as timing evidence. It also
+confirmed the engagement arithmetic: with `min_evals = 20` and `max_evals = 20` the surface never
+fires, and at `B = 40` it fires at exactly `k = 20` (20 guided evaluations).
 
 ## 12. Errata
 
