@@ -285,7 +285,7 @@ refuted hypothesis is a result, not a failure.
 | G0 provisioning | `optuna`, `flaml`, `autogluon`, `scikit-posthocs`, `pytest` import; versions in the manifest | abort before any run |
 | G1 space parity | cardinality = 1220; every enumerated config valid; 1,000 uniform draws valid; masked SRS params resolve to valid configs | abort |
 | G2 count parity | Protocol B: `n_evals == B` for every arm; Optuna trial count == B; SRS `engaged_at` not `None` | record `status="error"`, never silently proceed |
-| G3 pre-launch fit gate | every config fits and predicts on every dataset (`python -m benchmarks.gate_cspace_fit`) | space is broken — fix the spec, bump this document |
+| G3 pre-launch fit gate (**PASSED 2026-10-26**) | every config fits and predicts on every dataset (`python -m benchmarks.gate_cspace_fit`) | space is broken — fix the spec, bump this document |
 | G4 engagement | every SRS cell records `extra["surrogate"]` and `extra["engaged_at"]` | re-run the cell |
 | G5 provenance | `run_manifest.json`: git SHA + dirty flag + package versions + CPU model | dirt is recorded, not hidden |
 | G6 determinism | one fixed cell re-run must be bit-identical in `(k, cv_score)` | abort; do not publish |
@@ -345,6 +345,13 @@ while implementing `benchmarks/cspace.py` and `benchmarks/pipelines.py`, all bef
    H2 with a mechanical optimiser failure. The embedding is now continuous in the raw
    coordinate, and categorical columns are *replaced* by their embedding rather than appended
    next to the raw ordinal column (which had leaked the ordinal signal straight back in).
+
+**Gate G3 result (2026-10-26, pre-run).** `python -m benchmarks.gate_cspace_fit --stride 1`
+fitted and predicted all 1,220 configurations on all six datasets: **7,320/7,320 clean, 0
+failures** (ionosphere 24.2 s, credit-g 66.4 s, galaxy3 54.3 s, spambase 212.1 s, arrhythmia
+267.5 s, optdigits 392.4 s; 1,017 s total). The gate ran *before* any canonical directory
+existed, which is the ordering the contract requires — and it is what caught the arrhythmia
+missing-value confound below.
 
 **v0.2 → v0.3 (2026-10-26, pre-run).** The G3 gate found that arrhythmia contains 408 missing
 cells in 5 columns, so LogReg, SVC, KNN and every `PCA`/`SelectKBest` pipeline failed there while
