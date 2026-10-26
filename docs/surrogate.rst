@@ -171,13 +171,33 @@ the estimator's arguments and their values are objects of the followin types:
     srch.fit(X, y)
     print(srch.best_estimator_)
 
+Search spaces may also be written as plain Python collections, in addition to the
+domain objects above::
+
+    params = {'C': (1.e-3, 10.0),            # two numbers -> closed interval (Real)
+              'max_iter': [10, 50, 200],     # list        -> categorical grid
+              'kernel': ['poly', 'rbf']}     # strings     -> categorical grid
+
+A two-element numeric pair is read as a **range**, not as a two-value grid; for a
+genuine two-value categorical use ``Categorical([0.1, 1.0])``. Integral endpoints
+produce ``Integer``, non-integral endpoints ``Real``.
+
 ``SurrogateRandomCV`` also supports ``groups`` in ``fit`` for group-aware
 cross-validation, ``time_limit`` and ``max_evals`` resource budgets, and
 ``random_state`` for reproducible sampling. Evaluated configurations are
 available through ``evaluation_history_`` and ``cv_results_``; each record
-includes parameters, score, status, duration, and any captured error. Use
-``pareto_frontier()`` to inspect completed trials that trade validation score
-against evaluation duration.
+includes parameters, score, status, duration, and any captured error
+(``cost`` is kept alongside ``score`` for callers that want the minimisation
+view). Use ``pareto_frontier()`` to inspect completed trials that trade
+validation score against evaluation duration.
+
+Result attributes follow the scikit-learn ``BaseSearchCV`` convention:
+``best_params_``, ``best_index_``, ``best_score_``, ``best_estimator_``,
+``multimetric_``, ``n_splits_``, ``refit_time_``, and ``cv_results_``.
+``best_score_`` is in the scorer's own units -- **higher is better**, including
+for ``neg_*`` scorers -- and equals the mean cross-validated score of
+``best_params_``. ``score``/``predict``/``predict_proba`` delegate to
+``best_estimator_`` when ``refit`` is true.
 
 Search-space and pipeline safeguards include:
 

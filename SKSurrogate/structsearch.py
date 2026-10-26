@@ -804,8 +804,12 @@ class SurrogateRandomCV(BaseSearchCV):
         self.memory_limit = memory_limit
         self.prune_threshold = prune_threshold
         self.min_partial_folds = min_partial_folds
-        self.forbidden = tuple(forbidden)
-        self.conditional = dict(conditional)
+        # Store constructor arguments verbatim: ``clone`` compares
+        # ``get_params`` against what was passed in, so any normalisation here
+        # (tuple()/dict()/clamping) makes the search un-clonable and therefore
+        # unusable inside ``cross_validate`` or a meta-estimator.
+        self.forbidden = forbidden
+        self.conditional = conditional
         self.random_state = random_state
         self.bounds = []
         if self.cpu_limit is not None:
@@ -813,9 +817,11 @@ class SurrogateRandomCV(BaseSearchCV):
             if limit < 1:
                 raise ValueError("cpu_limit must be a positive integer")
             if self.n_jobs == -1 or self.n_jobs > limit:
-                self.n_jobs = limit
+                # Clamped in ``fit`` as ``n_jobs_``; ``n_jobs`` itself stays as
+                # constructed so that ``clone`` keeps working.
+                self.n_jobs_ = limit
         self.ineqs = ineqs
-        self.init = init if init is not None else {}
+        self.init = init
         self.OPTIM = None
         self.scorer_ = {}
         self.x0 = ()
@@ -828,11 +834,77 @@ class SurrogateRandomCV(BaseSearchCV):
         self.summary_ = {}
         self.failure_summary_ = {}
 
+    @staticmethod
+    def _coerce_domain(name, domain):
+        """Normalise one search-space entry into a domain object.
+
+        Accepted forms (mirroring what the docstring promises):
+
+        * a domain object already carrying ``VType`` (``Integer``, ``Real``,
+          ``Categorical``, ``HDReal``) -- returned unchanged;
+        * a two-element list/tuple of numbers -- read as a closed interval
+          ``(min, max)``; integral endpoints give ``Integer``, otherwise ``Real``;
+        * any other non-empty list/tuple/range/ndarray -- a categorical grid.
+
+        Ambiguity note: ``[0.1, 1.0]`` is an *interval*, not a two-value grid.
+        For a genuine two-value categorical use ``Categorical([0.1, 1.0])``.
+        """
+        from numpy import integer as np_integer, floating as np_floating, ndarray
+
+        if hasattr(domain, "VType"):
+            return domain
+        if isinstance(domain, range):
+            return Integer(min(domain), max(domain))
+        if isinstance(domain, ndarray):
+            domain = domain.tolist()
+        if isinstance(domain, (list, tuple)):
+            if not domain:
+                raise ValueError("Search parameter %r has an empty search space" % name)
+            numeric = all(
+                isinstance(value, (int, float, np_integer, np_floating))
+                and not isinstance(value, bool)
+                for value in domain
+            )
+            if len(domain) == 2 and numeric:
+                lower, upper = domain
+                if lower > upper:
+                    raise ValueError(
+                        "Search parameter %r has a lower bound above its upper bound" % name
+                    )
+                integral = isinstance(lower, (int, np_integer)) and isinstance(
+                    upper, (int, np_integer)
+                )
+                return Integer(lower, upper) if integral else Real(lower, upper)
+            return Categorical(list(domain))
+        raise ValueError(
+            "Search parameter %r must be a domain object (Integer/Real/Categorical/"
+            "HDReal), a two-element (min, max) pair, or a list of categorical "
+            "values; got %r" % (name, domain)
+        )
+
+    def _resolved_params(self):
+        """Coerce ``self.params`` into domain objects for this fit.
+
+        Stored as ``params_`` (fitted-attribute convention) so that the
+        ``params`` constructor argument is never mutated -- ``clone`` and
+        ``get_params`` must keep returning what the user passed in.
+        """
+        return {name: self._coerce_domain(name, domain) for name, domain in self.params.items()}
+
+    def _trial_index(self, params):
+        """Index of the last evaluation whose parameters match ``params``."""
+        for index in range(len(self.evaluation_history_) - 1, -1, -1):
+            if self.evaluation_history_[index]["params"] == params:
+                return index
+        return 0
+
     def _validate_search_space(self):
         """Validate parameter definitions before starting model evaluation."""
         from sklearn.base import clone
         from math import isfinite
 
+        params = getattr(self, "params_", None) or self._resolved_params()
+        self.params_list = list(params.keys())
         estimator_params = self.estimator.get_params(deep=True)
         representative = {}
         for name in self.params_list:
@@ -841,7 +913,7 @@ class SurrogateRandomCV(BaseSearchCV):
                     "Unknown search parameter %r for %s"
                     % (name, self.estimator.__class__.__name__)
                 )
-            parameter = self.params[name]
+            parameter = params[name]
             value_type = getattr(parameter, "VType", None)
             if value_type == "categorical":
                 if not parameter.items:
@@ -901,7 +973,7 @@ class SurrogateRandomCV(BaseSearchCV):
         return value
 
     def _forbidden_reason(self, parameters):
-        for rule in self.forbidden:
+        for rule in getattr(self, 'forbidden_', ()):
             if callable(rule):
                 matched = rule(parameters)
             elif isinstance(rule, dict):
@@ -922,7 +994,7 @@ class SurrogateRandomCV(BaseSearchCV):
 
     def _apply_conditional_parameters(self, parameters):
         active = parameters.copy()
-        for name, rule in self.conditional.items():
+        for name, rule in getattr(self, 'conditional_', {}).items():
             if name in active and not self._condition_matches(rule, parameters):
                 active.pop(name)
         return active
@@ -1001,6 +1073,10 @@ class SurrogateRandomCV(BaseSearchCV):
         from sklearn.model_selection import check_cv
         from sklearn.model_selection._validation import _fit_and_score
 
+        self.params_ = self._resolved_params()
+        self.init_ = self.init if self.init is not None else {}
+        self.conditional_ = dict(self.conditional or {})
+        self.forbidden_ = tuple(self.forbidden or ())
         self._validate_search_space()
         self._validate_pipeline_structure()
         # from lightgbm.sklearn import LightGBMError
@@ -1016,17 +1092,17 @@ class SurrogateRandomCV(BaseSearchCV):
         x0_ = []
         self.bounds = list(self.bounds)
         for param in self.params_list:
-            param_num_range = self.params[param]
+            param_num_range = self.params_[param]
             if param_num_range.VType != "hdreal":
                 lower, upper = self._encoded_bounds(param_num_range)
                 radius_list.append(
                     (upper - lower) / 2.0
                 )
-                if param in self.init:
+                if param in self.init_:
                     if param_num_range.VType == "categorical":
-                        x0_.append(param_num_range.items.index(self.init[param]))
+                        x0_.append(param_num_range.items.index(self.init_[param]))
                     else:
-                        x0_.append(self._encode_value(param_num_range, self.init[param]))
+                        x0_.append(self._encode_value(param_num_range, self.init_[param]))
                 else:
                     x0_.append(uniform(lower, upper))
                 if param_num_range.VType == "categorical":
@@ -1042,8 +1118,8 @@ class SurrogateRandomCV(BaseSearchCV):
                         )
                         / 2.0
                     )
-                    if (param in self.init) and (i in self.init[param]):
-                        x0_.append(self.init[param][i])
+                    if (param in self.init_) and (i in self.init_[param]):
+                        x0_.append(self.init_[param][i])
                     else:
                         x0_.append(
                             uniform(
@@ -1056,7 +1132,9 @@ class SurrogateRandomCV(BaseSearchCV):
             rds = 0.0
             for r in radius_list:
                 rds += r ** 2
-            self.radius = sqrt(rds)
+            self.radius_ = sqrt(rds)
+        else:
+            self.radius_ = self.radius
         self.x0 = array(x0_)
         self.bounds = tuple(self.bounds)
         cv_dat = list(cv.split(X, y, groups))
@@ -1068,7 +1146,7 @@ class SurrogateRandomCV(BaseSearchCV):
             cand_params = {}
             _idx = 0
             for _param in self.params_list:
-                _param_num_range = self.params[_param]
+                _param_num_range = self.params_[_param]
                 if _param_num_range.VType != "hdreal":
                     if _param_num_range.VType == "integer":
                         cand_params[_param] = int(round(self._decode_value(_param_num_range, x[_idx])))
@@ -1098,6 +1176,7 @@ class SurrogateRandomCV(BaseSearchCV):
                     {
                         "params": cand_params.copy(),
                         "score": None,
+                        "cost": None,
                         "status": "invalid",
                         "duration": perf_counter() - started,
                         "fold_duration": 0.0,
@@ -1121,6 +1200,7 @@ class SurrogateRandomCV(BaseSearchCV):
                     {
                         "params": cand_params.copy(),
                         "score": None,
+                        "cost": None,
                         "status": "invalid",
                         "duration": perf_counter() - started,
                         "fold_duration": 0.0,
@@ -1194,7 +1274,7 @@ class SurrogateRandomCV(BaseSearchCV):
                     }
 
             try:
-                scores = Parallel(n_jobs=self.n_jobs,
+                scores = Parallel(n_jobs=getattr(self, "n_jobs_", self.n_jobs),
                                   verbose=self.verbose,
                                   pre_dispatch=self.pre_dispatch
                                   )(delayed(parallel_fit_score)(clone(self.estimator),
@@ -1248,6 +1328,7 @@ class SurrogateRandomCV(BaseSearchCV):
                     {
                         "params": cand_params.copy(),
                         "score": None,
+                        "cost": None,
                         "status": "pruned",
                         "duration": perf_counter() - started,
                         "fold_duration": sum(durations),
@@ -1260,7 +1341,11 @@ class SurrogateRandomCV(BaseSearchCV):
             self.evaluation_history_.append(
                 {
                     "params": cand_params.copy(),
-                    "score": -score if n_test else None,
+                    # Public convention (sklearn): higher is better. The optimizer
+                    # minimizes internally, so the cost is kept next to the score
+                    # rather than encoded as a sign on the score itself.
+                    "score": score if n_test else None,
+                    "cost": -score if n_test else None,
                     "status": "complete" if n_test else "failed",
                     "duration": perf_counter() - started,
                     "fold_duration": sum(durations),
@@ -1279,7 +1364,7 @@ class SurrogateRandomCV(BaseSearchCV):
             ineqs=self.ineqs,
             bounds=self.bounds,
             verbose=self.verbose,
-            radius=self.radius,
+            radius=self.radius_,
             regressor=self.regressor,
             sampling=self.sampling,
             search_sphere=self.search_sphere,
@@ -1302,7 +1387,7 @@ class SurrogateRandomCV(BaseSearchCV):
         best_params_ = {}
         idx = 0
         for param in self.params_list:
-            param_num_range = self.params[param]
+            param_num_range = self.params_[param]
             if param_num_range.VType != "hdreal":
                 if param_num_range.VType == "integer":
                     best_params_[param] = int(round(x[idx]))
@@ -1327,25 +1412,40 @@ class SurrogateRandomCV(BaseSearchCV):
         # model, so fall back to the best trial that was actually completed;
         # when no trial was, skip the refit entirely.
         from numpy import isfinite
+        from time import perf_counter as _perf_counter
 
-        feasible = [
-            item
-            for item in self.evaluation_history_
-            if item.get("score") is not None and isfinite(item["score"])
+        # ``evaluation_history_`` stores the public score (higher is better) and
+        # the optimizer's cost (lower is better); selection uses the cost so the
+        # internal minimisation never leaks into ``best_score_``.
+        candidates = [
+            (index, item)
+            for index, item in enumerate(self.evaluation_history_)
+            if item.get("cost") is not None and isfinite(item["cost"])
         ]
-        if not feasible:
+        # BaseSearchCV contract: ``score``/``predict`` consult these.
+        self.multimetric_ = False
+        self.n_splits_ = len(cv_dat)
+        refit_started = _perf_counter()
+        if not candidates:
+            # Nothing completed: sklearn reports nan rather than a fake optimum.
             self.best_estimator_ = clone(self.estimator)
-            self.best_estimator_score = float("inf")
-            self.best_score_ = float("inf")
+            self.best_params_ = {}
+            self.best_index_ = 0
+            self.best_estimator_score = float("nan")
+            self.best_score_ = float("nan")
         else:
             if not isfinite(scr) or self._forbidden_reason(best_params_) is not None:
-                best_trial = min(feasible, key=lambda item: item["score"])
+                best_index_, best_trial = min(candidates, key=lambda pair: pair[1]["cost"])
                 best_params_ = {
                     name: value
                     for name, value in best_trial["params"].items()
                     if name in self.params_list
                 }
-                scr = best_trial["score"]
+                best_score = best_trial["score"]
+            else:
+                best_params_ = dict(best_params_)
+                best_score = -scr
+                best_index_ = self._trial_index(best_params_)
             self.best_estimator_ = clone(self.estimator).set_params(**best_params_)
             if self.refit is not False:
                 # Refit the best estimator on the full dataset so it can be used for
@@ -1353,8 +1453,11 @@ class SurrogateRandomCV(BaseSearchCV):
                 # uses the same fit_params as the CV folds above).
                 refit_kwargs = dict(self.fit_params or {})
                 self.best_estimator_.fit(X, y, **refit_kwargs)
-            self.best_estimator_score = scr
-            self.best_score_ = scr
+            self.best_params_ = dict(best_params_)
+            self.best_index_ = best_index_
+            self.best_estimator_score = best_score
+            self.best_score_ = best_score
+        self.refit_time_ = _perf_counter() - refit_started
         self.termination_reason = getattr(self.OPTIM, "termination_reason", None)
         self.summary_ = getattr(self.OPTIM, "summary_", {})
         self.cv_results_ = {

@@ -36,7 +36,7 @@ All methods optimize the **same estimator over the same space with the same budg
 
 | Method | What it is |
 |---|---|
-| `sksurrogate` | SRS with its default response surface: cubic Hilbert polynomial (`HilbertRegressor(deg=3)`). Primary method. |
+| `sksurrogate` | SRS with its v0.2 default response surface: un-tuned RBF Gaussian process (`GaussianProcessRegressor`). Primary method. The cubic Hilbert polynomial (`HilbertRegressor(deg=3)`) is kept as the named legacy arm below. |
 | `srs-no-surrogate` (ablation Arm A) | Identical SRS outer loop, surrogate never engages (`min_evals = B`) — search degenerates to random sampling through one code path. Isolates the surrogate's contribution exactly. |
 | `random` | Uniform sampling over the shared discrete space (≡ `RandomizedSearchCV` on categorical list spaces). |
 | `optuna-tpe` | `OptunaStudy(TPESampler(seed=s))`, one trial = one model evaluation, counted exactly. |
@@ -52,7 +52,7 @@ surface quality, not a tuned-kernel contest.
 Canonical run `benchmarks/results/20261018T003121Z` (210 records: 6 datasets × 5 methods × 7 seeds),
 merged with the v1.8 surface arms (`20261024T224454Z`). Mean final CV accuracy over 7 seeds — best per row in bold:
 
-| dataset | SRS + Hilbert³ (default) | SRS + GP | SRS + KRR | SRS, no surrogate (Arm A) | random | Optuna-TPE |
+| dataset | SRS + Hilbert³ (legacy) | SRS + GP | SRS + KRR | SRS, no surrogate (Arm A) | random | Optuna-TPE |
 |---|---:|---:|---:|---:|---:|---:|
 | arrhythmia | 0.6985 | 0.7020 | 0.6910 | 0.6910 | 0.6941 | **0.7036** |
 | credit-g | 0.7400 | 0.7423 | 0.7384 | 0.7391 | 0.7405 | **0.7436** |
@@ -64,7 +64,7 @@ merged with the v1.8 surface arms (`20261024T224454Z`). Mean final CV accuracy o
 Primary metric — median model evaluations to reach within an absolute gap $g = 0.01$ of the run's own final
 best CV (lower is better; self-target, so dataset difficulty does not confound):
 
-| dataset | SRS + Hilbert³ | SRS + GP | SRS + KRR | no surrogate (A) | random | Optuna-TPE |
+| dataset | SRS + Hilbert³ (legacy) | SRS + GP (default) | SRS + KRR | no surrogate (A) | random | Optuna-TPE |
 |---|---:|---:|---:|---:|---:|---:|
 | arrhythmia | 10.0 | 14.0 | **6.0** | **6.0** | 11.0 | 12.0 |
 | credit-g | 9.0 | 9.0 | 9.0 | 9.0 | **2.0** | 5.0 |
@@ -99,7 +99,7 @@ At B = 60 each SRS run receives ~40 surrogate-guided evaluations instead of 10, 
 window to work. Canonical SRS-arm directory `benchmarks/results/20261018T051214Z` (fixed runner) merged with the
 surface arms (`20261024T224524Z`; 84/84 cells, all terminated by the evaluation budget). Mean final CV accuracy:
 
-| dataset | SRS + Hilbert³ (default) | SRS + GP | SRS + KRR | SRS, no surrogate (Arm A) |
+| dataset | SRS + Hilbert³ (legacy) | SRS + GP | SRS + KRR | SRS, no surrogate (Arm A) |
 |---|---:|---:|---:|---:|
 | arrhythmia | 0.7000 | **0.7056** | 0.6933 | 0.7004 |
 | credit-g | 0.7412 | **0.7446** | 0.7384 | 0.7430 |
@@ -110,7 +110,7 @@ surface arms (`20261024T224524Z`; 84/84 cells, all terminated by the evaluation 
 
 Primary metric (median evals to $g = 0.01$ of own final best):
 
-| dataset | SRS + Hilbert³ | SRS + GP | SRS + KRR | no surrogate (A) |
+| dataset | SRS + Hilbert³ (legacy) | SRS + GP (default) | SRS + KRR | no surrogate (A) |
 |---|---:|---:|---:|---:|
 | arrhythmia | 10.0 | 14.0 | **9.0** | 10.0 |
 | credit-g | **9.0** | **9.0** | **9.0** | **9.0** |
@@ -159,6 +159,25 @@ Response-surface comparison at B = 60 (three surfaces):
    fastest-to-target on four of six datasets). SRS's case rests on *final quality under an equal evaluation budget*,
    where the GP surface wins — not on reaching a saturated target faster. No spin: these are small-budget,
    three-parameter results, and TPE remains competitive.
+
+## Wall-clock AutoML arm (`benchmarks/automl_arm.py`)
+
+The equal-evaluation protocol above measures **search efficiency** and cannot express
+AutoML systems, which choose their own number of internal fits (portfolios, stacking,
+bagging). This second arm uses a different, explicitly stated currency:
+
+| Item | Setting |
+|---|---|
+| Methods | `sksurrogate` (SurrogateRandomCV, `time_limit=B`), `optuna` (TPE, `timeout=B`), `autogluon` (`presets="medium_quality"`, `time_limit=B`), `flaml` (`time_budget=B`) |
+| Budget | **wall-clock seconds** `B`, identical for every method |
+| Split | one stratified 80/20 per (dataset, seed); the test set is never seen during search |
+| Reported | held-out accuracy + balanced accuracy of the chosen model, achieved wall time, and candidate-evaluation count where the library exposes one (AutoGluon/FLAML do not) |
+
+Because the budget is wall clock, this arm is **not** comparable to the tables above and is
+not a significance test; it answers "what quality do I get per minute of compute". Run it with
+`python benchmarks/automl_arm.py --datasets ... --seeds ... --budget 30`; the run writes a
+JSON record set to `benchmarks/results/automl_arm/`. Requires the `automl` extra:
+`pip install sksurrogate[automl]`.
 
 ## Reproducibility
 

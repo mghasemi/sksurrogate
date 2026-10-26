@@ -343,7 +343,7 @@ default_config = {
             "n_components": Integer(10, 100),
         },
         # Sensitivity Analysis
-        "sksurrogate.SensAprx": {
+        "SKSurrogate.SensAprx": {
             "n_features_to_select": Integer(2, 30),
             "method": Categorical(["sobol", "morris", "delta-mmnt"]),
             # 'regressor': Categorical([None, regressor])
@@ -472,7 +472,7 @@ class AML(object):
             "sklearn.manifold.MDS",
             "sklearn.manifold.SpectralEmbedding",
             "sklearn.manifold.TSNE",
-            "sksurrogate.SensAprx",
+            "SKSurrogate.SensAprx",
             "skrebate.ReliefF",
             "skrebate.SURF",
             "skrebate.SURFstar",
@@ -547,13 +547,21 @@ class AML(object):
         from sklearn.base import is_classifier, is_regressor
         from sklearn.feature_selection import SelectorMixin
 
+        # Optional third-party estimators (xgboost, skrebate, ...) may be absent
+        # from a lean install. Skip them instead of making ``AML()`` unusable,
+        # and record why so the omission is visible rather than silent.
+        self.skipped_estimators_ = {}
         for alg in self.config:
             if alg != "sklearn.pipeline.FeatureUnion":
                 detail = alg.split(".")
                 module_str = ".".join(detail[:-1])
-                module = import_module(module_str)
-                clss = module.__getattribute__(detail[-1])
-                mdl = self._new_estimator(clss)
+                try:
+                    module = import_module(module_str)
+                    clss = module.__getattribute__(detail[-1])
+                    mdl = self._new_estimator(clss)
+                except (ImportError, AttributeError) as exc:
+                    self.skipped_estimators_[alg] = "%s: %s" % (exc.__class__.__name__, exc)
+                    continue
                 if is_classifier(mdl):
                     self.config_types[alg] = "classifier"
                     self.couldBlast.append(alg)
@@ -867,7 +875,8 @@ class AML(object):
                 if self.verbose > 0:
                     print("score:%f" % best_scr)
                     print(best_mdl)
-                fitted[seq] = -best_scr
+                # EOA maximises fitness and scores are already higher-is-better.
+                fitted[seq] = best_scr
             return fitted
 
         num_parents = kwargs.pop("num_parents", 30)
@@ -896,17 +905,19 @@ class AML(object):
         """
         from collections import OrderedDict
 
-        return OrderedDict(sorted(self.models.items(), key=lambda x: x[1][1])[:num])
+        # Scores follow the scorer's own units (higher is better).
+        return OrderedDict(
+            sorted(self.models.items(), key=lambda item: item[1][1], reverse=True)[:num]
+        )
 
     def pareto_frontier(self, score_key="score", cost_key="duration"):
         """Return the non-dominated candidates across ``evaluation_history_``.
 
         Scores are maximized and costs (per-candidate wall-clock duration) are
         minimized, mirroring :meth:`SurrogateRandomCV.pareto_frontier`. Entries
-        missing either metric are skipped. Stored scores are the negated search
-        objective, so they are flipped back to the scorer's higher-is-better
-        units before dominance testing; the returned records carry that flipped
-        value under ``score_key``.
+        missing either metric are skipped. Stored scores are already in the
+        scorer's higher-is-better units (the internal minimisation happens
+        inside ``SurrogateRandomCV`` and never reaches this history).
         """
         from types import SimpleNamespace
 
@@ -919,7 +930,7 @@ class AML(object):
             if raw_score is None or cost is None:
                 continue
             record = dict(entry)
-            record[score_key] = -float(raw_score)
+            record[score_key] = float(raw_score)
             # AML history entries carry no status; mark them complete so the
             # structsearch dominance filter (status == "complete") keeps them.
             record.setdefault("status", "complete")

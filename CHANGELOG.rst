@@ -4,6 +4,51 @@ Changelog
 Unreleased
 ----------
 
+scikit-learn contract (0.2.1)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``SurrogateRandomCV`` now behaves as a real ``BaseSearchCV`` subclass against
+scikit-learn 1.9, which is what "drop-in replacement for ``BayesSearchCV``"
+implies:
+
+* ``best_params_``, ``best_index_``, ``best_score_``, ``multimetric_``,
+  ``n_splits_`` and ``refit_time_`` are set after ``fit``, so ``score``,
+  ``predict`` and ``predict_proba`` work through the estimator API instead of
+  raising ``AttributeError: multimetric_``.
+* Scores follow the sklearn convention (**higher is better**) everywhere:
+  ``best_score_``, ``best_estimator_score``, ``cv_results_["mean_test_score"]``,
+  AML's ``get_top``/``pareto_frontier``, and the control-plane API. The
+  optimiser still minimises internally; each ``evaluation_history_`` entry now
+  carries ``score`` (public) and ``cost`` (internal). ``best_score_`` equals the
+  mean CV score of ``best_params_`` and no longer reports a negated value.
+* ``AML`` orders pipelines by descending score; it previously sorted ascending
+  (correct only under the old negated convention) and used ``-score`` as the
+  evolutionary fitness.
+* Search spaces accept plain collections as documented: a two-element numeric
+  pair is an interval (``Integer``/``Real``), any other list/tuple/range is a
+  categorical grid. ``self.params`` is never mutated, and ``params_`` records the
+  coerced domains.
+* ``clone(SurrogateRandomCV(...))`` works after ``fit``: constructor arguments
+  (``forbidden``, ``conditional``, ``init``, ``radius``, ``n_jobs``) are no longer
+  normalised in place, so the search composes with ``cross_validate`` and
+  meta-estimators. Derived state lives in ``radius_``, ``init_``,
+  ``conditional_``, ``forbidden_``, ``n_jobs_``.
+* ``AML()`` no longer requires every optional estimator to be installed: modules
+  that fail to import are skipped and reported in ``skipped_estimators_``. Fixed
+  the default catalogue entry ``sksurrogate.SensAprx`` (not importable) to
+  ``SKSurrogate.SensAprx``.
+* New regression suite ``tests/test_sklearn_contract.py`` (17 tests) pins all of
+  the above.
+* New wall-clock AutoML arm ``benchmarks/automl_arm.py`` comparing SKSurrogate,
+  Optuna, AutoGluon and FLAML at an equal wall-clock budget (a separate protocol
+  from the equal-evaluation suite).
+* Docs: ``docs/benchmarks.md`` no longer calls the legacy Hilbert³ surface the
+  v0.2 default; ``docs/surrogate.rst`` documents collection-style search spaces
+  and the result attributes.
+
+API
+~~~
+
 JOSS submission and documentation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

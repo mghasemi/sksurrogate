@@ -42,6 +42,16 @@ the previous cubic Hilbert polynomial on the evidence of the equal-budget benchm
 custom regressor based on Hilbert Space techniques is still available (``HilbertRegressor``),
 and all ``scikit-learn`` regressors are accepted for optimization.
 
+Search spaces and results
+-------------------------
+Search spaces accept the domain objects (``Integer``, ``Real``, ``Categorical``,
+``HDReal``) *and* plain collections: a two-element numeric pair is a closed
+interval, any other list is a categorical grid. Results follow the
+``BaseSearchCV`` contract — ``best_params_``, ``best_score_`` (higher is better,
+in the scorer's own units), ``cv_results_``, ``score``/``predict`` delegating to
+``best_estimator_`` — so the tuner composes with ``cross_validate``,
+``Pipeline`` and meta-estimators.
+
 Benchmarks
 ----------
 The surrogate-guided search is validated against strong HPO/AutoML baselines at **equal

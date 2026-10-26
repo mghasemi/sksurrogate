@@ -71,6 +71,9 @@ setup(
     extras_require={
         "test": ["pytest", "pygments"],
         "benchmark": ["openml>=0.15,<0.16", "optuna"],
+        # Wall-clock AutoML arm (benchmarks/automl_arm.py). Separate extra: these
+        # are large and irrelevant to the tuner itself.
+        "automl": ["autogluon.tabular", "flaml[automl]"],
     },
     python_requires=">=3.10",
     classifiers=[

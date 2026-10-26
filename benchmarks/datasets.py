@@ -54,16 +54,19 @@ def _download_openml(name: str, did: int) -> pd.DataFrame:
     recombined into one frame with the class column last (the layout
     :func:`load_dataset` expects). Pinned via setup.py extras to openml<0.16.
     """
-    try:
-        import openml  # noqa: PLC0415 - optional dependency ([benchmark] extra)
-    except ImportError as exc:
-        raise ImportError(
-            f"openml is required to download '{name}' (did={did}). "
-            "Install it with `pip install sksurrogate[benchmark]`."
-        ) from exc
-
+    # Serve from the cache first: a warm cache makes the benchmark suite runnable
+    # offline, so the optional ``openml`` dependency is only needed for a download.
     csv_path = cache_dir() / f"{name}.csv"
     if not csv_path.exists():
+        try:
+            import openml  # noqa: PLC0415 - optional dependency ([benchmark] extra)
+        except ImportError as exc:
+            raise ImportError(
+                f"openml is required to download '{name}' (did={did}) and it is not "
+                f"cached at {csv_path}. Install it with "
+                "`pip install sksurrogate[benchmark]`."
+            ) from exc
+
         dataset = openml.datasets.get_dataset(did)
         features, target, _ignore_flags, _names = dataset.get_data(
             dataset_format="dataframe"

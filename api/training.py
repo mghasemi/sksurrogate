@@ -497,17 +497,17 @@ def fit_experiment_bundle(
         conditional=conditional,
         stacking=stacking or None,
     )
-    # SurrogateRandomCV reports the negated objective (it maximizes internally),
-    # so scores are flipped back into the scorer's own units for display; the
-    # non-finite scores of invalid candidates become null instead of Infinity.
+    # Scores are already in the scorer's own units (higher is better) and match
+    # ``best_score_``; the non-finite scores of invalid candidates become null
+    # instead of Infinity.
     evaluation_history = []
     for entry in aml.evaluation_history_:
-        row = {"pipeline": list(entry["pipeline"]), "score": finite_or_none(-float(entry["score"]))}
+        row = {"pipeline": list(entry["pipeline"]), "score": finite_or_none(float(entry["score"]))}
         if entry.get("duration") is not None:
             row["duration"] = round(float(entry["duration"]), 4)
         evaluation_history.append(row)
     top_pipelines = [
-        {"pipeline": list(seq), "score": finite_or_none(-float(score))} for seq, (_, score) in aml.get_top(5).items()
+        {"pipeline": list(seq), "score": finite_or_none(float(score))} for seq, (_, score) in aml.get_top(5).items()
     ]
     try:
         pareto = _json_safe_frontier(aml.pareto_frontier())
