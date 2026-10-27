@@ -1,0 +1,3 @@
+# Documentation build dependencies (Read the Docs `python.install`).
+sphinx
+myst-parser

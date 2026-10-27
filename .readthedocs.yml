@@ -24,6 +24,10 @@ formats:
 #    - epub
 
 # See https://docs.readthedocs.io/en/stable/guides/reproducible-builds.html
-# python:
-#    install:
-#    - requirements: docs/requirements.txt
+python:
+   install:
+      # Docs build deps (myst-parser for the .md study/blog pages)
+      - requirements: docs/requirements.txt
+      # Install the project itself so autodoc can import it
+      - method: pip
+        path: .

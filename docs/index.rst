@@ -27,6 +27,7 @@ Welcome to SKSurrogate's documentation!
    phase10
    release
    code
+   blog-honest-benchmark
 
 See also the [`benchmark results`](benchmarks.md), `the Web UI & API design plan <ui-plan.md>`_.
 
