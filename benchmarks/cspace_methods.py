@@ -425,6 +425,16 @@ def run_flaml(Xtr, ytr, Xte, yte, *, budget=None, wall=120, seed=0) -> RunRecord
     """FLAML AutoML — chooses its own pipelines; only final accuracy is comparable."""
     from flaml import AutoML
 
+    # FLAML's boosters reject feature names containing "[", "]", "<". Our one-hot
+    # columns inherit raw category values (credit-g yields 'checking_status_0<=X<200'),
+    # so 7/7 credit-g cells previously failed with
+    #   ValueError: feature_names must be string, and may not contain [, ] or <
+    # Names are opaque to every learner, so renaming both frames with the same
+    # positional map removes a harness artifact without touching the data.
+    rename = {column: f"f{index}" for index, column in enumerate(Xtr.columns)}
+    Xtr = Xtr.rename(columns=rename)
+    Xte = Xte.rename(columns=rename)
+
     automl = AutoML()
     started = time.perf_counter()
     automl.fit(
