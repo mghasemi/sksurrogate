@@ -4,7 +4,7 @@ Head-to-head comparison of SKSurrogate's surrogate-guided search (`SurrogateRand
 standard AutoML/HPO baselines — uniform random sampling and Optuna-TPE — under **equal evaluation
 budgets**, plus a decisive ablation isolating the value of the surrogate component itself. This page is
 the published evidence behind the README's "validated against benchmarks" claim; the full protocol
-contract, errata history, and acceptance mapping live in [`benchmarks/DESIGN.md`](../benchmarks/DESIGN.md) (v1.9).
+contract, errata history, and acceptance mapping live in [benchmarks/DESIGN.md](https://github.com/mghasemi/sksurrogate/blob/master/benchmarks/DESIGN.md) (v1.9).
 
 Raw per-run records are git-ignored by design and archived on Zenodo at DOI [10.5281/zenodo.23629024](https://doi.org/10.5281/zenodo.23629024); everything below is reproducible from the committed harness + that archive.
 

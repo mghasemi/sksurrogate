@@ -29,7 +29,17 @@ Welcome to SKSurrogate's documentation!
    code
    blog-honest-benchmark
 
-See also the [`benchmark results`](benchmarks.md), `the Web UI & API design plan <ui-plan.md>`_.
+.. toctree::
+   :maxdepth: 2
+   :caption: Benchmark studies & plans:
+
+   benchmarks
+   dtrack-study
+   ui-plan
+
+See also the :doc:`benchmark results <benchmarks>`, the
+:doc:`Hilbert-space (D-track) study <dtrack-study>` and the
+:doc:`Web UI & API design plan <ui-plan>`.
 
 Indices and tables
 ==================
