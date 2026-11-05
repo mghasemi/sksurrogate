@@ -190,6 +190,16 @@ the estimator's arguments and their values are objects of the followin types:
     srch.fit(X, y)
     print(srch.best_estimator_)
 
+The scikit-learn spellings ``param_distributions`` and ``n_iter`` are accepted
+alongside ``params`` and ``max_iter`` (give one spelling of each), and spaces may be
+written as shorthand: a ``(a, b)`` tuple is an ``Integer`` when both ends are integers
+and a ``Real`` otherwise, and any other list is a ``Categorical``. ``sampling`` accepts
+``"box"``, ``"sphere"`` or ``"compact"``, and the fitted search exposes ``best_params_``.
+The previous example then reads::
+
+    srch = SurrogateRandomCV(SVC(), param_distributions={
+        'C': (1.e-5, 10), 'kernel': ['poly', 'rbf'], 'degree': (1, 4)}, n_iter=30)
+
 ``SurrogateRandomCV`` also supports ``groups`` in ``fit`` for group-aware
 cross-validation, ``time_limit`` and ``max_evals`` resource budgets, and
 ``random_state`` for reproducible sampling. Evaluated configurations are

@@ -24,6 +24,28 @@ JOSS submission and documentation
 API
 ~~~
 
+* API simplification (no removals): ``SurrogateRandomCV`` accepts scikit-learn
+  names ``param_distributions`` and ``n_iter`` (``params``/``max_iter`` remain),
+  search spaces may be shorthand (``(a, b)`` tuple -> ``Integer``/``Real``,
+  list -> ``Categorical``; see ``as_space``), and fitted searches expose
+  ``best_params_``. ``AML`` is now a ``BaseEstimator`` (repr, ``clone``);
+  ``clone`` of ``SurrogateRandomCV``/``AML`` no longer fails. Fixed
+  ``AML()`` default config referencing the removed ``sksurrogate`` module name.
+  ``AML.fit(X, y, strategy="eoa")`` equals ``eoa_fit``; ``AML(stacking={...})``
+  overrides the ``stack_*`` arguments; ``sampling="box"|"sphere"|"compact"``
+  is accepted wherever a sampler class was.
+  Fixed ``subgroup_performance_report(metric="precision")``, which computed
+  recall, and made ``SurrogateRandomCV.best_score_`` follow scikit-learn's sign
+  (higher is better; the loss is still in ``best_estimator_score``).
+  ``cv_results_`` gains ``rank_test_score`` and ``loss``; ``mean_test_score`` is
+  now higher-is-better, and ``best_index_`` is set. ``AML`` keeps the best
+  surrogate stage instead of the last (which could be an unfitted ``inf``
+  result), and ``StackingEstimator.set_params`` no longer ignores ``cv``/``n_jobs``.
+  ``AML(resume=False)``: fits no longer silently resume a stale checkpoint (set ``resume=True`` for the old behaviour).
+  ``ModelBundle.save``/``ModelBundle.load`` mirror ``save_bundle``/``load_bundle``.
+  Removed redundant ``fit_transform`` overrides in ``SensAprx`` and
+  ``CorrelationThreshold`` (inherited from ``TransformerMixin``).
+
 * ``RegisterData`` accepts an optional ``preprocess_kwargs`` mapping, forwarded
   to ``DataPreprocess`` (e.g. ``bin_threshold``, ``cat_threshold``,
   ``force_impute``) when encoding is enabled; defaults are unchanged.

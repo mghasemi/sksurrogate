@@ -291,6 +291,11 @@ class DataPreprocess(object):
     :param force_threshold: boolean, indicate whether to force the deduction based on the provided thresholds or not
     :param imputer: the imputer object; default `IterativeImputer` for missing values imputation
     :param force_impute: boolean; default `True` to indicate the desire for missing value imputation
+
+    .. note::
+        This is a one-shot, whole-frame encoder: types are deduced and missing values imputed on the entire
+        frame, which leaks information across cross-validation folds. For scikit-learn pipelines and
+        cross-validation use :class:`FoldLocalDataPreprocessor`, which has ``fit``/``transform``.
     """
 
     def __init__(self, df, bin_threshold=.1, cat_threshold=.1, force_threshold=False, imputer=None, force_impute=True,

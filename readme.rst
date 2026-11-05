@@ -42,6 +42,25 @@ the previous cubic Hilbert polynomial on the evidence of the equal-budget benchm
 custom regressor based on Hilbert Space techniques is still available (``HilbertRegressor``),
 and all ``scikit-learn`` regressors are accepted for optimization.
 
+Quick start
+-----------
+``SurrogateRandomCV`` is a drop-in for ``RandomizedSearchCV``; ranges can be written as plain
+tuples (integers or floats) and lists (categorical values)::
+
+    from sklearn.svm import SVC
+    from SKSurrogate import SurrogateRandomCV
+
+    search = SurrogateRandomCV(
+        SVC(),
+        param_distributions={"C": (1e-3, 10.0), "kernel": ["poly", "rbf"], "degree": (1, 4)},
+        n_iter=30,
+    ).fit(X, y)
+    search.best_params_, search.best_score_
+
+For automatic pipeline design, ``AML(preset="classification").fit(X, y)`` (or
+``preset="regression"``) needs no configuration, and ``fit(X, y, strategy="eoa")`` selects the
+evolutionary search.
+
 Benchmarks
 ----------
 The surrogate-guided search is validated against strong HPO/AutoML baselines at **equal

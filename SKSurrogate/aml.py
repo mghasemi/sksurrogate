@@ -37,23 +37,6 @@ class StackingEstimator(BaseEstimator, TransformerMixin):
         self.cv = cv
         self.n_jobs = n_jobs
 
-    def set_params(self, **params):
-        """
-        Sets the sklearn related parameters for the estimator
-
-        :param params: parameters to be bassed to the estimator
-        :return: `self`
-        """
-        estimator_params = {}
-        for key, value in params.items():
-            if key.startswith("estimator__"):
-                estimator_params[key[len("estimator__"):]] = value
-            elif key in {"estimator", "res", "probs", "decision"}:
-                setattr(self, key, value)
-        if estimator_params:
-            self.estimator.set_params(**estimator_params)
-        return self
-
     def fit(self, X, y=None, **fit_params):
         """
         Fit the StackingEstimator meta-transformer.
@@ -351,7 +334,7 @@ default_config = {
             "n_components": Integer(10, 100),
         },
         # Sensitivity Analysis
-        "sksurrogate.SensAprx": {
+        "SKSurrogate.SensAprx": {
             "n_features_to_select": Integer(2, 30),
             "method": Categorical(["sobol", "morris", "delta-mmnt"]),
             # 'regressor': Categorical([None, regressor])
@@ -408,7 +391,7 @@ def _preset_surrogates():
     return [(GaussianProcessRegressor(), 50, BoxSample, "L-BFGS-B")]
 
 
-class AML(object):
+class AML(BaseEstimator):
     """
     A class that accepts a nested dictionary with machine learning libraries as its keys
     and a dictionary of their parameters and their ranges as value of each key and finds
@@ -441,6 +424,11 @@ class AML(object):
     :param stack_decision: default=True; `StackingEstimator`s `decision`
     :param stack_cv: default=5; cross-validation splitter used to build the out-of-fold
         features of the automatic `StackingEstimator` wrappers
+    :param resume: default=False; when True, each surrogate search resumes from its checkpoint in
+        ``check_point`` (only appropriate for the same data and configuration); otherwise every ``fit``
+        starts fresh and overwrites the checkpoint
+    :param stacking: default=None; optional dict (keys ``res``, ``probs``, ``decision``, ``cv``, ``n_jobs``)
+        that overrides the individual ``stack_*`` arguments
     :param stack_n_jobs: default=None; parallel jobs used for those out-of-fold predictions
     :param verbose: default=1; Level of output details
     :param n_jobs: int, default=-1; number of processes to run in parallel
@@ -470,6 +458,7 @@ class AML(object):
             stack_decision=True,
             stack_cv=5,
             stack_n_jobs=None,
+            stacking=None,
             verbose=1,
             n_jobs=-1,
             random_state=None,
@@ -480,6 +469,7 @@ class AML(object):
             forbidden=(),
             conditional=(),
             preset=None,
+            resume=False,
     ):
         from collections import OrderedDict
 
@@ -515,7 +505,7 @@ class AML(object):
             "sklearn.manifold.MDS",
             "sklearn.manifold.SpectralEmbedding",
             "sklearn.manifold.TSNE",
-            "sksurrogate.SensAprx",
+            "SKSurrogate.SensAprx",
             "skrebate.ReliefF",
             "skrebate.SURF",
             "skrebate.SURFstar",
@@ -549,12 +539,14 @@ class AML(object):
         self.stack_decision = stack_decision
         self.stack_cv = stack_cv
         self.stack_n_jobs = stack_n_jobs
+        self.stacking = stacking
+        self.resume = resume
         self.verbose = verbose
         self.num_features_upper_bound = 2
         self.cpu_limit = cpu_limit
         self.memory_limit = memory_limit
         self.forbidden = tuple(forbidden)
-        self.conditional = dict(conditional)
+        self.conditional = conditional if isinstance(conditional, dict) else dict(conditional)
         self.n_jobs = n_jobs
         self.random_state = random_state
         self.time_limit = time_limit
@@ -584,6 +576,22 @@ class AML(object):
         self.best_estimator_score = 0.0
         self.termination_reason = None
         self.summary_ = {}
+
+    def _stacking_options(self):
+        """Stacking options: ``stack_*`` arguments overridden by the ``stacking`` dict."""
+        options = {
+            "res": self.stack_res,
+            "probs": self.stack_probs,
+            "decision": self.stack_decision,
+            "cv": self.stack_cv,
+            "n_jobs": self.stack_n_jobs,
+        }
+        extra = dict(self.stacking or {})
+        unknown = sorted(set(extra) - set(options))
+        if unknown:
+            raise ValueError("Unknown stacking options: %s" % ", ".join(unknown))
+        options.update(extra)
+        return options
 
     def _apply_resource_limits(self):
         """Clamp the effective parallelism to the configured CPU budget."""
@@ -690,6 +698,9 @@ class AML(object):
         """
         if self.surrogates is None:
             self.surrogates = []
+        from .structsearch import resolve_sampling
+
+        sampling = resolve_sampling(sampling)
         if sampling is None:
             from .structsearch import BoxSample
 
@@ -776,15 +787,23 @@ class AML(object):
                 print("score:%f" % best_scr)
                 print(best_mdl)
 
-    def fit(self, X: Any, y: Any):
+    def fit(self, X: Any, y: Any, strategy="surrogate", **kwargs):
         """
         Generates and optimizes all legitimate pipelines. The best pipeline can be retrieved from `self.best_estimator_`
 
         :param X: Training data. If ``cat_cols`` is set, pass the original,
             unencoded feature matrix.
         :param y: Corresponding observations
+        :param strategy: ``"surrogate"`` (default) or ``"eoa"``; the latter is the same as calling
+            :meth:`eoa_fit` and forwards ``kwargs`` to it.
         :return: `self`
         """
+        if strategy == "eoa":
+            return self.eoa_fit(X, y, **kwargs)
+        if strategy != "surrogate":
+            raise ValueError("strategy must be 'surrogate' or 'eoa'")
+        if kwargs:
+            raise TypeError("unexpected fit arguments for strategy='surrogate': %s" % sorted(kwargs))
         self.models.clear()
         self.evaluation_history_.clear()
         self.termination_reason = None
@@ -1016,6 +1035,8 @@ class AML(object):
             "stack_decision": self.stack_decision,
             "stack_cv": self.stack_cv,
             "stack_n_jobs": self.stack_n_jobs,
+            "stacking": self.stacking,
+            "resume": self.resume,
             "verbose": self.verbose,
             "n_jobs": self.n_jobs,
             "cpu_limit": self.cpu_limit,
@@ -1142,11 +1163,7 @@ class AML(object):
                         pre,
                         StackingEstimator(
                             mdl,
-                            res=self.stack_res,
-                            probs=self.stack_probs,
-                            decision=self.stack_decision,
-                            cv=self.stack_cv,
-                            n_jobs=self.stack_n_jobs,
+                            **self._stacking_options(),
                         ),
                     )
                 )
@@ -1239,11 +1256,12 @@ class AML(object):
             }
             self.last_candidate_duration_ = perf_counter() - started
             return ppln, score
+        best_stage = None
         for srgt in surrogates:
             OPTIM = SurrogateRandomCV(
                 ppln,
-                params=config,
-                max_iter=srgt[1],
+                param_distributions=config,
+                n_iter=srgt[1],
                 min_evals=self.min_random_evals,
                 scoring=self.scoring,
                 cv=self.cv,
@@ -1252,7 +1270,7 @@ class AML(object):
                 regressor=srgt[0],
                 scipy_solver=srgt[3],
                 task_name=task_name,
-                continue_=True,
+                continue_=self.resume,
                 warm_start=True,
                 n_jobs=self.n_jobs,
                 time_limit=self.time_limit,
@@ -1262,6 +1280,9 @@ class AML(object):
                 conditional=self.conditional,
             )
             OPTIM.fit(X, y)
+            # A later stage may run out of budget and evaluate nothing; keep the best stage.
+            if best_stage is None or OPTIM.best_estimator_score <= best_stage[1]:
+                best_stage = (OPTIM.best_estimator_, OPTIM.best_estimator_score)
             if getattr(OPTIM, "summary_", None):
                 self.termination_reason = getattr(
                     OPTIM, "termination_reason", self.termination_reason
@@ -1270,4 +1291,4 @@ class AML(object):
         if OPTIM is None:
             raise RuntimeError("No surrogate search was executed")
         self.last_candidate_duration_ = perf_counter() - started
-        return OPTIM.best_estimator_, OPTIM.best_estimator_score
+        return best_stage

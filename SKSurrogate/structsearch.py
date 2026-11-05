@@ -189,6 +189,17 @@ def _resolve_continue_flag(legacy, canonical):
     return legacy if canonical is None else canonical
 
 
+def resolve_sampling(sampling):
+    """Return a sampler class from a class or one of ``"box"``, ``"sphere"``, ``"compact"``."""
+    if isinstance(sampling, str):
+        registry = {"box": BoxSample, "sphere": SphereSample, "compact": CompactSample}
+        try:
+            return registry[sampling.lower()]
+        except KeyError:
+            raise ValueError("sampling must be one of %s or a sampler class" % sorted(registry))
+    return sampling
+
+
 class SurrogateSearch(object):
     """
     An implementation of the Surrogate Random Search (SRS).
@@ -240,7 +251,7 @@ class SurrogateSearch(object):
         self.min_partial_folds = kwargs.pop("min_partial_folds", 1)
         self.radius = kwargs.pop("radius", 2.0)
         self.contraction = kwargs.pop("contraction", 0.9)
-        sampling = kwargs.pop("sampling", SphereSample)
+        sampling = resolve_sampling(kwargs.pop("sampling", SphereSample))
         self.Sampling = sampling(
             init_radius=self.radius,
             contraction=self.contraction,
@@ -734,6 +745,28 @@ except ModuleNotFoundError:
     delayed = type("delayed", (object,), dict())
 
 
+def as_space(value):
+    """Coerce shorthand into a search-space object.
+
+    ``(a, b)`` tuples become ``Integer`` (both ints) or ``Real``; any other list
+    or tuple becomes ``Categorical``. Existing space objects pass through.
+    """
+    from numpy import floating, integer
+
+    if getattr(value, "VType", None) is not None:
+        return value
+    if isinstance(value, tuple) and len(value) == 2 and all(
+        isinstance(v, (int, float, integer, floating)) and not isinstance(v, bool)
+        for v in value
+    ):
+        if all(isinstance(v, (int, integer)) for v in value):
+            return Integer(*value)
+        return Real(*value)
+    if isinstance(value, (list, tuple, set)):
+        return Categorical(list(value))
+    return value
+
+
 class SurrogateRandomCV(BaseSearchCV):
     """
     Surrogate Random Search optimization over hyperparameters.
@@ -749,6 +782,8 @@ class SurrogateRandomCV(BaseSearchCV):
     :param estimator: estimator object. An object of that type is instantiated for each search point. This object is
         assumed to implement the scikit-learn estimator api. Either estimator needs to provide a ``score`` function,
         or ``scoring`` must be passed.
+    :param param_distributions: dict Scikit-learn style name for ``params``; either may be given.
+    :param n_iter: int Scikit-learn style name for ``max_iter``; either may be given.
     :param params: dict Dictionary with parameters names (string) as keys and domains as lists of parameter ranges
         to try. Domains are either lists of categorical (string) values or 2 element lists specifying a min and max
         for integer or float parameters
@@ -809,7 +844,7 @@ class SurrogateRandomCV(BaseSearchCV):
     def __init__(
             self,
             estimator,
-            params,
+            params=None,
             scoring=None,
             fit_params=None,
             n_jobs=-1,
@@ -844,8 +879,20 @@ class SurrogateRandomCV(BaseSearchCV):
             forbidden=(),
             conditional=(),
             continue_=None,
+            param_distributions=None,
+            n_iter=None,
     ):
         resolved_continue = _resolve_continue_flag(Continue, continue_)
+        if param_distributions is not None and params is not None and params != param_distributions:
+            raise ValueError("params and param_distributions cannot both be given")
+        space = param_distributions if param_distributions is not None else params
+        if space is None:
+            raise ValueError("param_distributions (or its alias params) is required")
+        if n_iter is not None and max_iter != 50 and max_iter != n_iter:
+            raise ValueError("max_iter and n_iter cannot specify conflicting values")
+        self.param_space_ = {name: as_space(v) for name, v in space.items()}
+        self.param_distributions = param_distributions
+        self.n_iter = n_iter
         super(SurrogateRandomCV, self).__init__(
             estimator=estimator,
             scoring=scoring,
@@ -859,8 +906,9 @@ class SurrogateRandomCV(BaseSearchCV):
         )
         self.params = params
         self.fit_params = fit_params
-        self.params_list = list(params.keys())
+        self.params_list = list(space.keys())
         self.max_iter = max_iter
+        self.max_iter_ = n_iter if n_iter is not None else max_iter
         self.min_evals = min_evals
         self.radius = radius
         self.contraction = contraction
@@ -880,7 +928,7 @@ class SurrogateRandomCV(BaseSearchCV):
         self.prune_threshold = prune_threshold
         self.min_partial_folds = min_partial_folds
         self.forbidden = tuple(forbidden)
-        self.conditional = dict(conditional)
+        self.conditional = conditional if isinstance(conditional, dict) else dict(conditional)
         self.random_state = random_state
         self.bounds = []
         if self.cpu_limit is not None:
@@ -896,7 +944,7 @@ class SurrogateRandomCV(BaseSearchCV):
         self.x0 = ()
         self.best_estimator_ = None
         self.best_estimator_score = 0.0
-        self.best_score_ = 0.
+        self.best_score_ = float("-inf")
         self.evaluation_history_ = []
         self.cv_results_ = {}
         self.termination_reason = None
@@ -925,7 +973,7 @@ class SurrogateRandomCV(BaseSearchCV):
                     "Unknown search parameter %r for %s"
                     % (name, self.estimator.__class__.__name__)
                 )
-            parameter = self.params[name]
+            parameter = self.param_space_[name]
             value_type = getattr(parameter, "VType", None)
             if value_type == "categorical":
                 if not parameter.items:
@@ -1100,7 +1148,7 @@ class SurrogateRandomCV(BaseSearchCV):
         x0_ = []
         self.bounds = list(self.bounds)
         for param in self.params_list:
-            param_num_range = self.params[param]
+            param_num_range = self.param_space_[param]
             if param_num_range.VType != "hdreal":
                 lower, upper = self._encoded_bounds(param_num_range)
                 radius_list.append(
@@ -1152,7 +1200,7 @@ class SurrogateRandomCV(BaseSearchCV):
             cand_params = {}
             _idx = 0
             for _param in self.params_list:
-                _param_num_range = self.params[_param]
+                _param_num_range = self.param_space_[_param]
                 if _param_num_range.VType != "hdreal":
                     if _param_num_range.VType == "integer":
                         cand_params[_param] = int(round(self._decode_value(_param_num_range, x[_idx])))
@@ -1358,7 +1406,7 @@ class SurrogateRandomCV(BaseSearchCV):
         self.OPTIM = SurrogateSearch(
             obj,
             x0=self.x0,
-            max_iter=self.max_iter,
+            max_iter=self.max_iter_,
             min_evals=self.min_evals,
             ineqs=self.ineqs,
             bounds=self.bounds,
@@ -1387,7 +1435,7 @@ class SurrogateRandomCV(BaseSearchCV):
         best_params_ = {}
         idx = 0
         for param in self.params_list:
-            param_num_range = self.params[param]
+            param_num_range = self.param_space_[param]
             if param_num_range.VType != "hdreal":
                 if param_num_range.VType == "integer":
                     best_params_[param] = int(round(x[idx]))
@@ -1420,8 +1468,9 @@ class SurrogateRandomCV(BaseSearchCV):
         ]
         if not feasible:
             self.best_estimator_ = clone(self.estimator)
+            self.best_params_ = {}
             self.best_estimator_score = float("inf")
-            self.best_score_ = float("inf")
+            self.best_score_ = float("-inf")
         else:
             if not isfinite(scr) or self._forbidden_reason(best_params_) is not None:
                 best_trial = min(feasible, key=lambda item: item["score"])
@@ -1432,19 +1481,33 @@ class SurrogateRandomCV(BaseSearchCV):
                 }
                 scr = best_trial["score"]
             self.best_estimator_ = clone(self.estimator).set_params(**best_params_)
+            self.best_params_ = dict(best_params_)
             if self.refit is not False:
                 # Refit the best estimator on the full dataset so it can be used for
                 # prediction/scoring (mirrors sklearn's BaseSearchCV refit behavior;
                 # uses the same fit_params as the CV folds above).
                 refit_kwargs = dict(self.fit_params or {})
                 self.best_estimator_.fit(X, y, **refit_kwargs)
+            # best_estimator_score is the minimized loss; best_score_ follows the
+            # scikit-learn convention (higher is better).
             self.best_estimator_score = scr
-            self.best_score_ = scr
+            self.best_score_ = -scr
         self.termination_reason = getattr(self.OPTIM, "termination_reason", None)
         self.summary_ = getattr(self.OPTIM, "summary_", {})
+        losses = [item["score"] for item in self.evaluation_history_]
+        test_scores = [-v if v is not None and isfinite(v) else float("nan") for v in losses]
+        ranked = sorted(
+            (i for i, v in enumerate(test_scores) if isfinite(v)), key=lambda i: -test_scores[i]
+        )
+        ranks = [len(ranked) + 1] * len(test_scores)
+        for position, index in enumerate(ranked, start=1):
+            ranks[index] = position
+        self.best_index_ = ranked[0] if ranked else None
         self.cv_results_ = {
             "params": [item["params"] for item in self.evaluation_history_],
-            "mean_test_score": [item["score"] for item in self.evaluation_history_],
+            "mean_test_score": test_scores,
+            "rank_test_score": ranks,
+            "loss": losses,
             "status": [item["status"] for item in self.evaluation_history_],
             "duration": [item["duration"] for item in self.evaluation_history_],
             "error": [item["error"] for item in self.evaluation_history_],

@@ -131,6 +131,11 @@ pipeline:
     A.eoa_fit(X, y, max_generations=10, num_parents=10)
     print(A.get_top(5))
 
+``A.fit(X, y, strategy="eoa", max_generations=10, num_parents=10)`` is an equivalent
+spelling that keeps a single ``fit`` entry point. The automatic stacking wrappers can be
+configured with one dictionary, e.g. ``AML(..., stacking={"cv": 3, "probs": False})``,
+instead of the individual ``stack_*`` arguments.
+
 In order to perform an exhaustive search on all possible pipelines just replace the last line
 with the following::
 
@@ -248,7 +253,7 @@ following transformers are considered as feature selectors:
     - `MDS`
     - `SpectralEmbedding`
     - `TSNE`
-    - `sksurrogate.SensAprx`
+    - `SKSurrogate.SensAprx`
     - `skrebate.ReliefF`
     - `skrebate.SURF`
     - `skrebate.SURFstar`

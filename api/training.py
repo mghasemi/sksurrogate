@@ -408,7 +408,14 @@ def fit_baseline_bundle(
             "metric_scope": "validation partition" if "score" in metrics else None,
         },
     )
-    bundle = ModelBundle(
+    bundle = _new_bundle(model, metrics, task_name, schema, run_record, owner, run_id)
+    bundle.record_audit_event("training", estimator=estimator, metrics=metrics)
+    return bundle
+
+
+def _new_bundle(model, metrics, task_name, schema, run_record, owner, run_id):
+    """Create a ``ModelBundle`` carrying the reproducibility record shared by all training entry points."""
+    return ModelBundle(
         model,
         task_name=task_name,
         schema=schema,
@@ -418,8 +425,6 @@ def fit_baseline_bundle(
         owner=owner,
         run_id=run_id,
     )
-    bundle.record_audit_event("training", estimator=estimator, metrics=metrics)
-    return bundle
 
 
 def build_search_param(spec):
@@ -637,16 +642,7 @@ def fit_experiment_bundle(
             "metric_scope": "cross-validation search score; reported train_score is refit training score",
         },
     )
-    bundle = ModelBundle(
-        best_estimator,
-        task_name=task_name,
-        schema=schema,
-        metrics={"train_score": train_score},
-        metadata={"reproducibility": run_record},
-        dataset_fingerprint=run_record["data"]["train_fingerprint"],
-        owner=owner,
-        run_id=run_id,
-    )
+    bundle = _new_bundle(best_estimator, {"train_score": train_score}, task_name, schema, run_record, owner, run_id)
     bundle.record_audit_event(
         "experiment",
         scoring=scoring,
@@ -800,16 +796,7 @@ def fit_pipeline_bundle(
             "metric_scope": "cross-validation search score; reported train_score is refit training score",
         },
     )
-    bundle = ModelBundle(
-        pipeline,
-        task_name=task_name,
-        schema=schema,
-        metrics={"train_score": train_score},
-        metadata={"reproducibility": run_record},
-        dataset_fingerprint=run_record["data"]["train_fingerprint"],
-        owner=owner,
-        run_id=run_id,
-    )
+    bundle = _new_bundle(pipeline, {"train_score": train_score}, task_name, schema, run_record, owner, run_id)
     bundle.record_audit_event(
         "pipeline_optimization",
         pipeline=list(seq),

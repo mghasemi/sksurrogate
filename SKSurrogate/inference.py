@@ -68,6 +68,15 @@ def _read_input(input_data):
     return pd.read_csv(input_data)
 
 
+def _as_bundle(bundle, strict_dependencies=True):
+    """Accept a :class:`ModelBundle` or a path to a saved one."""
+    if isinstance(bundle, (str, Path)):
+        bundle = load_bundle(bundle, strict_dependencies=strict_dependencies)
+    if not isinstance(bundle, ModelBundle):
+        raise TypeError("bundle must be a ModelBundle or bundle path")
+    return bundle
+
+
 def predict_batch(
     bundle,
     input_data,
@@ -82,10 +91,7 @@ def predict_batch(
     be a pandas DataFrame or a CSV path. The returned DataFrame always contains
     ``prediction``, ``model_version``, and ``request_id`` columns.
     """
-    if isinstance(bundle, (str, Path)):
-        bundle = load_bundle(bundle, strict_dependencies=strict_dependencies)
-    if not isinstance(bundle, ModelBundle):
-        raise TypeError("bundle must be a ModelBundle or bundle path")
+    bundle = _as_bundle(bundle, strict_dependencies)
     started = time.perf_counter()
     frame = _validate_input(bundle, _read_input(input_data))
     predictions = bundle.predict(frame)
@@ -144,10 +150,7 @@ def main(argv=None):
 
 def create_app(bundle, *, strict_dependencies=True):
     """Create a dependency-free WSGI application for online predictions."""
-    if isinstance(bundle, (str, Path)):
-        bundle = load_bundle(bundle, strict_dependencies=strict_dependencies)
-    if not isinstance(bundle, ModelBundle):
-        raise TypeError("bundle must be a ModelBundle or bundle path")
+    bundle = _as_bundle(bundle, strict_dependencies)
 
     def response(start_response, status, payload):
         body = json.dumps(payload, default=str).encode("utf-8")

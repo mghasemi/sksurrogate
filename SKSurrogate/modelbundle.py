@@ -119,6 +119,15 @@ class ModelBundle:
             "audit_events": self.audit_events,
         }
 
+    def save(self, path):
+        """Atomically write this bundle; same as :func:`save_bundle`."""
+        return save_bundle(self, path)
+
+    @classmethod
+    def load(cls, path, **kwargs):
+        """Load a bundle from ``path``; same as :func:`load_bundle`."""
+        return load_bundle(path, **kwargs)
+
     @classmethod
     def from_record(cls, record):
         if record.get("format_version") != BUNDLE_FORMAT_VERSION:

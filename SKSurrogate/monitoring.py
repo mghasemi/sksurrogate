@@ -504,13 +504,19 @@ def delayed_label_performance(predictions, labels, *, model_version=None, task_t
     return {"model_version": model_version, "rows": int(len(labels)), "metrics": metrics}
 
 
-def fairness_report(y_true, y_pred, groups, *, positive_label=1):
-    """Summarize demographic parity and equal-opportunity gaps across groups."""
+def _grouped_inputs(y_true, y_pred, groups):
+    """Convert to arrays and check the three inputs have equal length."""
     y_true = np.asarray(y_true)
     y_pred = np.asarray(y_pred)
     groups = np.asarray(groups)
     if len(y_true) != len(y_pred) or len(y_true) != len(groups):
         raise ValueError("y_true, y_pred, and groups must have the same length")
+    return y_true, y_pred, groups
+
+
+def fairness_report(y_true, y_pred, groups, *, positive_label=1):
+    """Summarize demographic parity and equal-opportunity gaps across groups."""
+    y_true, y_pred, groups = _grouped_inputs(y_true, y_pred, groups)
     if not len(y_true):
         raise ValueError("inputs cannot be empty")
     by_group = {}
@@ -539,11 +545,7 @@ def fairness_report(y_true, y_pred, groups, *, positive_label=1):
 
 def subgroup_performance_report(y_true, y_pred, groups, *, metric="accuracy", positive_label=1):
     """Report group-level metrics and the maximum performance gap between subgroups."""
-    y_true = np.asarray(y_true)
-    y_pred = np.asarray(y_pred)
-    groups = np.asarray(groups)
-    if len(y_true) != len(y_pred) or len(y_true) != len(groups):
-        raise ValueError("y_true, y_pred, and groups must have the same length")
+    y_true, y_pred, groups = _grouped_inputs(y_true, y_pred, groups)
     if metric not in {"accuracy", "precision", "recall", "f1", "loss"}:
         raise ValueError("metric must be one of accuracy, precision, recall, f1, or loss")
     results = {}
@@ -556,8 +558,7 @@ def subgroup_performance_report(y_true, y_pred, groups, *, metric="accuracy", po
             value = float(np.mean(group_true == group_pred)) if len(group_true) else 0.0
         elif metric == "precision":
             positive_pred = group_pred == positive_label
-            actual_positive = group_true == positive_label
-            value = float(np.mean(positive_pred[actual_positive])) if np.any(actual_positive) else 0.0
+            value = float(np.mean(group_true[positive_pred] == positive_label)) if np.any(positive_pred) else 0.0
         elif metric == "recall":
             actual_positive = group_true == positive_label
             value = float(np.mean(group_pred[actual_positive] == positive_label)) if np.any(actual_positive) else 0.0
