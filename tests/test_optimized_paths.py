@@ -10,6 +10,7 @@ matplotlib.use("Agg")
 
 import numpy as np
 import pandas as pd
+from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.datasets import make_classification
 from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import RandomForestClassifier
@@ -50,12 +51,24 @@ from SKSurrogate import (
     sensitive_feature_report,
     fairness_report,
     subgroup_performance_report,
+    split_conformal_regression_interval,
 )
 from SKSurrogate.inference import main as batch_main
 from SKSurrogate.inference import create_app
 from SKSurrogate.eoa import UniformRand
 from SKSurrogate.sensapprx import SensAprx
 from SKSurrogate.structsearch import Categorical, Real, SurrogateRandomCV, SurrogateSearch
+
+
+class MeanRecordingRegressor(RegressorMixin, BaseEstimator):
+    def fit(self, X, y):
+        self.fit_X_ = np.asarray(X).copy()
+        self.fit_y_ = np.asarray(y).copy()
+        self.mean_ = float(np.mean(y))
+        return self
+
+    def predict(self, X):
+        return np.full(len(X), self.mean_)
 
 
 class TestOptimizedPaths(unittest.TestCase):
@@ -869,12 +882,333 @@ class TestOptimizedPaths(unittest.TestCase):
             metrics = tracker.LogMetrics(model)
             tracker.plot_roc_curve(model, "rf")
             first_split = tracker._split_cache[model.mltrack_id]
+            tracker.plot_calibration_curve(model, "rf", fig_index=97, bins=5)
+            calibration_split = tracker._split_cache[model.mltrack_id]
             tracker.plot_lift_curve(model, title="rf")
             second_split = tracker._split_cache[model.mltrack_id]
 
             self.assertIs(first_split[2], second_split[2])
+            self.assertIs(first_split[2], calibration_split[2])
             self.assertIsNotNone(metrics["logloss"])
-            self.assertEqual(len(tracker.allPlots(model.mltrack_id)), 2)
+            self.assertEqual(len(tracker.allPlots(model.mltrack_id)), 3)
+            import matplotlib.pyplot as plt
+
+            plt.close("all")
+
+    def test_mltrace_reports_and_plots_single_target_regression_diagnostics(self):
+        X = np.linspace(-2.0, 2.0, 80).reshape(-1, 1)
+        y = 1.5 * X[:, 0] - 0.3 + np.sin(X[:, 0]) * 0.1
+        frame = pd.DataFrame({"feature": X[:, 0], "target": y})
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            tracker = mltrack("regression-diagnostics", db_name=database.name)
+            tracker.RegisterData(frame, "target")
+            model = tracker.LogModel(LinearRegression(), "linear-regression")
+
+            summary = tracker.regression_diagnostics(model)
+            first_split = tracker._split_cache[model.mltrack_id]
+            expected_predictions = model.predict(first_split[3])
+            expected_residuals = first_split[5] - expected_predictions
+            import matplotlib.pyplot as plt
+
+            tracker.plot_regression_diagnostics(model, title="Test diagnostics")
+            second_split = tracker._split_cache[model.mltrack_id]
+
+            self.assertEqual(summary["n_samples"], len(first_split[3]))
+            self.assertGreaterEqual(summary["mean_absolute_error"], 0.0)
+            self.assertGreaterEqual(summary["root_mean_squared_error"], 0.0)
+            self.assertAlmostEqual(
+                summary["root_mean_squared_error"],
+                np.sqrt(np.mean(expected_residuals**2)),
+            )
+            self.assertAlmostEqual(
+                summary["residual_mean"], np.mean(expected_residuals)
+            )
+            self.assertAlmostEqual(
+                summary["residual_std"], np.std(expected_residuals, ddof=1)
+            )
+            self.assertEqual(len(plt.gcf().axes), 4)
+            self.assertIs(first_split[2], second_split[2])
+            self.assertEqual(len(tracker.allPlots(model.mltrack_id)), 1)
+            plt.close("all")
+
+    def test_mltrace_permutation_importance_is_bounded_and_repeatable(self):
+        rng = np.random.default_rng(23)
+        signal = rng.normal(size=120)
+        noise = rng.normal(size=120)
+        frame = pd.DataFrame(
+            {"signal": signal, "noise": noise, "target": 4.0 * signal + 0.05 * noise}
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            tracker = mltrack("permutation-importance", db_name=database.name)
+            tracker.RegisterData(frame, "target")
+            model = tracker.LogModel(LinearRegression(), "linear-regression")
+            result = tracker.permutation_importance(
+                model,
+                features=["signal", "noise"],
+                max_samples=30,
+                n_repeats=3,
+                random_state=9,
+            )
+            repeated = tracker.permutation_importance(
+                model,
+                features=["signal", "noise"],
+                max_samples=30,
+                n_repeats=3,
+                random_state=9,
+            )
+
+            self.assertEqual(result["reference"]["source"], "cached_test_split")
+            self.assertEqual(result["reference"]["sampled_rows"], 30)
+            self.assertEqual(result["reference"]["max_samples"], 30)
+            self.assertEqual(result["reference"]["random_state"], 9)
+            self.assertEqual(result["selected_features"], ["signal", "noise"])
+            self.assertEqual(
+                result["importances"]["feature"].tolist(),
+                repeated["importances"]["feature"].tolist(),
+            )
+            np.testing.assert_allclose(
+                result["importances"]["importance_mean"],
+                repeated["importances"]["importance_mean"],
+            )
+            self.assertEqual(
+                len(result["importances"].iloc[0]["importance_samples"]), 3
+            )
+            self.assertEqual(
+                result["importances"].iloc[0]["feature"], "signal"
+            )
+
+            with self.assertRaisesRegex(ValueError, "exceeding max_features"):
+                tracker.permutation_importance(model, max_features=1)
+            with self.assertRaisesRegex(ValueError, "Unknown feature name"):
+                tracker.permutation_importance(model, features=["unknown"])
+
+            tracker.RegisterData(frame.iloc[:20], "target", partition="test")
+            partition_result = tracker.permutation_importance(
+                model,
+                reference_partition="test",
+                features=["signal"],
+                max_samples=10,
+                random_state=4,
+            )
+            self.assertEqual(partition_result["reference"]["source"], "partition")
+            self.assertEqual(partition_result["reference"]["partition"], "test")
+            self.assertEqual(partition_result["reference"]["available_rows"], 20)
+            self.assertEqual(partition_result["reference"]["sampled_rows"], 10)
+
+    def test_mltrace_plots_permutation_importance_and_partial_dependence_ice(self):
+        rng = np.random.default_rng(31)
+        signal = rng.normal(size=100)
+        noise = rng.normal(size=100)
+        frame = pd.DataFrame(
+            {"signal": signal, "noise": noise, "target": 2.5 * signal + noise}
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            tracker = mltrack("model-explanations", db_name=database.name)
+            tracker.RegisterData(frame, "target")
+            model = tracker.LogModel(LinearRegression(), "linear-regression")
+            import matplotlib.pyplot as plt
+
+            tracker.plot_permutation_importance(
+                model,
+                max_samples=35,
+                n_repeats=2,
+                random_state=3,
+            )
+            self.assertEqual(len(plt.gcf().axes), 1)
+            tracker.plot_partial_dependence(
+                model,
+                ["signal"],
+                kind="both",
+                max_samples=35,
+                ice_samples=8,
+                grid_resolution=8,
+                random_state=3,
+            )
+            tracker.plot_partial_dependence(
+                model,
+                [("signal", "noise")],
+                kind="average",
+                max_samples=35,
+                grid_resolution=5,
+                random_state=3,
+            )
+
+            plots = tracker.allPlots(model.mltrack_id)
+            self.assertEqual(len(plots), 3)
+            self.assertEqual(plots["title"].tolist().count("partial dependence"), 2)
+            saved_partial_dependence = tracker.LoadPlot(plots.iloc[1]["plot_id"])
+            self.assertGreater(len(saved_partial_dependence.axes), 0)
+            self.assertGreaterEqual(
+                max(len(axis.lines) for axis in saved_partial_dependence.axes), 2
+            )
+            with self.assertRaisesRegex(ValueError, "ICE is supported only"):
+                tracker.plot_partial_dependence(
+                    model,
+                    [("signal", "noise")],
+                    kind="both",
+                    max_samples=20,
+                )
+            plt.close("all")
+
+    def test_mltrace_rejects_classifiers_for_regression_diagnostics(self):
+        X, y = make_classification(n_samples=80, n_features=4, random_state=2)
+        frame = np2df(np.column_stack((X, y)), ["f0", "f1", "f2", "f3", "target"])()
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            tracker = mltrack("classification-regression-diagnostics", db_name=database.name)
+            tracker.RegisterData(frame, "target")
+            model = tracker.LogModel(
+                RandomForestClassifier(n_estimators=5, random_state=2), "classifier"
+            )
+
+            with self.assertRaisesRegex(ValueError, "require a regression estimator"):
+                tracker.regression_diagnostics(model)
+
+    def test_mltrace_plots_multiclass_roc_with_ovr_and_micro_average(self):
+        X, y = make_classification(
+            n_samples=120,
+            n_features=6,
+            n_informative=4,
+            n_redundant=0,
+            n_classes=3,
+            n_clusters_per_class=1,
+            random_state=4,
+        )
+        frame = np2df(
+            np.column_stack((X, y)),
+            ["f0", "f1", "f2", "f3", "f4", "f5", "target"],
+        )()
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            tracker = mltrack("multiclass-roc", db_name=database.name)
+            tracker.RegisterData(frame, "target")
+            model = tracker.LogModel(
+                RandomForestClassifier(n_estimators=5, random_state=4), "multiclass"
+            )
+            import matplotlib.pyplot as plt
+
+            tracker.plot_roc_curve(model, label="RF")
+            axes = plt.gcf().axes
+
+            self.assertEqual(len(axes), 1)
+            labels = [line.get_label() for line in axes[0].lines]
+            self.assertEqual(len(labels), 5)
+            self.assertTrue(any("micro-average" in label for label in labels))
+            self.assertTrue(any("AUC=" in label for label in labels))
+            self.assertEqual(len(tracker.allPlots(model.mltrack_id)), 1)
+            plt.close("all")
+
+    def test_mltrace_plots_multiclass_calibration_one_vs_rest(self):
+        X, y = make_classification(
+            n_samples=120,
+            n_features=6,
+            n_informative=4,
+            n_redundant=0,
+            n_classes=3,
+            n_clusters_per_class=1,
+            random_state=5,
+        )
+        frame = np2df(
+            np.column_stack((X, y)),
+            ["f0", "f1", "f2", "f3", "f4", "f5", "target"],
+        )()
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            tracker = mltrack("multiclass-calibration", db_name=database.name)
+            tracker.RegisterData(frame, "target")
+            model = tracker.LogModel(
+                RandomForestClassifier(n_estimators=5, random_state=5), "multiclass"
+            )
+            import matplotlib.pyplot as plt
+
+            tracker.plot_calibration_curve(model, "RF", fig_index=98, bins=5)
+            axes = plt.figure(98).axes
+
+            self.assertEqual(len(axes), 2)
+            self.assertEqual(len(axes[0].lines), 4)
+            self.assertGreater(len(axes[1].patches), 0)
+            self.assertEqual(len(tracker.allPlots(model.mltrack_id)), 1)
+            plt.close("all")
+
+    def test_mltrace_compares_repeated_cv_scores_with_paired_bootstrap(self):
+        reference = {"repeated_outer_scores": [0.70, 0.80, 0.75, 0.65]}
+        candidate = {"repeated_outer_scores": [0.75, 0.78, 0.80, 0.70]}
+
+        result = mltrack.compare_repeated_cv_results(
+            reference, candidate, n_resamples=2000, random_state=17
+        )
+        repeated_result = mltrack.compare_repeated_cv_results(
+            reference, candidate, n_resamples=2000, random_state=17
+        )
+        differences = np.array([0.05, -0.02, 0.05, 0.05])
+
+        self.assertEqual(result, repeated_result)
+        self.assertEqual(result["repeat_count"], 4)
+        self.assertAlmostEqual(result["mean_difference"], float(np.mean(differences)))
+        self.assertAlmostEqual(
+            result["cohens_dz"],
+            float(np.mean(differences) / np.std(differences, ddof=1)),
+        )
+        interval = result["confidence_interval"]
+        self.assertLessEqual(interval["lower"], result["mean_difference"])
+        self.assertGreaterEqual(interval["upper"], result["mean_difference"])
+
+    def test_mltrace_paired_repeated_cv_comparison_rejects_unpaired_inputs(self):
+        with self.assertRaisesRegex(ValueError, "at least two repeat scores"):
+            mltrack.compare_repeated_cv_results(
+                {"repeated_outer_scores": [0.7, 0.8]},
+                {"repeated_outer_scores": [0.75]},
+            )
+        with self.assertRaisesRegex(ValueError, "positive integer"):
+            mltrack.compare_repeated_cv_results(
+                {"repeated_outer_scores": [0.7, 0.8]},
+                {"repeated_outer_scores": [0.75, 0.85]},
+                n_resamples=0,
+            )
+
+    def test_split_conformal_regression_uses_disjoint_training_and_calibration_data(self):
+        X_train = np.array([[0.0], [1.0]])
+        y_train = np.array([1.0, 3.0])
+        X_calibration = np.array([[10.0], [11.0], [12.0]])
+        y_calibration = np.array([2.0, 3.0, 7.0])
+        X_test = np.array([[20.0], [21.0]])
+
+        result = split_conformal_regression_interval(
+            MeanRecordingRegressor(),
+            X_train,
+            y_train,
+            X_calibration,
+            y_calibration,
+            X_test,
+            alpha=0.25,
+        )
+
+        np.testing.assert_array_equal(result["estimator"].fit_X_, X_train)
+        np.testing.assert_array_equal(result["estimator"].fit_y_, y_train)
+        np.testing.assert_array_equal(result["predictions"], [2.0, 2.0])
+        np.testing.assert_array_equal(result["lower"], [-3.0, -3.0])
+        np.testing.assert_array_equal(result["upper"], [7.0, 7.0])
+        self.assertEqual(result["quantile"], 5.0)
+        self.assertEqual(result["coverage_level"], 0.75)
+        self.assertIn("exchangeability", result["coverage_assumption"])
+
+    def test_split_conformal_regression_corrects_small_calibration_quantile(self):
+        result = split_conformal_regression_interval(
+            MeanRecordingRegressor(),
+            np.array([[0.0], [1.0]]),
+            np.array([1.0, 3.0]),
+            np.array([[10.0], [11.0]]),
+            np.array([2.0, 3.0]),
+            np.array([[20.0]]),
+            alpha=0.1,
+        )
+
+        self.assertTrue(np.isinf(result["quantile"]))
+        self.assertTrue(np.isneginf(result["lower"][0]))
+        self.assertTrue(np.isposinf(result["upper"][0]))
 
     def test_mltrace_warns_when_eager_preprocessing_is_enabled(self):
         frame = pd.DataFrame(

@@ -10,8 +10,11 @@ work starts, changes direction, or is completed.
 **Status:** Implementation in progress; P0.2 and the scoped P0.3 numerical
 hardening/diagnostics are complete, P0.4 promotion checks are implemented,
 P1.1 quick-start presets are complete, P1.2 has baseline and component
-profiles with optimization still open, and P1.3 has corrected EOA aliases.
-The broader recommendation audit is complete.
+profiles with optimization still open, P1.3 has corrected EOA aliases, and
+P1.4 evaluation diagnostics are complete for the scoped tasks. P1.5 model
+explanations are complete for bounded permutation importance and
+partial-dependence/ICE plots; optional SHAP integration remains deferred. The
+broader recommendation audit is complete.
 
 The source assessments describe possible gaps based largely on documentation,
 not a verified code audit. Before implementing any item, check the current
@@ -74,8 +77,8 @@ scope or status.
 | Search cost and surrogate robustness | Partial | Hilbert numerical guards and surrogate diagnostics are implemented (P0.3). The previous real-workload probe mislabeled the library's default GP arm as Hilbert; the benchmark now injects and records Hilbert explicitly, and corrected real-workload comparisons are documented. Component profiling is complete; optimization remains P1.2. |
 | Ensembling, TabPFN, and pruning integrations | Deferred | Not needed to close a verified correctness gap; evaluate bounded optional ensembling under P1.8. Do not add heavyweight dependencies by default. |
 | EDA and data intelligence | Missing | Data typing/preprocessing is not a scientific EDA report. Scope a bounded profile under P2.1; unit inference and document extraction remain deferred. |
-| Evaluation uncertainty and statistical comparison | Partial | Nested/repeated evaluation and interval summaries already exist in the MLOps foundation. Paired comparisons, effect sizes, and conformal methods remain P1.4. |
-| Explanations and diagnostic plots | Partial | Sensitivity analysis exists; regression diagnostics, practical feature-attribution tools, and wider-feature handling remain P1.4/P1.5. Treat SHAP as optional pending evaluation. |
+| Evaluation uncertainty and statistical comparison | Partial | Nested/repeated evaluation and interval summaries already exist. P1.4 adds paired repeat-score bootstrap intervals/effect sizes and split-conformal regression; broader inferential tests remain future work. |
+| Explanations and diagnostic plots | Partial | Sensitivity analysis and P1.4 diagnostics exist; P1.5 adds bounded permutation importance and partial-dependence/ICE plots. SHAP remains a separately evaluated, deferred optional integration. |
 | Additional scientific problem classes | Deferred | Time-series, survival, and other specialized tasks require task-specific protocols; retain under P3 rather than extending generic search without validation. |
 | Data provenance and lineage | Partial | Fingerprints, schema/partition identity, run metadata, and model lineage exist in the MLOps foundation. Scientific transformation/target provenance and exports remain P2.2. |
 | Research projects, notebooks, and reports | Missing | Existing tracking and API workflows are foundations, not project/hypothesis management or reproducible notebook/report generation; retain P2.3/P2.5. |
@@ -290,13 +293,18 @@ continue to work through a documented migration period.
 
 #### P1.4 Improve evaluation diagnostics and statistical comparison
 
-- [ ] Add regression diagnostics (predicted-versus-actual and residual
-  summaries/plots) and extend classification curves to multiclass where
-  metrics have a well-defined multiclass interpretation.
-- [ ] Build on existing nested/repeated evaluation rather than duplicating it.
-- [ ] Add uncertainty-aware model comparison (for example paired resampling
-  intervals and appropriate effect sizes); state the evaluation assumptions.
-- [ ] Prototype conformal prediction intervals/sets with documented coverage
+- **Status:** Complete for single-target regression, multiclass ROC/calibration,
+  paired repeated-CV comparison, and split-conformal regression. Cumulative
+  gain/lift remain binary-only because they require a single positive-class
+  ranking.
+- [x] Add single-target regression diagnostics (predicted-versus-actual,
+  residual summaries, and plots) on the tracker's existing split.
+- [x] Extend ROC and calibration plots with well-defined multiclass
+  visualizations; retain binary gain/lift for positive-class ranking.
+- [x] Build paired comparisons on `nested_cv_evaluation` repeat-level scores.
+- [x] Add uncertainty-aware paired comparison with bootstrap intervals and a
+  paired effect size; document alignment and dependence assumptions.
+- [x] Prototype split-conformal regression intervals with documented coverage
   assumptions and tests for calibration/evaluation separation.
 
 **Done when:** diagnostics support the documented task types and comparisons
@@ -304,18 +312,25 @@ report uncertainty without treating a small score difference as definitive.
 
 #### P1.5 Add practical model explanations
 
-- [ ] Start with permutation importance and supported scikit-learn
+- **Status:** Complete for the scoped tracker APIs. SHAP is not added as a
+  dependency or required path; reconsider it as an optional extra if users need
+  estimator-specific local attributions beyond permutation importance and ICE.
+- [x] Start with permutation importance and supported scikit-learn
   partial-dependence/ICE capabilities; make the chosen reference dataset and
   sampling behavior explicit.
-- [ ] Evaluate SHAP as an optional integration for compatible estimators rather
-  than a required dependency.
-- [ ] Handle wide inputs through explicit limits, sampling, or pagination
-  instead of an unexplained hard feature-count failure.
-- [ ] Label explanations as associations/model behavior, not causal findings;
-  support stability checks across resamples where practical.
+- [x] Evaluate SHAP as an optional integration for compatible estimators rather
+  than a required dependency. Scikit-learn provides the bounded global and
+  profile explanations in scope; defer SHAP to avoid adding another integration
+  until supported estimators and local-attribution needs are specified.
+- [x] Handle wide inputs through explicit feature selection and a configurable
+  feature cap; bound and report reference sampling and ICE curve counts.
+- [x] Label explanations as model behavior, not causal findings; report
+  permutation-repeat variability and document that stability across alternative
+  reference samples is not guaranteed.
 
 **Done when:** supported models have useful global and local diagnostics with
-clear limitations and bounded runtime.
+clear limitations and bounded runtime for the scoped global-importance and
+feature-profile APIs.
 
 #### P1.6 Improve sensitive-feature detection carefully
 
@@ -522,6 +537,40 @@ acceptance criteria are met.
   performing local optimization. No core optimization was applied because the
   measured work is small for the default GP and the Hilbert cost applies only
   when that optional legacy surface is selected.
+- **2026-11-05 — P1.4 regression diagnostics:** added
+  `mltrack.regression_diagnostics()` with MAE, RMSE, R2, and residual summaries,
+  plus a persisted four-panel predicted/actual, residual, histogram, and Q-Q
+  plot. Both reuse the tracker's cached 75/25 split; classifier, multi-output,
+  malformed-shape, and non-finite data paths fail explicitly. Added API
+  documentation that the diagnostics are descriptive rather than inference.
+  Summary calculations are checked against predictions on the same cached
+  split.
+- **2026-11-05 — P1.4 multiclass ROC:** extended `plot_roc_curve` with
+  per-class one-vs-rest and micro-average curves, requiring all classes to be
+  represented in the held-out split. Binary curves explicitly require both
+  classes; binary-only gain/lift behavior remains unchanged. Added a 3-class
+  plot-persistence test.
+- **2026-11-05 — P1.4 multiclass calibration:** extended
+  `plot_calibration_curve` with per-class one-vs-rest reliability curves and
+  probability histograms. It requires finite class probabilities and each
+  class to appear in the held-out split; existing binary behavior remains.
+  Added a 3-class plot-persistence test.
+- **2026-11-05 — P1.4 paired comparison:** added
+  `mltrack.compare_repeated_cv_results()` for paired repeat-level score
+  differences, a deterministic percentile-bootstrap interval, and paired
+  Cohen's d-z. It validates aligned finite scores and documents that callers
+  must use the same data/splits and that repeated CV is not independent-sample
+  inference.
+- **2026-11-05 — P1.4 split conformal:** added public
+  `split_conformal_regression_interval()` with a separate calibration set,
+  absolute residual scores, and the finite-sample corrected quantile. The
+  estimator is cloned and fit only on training data; a small-calibration case
+  correctly produces unbounded intervals when the requested rank exceeds the
+  calibration sample count. Documentation states the exchangeability and
+  model/calibration independence assumptions.
+  The final optimized-path suite passes (80 tests), including binary and
+  multiclass plots, paired-score resampling, and conformal train/calibration
+  separation; Python compilation and `git diff --check` pass.
 - **2026-11-05 — P0.1 recommendation audit:** compared both supplied
   assessments with current implementation evidence and the existing
   MLOps roadmap. Corrected stale claims about DataFrame handling and
@@ -591,3 +640,16 @@ acceptance criteria are met.
   conflicts, legacy calls, and AML forwarding. Validation passed: 97 tests
   across the alias, benchmark-timing, optimized-path, and phase-4 endpoint
   suites; Python compilation and `git diff --check` also passed.
+- **2026-11-05 — P1.5 model explanations:** added deterministic, bounded
+  permutation importance with explicit feature selection for wide data,
+  repeat-level score drops, reference/sampling metadata, and saved ranking
+  plots. Added scikit-learn partial-dependence/ICE plots with explicit one- or
+  two-feature selectors, categorical-column handling, row/grid/curve limits,
+  and persisted figures. The default reference is the cached holdout; callers
+  can choose a registered partition. Documentation distinguishes model
+  behavior from causality and explains the sampling and stability limits.
+  SHAP was assessed and deferred without adding a dependency. Focused
+  validation: all 82 tests in `test_optimized_paths.py` pass; changed Python
+  files compile, Pylance reports no syntax errors, and `git diff --check`
+  passes. The test run reports existing sklearn convergence warnings and a
+  Matplotlib/Python pickle deprecation warning when persisting a figure.

@@ -215,6 +215,118 @@ splitters preserve group labels through the evaluation path.
     MLTr.plot_cumulative_gain(clf, title="Random Forest: Cumulative Gains Curve")
     MLTr.plot_lift_curve(clf, title="Random Forest: Lift Curve")
 
+Regression diagnostics
+=====================
+For a single-target regressor, ``mltrack`` can report held-out summary
+metrics and save a four-panel diagnostic plot. Both methods reuse the same
+cached 75/25 split used by the other model plots::
+
+    summary = MLTr.regression_diagnostics(regressor)
+    print(summary)
+    MLTr.plot_regression_diagnostics(regressor, title="Material strength")
+
+The summary includes sample count, mean absolute error, root mean squared
+error, :math:`R^2`, and residual mean and sample standard deviation. The plot
+shows predicted versus actual values, residuals versus predictions, a residual
+histogram, and a normal Q-Q plot. These are descriptive diagnostics on one
+held-out split; they do not provide confidence intervals or prove that
+residuals are normally distributed. Multi-output regression is not currently
+supported. For model comparison and uncertainty across repeated evaluations,
+use ``nested_cv_evaluation`` rather than treating a single split as definitive.
+
+For paired comparisons, evaluate both estimators with the same repeated-CV
+protocol and compare their result dictionaries::
+
+    comparison = MLTr.compare_repeated_cv_results(
+        reference_results, candidate_results, random_state=7
+    )
+
+The result reports the candidate-minus-reference mean and median repeat-score
+difference, a percentile bootstrap interval, and paired Cohen's :math:`d_z`.
+At least two aligned repeat scores are required. The caller must ensure both
+evaluations used the same data and split protocol. Since repeated CV repeats
+reuse observations and training sets, this interval summarizes variation
+across repeats; it is not an independent-sample significance test.
+
+For uncertainty-aware single-target regression, use split conformal prediction
+with disjoint training and calibration partitions::
+
+    interval = split_conformal_regression_interval(
+        regressor,
+        X_train, y_train,
+        X_calibration, y_calibration,
+        X_test,
+        alpha=0.1,
+    )
+    lower, upper = interval["lower"], interval["upper"]
+
+The estimator is cloned and fitted only on the training data. Absolute
+calibration residuals determine the finite-sample corrected interval width;
+test labels are not accepted. The marginal coverage guarantee assumes the
+calibration and future examples are exchangeable and that the fitted model was
+chosen independently of the calibration set. Use a separate untouched test
+set to measure empirical coverage; coverage is not guaranteed under
+distribution shift.
+
+Model explanations
+==================
+``permutation_importance`` provides a global, model-agnostic ranking using
+the estimator's score by default (or an explicit scikit-learn scorer) and
+returns the score drops, repeat-level values, and reference-set metadata::
+
+    importance = MLTr.permutation_importance(
+        regressor,
+        features=["temperature", "pressure"],
+        n_repeats=8,
+        max_samples=1000,
+        random_state=7,
+    )
+    print(importance["importances"])
+    MLTr.plot_permutation_importance(regressor, features=["temperature", "pressure"])
+
+The default reference is the cached 25% holdout created by
+``mltrack.split_train``; that split is reused per logged model and is not
+seeded by this API. Set ``reference_partition`` to use a separately registered
+partition such as ``"test"``. At most 1,000 rows are used by default; any
+additional row sampling is without replacement and controlled by
+``random_state``. The result records the reference source, partition, row
+counts, sampling limit, and seed. Wide datasets are not silently truncated:
+the default limit is 100 features, and larger inputs require an explicit
+``features`` selection. ``max_features`` can adjust this computational bound.
+
+``plot_partial_dependence`` uses scikit-learn's partial-dependence display for
+explicitly selected one- or two-feature profiles::
+
+    MLTr.plot_partial_dependence(
+        regressor,
+        ["temperature", "pressure"],
+        kind="both",
+        max_samples=1000,
+        ice_samples=100,
+        random_state=7,
+    )
+    MLTr.plot_partial_dependence(
+        regressor, [("temperature", "pressure")], kind="average"
+    )
+
+The reference and row-sampling defaults match permutation importance. At most
+six profiles are plotted per call, and ICE curves are capped at 100 per
+one-dimensional feature by default. Two-feature interactions show average
+partial dependence only, so request ``kind="average"`` when selecting a pair.
+Registered non-numeric columns are treated as categorical features. Both
+explanation methods save their plots in the tracker. These are descriptions
+of a fitted model's behavior on the chosen reference data, not causal effects;
+feature dependence, the selected reference population, and sampling can all
+change the apparent attribution or profile. These APIs do not promise
+stability across resamples.
+
+``plot_roc_curve`` supports multiclass classifiers with one-vs-rest curves for
+each class and a micro-average curve. ``plot_calibration_curve`` similarly
+reports one-vs-rest curves and probability distributions for each class; both
+require the held-out split to contain examples from every fitted class.
+Cumulative-gain and lift charts remain binary-only because they require a
+single positive-class ranking.
+
 *The Best of EOA*
 
 |plt1| |plt2|
