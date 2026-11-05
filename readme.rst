@@ -61,6 +61,17 @@ For automatic pipeline design, ``AML(preset="classification").fit(X, y)`` (or
 ``preset="regression"``) needs no configuration, and ``fit(X, y, strategy="eoa")`` selects the
 evolutionary search.
 
+More workflows are covered in the
+`surrogate-search guide <https://sksurrogate.readthedocs.io/en/latest/surrogate.html>`_,
+`preprocessing guide <https://sksurrogate.readthedocs.io/en/latest/dataproc.html>`_,
+`scientific workflow guide <https://sksurrogate.readthedocs.io/en/latest/mltrace.html>`_,
+`experiment design guide <https://sksurrogate.readthedocs.io/en/latest/experiment-design.html>`_,
+`research projects guide <https://sksurrogate.readthedocs.io/en/latest/research-projects.html>`_,
+and `monitoring guide <https://sksurrogate.readthedocs.io/en/latest/monitoring.html>`_.
+For the API and UI, see the
+`control-plane guide <https://sksurrogate.readthedocs.io/en/latest/controlplane.html>`_
+and `UI walkthrough <https://sksurrogate.readthedocs.io/en/latest/ui-manual.html>`_.
+
 Benchmarks
 ----------
 The surrogate-guided search is validated against strong HPO/AutoML baselines at **equal

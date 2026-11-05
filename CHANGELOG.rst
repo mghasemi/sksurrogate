@@ -21,9 +21,57 @@ JOSS submission and documentation
   software record (DOI 10.5281/zenodo.23631823).
 * WebUI dependency bump: vite 8.3.4.
 
+Scientific workflows and diagnostics
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* AML categorical preprocessing is now learned within each cross-validation
+  training fold. Added the reusable ``FoldLocalDataPreprocessor``; the eager
+  whole-frame ``DataPreprocess`` API remains available, with leakage caveats
+  documented for use before validation or cross-validation.
+* Surrogate-search diagnostics now identify the selected response surface and
+  record fit and local-optimization outcomes. Surrogate fit or prediction
+  failures are not silently replaced by random search or another regressor.
+* Added bounded permutation-importance and partial-dependence/ICE diagnostics,
+  paired repeated-CV comparisons, and single-target regression diagnostics.
+  Explanations describe model behavior, not causality; reference data, feature
+  selection, and sampling bounds should be chosen deliberately.
+* Added seeded Latin-hypercube designs and Gaussian-process LCB candidate
+  recommendations for bounded continuous domains. Recommendations are not
+  objective evaluations or experiment execution, and the benchmark evidence
+  does not establish general or physical-world performance.
+* Added split-conformal regression and conformalized quantile-regression
+  intervals with disjoint calibration data. Quantile-interval integration in
+  the UI/API remains deferred; coverage assumptions and limitations are
+  documented in the Python guide.
+* Added chronological splitter support for nested evaluation and quantile
+  regression with pinball-loss evaluation in the Python/API and Evaluation UI
+  workflows.
+* Added API research projects that store questions and notes and reference
+  existing dataset partitions, model bundles, and jobs without copying their
+  artifacts. The API notebook demonstrates following those references.
+* Added bounded mixed-type dataset profiles and reproducibility exports for
+  API-trained bundles, including training-partition lineage, configuration,
+  environment, and evaluation details. Added executable offline and Python API
+  client notebooks; Jupyter remains optional.
+* Sensitive-feature scans now include bounded, local checks for email,
+  formatted US SSN, and formatted US phone patterns; reports contain counts,
+  not matched values. External retraining triggers support bounded,
+  deduplicated scheduler/webhook events. Events must be timezone-aware and no
+  more than ten minutes old; data events must match the registered training
+  partition fingerprint. Deduplication is process-local, and automated
+  promotion is limited to threshold-gated staging.
+* Bundle promotion checks schema compatibility by default; a mandatory metric
+  threshold policy is not configured for ordinary promotion. Automated
+  retraining promotion is separate and requires at least one finite metric
+  threshold before staging.
+
 API
 ~~~
 
+* Added explicit ``AML(preset="classification"|"regression")`` quick starts
+  using scikit-learn tree ensembles with task-appropriate scoring and bounded
+  per-candidate evaluation budgets. Custom and legacy configurations remain
+  available.
 * API simplification (no removals): ``SurrogateRandomCV`` accepts scikit-learn
   names ``param_distributions`` and ``n_iter`` (``params``/``max_iter`` remain),
   search spaces may be shorthand (``(a, b)`` tuple -> ``Integer``/``Real``,
@@ -42,6 +90,8 @@ API
   surrogate stage instead of the last (which could be an unfitted ``inf``
   result), and ``StackingEstimator.set_params`` no longer ignores ``cv``/``n_jobs``.
   ``AML(resume=False)``: fits no longer silently resume a stale checkpoint (set ``resume=True`` for the old behaviour).
+  EOA now accepts ``parents_prop``, ``elites_prop``, and
+  ``max_generations``; the legacy spellings remain supported.
   ``ModelBundle.save``/``ModelBundle.load`` mirror ``save_bundle``/``load_bundle``.
   Removed redundant ``fit_transform`` overrides in ``SensAprx`` and
   ``CorrelationThreshold`` (inherited from ``TransformerMixin``).

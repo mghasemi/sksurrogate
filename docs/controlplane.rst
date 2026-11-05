@@ -79,6 +79,13 @@ response schemas. The web UI provides corresponding workflow pages, including
 dashboard, datasets, experiments, evaluation, model bundles, registry and
 deployment, inference, monitoring, retraining, and settings.
 
+Normal registry promotion requires a passing bundle-quality report by default;
+the current default check is schema compatibility, not a configured metric
+threshold policy. Automated retraining promotion is a separate workflow: it
+requires at least one finite metric threshold and can promote automatically
+only to ``staging``. Production promotion remains approval-gated. See
+:doc:`phase9` for the retraining trigger and promotion contract.
+
 Experiment and retraining search requests use ``max_generations`` for the
 generation budget. Existing clients may continue sending ``max_generation``
 during migration; the API accepts that legacy spelling, while OpenAPI and the

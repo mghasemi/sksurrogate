@@ -4,12 +4,17 @@
 
 Review the public API for duplication and redundancy so users write the least
 code for the same goals. **No features are removed.** The API stays aligned with
-scikit-learn (interchangeable where possible). Old names remain as aliases that
-emit `DeprecationWarning`. This is a living plan: update task status and the
+scikit-learn (interchangeable where possible). Old names remain available as
+aliases; they do not necessarily emit `DeprecationWarning` (for example,
+`SurrogateRandomCV` keeps quiet aliases because `clone` passes both spellings).
+This is a living plan: update task status and the
 progress log whenever work starts, changes direction, or completes. Sits beside
 [`AI_LAYER_ROADMAP.md`](./AI_LAYER_ROADMAP.md).
 
-**Status:** All phases complete or consciously deferred (see Phase 6/7 notes); Phase 6 partly done, `mltrack` split deferred; Phase 7 docs done, namespace regrouping deferred; Phase 8 verification ongoing.
+**Status:** Phases 1, 3 through 5, and 8 are complete. Phase 2's exhaustive public
+name/argument inventory remains open. Phase 6's `mltrack` split and Phase 7's
+namespace regrouping are consciously deferred; the scoped lifecycle changes
+and documentation are complete.
 
 Legend: `[ ]` open, `[~]` in progress, `[x]` done.
 
@@ -101,7 +106,7 @@ Making `DataPreprocess` itself a transformer would duplicate it.
 - [x] Docs (`surrogate.rst`, `opd.rst`) and `CHANGELOG.rst` updated. readme quick start added; examples unchanged (they already use the unaffected APIs).
 
 ### Phase 8: Verification
-- [x] (2026-11-05: 241 tests, snapshot OK, examples 04-06 run) Full tests, signature snapshot (no name removed), examples, deprecation
+- [x] (2026-11-05: 247 tests, snapshot OK; examples 04-06 run) Full tests, signature snapshot (no name removed), examples, deprecation
       warnings emitted with unchanged behaviour.
 
 ## Open observations
@@ -150,3 +155,7 @@ Making `DataPreprocess` itself a transformer would duplicate it.
   construction deduplicated; readme quick start added. 247 tests pass, snapshot
   OK. Test-suite time rose from ~40s to ~80s because AML fits now start fresh
   instead of silently resuming leftover checkpoints.
+- 2026-11-05: Documentation status reconciled. The exhaustive Phase 2 public
+  API inventory remains open; the remaining `mltrack` split and namespace
+  regrouping stay deferred. Phase 8 verification is complete at 247 tests with
+  the signature snapshot passing; examples 04-06 were run.

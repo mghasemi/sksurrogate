@@ -145,6 +145,10 @@ also depends on cross-validation folds and the number of candidates. Passing
 combined with ``preset``. Omitting both preserves the existing legacy default
 search space.
 
+By default, each ``AML.fit`` starts a fresh search rather than resuming a
+checkpoint left by an earlier fit. Set ``AML(resume=True)`` only when you
+intend to continue surrogate searches from their saved checkpoints.
+
 ``AML.fit`` accepts a pandas DataFrame directly; estimators that preserve their
 input representation receive the original feature names. For categorical
 columns, pass DataFrame column names or array column indices through
@@ -253,7 +257,8 @@ For nested-CV API requests, set ``scoring`` to
 estimator's ``quantile`` setting. Custom callable scorers remain available in
 the Python API. The Evaluation page also offers pinball-loss learning curves
 with an explicit quantile level and reports the loss in its natural positive
-scale. Quantile-interval diagnostics remain outside the current workflow.
+scale. Quantile-interval diagnostics are not integrated into the API or UI;
+the Python interval helpers are documented below.
 
 **Step 5.** Plot learning curves for accuracy, :math:`F_1`, area under ROC, calibration lift and
  cumulative curves for the two models::
