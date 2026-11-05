@@ -1252,7 +1252,7 @@ class AML(object):
                 regressor=srgt[0],
                 scipy_solver=srgt[3],
                 task_name=task_name,
-                Continue=True,
+                continue_=True,
                 warm_start=True,
                 n_jobs=self.n_jobs,
                 time_limit=self.time_limit,

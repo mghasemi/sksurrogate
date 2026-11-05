@@ -28,6 +28,7 @@ from .mltrace import (
     mltrack,
     np2df,
     split_conformal_regression_interval,
+    split_conformal_quantile_interval,
 )
 from .DataProcess import DataPreprocess, FoldLocalDataPreprocessor
 from .ci import BundleQualityGateError, assert_bundle_quality, check_bundle_quality
@@ -93,6 +94,7 @@ __all__ = [
     "Words",
     "mltrack",
     "split_conformal_regression_interval",
+    "split_conformal_quantile_interval",
     "assert_bundle_quality",
     "check_bundle_quality",
     "ModelBundle",

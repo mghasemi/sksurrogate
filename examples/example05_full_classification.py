@@ -49,8 +49,8 @@ def main():
         workdir = Path(workdir)
         # Register explicit partitions so model selection cannot use validation labels.
         tracker = mltrack("synthetic-classification", db_name=str(workdir / "mltrace.db"))
-        tracker.RegisterData(train_with_target, "target", partition="train")
-        tracker.RegisterData(validation_with_target, "target", partition="validation")
+        tracker.register_data(train_with_target, "target", partition="train")
+        tracker.register_data(validation_with_target, "target", partition="validation")
         evaluation = tracker.nested_cv_evaluation(
             LogisticRegression(max_iter=500, random_state=7),
             inner_cv=3,

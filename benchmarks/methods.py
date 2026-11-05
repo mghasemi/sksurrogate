@@ -247,7 +247,7 @@ def _run_srs(
         random_state=seed,
         n_jobs=1,
         warm_start=False,
-        Continue=False,
+        continue_=False,
         task_name=task_name,
     )
     # SRS draws its initial point x0 from Python's *module-level* `random`

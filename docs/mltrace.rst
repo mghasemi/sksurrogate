@@ -46,14 +46,22 @@ Let us make up a sample classification task and trace the models via `mltrace`.
     # initialize the tracker with a task called 'sample'
     MLTr = mltrack('sample', db_name="sample.db")
     # register the data
-    MLTr.RegisterData(df, 'target')
+    MLTr.register_data(df, 'target')
     # inspect the recorded Python and dependency versions
-    print(MLTr.GetMetadata())
+    print(MLTr.get_metadata())
     # add dataset or experiment metadata
-    MLTr.UpdateMetadata({'dataset_version': 'sample-v1', 'seed': 7})
+    MLTr.update_metadata({'dataset_version': 'sample-v1', 'seed': 7})
     # modify the description of the task
-    MLTr.UpdateTask({'description': "This is a sample task to demonstrate\\
+    MLTr.update_task({'description': "This is a sample task to demonstrate\\
             capabilities of the mltrace."})
+
+The tracker also provides snake_case names for the common model and data
+operations: ``register_data``, ``log_model``, ``feature_weights``,
+``top_features``, ``all_models``, and ``get_best``. The original method names
+remain supported for compatibility; no removal release is scheduled. Matching
+snake_case aliases are also available for task/model updates, metadata, CV
+configuration, model preservation/recovery, metric logging, plots, weights,
+and summary access.
 
 Dataset registration records a deterministic fingerprint and a serializable schema.
 The schema includes feature names, dtypes, nullability, row and unique-value counts,
@@ -81,7 +89,7 @@ split handling.
     rgs = RandomizedSearchCV(KernelRidge(),
             param_distributions=param_grid_kr, n_iter=10, cv=2)
     # ask for specific weights to be calculated and recorded
-    MLTr.FeatureWeights(regressor=rgs,
+    MLTr.feature_weights(regressor=rgs,
             weights=('pearson', 'sobol', 'morris', 'delta-mmnt'))
     # visualise
     plt1 = MLTr.heatmap(sort_by='pearson')
@@ -106,9 +114,9 @@ split handling.
     # init classifier
     clf = RandomForestClassifier(n_estimators=50)
     # log the classifier
-    clf = MLTr.LogModel(clf, "RandomForestClassifier(50)")
+    clf = MLTr.log_model(clf, "RandomForestClassifier(50)")
     # find the average metrics
-    print(MLTr.LogMetrics(clf, cv=ShuffleSplit(5, .25)))
+    print(MLTr.log_metrics(clf, cv=ShuffleSplit(5, .25)))
     # {'accuracy': 0.8816, 'auc': 0.9504791437613562, 'precision': 0.9029848807772192,
     # 'f1': 0.8782525829634803, 'recall': 0.8554950898148654, 'mcc': 0.7640884799286114,
     # 'logloss': 4.089427586800243, 'variance': None, 'max_error': None, 'mse': None,
@@ -182,9 +190,9 @@ intentionally converts the encoded matrix to an array before estimator fitting.
     A.eoa_fit(X, y, max_generations=15, num_parents=20)
     # retrieve and log the best
     eoa_clf = A.best_estimator_
-    eoa_clf = MLTr.LogModel(eoa_clf, "Best of EOA Surrogate Search")
-    print(MLTr.LogMetrics(eoa_clf, cv=ShuffleSplit(5, .25)))
-    MLTr.PreserveModel(eoa_clf)
+    eoa_clf = MLTr.log_model(eoa_clf, "Best of EOA Surrogate Search")
+    print(MLTr.log_metrics(eoa_clf, cv=ShuffleSplit(5, .25)))
+    MLTr.preserve_model(eoa_clf)
     # {'accuracy': 0.8824, 'auc': 0.9207884992789751, 'precision': 0.8930688738450767,
     # 'f1': 0.8789651291713657, 'recall': 0.8664344690110679, 'mcc': 0.7657250436230718,
     # 'logloss': 4.061801043429923, 'variance': None, 'max_error': None, 'mse': None,
@@ -317,6 +325,31 @@ calibration and future examples are exchangeable and that the fitted model was
 chosen independently of the calibration set. Use a separate untouched test
 set to measure empirical coverage; coverage is not guaranteed under
 distribution shift.
+
+For two trained-on-training-partition quantile estimators, conformalized
+quantile regression adjusts interval width using a disjoint calibration
+partition::
+
+    interval = split_conformal_quantile_interval(
+        lower_quantile_estimator, upper_quantile_estimator,
+        X_train, y_train,
+        X_calibration, y_calibration,
+        X_test,
+        alpha=0.1,
+    )
+    lower, upper = interval["lower"], interval["upper"]
+
+The estimators should represent lower and upper conditional quantiles
+(commonly ``alpha / 2`` and ``1 - alpha / 2``). Predicted bounds are ordered
+before calibration and application. The finite-sample corrected score can
+expand or contract the base interval; a negative correction can make a
+prediction set empty when the corrected lower bound exceeds the upper bound.
+The result includes ``empty_interval_mask`` so callers can identify these
+cases without changing the conformal prediction set. The correction is
+infinite when the requested rank exceeds the calibration size. As with split conformal regression, the
+marginal coverage claim assumes exchangeable calibration/future examples and
+estimators selected independently of the calibration set. It does not imply
+conditional coverage or protect against distribution shift.
 
 Model explanations
 ==================

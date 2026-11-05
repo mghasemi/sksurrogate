@@ -10,8 +10,10 @@ work starts, changes direction, or is completed.
 **Status:** Implementation in progress; P0.2 and the scoped P0.3 numerical
 hardening/diagnostics are complete, P0.4 promotion checks are implemented,
 P1.1 quick-start presets are complete, P1.2 has baseline and component
-profiles with optimization still open, P1.3 has corrected EOA aliases, and
-P1.4 evaluation diagnostics are complete for the scoped tasks. P1.5 model
+profiles with optimization still open, P1.3 naming inconsistencies from the
+assessment are complete for the audited names through compatibility aliases,
+and P1.4 evaluation
+diagnostics are complete for the scoped tasks. P1.5 model
 explanations are complete for bounded permutation importance and
 partial-dependence/ICE plots; optional SHAP integration remains deferred.
 P1.6 bounded sensitive-feature detection and P1.7 external triggered
@@ -24,7 +26,9 @@ P2.5's API-first project metadata workflow is complete for the scoped MVP:
 projects link existing dataset partitions, model bundles, and jobs, and the
 API notebook verifies linked lineage without duplicating artifact storage. A
 project UI or rerun-from-project service remains future work. The broader
-recommendation audit is complete.
+recommendation audit is complete. P3 adds a Python split-conformalized
+quantile-interval helper; UI/API integration and unrelated research bets remain
+deferred.
 
 The source assessments describe possible gaps based largely on documentation,
 not a verified code audit. Before implementing any item, check the current
@@ -81,7 +85,7 @@ scope or status.
 
 | Recommendation area | Status | Current evidence and planned disposition |
 | --- | --- | --- |
-| Default search presets and API ergonomics | Partial | Bounded classification/regression presets are available (P1.1); legacy `AML(config=None)` behavior and broader naming/deprecation work remain under P1.3. |
+| Default search presets and API ergonomics | Partial | Bounded classification/regression presets are available (P1.1); legacy `AML(config=None)` behavior is preserved, and the assessed EOA, `mltrack`, and surrogate continuation naming inconsistencies have compatibility aliases (P1.3). |
 | DataFrame names and categorical columns in AML | Existing | The source claim that AML strips DataFrames is stale: inputs and named categorical columns are preserved in current paths; keep compatibility work in P1.3 rather than redoing the feature. |
 | Fold-safe preprocessing and column routing | Partial | AML's candidate preprocessing is fold-local, with `FoldLocalDataPreprocessor` available (P0.2). The legacy eager `DataPreprocess.encode()` workflow remains distinct and is documented as unsafe to fit before CV. High-cardinality/text improvements are not included in this completed fix. |
 | Search cost and surrogate robustness | Partial | Hilbert numerical guards and surrogate diagnostics are implemented (P0.3). The previous real-workload probe mislabeled the library's default GP arm as Hilbert; the benchmark now injects and records Hilbert explicitly, and corrected real-workload comparisons are documented. Component profiling is complete; optimization remains P1.2. |
@@ -89,7 +93,7 @@ scope or status.
 | EDA and data intelligence | Partial | P2.1 adds bounded mixed-type dataset profiles and registered-partition API access, with exploratory/non-causal caveats. Unit inference and document extraction remain deferred. |
 | Evaluation uncertainty and statistical comparison | Partial | Nested/repeated evaluation and interval summaries already exist. P1.4 adds paired repeat-score bootstrap intervals/effect sizes and split-conformal regression; broader inferential tests remain future work. |
 | Explanations and diagnostic plots | Partial | Sensitivity analysis and P1.4 diagnostics exist; P1.5 adds bounded permutation importance and partial-dependence/ICE plots. SHAP remains a separately evaluated, deferred optional integration. |
-| Additional scientific problem classes | Partial | P3 adds chronological splitter-level nested evaluation and quantile regression scoring/learning curves; full forecasting protocols, survival analysis, and quantile-interval diagnostics remain deferred. |
+| Additional scientific problem classes | Partial | P3 adds chronological splitter-level nested evaluation, quantile regression scoring/learning curves, and a Python split-conformalized quantile interval helper; full forecasting protocols, survival analysis, and UI/API interval integration remain deferred. |
 | Data provenance and lineage | Partial | P2.2 snapshots training settings, partition identity, environment, and evaluation protocol on newly trained API bundles, with JSON/Markdown exports and persisted nested-CV uncertainty. Target construction and upstream exclusions remain user-supplied provenance gaps. |
 | Research projects, notebooks, and reports | Partial | P2.2 adds reproducibility exports; P2.3 adds executable offline scientific and standard-library Python API client notebooks. Research-project/hypothesis management remains P2.5. |
 | Promotion quality gates | Existing | The server-side gate is implemented and shared by UI/API promotion flows (P0.4); do not duplicate this recommendation. |
@@ -285,9 +289,11 @@ quality, and the chosen behavior is covered by tests.
 
 #### P1.3 Preserve DataFrame names and normalize API conventions
 
-- **Status:** Partial — AML already passes DataFrames through, named
-  categorical columns work, and EOA now accepts corrected aliases; broader
-  public naming inconsistencies and deprecation policy remain.
+- **Status:** Complete for the naming inconsistencies identified in the
+  assessment. AML already passes DataFrames through, named
+  categorical columns work, EOA and common mltrack methods have corrected
+  aliases, and `SurrogateRandomCV`/`SurrogateSearch` accept `continue_`.
+  Unrelated API renames and broad deprecation policy are not implied.
 - [x] Audit `AML` input handling for DataFrame-to-array conversion and
   positional-only categorical references.
 - [x] Preserve feature names through fitting when supported by downstream
@@ -297,6 +303,16 @@ quality, and the chosen behavior is covered by tests.
   retaining the legacy spellings.
 - [x] Warn when legacy EOA constructor spellings are used and document the
   migration; retain the aliases with no scheduled removal version.
+- [x] Add snake_case aliases for the common `mltrack` methods named in the
+  assessment and remaining public mixed-case methods while preserving the
+  original methods.
+- [x] Update first-party examples and documentation to use canonical names and
+  test the legacy and snake_case bindings.
+- [x] Add a `continue_` alias for `SurrogateRandomCV.Continue`, preserve the
+  legacy name, and reject conflicting non-default values.
+- [x] Document the continuation alias and test constructor, attribute,
+  `set_params`, and legacy compatibility behavior.
+- [x] Retain legacy spellings without a scheduled removal release.
 
 **Done when:** named inputs retain useful feature names and existing callers
 continue to work through a documented migration period.
@@ -535,10 +551,14 @@ service that launches reruns directly from project metadata are deferred.
 - [x] Add an explicit-alpha pinball-loss option to nested-CV API evaluation.
 - [x] Offer alpha-specific pinball loss in regression learning curves and the
   Evaluation UI.
+- [x] Add a Python split-conformalized quantile-regression interval helper
+  using ordered quantile bounds, a disjoint calibration set, and the
+  finite-sample corrected conformity-score rank.
 - [ ] Add survival API workflows only after a concrete censoring-aware protocol
   and dependency choice are justified.
-- [ ] Add quantile-interval diagnostics only after selecting a supported
-  interval protocol and documenting its assumptions.
+- [ ] Add quantile-interval UI/API diagnostics only after defining their
+  integration and calibration-data contract; the Python helper covers the
+  bounded conformalized-quantile-regression protocol.
 - [ ] Investigate domain-specific scientific formats and semantic/unit-aware
   data understanding only with clear user needs and a bounded first format.
 - [ ] Treat document extraction, full LLM research assistance, symbolic
@@ -560,6 +580,62 @@ acceptance criteria are met.
 
 ### Progress log
 
+- **2026-11-05 — P1.2 profiling follow-up:** reran the component profiler on
+  the fixed Galaxy3 split at 21 evaluations (RF(10), five-fold CV). The default
+  GP arm spent 1.638 s in candidate evaluation and 0.022 s in residual search
+  work; its GP fit, optimizer, and prediction calls were individually
+  millisecond-scale. The no-surrogate control showed a similar 1.640 s
+  candidate-evaluation time and 0.006 s residual. This is a one-seed
+  cProfile diagnostic, not an unprofiled performance benchmark, and does not
+  establish a worthwhile code optimization. No search behavior was changed;
+  keep P1.2 open for representative evidence rather than optimizing estimator
+  evaluation or weakening the CV protocol speculatively.
+- **2026-11-05 — P1.3 mltrack naming aliases:** added snake_case aliases for
+  all remaining public mixed-case ``mltrack`` methods without removing or
+  warning on the original names. First-party examples and workflow
+  documentation now use the canonical names; regression coverage exercises
+  alias identity and representative metadata, task, and model-persistence
+  workflows. Python compilation, notebook JSON validation, and
+  ``git diff --check`` pass. ``SurrogateRandomCV.Continue`` was handled in the
+  following entry.
+- **2026-11-05 — P1.3 surrogate continuation alias:** added ``continue_`` as
+  the canonical constructor name while preserving ``Continue`` in both
+  ``SurrogateSearch`` and ``SurrogateRandomCV``. ``SurrogateRandomCV`` keeps
+  the attribute synchronized through ``set_params``; conflicting non-default
+  values are rejected. AML and the benchmark runner now use the canonical
+  keyword. The Pylance
+  signature-compatibility check could not establish compatibility for 15 of 17
+  callers with unknown types; two other call sites also had unresolved
+  callable signatures. No existing call spelling was removed. The combined
+  surrogate-diagnostics and optimized-path suites pass (99 tests, 19
+  subtests); the benchmark profile smoke test and Python compilation pass.
+  Sphinx completes with warnings/errors in unrelated existing documentation.
+- **2026-11-05 — P1.3 remaining mltrack aliases:** completed the snake_case
+  alias set for legacy metadata/CV/task/model/plot/weight/summary methods and
+  migrated the remaining first-party mltrace walkthrough and phase-10 example.
+  The focused persistence/alias test and all 93 optimized-path tests (19
+  subtests) pass. Python compilation, notebook JSON validation, and
+  ``git diff --check`` pass. The Sphinx build exits successfully with existing
+  warnings/errors in ``release.rst``, ``sensitivity.rst``, and unrelated
+  references. P1.3 is now complete for the naming inconsistencies identified
+  by the supplied assessment; broader unrelated renames are not included.
+- **2026-11-05 — P3 conformalized quantile intervals:** selected split
+  conformalized quantile regression as the bounded interval protocol. Added
+  ``split_conformal_quantile_interval`` to the public Python API. It fits
+  cloned lower/upper regressors on training data, calibrates ordered
+  nonconformity scores on a separate partition, uses the finite-sample rank
+  (including infinite intervals when calibration is too small), and accepts
+  no test labels. Documentation states exchangeability and model-selection
+  assumptions. Python-only tests cover score correction, inverted base
+  predictions, negative corrections, training/calibration separation, small
+  calibration samples, empty prediction sets (reported by
+  ``empty_interval_mask``), invalid inputs, and a real sklearn
+  ``QuantileRegressor`` pair. The helper is exported from the package root.
+  Validation: 118 tests and 19 subtests passed across optimized paths and
+  quantile/evaluation endpoints; compilation, notebook JSON, and whitespace
+  checks pass. Sphinx exits successfully with existing warnings and errors in
+  unrelated documentation. UI/API endpoints remain deferred pending a
+  calibration partition contract.
 - **2026-11-05 — Roadmap status reconciliation:** updated the recommendation
   summary to reflect scoped time-series and quantile support, and to distinguish
   completed bounded PII-pattern scanning from broader locale-specific coverage.

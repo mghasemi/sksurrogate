@@ -213,6 +213,112 @@ def split_conformal_regression_interval(
     }
 
 
+def split_conformal_quantile_interval(
+    lower_estimator,
+    upper_estimator,
+    X_train,
+    y_train,
+    X_calibration,
+    y_calibration,
+    X_test,
+    alpha=0.1,
+):
+    """Fit quantile regressors and produce conformalized prediction intervals.
+
+    The estimators should predict lower and upper conditional quantiles,
+    commonly at ``alpha / 2`` and ``1 - alpha / 2``. They are cloned and fit
+    only on the training partition. Calibration scores are
+    ``max(lower - y, y - upper)`` after ordering the two predicted bounds.
+    The finite-sample corrected score expands (or, when negative, contracts)
+    test intervals. Test labels are not accepted.
+
+    Marginal coverage assumes exchangeable calibration and future examples and
+    estimators selected independently of the calibration set.
+    """
+    import math
+
+    import numpy as np
+    from sklearn.base import clone, is_classifier
+
+    if not math.isfinite(alpha) or not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must be between 0 and 1.")
+    if is_classifier(lower_estimator) or is_classifier(upper_estimator):
+        raise ValueError("Split conformal intervals require regression estimators")
+
+    y_train = np.asarray(y_train, dtype=float)
+    y_calibration = np.asarray(y_calibration, dtype=float)
+    if y_train.ndim != 1 or y_calibration.ndim != 1:
+        raise ValueError("Split conformal regression supports single-target outputs only")
+    if len(X_train) != y_train.size or len(X_calibration) != y_calibration.size:
+        raise ValueError("Each feature matrix must have the same number of rows as its targets")
+    if y_train.size < 1 or y_calibration.size < 1:
+        raise ValueError("Training and calibration data must each contain at least one sample")
+    if not np.isfinite(y_train).all() or not np.isfinite(y_calibration).all():
+        raise ValueError("Training and calibration targets must all be finite")
+
+    fitted_lower = clone(lower_estimator)
+    fitted_upper = clone(upper_estimator)
+    fitted_lower.fit(X_train, y_train)
+    fitted_upper.fit(X_train, y_train)
+
+    calibration_lower = np.asarray(fitted_lower.predict(X_calibration), dtype=float)
+    calibration_upper = np.asarray(fitted_upper.predict(X_calibration), dtype=float)
+    test_lower = np.asarray(fitted_lower.predict(X_test), dtype=float)
+    test_upper = np.asarray(fitted_upper.predict(X_test), dtype=float)
+    if (
+        calibration_lower.ndim != 1
+        or calibration_upper.shape != calibration_lower.shape
+        or calibration_lower.shape != y_calibration.shape
+        or test_lower.ndim != 1
+        or test_upper.shape != test_lower.shape
+    ):
+        raise ValueError("Estimator predictions must be one-dimensional and match their input rows")
+    if (
+        not np.isfinite(calibration_lower).all()
+        or not np.isfinite(calibration_upper).all()
+        or not np.isfinite(test_lower).all()
+        or not np.isfinite(test_upper).all()
+    ):
+        raise ValueError("Estimator predictions must all be finite")
+
+    calibration_lower, calibration_upper = (
+        np.minimum(calibration_lower, calibration_upper),
+        np.maximum(calibration_lower, calibration_upper),
+    )
+    test_lower, test_upper = (
+        np.minimum(test_lower, test_upper),
+        np.maximum(test_lower, test_upper),
+    )
+    scores = np.maximum(
+        calibration_lower - y_calibration,
+        y_calibration - calibration_upper,
+    )
+    rank = math.ceil((scores.size + 1) * (1.0 - alpha))
+    correction = (
+        float(np.partition(scores, rank - 1)[rank - 1])
+        if rank <= scores.size
+        else float("inf")
+    )
+    interval_lower = test_lower - correction
+    interval_upper = test_upper + correction
+    return {
+        "lower_estimator": fitted_lower,
+        "upper_estimator": fitted_upper,
+        "lower": interval_lower,
+        "upper": interval_upper,
+        "empty_interval_mask": interval_lower > interval_upper,
+        "correction": correction,
+        "alpha": float(alpha),
+        "coverage_level": float(1.0 - alpha),
+        "calibration_size": int(scores.size),
+        "method": "split conformalized quantile regression",
+        "coverage_assumption": (
+            "marginal coverage under exchangeability when the quantile "
+            "estimators are fitted and selected independently of calibration data"
+        ),
+    }
+
+
 def cv_param_defs(splitter_name):
     """Constructor parameter definitions for a standard CV splitter.
 
@@ -2811,3 +2917,26 @@ class mltrack(object):
     def Stats(self):
         df = self.get_dataframe()[self.target]
         return dict(df.describe())
+
+    update_metadata = UpdateMetadata
+    get_metadata = GetMetadata
+    set_cv = SetCV
+    get_cv_spec = GetCVSpec
+    update_task = UpdateTask
+    update_model = UpdateModel
+    register_data = RegisterData
+    log_model = LogModel
+    log_metrics = LogMetrics
+    load_model = LoadModel
+    get_best = getBest
+    all_tasks = allTasks
+    all_models = allModels
+    all_preserved = allPreserved
+    preserve_model = PreserveModel
+    recover_model = RecoverModel
+    all_plots = allPlots
+    load_plot = LoadPlot
+    feature_weights = FeatureWeights
+    retrieve_weights = RetrieveWeights
+    top_features = TopFeatures
+    stats = Stats

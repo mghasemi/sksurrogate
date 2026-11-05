@@ -198,6 +198,11 @@ includes parameters, score, status, duration, and any captured error. Use
 ``pareto_frontier()`` to inspect completed trials that trade validation score
 against evaluation duration.
 
+Use ``continue_`` to resume from a previous search checkpoint. The legacy
+``Continue`` spelling remains accepted; if a non-default ``Continue`` value
+conflicts with ``continue_``, construction raises ``ValueError``. No removal
+release is scheduled for the legacy spelling.
+
 Search-space and pipeline safeguards include:
 
 * conditional parameters, which are omitted when their activation rule does not match;

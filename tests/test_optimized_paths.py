@@ -55,6 +55,7 @@ from SKSurrogate import (
     fairness_report,
     subgroup_performance_report,
     split_conformal_regression_interval,
+    split_conformal_quantile_interval,
     suggest_next_point,
 )
 from SKSurrogate.inference import main as batch_main
@@ -1133,6 +1134,51 @@ class TestOptimizedPaths(unittest.TestCase):
 
             plt.close("all")
 
+    def test_mltrace_snake_case_aliases_preserve_legacy_methods(self):
+        X, y = make_classification(n_samples=80, n_features=4, random_state=3)
+        frame = np2df(np.column_stack((X, y)), ["f0", "f1", "f2", "f3", "target"])()
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            tracker = mltrack("snake-case-aliases", db_name=database.name)
+            tracker.register_data(frame, "target")
+            weights = tracker.feature_weights(weights=("variance",))
+            model = tracker.log_model(DummyClassifier(strategy="most_frequent"), "dummy")
+
+            self.assertIn("variance", weights.columns)
+            self.assertEqual(len(tracker.all_models()), 1)
+            self.assertTrue(tracker.top_features(2))
+            self.assertEqual(tracker.get_metadata(), tracker.GetMetadata())
+            tracker.update_metadata({"alias_test": True})
+            self.assertTrue(tracker.get_metadata()["alias_test"])
+            self.assertEqual(tracker.set_cv(2), tracker.get_cv_spec())
+            self.assertEqual(len(tracker.all_tasks()), 1)
+            tracker.preserve_model(model)
+            self.assertEqual(len(tracker.all_preserved()), 1)
+            self.assertEqual(type(tracker.recover_model(model.mltrack_id)), type(model))
+            self.assertIs(mltrack.register_data, mltrack.RegisterData)
+            self.assertIs(mltrack.log_model, mltrack.LogModel)
+            self.assertIs(mltrack.feature_weights, mltrack.FeatureWeights)
+            self.assertIs(mltrack.top_features, mltrack.TopFeatures)
+            self.assertIs(mltrack.update_metadata, mltrack.UpdateMetadata)
+            self.assertIs(mltrack.get_metadata, mltrack.GetMetadata)
+            self.assertIs(mltrack.set_cv, mltrack.SetCV)
+            self.assertIs(mltrack.get_cv_spec, mltrack.GetCVSpec)
+            self.assertIs(mltrack.update_task, mltrack.UpdateTask)
+            self.assertIs(mltrack.update_model, mltrack.UpdateModel)
+            self.assertIs(mltrack.log_metrics, mltrack.LogMetrics)
+            self.assertIs(mltrack.load_model, mltrack.LoadModel)
+            self.assertIs(mltrack.all_models, mltrack.allModels)
+            self.assertIs(mltrack.all_tasks, mltrack.allTasks)
+            self.assertIs(mltrack.all_preserved, mltrack.allPreserved)
+            self.assertIs(mltrack.preserve_model, mltrack.PreserveModel)
+            self.assertIs(mltrack.recover_model, mltrack.RecoverModel)
+            self.assertIs(mltrack.all_plots, mltrack.allPlots)
+            self.assertIs(mltrack.load_plot, mltrack.LoadPlot)
+            self.assertIs(mltrack.retrieve_weights, mltrack.RetrieveWeights)
+            self.assertIs(mltrack.get_best, mltrack.getBest)
+            self.assertIs(mltrack.stats, mltrack.Stats)
+            tracker.close()
+
     def test_mltrace_reports_and_plots_single_target_regression_diagnostics(self):
         X = np.linspace(-2.0, 2.0, 80).reshape(-1, 1)
         y = 1.5 * X[:, 0] - 0.3 + np.sin(X[:, 0]) * 0.1
@@ -1447,6 +1493,160 @@ class TestOptimizedPaths(unittest.TestCase):
         self.assertTrue(np.isinf(result["quantile"]))
         self.assertTrue(np.isneginf(result["lower"][0]))
         self.assertTrue(np.isposinf(result["upper"][0]))
+
+    def test_split_conformal_quantile_interval_calibrates_disjoint_partitions(self):
+        from sklearn.dummy import DummyRegressor
+
+        X_train = np.array([[0.0], [1.0]])
+        y_train = np.array([10.0, 20.0])
+        X_calibration = np.arange(7.0, 14.0).reshape(-1, 1)
+        y_calibration = np.array([-1.0, 0.2, 0.5, 1.5, 0.0, 1.0, 0.4])
+        X_test = np.array([[20.0], [21.0]])
+
+        result = split_conformal_quantile_interval(
+            DummyRegressor(strategy="constant", constant=0.25),
+            DummyRegressor(strategy="constant", constant=0.75),
+            X_train,
+            y_train,
+            X_calibration,
+            y_calibration,
+            X_test,
+            alpha=0.25,
+        )
+
+        np.testing.assert_array_equal(result["lower_estimator"].predict(X_test), [0.25, 0.25])
+        np.testing.assert_array_equal(result["upper_estimator"].predict(X_test), [0.75, 0.75])
+        np.testing.assert_array_equal(result["lower"], [-0.5, -0.5])
+        np.testing.assert_array_equal(result["upper"], [1.5, 1.5])
+        self.assertEqual(result["correction"], 0.75)
+        self.assertEqual(result["coverage_level"], 0.75)
+        self.assertEqual(result["calibration_size"], 7)
+        self.assertIn("exchangeability", result["coverage_assumption"])
+
+    def test_split_conformal_quantile_interval_fits_only_on_training_partition(self):
+        X_train = np.array([[0.0], [1.0]])
+        y_train = np.array([1.0, 3.0])
+        result = split_conformal_quantile_interval(
+            MeanRecordingRegressor(),
+            MeanRecordingRegressor(),
+            X_train,
+            y_train,
+            np.array([[10.0], [11.0], [12.0]]),
+            np.array([2.0, 3.0, 7.0]),
+            np.array([[20.0]]),
+            alpha=0.25,
+        )
+
+        for key in ("lower_estimator", "upper_estimator"):
+            np.testing.assert_array_equal(result[key].fit_X_, X_train)
+            np.testing.assert_array_equal(result[key].fit_y_, y_train)
+
+    def test_split_conformal_quantile_interval_runs_with_sklearn_quantile_regressors(self):
+        from sklearn.linear_model import QuantileRegressor
+
+        X = np.arange(30.0).reshape(-1, 1)
+        y = 2.0 * X[:, 0] + np.sin(X[:, 0])
+        result = split_conformal_quantile_interval(
+            QuantileRegressor(quantile=0.1, alpha=0.0),
+            QuantileRegressor(quantile=0.9, alpha=0.0),
+            X[:15],
+            y[:15],
+            X[15:25],
+            y[15:25],
+            X[25:],
+            alpha=0.2,
+        )
+
+        self.assertEqual(result["lower"].shape, (5,))
+        self.assertEqual(result["upper"].shape, (5,))
+        self.assertTrue(np.all(result["lower"] <= result["upper"]))
+        self.assertEqual(result["lower_estimator"].quantile, 0.1)
+        self.assertEqual(result["upper_estimator"].quantile, 0.9)
+
+    def test_split_conformal_quantile_interval_orders_bounds_and_can_contract(self):
+        from sklearn.dummy import DummyRegressor
+
+        result = split_conformal_quantile_interval(
+            DummyRegressor(strategy="constant", constant=8.0),
+            DummyRegressor(strategy="constant", constant=2.0),
+            np.array([[0.0], [1.0]]),
+            np.array([0.0, 1.0]),
+            np.arange(7.0).reshape(-1, 1),
+            np.array([3.0, 3.0, 4.0, 5.0, 6.0, 7.0, 7.0]),
+            np.array([[10.0]]),
+            alpha=0.25,
+        )
+
+        self.assertEqual(result["correction"], -1.0)
+        np.testing.assert_array_equal(result["lower"], [3.0])
+        np.testing.assert_array_equal(result["upper"], [7.0])
+        np.testing.assert_array_equal(result["empty_interval_mask"], [False])
+
+    def test_split_conformal_quantile_interval_reports_empty_prediction_sets(self):
+        from sklearn.base import BaseEstimator, RegressorMixin
+
+        class XValueRegressor(RegressorMixin, BaseEstimator):
+            def __init__(self, value):
+                self.value = value
+
+            def fit(self, X, y):
+                return self
+
+            def predict(self, X):
+                return np.asarray(X)[:, 0] * self.value
+
+        result = split_conformal_quantile_interval(
+            XValueRegressor(2.0),
+            XValueRegressor(8.0),
+            np.array([[1.0], [1.1]]),
+            np.array([4.0, 8.0]),
+            np.array([[1.0], [1.0], [1.0], [1.0], [1.0], [1.0], [1.0]]),
+            np.full(7, 5.0),
+            np.array([[0.1]]),
+            alpha=0.25,
+        )
+
+        self.assertGreater(result["lower"][0], result["upper"][0])
+        np.testing.assert_array_equal(result["empty_interval_mask"], [True])
+
+    def test_split_conformal_quantile_interval_uses_infinite_correction_for_small_calibration(self):
+        from sklearn.dummy import DummyRegressor
+
+        result = split_conformal_quantile_interval(
+            DummyRegressor(strategy="constant", constant=0.0),
+            DummyRegressor(strategy="constant", constant=1.0),
+            np.array([[0.0], [1.0]]),
+            np.array([0.0, 1.0]),
+            np.array([[2.0], [3.0]]),
+            np.array([0.5, 0.5]),
+            np.array([[4.0]]),
+            alpha=0.1,
+        )
+
+        self.assertTrue(np.isinf(result["correction"]))
+        self.assertTrue(np.isneginf(result["lower"][0]))
+        self.assertTrue(np.isposinf(result["upper"][0]))
+
+    def test_split_conformal_quantile_interval_validates_alpha_and_target_shape(self):
+        from sklearn.dummy import DummyRegressor
+
+        arguments = (
+            DummyRegressor(),
+            DummyRegressor(),
+            np.array([[0.0], [1.0]]),
+            np.array([0.0, 1.0]),
+            np.array([[2.0], [3.0]]),
+            np.array([0.5, 0.5]),
+            np.array([[4.0]]),
+        )
+        with self.assertRaisesRegex(ValueError, "alpha must be between 0 and 1"):
+            split_conformal_quantile_interval(*arguments, alpha=float("nan"))
+        with self.assertRaisesRegex(ValueError, "single-target"):
+            split_conformal_quantile_interval(
+                *arguments[:3],
+                np.array([[0.0, 1.0], [1.0, 2.0]]),
+                *arguments[4:],
+            )
 
     def test_mltrace_warns_when_eager_preprocessing_is_enabled(self):
         frame = pd.DataFrame(

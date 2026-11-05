@@ -51,7 +51,7 @@ existing task, metadata, models, metrics, plots, data, and saved-model rows::
    from SKSurrogate import mltrack
 
    tracker = mltrack("my-task", db_name="mltrack.db")
-   print(tracker.GetMetadata())
+   print(tracker.get_metadata())
    print(tracker.ListModels())
    tracker.close()
 

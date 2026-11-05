@@ -44,6 +44,24 @@ def test_surrogate_search_reports_selected_custom_regressor_and_fit_history(tmp_
     assert search.summary_["surrogate"] is search.surrogate_info_
 
 
+def test_surrogate_search_accepts_continue_alias(tmp_path):
+    search = SurrogateSearch(
+        lambda point: point[0] ** 2,
+        bounds=[(-1.0, 1.0)],
+        continue_=True,
+        task_name=str(tmp_path / "continue-alias"),
+    )
+    assert search.Continue is True
+
+    with pytest.raises(ValueError, match="cannot specify conflicting values"):
+        SurrogateSearch(
+            lambda point: point[0] ** 2,
+            Continue=True,
+            continue_=False,
+            task_name=str(tmp_path / "conflicting-continue"),
+        )
+
+
 def test_surrogate_fit_error_is_recorded_and_propagated_without_fallback(tmp_path):
     search = SurrogateSearch(
         lambda point: point[0] ** 2,
@@ -99,7 +117,7 @@ def test_surrogate_random_cv_exposes_default_regressor_diagnostics(tmp_path):
         max_evals=1,
         refit=False,
         warm_start=False,
-        Continue=False,
+        continue_=False,
         task_name=str(tmp_path / "default"),
     )
 
@@ -111,3 +129,28 @@ def test_surrogate_random_cv_exposes_default_regressor_diagnostics(tmp_path):
     )
     assert search.surrogate_info_["automatic_fallback"] is None
     assert search.summary_["surrogate"] is search.surrogate_info_
+
+
+def test_surrogate_random_cv_continue_alias_preserves_legacy_parameter():
+    def make_search(**kwargs):
+        return SurrogateRandomCV(
+            LogisticRegression(),
+            {"C": Categorical([0.1, 1.0])},
+            warm_start=False,
+            **kwargs,
+        )
+
+    canonical = make_search(continue_=True)
+    assert canonical.continue_ is True
+    assert canonical.Continue is True
+    assert canonical.get_params(deep=False)["continue_"] is True
+
+    canonical.set_params(continue_=False)
+    assert canonical.Continue is False
+    canonical.set_params(Continue=True)
+    assert canonical.continue_ is True
+
+    legacy = make_search(Continue=True)
+    assert legacy.continue_ is True
+    with pytest.raises(ValueError, match="cannot specify conflicting values"):
+        make_search(Continue=True, continue_=False)

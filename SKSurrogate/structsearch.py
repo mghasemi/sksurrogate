@@ -183,6 +183,12 @@ class SphereSample(BaseSample):
         return candid
 
 
+def _resolve_continue_flag(legacy, canonical):
+    if canonical is not None and legacy is not False and legacy != canonical:
+        raise ValueError("Continue and continue_ cannot specify conflicting values")
+    return legacy if canonical is None else canonical
+
+
 class SurrogateSearch(object):
     """
     An implementation of the Surrogate Random Search (SRS).
@@ -207,7 +213,8 @@ class SurrogateSearch(object):
     :param scipy_solver: `str` the scipy solver ('COBYLA' or 'SLSQP') to solve the local optimization problem at each
         iteration (default: 'COBYLA')
     :param max_itr_no_prog: `int` maximum number of iterations with no progress (default: infinity)
-    :param Continue: `boolean` continues the progress from where it has been interrupted (default: False)
+    :param continue_: `boolean` continues progress from where it was interrupted (default: False)
+    :param Continue: legacy spelling for `continue_`; retained for compatibility
     :param warm_start: `boolean` use data from the previous attempts, but starts from the first iteration
         (default: False)
     :param cpu_limit: Optional cap on the parallelism consumed by any internal worker pool.
@@ -250,7 +257,9 @@ class SurrogateSearch(object):
         self.NumFailedLocOptim = 0
         # init data storing protocol
         self.TaskName = kwargs.pop("task_name", "optim_task")
-        self.Continue = kwargs.pop("Continue", False)
+        legacy_continue = kwargs.pop("Continue", False)
+        canonical_continue = kwargs.pop("continue_", None)
+        self.Continue = _resolve_continue_flag(legacy_continue, canonical_continue)
         self.warm_start = kwargs.pop("warm_start", False)
         self.optimizer = kwargs.get("optimizer", "scipy")
         self.__load()
@@ -834,7 +843,9 @@ class SurrogateRandomCV(BaseSearchCV):
             min_partial_folds=1,
             forbidden=(),
             conditional=(),
+            continue_=None,
     ):
+        resolved_continue = _resolve_continue_flag(Continue, continue_)
         super(SurrogateRandomCV, self).__init__(
             estimator=estimator,
             scoring=scoring,
@@ -860,7 +871,7 @@ class SurrogateRandomCV(BaseSearchCV):
         self.scipy_solver = scipy_solver
         self.task_name = task_name
         self.warm_start = warm_start
-        self.Continue = Continue
+        self.Continue = resolved_continue
         self.max_itr_no_prog = max_itr_no_prog
         self.time_limit = time_limit
         self.max_evals = max_evals
@@ -892,6 +903,14 @@ class SurrogateRandomCV(BaseSearchCV):
         self.summary_ = {}
         self.failure_summary_ = {}
         self.surrogate_info_ = {}
+
+    @property
+    def continue_(self):
+        return self.Continue
+
+    @continue_.setter
+    def continue_(self, value):
+        self.Continue = value
 
     def _validate_search_space(self):
         """Validate parameter definitions before starting model evaluation."""
