@@ -48,6 +48,7 @@ from .monitoring import (
 )
 from .retraining import RetrainingJob
 from .synthdat import SynthData
+from .design import latin_hypercube, suggest_next_point
 
 __version__ = "0.2.0"
 
@@ -101,6 +102,8 @@ __all__ = [
     "SchemaValidationError",
     "create_app",
     "serve",
+    "latin_hypercube",
+    "suggest_next_point",
     "dataset_profile",
     "drift_report",
     "fairness_report",

@@ -17,7 +17,14 @@ partial-dependence/ICE plots; optional SHAP integration remains deferred.
 P1.6 bounded sensitive-feature detection and P1.7 external triggered
 retraining are complete for the scoped integrations. P1.8 was evaluated and
 deferred because the bounded ensemble probe showed no consistent useful gain.
-The broader recommendation audit is complete.
+P2.4's bounded continuous numeric prototype, synthetic benchmarks, and two
+real-data model-tuning checks are complete for the scoped MVP; broader
+scientific/physical validation and other variable types remain future work.
+P2.5's API-first project metadata workflow is complete for the scoped MVP:
+projects link existing dataset partitions, model bundles, and jobs, and the
+API notebook verifies linked lineage without duplicating artifact storage. A
+project UI or rerun-from-project service remains future work. The broader
+recommendation audit is complete.
 
 The source assessments describe possible gaps based largely on documentation,
 not a verified code audit. Before implementing any item, check the current
@@ -467,27 +474,54 @@ code cells compile. Sphinx documentation build and ``git diff --check`` passed.
 
 #### P2.4 Prototype experiment design and active learning
 
-- [ ] Start with a scoped design-of-experiments capability (for example Latin
+- [x] Start with a scoped design-of-experiments capability (for example Latin
   hypercube sampling) and validate its constraints and output format.
-- [ ] Then evaluate uncertainty-aware or sensitivity-guided next-point
+- [x] Then evaluate uncertainty-aware or sensitivity-guided next-point
   selection using existing surrogates.
-- [ ] Keep recommendations separate from executing real-world experiments;
+- [x] Keep recommendations separate from executing real-world experiments;
   require users to validate physical constraints and safety.
-- [ ] Benchmark information/optimization value against simple baselines.
+- [x] Benchmark information/optimization value against simple baselines on
+  reproducible synthetic and real-data model-tuning tasks.
+
+**Status:** Complete for the bounded continuous numeric MVP. It produces
+seeded Latin-hypercube designs and GP-LCB proposals without evaluating or
+executing experiments. Fixed GP length scales avoid the prior per-suggestion
+hyperparameter-optimizer convergence warnings. The reproducible comparisons
+cover three synthetic functions and fixed-fold Ridge and logistic-regression
+tuning tasks on two bundled real datasets. LCB beats the equal-budget random
+baseline in the recorded runs, but the scale was selected after exploratory
+testing on the synthetic and diabetes tasks; the breast-cancer task is a
+separate check. This limited evidence does not establish a general advantage
+or validate physical experiments. Categorical/discrete variables, constraints,
+noise models, adaptive kernel fitting, and broader scientific validation
+remain out of scope.
 
 **Done when:** a bounded prototype produces valid candidate designs and
-demonstrates value on reproducible synthetic and representative tasks.
+demonstrates value on reproducible synthetic and representative real-data
+model-tuning tasks. The checks above meet this criterion for the scoped MVP.
 
 #### P2.5 Organize investigations around research projects
 
-- [ ] First stabilize dataset, analysis, run, and report APIs.
-- [ ] Define a minimal project model for questions, datasets, analyses, notes,
+- [x] Reuse the existing dataset, analysis, run, and report APIs as the
+  artifact source of truth; do not mirror their payloads in project records.
+- [x] Define a minimal project model for questions, datasets, analyses, notes,
   and linked results before proposing a full workspace redesign.
-- [ ] Keep production deployment and monitoring available as a separate
+- [x] Keep production deployment and monitoring available as a separate
   operational workflow.
 
+**Status:** Complete for the API-first MVP. The API can persist project
+metadata and validate references to existing dataset partitions, bundles, and
+jobs. Project-level
+retrieval currently returns those stable references; clients follow the
+existing endpoints for the authoritative artifacts. The executable API
+notebook creates a bounded analysis, links its dataset, search/evaluation jobs,
+and bundle in a project, then follows the links and verifies the training
+fingerprint and run ID. There is intentionally no second run or registry store.
+
 **Done when:** a project can link and reproduce existing analysis artifacts
-without duplicating experiment-tracking or registry concepts.
+without duplicating experiment-tracking or registry concepts. The API notebook
+roundtrip meets this criterion for the API-first MVP; a project UI and a
+service that launches reruns directly from project metadata are deferred.
 
 ### P3 — Defer until demand and foundations are established
 
@@ -745,3 +779,37 @@ acceptance criteria are met.
   no production ensemble API or bundle changes were made. Full protocol,
   results, and deferral rationale are documented in
   `benchmarks/DESIGN.md`.
+- **2026-11-05 — P2.4 active design prototype and validation:** added and
+  exported bounded continuous Latin-hypercube generation and seeded
+  Gaussian-process LCB candidate recommendations. Proposals are not evaluated
+  and physical/operational feasibility is explicitly left to callers. A
+  focused reproduction confirmed that per-suggestion sklearn kernel
+  optimization caused lower-bound convergence warnings. Fixed the Matern 5/2
+  kernel length scale at 1.0 in normalized bounds and exposed that setting in
+  proposal metadata. This eliminated the warning for the reproducer and
+  produced no GP convergence warnings in the benchmark. The equal-budget
+  benchmark compares uniform random search on three synthetic functions and
+  fixed-fold Ridge/diabetes and logistic-regression/breast-cancer tuning. On
+  the standard 10-seed synthetic run, LCB won 10/10 on each function; on the
+  two five-seed model-tuning runs it won 5/5 each. The fixed scale was chosen
+  after exploratory tests on the synthetic and diabetes tasks, so those
+  numbers are development evidence; breast-cancer classification is a
+  separate validation task. Results do not establish physical-experiment
+  safety or general superiority. The focused API test suite passes (92 tests),
+  smoke and full benchmarks complete with no benchmark warnings, changed
+  Python files compile, and `git diff --check` passes. Sphinx builds the new
+  page; the full docs build still reports 16 warnings in unrelated pages.
+- **2026-11-05 — Started P2.5 research projects:** audited the existing
+  dataset-partition, analysis-job, bundle, lineage, run-configuration, and
+  Markdown-report APIs. Added a minimal JSON-backed project resource for
+  research questions, append-only notes, and validated references to existing
+  dataset partitions, model bundles, and jobs. Project records store only
+  references; existing datasets, jobs, runs, reports, registry, and monitoring
+  remain the sources of truth. Added CRUD/notes/link validation tests and API
+  documentation. Extended the API notebook to create a project from a
+  reproducible dataset/search/evaluation workflow, then follow dataset, job,
+  and bundle references and verify the run's training fingerprint. Six
+  project tests and the combined 98-test project and optimized-path suite pass;
+  notebook end-to-end validation, compilation, and `git diff --check` pass.
+  Sphinx builds the project page and completes with 16 existing warnings in
+  unrelated documentation.

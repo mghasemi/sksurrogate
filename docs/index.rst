@@ -14,6 +14,8 @@ Welcome to SKSurrogate's documentation!
    surrogate
    hilbert
    sensitivity
+   experiment-design
+   research-projects
    eoa
    opd
    dataproc

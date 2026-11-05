@@ -29,6 +29,7 @@ from .routers import (
     jobs,
     lineage,
     monitoring,
+    projects,
     quality_gates,
     registry,
     retraining,
@@ -133,6 +134,7 @@ app.include_router(quality_gates.router)
 app.include_router(registry.router)
 app.include_router(inference.router)
 app.include_router(monitoring.router)
+app.include_router(projects.router)
 app.include_router(sensitivity.router)
 app.include_router(experiments.router)
 app.include_router(jobs.router)

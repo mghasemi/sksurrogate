@@ -59,6 +59,10 @@ class Settings:
     def checkpoints_dir(self):
         return self.root / "checkpoints"
 
+    @property
+    def projects_dir(self):
+        return self.root / "projects"
+
     def ensure(self):
         for directory in (
             self.datasets_dir,
@@ -69,6 +73,7 @@ class Settings:
             self.monitoring_dir,
             self.jobs_dir,
             self.checkpoints_dir,
+            self.projects_dir,
         ):
             directory.mkdir(parents=True, exist_ok=True)
         return self

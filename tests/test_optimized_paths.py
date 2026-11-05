@@ -18,6 +18,7 @@ from sklearn.model_selection import ShuffleSplit
 from sklearn.model_selection import KFold, GroupKFold
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.exceptions import ConvergenceWarning
 from sklearn.feature_selection import VarianceThreshold
 from sklearn.pipeline import Pipeline
 
@@ -46,6 +47,7 @@ from SKSurrogate import (
     prediction_distribution_report,
     loss_report,
     load_bundle,
+    latin_hypercube,
     mltrack,
     np2df,
     save_bundle,
@@ -53,6 +55,7 @@ from SKSurrogate import (
     fairness_report,
     subgroup_performance_report,
     split_conformal_regression_interval,
+    suggest_next_point,
 )
 from SKSurrogate.inference import main as batch_main
 from SKSurrogate.inference import create_app
@@ -73,6 +76,112 @@ class MeanRecordingRegressor(RegressorMixin, BaseEstimator):
 
 
 class TestOptimizedPaths(unittest.TestCase):
+    def test_latin_hypercube_is_seeded_bounded_and_stratified(self):
+        bounds = [(-2.0, 3.0), (10.0, 20.0), (0.25, 1.25)]
+        design = latin_hypercube(bounds, 12, random_state=31)
+        repeated = latin_hypercube(bounds, 12, random_state=31)
+
+        self.assertEqual(design.shape, (12, 3))
+        np.testing.assert_array_equal(design, repeated)
+        self.assertTrue(np.all(design >= np.array([-2.0, 10.0, 0.25])))
+        self.assertTrue(np.all(design <= np.array([3.0, 20.0, 1.25])))
+        for column, (lower, upper) in enumerate(bounds):
+            strata = np.floor((design[:, column] - lower) / (upper - lower) * 12)
+            self.assertEqual(sorted(strata.tolist()), list(range(12)))
+
+    def test_latin_hypercube_rejects_invalid_design_requests(self):
+        for bounds in ([], [(1.0, 1.0)], [(2.0, 1.0)], [(0.0, np.inf)], [(0.0, 1.0, 2.0)]):
+            with self.subTest(bounds=bounds):
+                with self.assertRaises(ValueError):
+                    latin_hypercube(bounds, 4)
+        for n_samples in (0, -1, 10001, True, 1.5):
+            with self.subTest(n_samples=n_samples):
+                with self.assertRaisesRegex(ValueError, "n_samples"):
+                    latin_hypercube([(0.0, 1.0)], n_samples)
+        with self.assertRaisesRegex(ValueError, "random_state"):
+            latin_hypercube([(0.0, 1.0)], 2, random_state=True)
+
+    def test_active_learning_recommends_a_bounded_repeatable_unevaluated_point(self):
+        bounds = [(-1.0, 1.0), (-2.0, 2.0)]
+        samples = np.array(
+            [
+                [-1.0, -2.0],
+                [-1.0, 2.0],
+                [1.0, -2.0],
+                [1.0, 2.0],
+                [0.0, 0.0],
+                [0.0, 1.0],
+            ]
+        )
+        values = np.sum((samples - np.array([0.25, -0.5])) ** 2, axis=1)
+        proposal = suggest_next_point(
+            samples,
+            values,
+            bounds,
+            n_candidates=128,
+            random_state=17,
+        )
+        repeated = suggest_next_point(
+            samples,
+            values,
+            bounds,
+            n_candidates=128,
+            random_state=17,
+        )
+
+        self.assertEqual(proposal["acquisition"], "lower_confidence_bound")
+        self.assertEqual(proposal["optimization_direction"], "minimize")
+        self.assertEqual(proposal["surrogate_kernel"], "Matern(nu=2.5)")
+        self.assertEqual(proposal["kernel_length_scale"], [1.0, 1.0])
+        self.assertEqual(proposal["observations_used"], len(samples))
+        self.assertEqual(proposal["candidate_pool_size"], 128)
+        self.assertIn("not evaluated", proposal["interpretation"])
+        self.assertTrue(np.all(proposal["candidate"] >= [-1.0, -2.0]))
+        self.assertTrue(np.all(proposal["candidate"] <= [1.0, 2.0]))
+        np.testing.assert_array_equal(proposal["candidate"], repeated["candidate"])
+        self.assertFalse(np.any(np.all(samples == proposal["candidate"], axis=1)))
+
+    def test_active_learning_does_not_emit_gp_optimizer_convergence_warnings(self):
+        samples = np.array(
+            [[-1.0, -1.0], [-1.0, 1.0], [1.0, -1.0], [1.0, 1.0], [0.0, 0.0]]
+        )
+        values = np.sin(samples[:, 0] * 6.0) + samples[:, 1] ** 2
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", ConvergenceWarning)
+            proposal = suggest_next_point(
+                samples,
+                values,
+                [(-1.0, 1.0), (-1.0, 1.0)],
+                n_candidates=128,
+                random_state=4,
+            )
+        self.assertEqual(proposal["kernel_length_scale"], [1.0, 1.0])
+
+    def test_active_learning_validates_observations_and_bounds(self):
+        bounds = [(0.0, 1.0)]
+        samples = np.array([[0.1], [0.9]])
+        values = np.array([1.0, 0.5])
+        invalid = (
+            (samples[:1], values),
+            (samples, values[:1]),
+            (np.array([[0.1, 0.2], [0.3, 0.4]]), values),
+            (np.array([[0.1], [np.nan]]), values),
+            (np.array([[0.1], [1.1]]), values),
+        )
+        for bad_samples, bad_values in invalid:
+            with self.subTest(samples=bad_samples, values=bad_values):
+                with self.assertRaises(ValueError):
+                    suggest_next_point(bad_samples, bad_values, bounds)
+        for kwargs in (
+            {"n_candidates": 0},
+            {"beta": 0.0},
+            {"beta": np.inf},
+            {"random_state": True},
+        ):
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(ValueError):
+                    suggest_next_point(samples, values, bounds, **kwargs)
+
     def test_dataset_profile_summarizes_mixed_data_and_associations(self):
         frame = pd.DataFrame(
             {

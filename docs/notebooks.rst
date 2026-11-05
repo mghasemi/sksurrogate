@@ -32,7 +32,10 @@ terminal::
 The notebook uses Python's standard-library HTTP client to upload two
 partitions, inspect a profile, submit and poll an AutoML job, launch repeated
 nested-CV evaluation, and retrieve the run-configuration JSON and Markdown
-report. Set ``SKSURROGATE_API_URL`` and, when API-key authentication is enabled,
+report. It then creates a research project linking the registered partition,
+search/evaluation jobs, and selected bundle, and follows those references to
+verify that the linked job, dataset fingerprint, and run configuration agree.
+Set ``SKSURROGATE_API_URL`` and, when API-key authentication is enabled,
 ``SKSURROGATE_API_KEY`` in the notebook environment. ``SKSURROGATE_TASK_NAME``
 can select a task name; otherwise each run creates a timestamped one. Uploaded
 data, jobs, and bundles persist in the API's configured storage root. Use only
