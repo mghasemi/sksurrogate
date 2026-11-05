@@ -525,8 +525,19 @@ service that launches reruns directly from project metadata are deferred.
 
 ### P3 — Defer until demand and foundations are established
 
-- [ ] Evaluate time-series forecasting, survival analysis, and quantile
-  regression individually, including their required splitters and metrics.
+- [x] Validate splitter-level time-series nested evaluation with chronological
+  `TimeSeriesSplit` and explicit metrics; full forecasting workflows remain
+  caller-managed.
+- [x] Assess survival-analysis feasibility, including target representation,
+  censoring-aware estimators, splitters, and metrics; implementation is deferred.
+- [x] Verify the generic Python quantile-regression path with a matching
+  pinball-loss scorer; learning-curve catalogs and quantile diagnostics remain
+  gaps.
+- [x] Add an explicit-alpha pinball-loss option to nested-CV API evaluation.
+- [ ] Add survival API workflows only after a concrete censoring-aware protocol
+  and dependency choice are justified.
+- [ ] Extend quantile metrics to learning curves and add quantile-interval
+  diagnostics only after selecting the desired supported workflow.
 - [ ] Investigate domain-specific scientific formats and semantic/unit-aware
   data understanding only with clear user needs and a bounded first format.
 - [ ] Treat document extraction, full LLM research assistance, symbolic
@@ -548,6 +559,31 @@ acceptance criteria are met.
 
 ### Progress log
 
+- **2026-11-06 — P3 time-series evaluation:** verified that the existing
+  `TimeSeriesSplit` round-trips with its gap and test-window settings and
+  added support for serialized splitter specs in the nested-CV API. Reproduced
+  and fixed explicit scorer handling so the requested sklearn metric is used
+  for inner, outer, and final-validation scores instead of silently defaulting
+  to `estimator.score`. Regression and endpoint tests cover chronological
+  order, gap, negative MAE, and API splitter validation. Documentation makes
+  row ordering and caller-managed forecast feature/target construction
+  explicit; this does not add a forecasting-specific workflow.
+- **2026-11-06 — P3 survival and quantile feasibility:** found no survival
+  estimators or survival package in the dependencies, and the current data and
+  nested-evaluation path model one ordinary target column rather than a
+  censoring/event-time contract. Defer survival support until an estimator,
+  censoring-aware metrics, and compatible data representation are selected.
+  Verified that generic Python nested evaluation can fit scikit-learn's
+  `QuantileRegressor` and honor a custom scorer matched to its quantile. At
+  that point the API lacked alpha-specific pinball loss; the nested-CV API gap
+  is closed in the following entry, while learning-curve metrics and quantile
+  diagnostics remain deferred.
+- **2026-11-06 — P3 quantile nested-CV API:** added
+  ``scoring="neg_mean_pinball_loss"`` with an explicit ``pinball_alpha`` to
+  the API route, validated before job submission. Verified outer-fold and
+  final-validation scores against scikit-learn's pinball loss using a
+  ``QuantileRegressor`` bundle. Other named scoring behavior is unchanged;
+  learning-curve metrics and interval diagnostics remain deferred.
 - **Planning:** roadmap created from the two assessments in `ailayer.md`.
   Existing MLOps and UI roadmap overlap was noted.
 - **2026-11-04 — P0.1/P0.2 audit:** confirmed eager full-frame fitting in

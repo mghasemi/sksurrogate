@@ -24,7 +24,8 @@ matplotlib.use("Agg")
 
 import pandas as pd
 from fastapi import HTTPException
-from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.linear_model import LinearRegression, LogisticRegression, QuantileRegressor
+from sklearn.metrics import mean_pinball_loss
 
 from SKSurrogate import ModelBundle, load_bundle, save_bundle
 
@@ -315,6 +316,122 @@ class TestPhase1Endpoints(unittest.TestCase):
         )
         report = bundles_router.export_run_report(TASK, CLASSIFIER_VERSION)
         self.assertIn("confidence interval", report.body.decode("utf-8"))
+
+    def test_nested_cv_accepts_time_series_splitter_specs(self):
+        time_series_cv = {
+            "type": "TimeSeriesSplit",
+            "n_splits": 2,
+            "test_size": 100,
+            "gap": 10,
+        }
+        submitted = evaluation_router.run_nested_cv(
+            TASK,
+            evaluation_router.NestedCVRequest(
+                model_version=CLASSIFIER_VERSION,
+                inner_cv=time_series_cv,
+                outer_cv=time_series_cv,
+            ),
+        )
+
+        record = _wait_for_job(submitted["job_id"])
+        self.assertEqual(record["status"], "completed", record["error"])
+        result = record["result"]
+        self.assertEqual(len(result["fold_metrics"]), 2)
+        self.assertEqual(len(result["outer_scores"]), 2)
+        self.assertTrue(all(fold["inner_scores"] for fold in result["fold_metrics"]))
+
+    def test_nested_cv_rejects_invalid_splitter_specs_before_queueing(self):
+        with self.assertRaises(HTTPException) as ctx:
+            evaluation_router.run_nested_cv(
+                TASK,
+                evaluation_router.NestedCVRequest(
+                    model_version=CLASSIFIER_VERSION,
+                    outer_cv={"type": "NotASplitter"},
+                ),
+            )
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        self.assertIn("Invalid CV splitter", ctx.exception.detail)
+
+    def test_nested_cv_supports_explicit_quantile_pinball_scoring(self):
+        quantile = 0.8
+        train = self._frame.iloc[:1200].reset_index(drop=True)
+        validation = self._frame.iloc[1200:].reset_index(drop=True)
+        features = train.drop(columns=[TARGET]).to_numpy()
+        model = QuantileRegressor(quantile=quantile, alpha=0.0).fit(
+            features, train[TARGET].to_numpy()
+        )
+        version = "quantile-v1"
+        self._save_bundle(model, version)
+
+        submitted = evaluation_router.run_nested_cv(
+            TASK,
+            evaluation_router.NestedCVRequest(
+                model_version=version,
+                inner_cv=2,
+                outer_cv=2,
+                scoring="neg_mean_pinball_loss",
+                pinball_alpha=quantile,
+            ),
+        )
+        record = _wait_for_job(submitted["job_id"])
+        self.assertEqual(record["status"], "completed", record["error"])
+        result = record["result"]
+        self.assertEqual(result["scoring"], "neg_mean_pinball_loss")
+        self.assertEqual(result["pinball_alpha"], quantile)
+
+        for fold in result["fold_metrics"]:
+            expected_score = -mean_pinball_loss(
+                fold["outer_truth"],
+                fold["outer_predictions"],
+                alpha=quantile,
+            )
+            self.assertAlmostEqual(fold["outer_score"], expected_score)
+
+        final_model = QuantileRegressor(quantile=quantile, alpha=0.0).fit(
+            features,
+            train[TARGET].to_numpy(),
+        )
+        expected_validation_score = -mean_pinball_loss(
+            validation[TARGET].to_numpy(),
+            final_model.predict(validation.drop(columns=[TARGET]).to_numpy()),
+            alpha=quantile,
+        )
+        self.assertAlmostEqual(
+            result["final_validation_score"],
+            expected_validation_score,
+        )
+        bundle = load_bundle(
+            settings.task_bundles_dir(TASK) / (version + ".bundle"),
+            strict_dependencies=False,
+        )
+        protocol = bundle.metadata["evaluations"][-1]["protocol"]
+        self.assertEqual(protocol["scoring"], "neg_mean_pinball_loss")
+        self.assertEqual(protocol["pinball_alpha"], quantile)
+
+    def test_nested_cv_requires_pinball_alpha_only_for_pinball_scoring(self):
+        with self.assertRaises(HTTPException) as missing_alpha:
+            evaluation_router.run_nested_cv(
+                TASK,
+                evaluation_router.NestedCVRequest(
+                    model_version=CLASSIFIER_VERSION,
+                    scoring="neg_mean_pinball_loss",
+                ),
+            )
+        self.assertEqual(missing_alpha.exception.status_code, 400)
+        self.assertIn("pinball_alpha is required", missing_alpha.exception.detail)
+
+        with self.assertRaises(HTTPException) as unrelated_alpha:
+            evaluation_router.run_nested_cv(
+                TASK,
+                evaluation_router.NestedCVRequest(
+                    model_version=CLASSIFIER_VERSION,
+                    scoring="accuracy",
+                    pinball_alpha=0.8,
+                ),
+            )
+        self.assertEqual(unrelated_alpha.exception.status_code, 400)
+        self.assertIn("only valid", unrelated_alpha.exception.detail)
 
     def test_nested_cv_persists_evaluation_to_the_selected_registry_version(self):
         from SKSurrogate import ModelRegistry

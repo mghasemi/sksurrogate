@@ -22,7 +22,7 @@ import numpy as np
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from SKSurrogate import load_bundle, mltrack, save_bundle
+from SKSurrogate import build_cv, load_bundle, mltrack, save_bundle
 
 from ..config import settings
 from ..deps import (
@@ -146,17 +146,48 @@ class NestedCVRequest(BaseModel):
     estimator is cloned per fold, so no fitted state from a previous run leaks in.
     The call is expensive (repeats × outer × inner fits), which is why it runs as
     a background job rather than inline.
+    ``inner_cv`` and ``outer_cv`` accept integer fold counts or serialized
+    scikit-learn splitter specs.
     """
 
     model_version: str | None = None
     alias: str | None = None
-    inner_cv: int = Field(default=2, ge=1)
-    outer_cv: int = Field(default=2, ge=1)
+    inner_cv: int | dict = 2
+    outer_cv: int | dict = 2
     train_partition: str = "train"
     validation_partition: str = "validation"
     scoring: str | None = None
+    pinball_alpha: float | None = Field(default=None, gt=0.0, lt=1.0)
     repeats: int = Field(default=1, ge=1)
     confidence_level: float = Field(default=0.95, gt=0.0, lt=1.0)
+
+
+def _nested_cv_scorer(scoring, pinball_alpha):
+    if scoring == "neg_mean_pinball_loss":
+        if pinball_alpha is None:
+            raise bad_request(
+                "pinball_alpha is required when scoring is 'neg_mean_pinball_loss'"
+            )
+        from sklearn.metrics import make_scorer, mean_pinball_loss
+
+        return make_scorer(
+            mean_pinball_loss,
+            alpha=pinball_alpha,
+            greater_is_better=False,
+        )
+    if pinball_alpha is not None:
+        raise bad_request(
+            "pinball_alpha is only valid when scoring is 'neg_mean_pinball_loss'"
+        )
+    if scoring is None:
+        return None
+
+    from sklearn.metrics import get_scorer
+
+    try:
+        return get_scorer(scoring)
+    except ValueError as exc:
+        raise bad_request(str(exc))
 
 
 @router.post("/{task_name}/nested-cv")
@@ -172,6 +203,13 @@ def run_nested_cv(task_name: str, body: NestedCVRequest):
     if (body.model_version is None) == (body.alias is None):
         raise bad_request("Exactly one of model_version or alias must be provided")
 
+    try:
+        inner_cv = build_cv(body.inner_cv)
+        outer_cv = build_cv(body.outer_cv)
+    except (TypeError, ValueError) as exc:
+        raise bad_request("Invalid CV splitter: %s" % exc)
+    scoring_fn = _nested_cv_scorer(body.scoring, body.pinball_alpha)
+
     # Resolve now so a missing bundle fails fast with 404/400, not as a job error.
     resolve_bundle(
         task_name,
@@ -181,26 +219,18 @@ def run_nested_cv(task_name: str, body: NestedCVRequest):
     )
 
     def _task():
-        from sklearn.metrics import get_scorer
-
         bundle = resolve_bundle(
             task_name,
             model_version=body.model_version,
             alias=body.alias,
             strict_dependencies=False,
         )
-        scoring_fn = None
-        if body.scoring is not None:
-            try:
-                scoring_fn = get_scorer(body.scoring)
-            except ValueError as exc:
-                raise bad_request(str(exc))
 
         with open_tracker(task_name) as tracker:
             result = tracker.nested_cv_evaluation(
                 bundle.model,
-                inner_cv=body.inner_cv,
-                outer_cv=body.outer_cv,
+                inner_cv=inner_cv,
+                outer_cv=outer_cv,
                 train_partition=body.train_partition,
                 validation_partition=body.validation_partition,
                 scoring=scoring_fn,
@@ -219,6 +249,8 @@ def run_nested_cv(task_name: str, body: NestedCVRequest):
         result = _clean(result)
         result["model_version"] = bundle.model_version
         result["task_name"] = task_name
+        result["scoring"] = body.scoring
+        result["pinball_alpha"] = body.pinball_alpha
         bundle.metadata = dict(bundle.metadata or {})
         evaluations = list(bundle.metadata.get("evaluations", []))
         partition_history = tracker_metadata.get("dataset_partition_history", {})
@@ -232,6 +264,7 @@ def run_nested_cv(task_name: str, body: NestedCVRequest):
                     "train_partition": body.train_partition,
                     "validation_partition": body.validation_partition,
                     "scoring": body.scoring,
+                    "pinball_alpha": body.pinball_alpha,
                     "repeats": body.repeats,
                     "confidence_level": body.confidence_level,
                 },

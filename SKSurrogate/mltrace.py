@@ -996,6 +996,11 @@ class mltrack(object):
     ):
         """Evaluate a model with nested CV while reserving the validation partition for the final score.
 
+        ``scoring`` should be a scikit-learn scorer callable taking
+        ``(estimator, X, y)`` (such as the result of
+        ``sklearn.metrics.get_scorer``). When omitted, the estimator's
+        ``score`` method is used when available; otherwise accuracy is used.
+
         Metric semantics:
         - ``outer_scores`` are fold-level scores computed on each held-out outer split.
         - ``mean_outer_score`` is the arithmetic mean across those outer folds.
@@ -1081,6 +1086,14 @@ class mltrack(object):
                     return list(fallback.split(X, y))
                 raise
 
+        def score_model(model, X, y):
+            if scoring is not None:
+                return float(scoring(model, X, y))
+            if hasattr(model, "score"):
+                return float(model.score(X, y))
+            predictions = model.predict(X)
+            return float(accuracy_score(y, predictions))
+
         repeated_outer_scores = []
         repeated_metrics = []
         for repeat_index in range(repeats):
@@ -1102,14 +1115,7 @@ class mltrack(object):
                 if len(numpy.unique(y_outer_train)) < 2:
                     candidate = clone(estimator)
                     candidate.fit(X_outer_train, y_outer_train)
-                    if hasattr(candidate, "score"):
-                        score = candidate.score(X_outer_test, y_outer_test)
-                    else:
-                        predictions = candidate.predict(X_outer_test)
-                        if scoring is not None:
-                            score = scoring(y_outer_test, predictions)
-                        else:
-                            score = accuracy_score(y_outer_test, predictions)
+                    score = score_model(candidate, X_outer_test, y_outer_test)
                     fold_scores = [float(score)]
                 else:
                     inner_groups = groups[outer_train_idx] if groups is not None else None
@@ -1121,27 +1127,17 @@ class mltrack(object):
                         else:
                             candidate = clone(estimator)
                             candidate.fit(X_outer_train[inner_train_idx], y_outer_train[inner_train_idx])
-                        if hasattr(candidate, "score"):
-                            score = candidate.score(X_outer_train[inner_valid_idx], y_outer_train[inner_valid_idx])
-                        else:
-                            predictions = candidate.predict(X_outer_train[inner_valid_idx])
-                            if scoring is not None:
-                                score = scoring(y_outer_train[inner_valid_idx], predictions)
-                            else:
-                                score = accuracy_score(y_outer_train[inner_valid_idx], predictions)
+                        score = score_model(
+                            candidate,
+                            X_outer_train[inner_valid_idx],
+                            y_outer_train[inner_valid_idx],
+                        )
                         fold_scores.append(float(score))
 
                 best_candidate = clone(estimator)
                 best_candidate.fit(X_outer_train, y_outer_train)
-                if hasattr(best_candidate, "score"):
-                    outer_predictions = best_candidate.predict(X_outer_test)
-                    outer_score = best_candidate.score(X_outer_test, y_outer_test)
-                else:
-                    outer_predictions = best_candidate.predict(X_outer_test)
-                    if scoring is not None:
-                        outer_score = scoring(y_outer_test, outer_predictions)
-                    else:
-                        outer_score = accuracy_score(y_outer_test, outer_predictions)
+                outer_predictions = best_candidate.predict(X_outer_test)
+                outer_score = score_model(best_candidate, X_outer_test, y_outer_test)
 
                 outer_scores.append(float(outer_score))
                 inner_mean_score = float(sum(fold_scores) / max(len(fold_scores), 1))
@@ -1190,14 +1186,7 @@ class mltrack(object):
         if X_valid is not None and y_valid is not None:
             final_model = clone(estimator)
             final_model.fit(X_train, y_train)
-            if hasattr(final_model, "score"):
-                final_score = float(final_model.score(X_valid, y_valid))
-            else:
-                predictions = final_model.predict(X_valid)
-                if scoring is not None:
-                    final_score = float(scoring(y_valid, predictions))
-                else:
-                    final_score = float(accuracy_score(y_valid, predictions))
+            final_score = score_model(final_model, X_valid, y_valid)
             result["final_validation_score"] = final_score
 
         self.UpdateMetadata({

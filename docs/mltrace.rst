@@ -197,6 +197,55 @@ partition. It stores fold-level predictions and metrics, mean outer scores, repe
 confidence intervals, and the final validation score in task metadata. Group-aware
 splitters preserve group labels through the evaluation path.
 
+For ordered observations, callers can use ``TimeSeriesSplit`` for both
+``inner_cv`` and ``outer_cv``. Keep rows in chronological order before
+registering the partitions; SKSurrogate does not infer timestamps or sort rows.
+Choose ``gap`` to exclude observations between each training and test window,
+and construct lag, rolling, or forecast-horizon features without future-data
+leakage before registration. Supply an explicit scikit-learn scorer when the
+evaluation metric should differ from the estimator's default ``score`` method::
+
+    from sklearn.metrics import get_scorer
+    from sklearn.model_selection import TimeSeriesSplit
+
+    result = tracker.nested_cv_evaluation(
+        estimator,
+        inner_cv=TimeSeriesSplit(n_splits=3, gap=2),
+        outer_cv=TimeSeriesSplit(n_splits=4, gap=2),
+        scoring=get_scorer("neg_mean_absolute_error"),
+    )
+
+The nested-CV API accepts these splitters as serialized specs, for example
+``{"type": "TimeSeriesSplit", "n_splits": 4, "gap": 2}``, as well as integer
+fold counts. This is splitter-level support: forecast target construction,
+horizon-specific scoring, and time-aware feature engineering remain the
+caller's responsibility.
+
+The generic Python estimator path also works with scikit-learn's
+``QuantileRegressor``. To evaluate the selected quantile, pass a matching
+pinball-loss scorer; the scorer's ``alpha`` must match the estimator's
+``quantile``::
+
+    from sklearn.metrics import make_scorer, mean_pinball_loss
+    from sklearn.linear_model import QuantileRegressor
+
+    quantile = 0.8
+    result = tracker.nested_cv_evaluation(
+        QuantileRegressor(quantile=quantile),
+        scoring=make_scorer(
+            mean_pinball_loss,
+            alpha=quantile,
+            greater_is_better=False,
+        ),
+    )
+
+For nested-CV API requests, set ``scoring`` to
+``"neg_mean_pinball_loss"`` and provide ``pinball_alpha`` in the open interval
+``(0, 1)``. The API requires this value explicitly so it can match the
+estimator's ``quantile`` setting. Custom callable scorers remain available in
+the Python API. The learning-curve metric catalog does not yet offer
+alpha-specific pinball loss or quantile-interval diagnostics.
+
 **Step 5.** Plot learning curves for accuracy, :math:`F_1`, area under ROC, calibration lift and
  cumulative curves for the two models::
 
