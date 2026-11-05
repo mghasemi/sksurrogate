@@ -21,7 +21,8 @@ Space design notes:
 
 Per-evaluation records are ``(k, cv_score, wall_s)``; entries without a score
 (invalid/pruned/failed trials) keep their position in the curve with
-``cv_score=None`` so evaluation counting stays honest.
+``cv_score=None`` so evaluation counting stays honest. ``total_wall_s`` records
+the search duration, excluding the final held-out evaluation.
 """
 
 from __future__ import annotations
@@ -79,6 +80,7 @@ class RunRecord:
     final_cv_best: Optional[float] = None
     final_test_accuracy: Optional[float] = None
     final_test_balanced: Optional[float] = None
+    #: Search wall time, excluding the final held-out evaluation.
     total_wall_s: Optional[float] = None
     extra: dict[str, Any] = dataclasses.field(default_factory=dict)
 
@@ -121,17 +123,25 @@ def _best_completed(records: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
 # --------------------------------------------------------------------------- #
 
 def run_sksurrogate(Xtr, ytr, Xte, yte, budget: int, seed: int, n_estimators: int = 50) -> RunRecord:
-    """Arm B — SKSurrogate surrogate-guided search (primary method).
+    """Arm B — degree-3 Hilbert response surface, retained as the legacy baseline.
 
-    Requests the default engagement ``min_evals = max(5, budget // 5)``, but note the
-    constructor clamp in :class:`SKSurrogate.structsearch.SurrogateSearch`: with the
-    default cubic Hilbert regressor the effective threshold is
-    ``max(requested, C(n_params + 3, n_params))`` — for this 3-parameter space that is
-    **20**, so the surrogate only engages once 20 points have been evaluated (records
-    k >= budget - 10 at the suite budget B = 30; it never engages when budget < 21).
-    See DESIGN.md v1.4 errata.
+    The library default is now a Gaussian process, so this arm supplies Hilbert
+    explicitly to keep it distinct from ``sksurrogate-gp``.
     """
-    return _run_srs(Xtr, ytr, Xte, yte, budget, seed, n_estimators, min_evals=None, task_tag="srs")
+    from SKSurrogate.NpyProximation import HilbertRegressor
+
+    return _run_srs(
+        Xtr,
+        ytr,
+        Xte,
+        yte,
+        budget,
+        seed,
+        n_estimators,
+        min_evals=None,
+        task_tag="srs",
+        regressor_factory=lambda: HilbertRegressor(deg=3),
+    )
 
 
 def run_srs_no_surrogate(Xtr, ytr, Xte, yte, budget: int, seed: int, n_estimators: int = 50) -> RunRecord:
@@ -152,9 +162,8 @@ def run_sksurrogate_gp(Xtr, ytr, Xte, yte, budget: int, seed: int, n_estimators:
     """Arm B with a Gaussian-process response surface (DESIGN.md v1.8).
 
     Identical SRS outer loop and engagement schedule to :func:`run_sksurrogate` —
-    the explicit ``min_evals`` floor mirrors the library's clamp for its default
-    cubic Hilbert regressor, so all surrogate arms engage at identical k (20 in
-    this 3-parameter space) — but the response surface is a stock sklearn
+    all benchmark surrogate arms use the same 20-point floor in this
+    three-parameter space — but the response surface is a stock sklearn
     ``GaussianProcessRegressor`` (RBF kernel, alpha=1e-10 defaults). Kernel
     hyperparameters are deliberately un-tuned: first test of whether a richer
     surface helps under an equal protocol.
@@ -194,11 +203,9 @@ def _run_srs(
     params = {name: Categorical(values) for name, values in SPACE.items()}
     custom_regressor = None
     if regressor_factory is not None:
-        # DESIGN v1.8: the library's MinEvals floor (C(n_params+3, n_params)) applies only when
-        # SurrogateSearch installs its own default cubic HilbertRegressor; a user-supplied
-        # regressor receives the requested min_evals verbatim (v1.4 errata). Apply that same
-        # floor here so every surrogate arm engages at identical k — isolating the response
-        # surface as the only variable under test.
+        # Keep the engagement point identical across response-surface arms. The
+        # benchmark uses the degree-3 Hilbert basis size (20 points for this
+        # three-parameter space), regardless of the library's current default.
         import math
 
         min_evals = max(min_evals, math.comb(len(SPACE) + 3, len(SPACE)))
@@ -223,10 +230,8 @@ def _run_srs(
     # in the CWD after every iteration and silently restores it, which would
     # contaminate independent benchmark runs (verified 2026-10-17).
     # `min_evals` is passed through verbatim: None -> default request (Arm B), budget ->
-    # surrogate never engages within the cap (Arm A; DESIGN.md section 9). NOTE: the
-    # SurrogateSearch constructor clamps the effective threshold up to C(n_params+3, n_params)
-    # for the default cubic Hilbert regressor — 20 in this space (DESIGN.md v1.4 errata), so
-    # Arm B engages only once 20 points are evaluated regardless of the requested value.
+    # surrogate never engages within the cap (Arm A; DESIGN.md section 9). The shared
+    # 20-point engagement floor is applied above for all benchmark surrogate arms.
     task_name = f"{task_tag}_bench_s{seed}_{int(time.time())}"
     search = SurrogateRandomCV(
         estimator=make_pipeline(seed, n_estimators),
@@ -234,7 +239,7 @@ def _run_srs(
         max_iter=4 * budget,  # DESIGN v1.7: safe ceiling; max_evals is the binding cap (see errata above)
         max_evals=budget,
         min_evals=min_evals,
-        regressor=custom_regressor,  # DESIGN v1.8: None -> library default cubic Hilbert; else stock sklearn surface
+        regressor=custom_regressor,  # None selects the library default; benchmark surrogate arms inject a surface.
         scoring=None,
         cv=5,
         refit=False,
@@ -307,9 +312,8 @@ def _run_srs(
         extra={
             "termination_reason": getattr(search, "termination_reason", None),
             "failure_summary": getattr(search, "failure_summary_", {}),
-            # DESIGN v1.8: which response surface this arm fitted (default cubic Hilbert
-            # unless a custom regressor was injected).
-            "surrogate": type(custom_regressor).__name__ if custom_regressor is not None else "HilbertRegressor(deg=3)",
+            "surrogate": search.surrogate_info_["regressor"],
+            "surrogate_source": search.surrogate_info_["source"],
             # DESIGN v1.7: SRS loop-iteration count vs n_evals exposes no-op
             # iterations (failed local optimizations of the surrogate surface).
             "n_iterations": int(getattr(search.OPTIM, "iteration", 0)) if hasattr(search, "OPTIM") else None,
@@ -321,6 +325,7 @@ def run_random(Xtr, ytr, Xte, yte, budget: int, seed: int, n_estimators: int = 5
     """Uniform random search over the shared space (RandomizedSearchCV-equivalent)."""
     rng = np.random.default_rng(seed)
     records: list[dict[str, Any]] = []
+    search_started = time.perf_counter()
     for k in range(budget):
         params = {name: values[int(rng.integers(len(values)))] for name, values in SPACE.items()}
         started = time.perf_counter()
@@ -335,6 +340,7 @@ def run_random(Xtr, ytr, Xte, yte, budget: int, seed: int, n_estimators: int = 5
 
     best = _best_completed(records)
     best_params = dict(best.pop("_params")) if best is not None else {}
+    total_wall = time.perf_counter() - search_started
     test_acc, test_bal = _final_test_scores(best_params, Xtr, ytr, Xte, yte, seed, n_estimators)
 
     return RunRecord(
@@ -351,6 +357,7 @@ def run_random(Xtr, ytr, Xte, yte, budget: int, seed: int, n_estimators: int = 5
         final_cv_best=best["cv_score"] if best is not None else None,
         final_test_accuracy=test_acc,
         final_test_balanced=test_bal,
+        total_wall_s=total_wall,
     )
 
 

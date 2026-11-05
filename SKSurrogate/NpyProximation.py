@@ -255,10 +255,28 @@ class FunctionSpace(object):
         is a list of function that are orthogonal to each other with
         respect to the measure ``measure`` over the given range ``domain``.
         """
+        import numpy as np
         from numpy.linalg import det
         from numpy import sqrt
 
         N = len(self.base)
+        self.GramMat()
+        if not np.isfinite(self.Gram).all():
+            raise ValueError("The Gram matrix contains non-finite values")
+        rank = np.linalg.matrix_rank(self.Gram)
+        if rank < N:
+            raise ValueError(
+                "The function basis is linearly dependent under the specified "
+                "measure (rank %d for %d functions); reduce the basis size or "
+                "provide more independent support points." % (rank, N)
+            )
+        try:
+            np.linalg.cholesky(self.Gram)
+        except np.linalg.LinAlgError as exc:
+            raise ValueError(
+                "The Gram matrix is not positive definite; the function basis "
+                "is numerically ill-conditioned under the specified measure."
+            ) from exc
         GramDets = [1.0] + [det(self.minor_gram(i)) for i in range(N)]
         B = []
         D = []
@@ -405,6 +423,9 @@ class HilbertRegressor(BaseEstimator, RegressorMixin):
         on `fit` inputs
     :param fspace: NpyProximation.FunctionBasis, default = None
         the function subspace of :math:`L_2(\mu)`, if `None` it will be initiated according to `self.meas`
+
+    A fit raises ``ValueError`` when the supplied basis is rank-deficient or
+    numerically ill-conditioned under the selected measure.
     """
 
     def __init__(self, deg=3, base=None, meas=None, fspace=None):

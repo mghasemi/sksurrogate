@@ -16,8 +16,8 @@ class DeploymentApprovalGate:
             raise PermissionError(
                 "Deployment requires %d unique approvals" % self.required_approvals
             )
-        if quality_report is not None and not quality_report.get("passed", False):
-            raise ValueError("Deployment quality gates did not pass")
+        if not isinstance(quality_report, dict) or quality_report.get("passed") is not True:
+            raise ValueError("A passing deployment quality report is required")
         for approver in unique_approvers:
             self.registry.record_approval(task_name, model_version, approver, state=state)
         self.registry.promote(task_name, model_version, state)

@@ -123,10 +123,29 @@ less than 1) to shrink the radius of the sphere to assure fast convergence to a 
 
 Surrogate models
 ===================================
-By default, `SurrogateSearch` uses a polynomial surface of degree 3 to approximate :math:`f`
-based on existing data and will be updated on each iteration where a new piece of information a
-bout :math:`f` is found. Typically, any regressor inherited from `RegressorMixin` that implements
-a `fit` and a `predict` method can be used.
+`SurrogateRandomCV` uses scikit-learn's RBF
+`GaussianProcessRegressor` by default. This default is based on the equal-budget
+benchmark comparison documented in ``benchmarks/DESIGN.md``; pass a
+scikit-learn-style regressor with ``regressor=...`` to select another response
+surface. `SurrogateSearch` accepts regressors that implement ``fit`` and
+``predict`` and return one finite prediction for each query point.
+
+After fitting, ``SurrogateRandomCV.surrogate_info_`` reports the resolved
+regressor's fully qualified class name, whether it came from the default or
+was supplied by the caller, the effective minimum number of points before
+surrogate fitting, and fit/optimization counts. ``fit_history`` records each
+attempt's iteration, training-point count, fit status, and local-optimizer
+status. The same information is available at ``summary_["surrogate"]`` and
+from ``SurrogateSearch.surrogate_info_``.
+
+There is no automatic replacement surrogate or random-search fallback when
+surrogate fitting or prediction raises an exception: the exception is
+propagated, and its stage and type remain in ``fit_history``. A non-successful
+SciPy local-optimization result is recorded and counted; that iteration does
+not evaluate a candidate, and the search loop continues unless another
+termination condition is met. These diagnostics distinguish response-surface
+failures from candidate-model CV failures, which are handled by
+``error_score`` and reported in ``failure_summary_``.
 
 Optimizer
 ===================================

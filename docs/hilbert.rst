@@ -2,6 +2,12 @@
 Hilbert Spaces
 =========================
 
+``HilbertRegressor`` requires the supplied basis to be linearly independent
+under its fitting measure. When the Gram matrix is rank-deficient or
+numerically ill-conditioned (for example, a polynomial basis larger than the
+number of independent training points), fitting raises ``ValueError`` with
+guidance to reduce the basis or provide more independent support points.
+
 Orthonormal system of functions
 ===============================
 

@@ -16,6 +16,7 @@ import hashlib
 import json
 import numpy
 import joblib
+import warnings
 from typing import Any
 from peewee import (
     BareField,
@@ -362,7 +363,8 @@ class mltrack(object):
     :param cv: the default cross validation method, must be a valid cv based on `sklearn.model_selection`;
             default: `ShuffleSplit(n_splits=3, test_size=.25)`
     :param encode: whether to preprocess the data automatically or not;
-            default: `False`
+        default: `False`. This eagerly fits preprocessing on the full frame;
+        use `FoldLocalDataPreprocessor` in a scikit-learn pipeline for CV.
     """
 
     def __init__(self, task, task_id=None, db_name="mltrack.db", cv=None, encode=False):
@@ -792,7 +794,15 @@ class mltrack(object):
         self.target = target
         self._split_cache.clear()
         if self.encode:
+            warnings.warn(
+                "mltrack encode=True fits preprocessing on the complete "
+                "registered frame. For cross-validation, use "
+                "FoldLocalDataPreprocessor inside the estimator pipeline.",
+                UserWarning,
+                stacklevel=2,
+            )
             from .DataProcess import DataPreprocess
+
             encoder = DataPreprocess(source_df, **(preprocess_kwargs or {}))
             encoder.encode()
             source_df = encoder.transformed_df

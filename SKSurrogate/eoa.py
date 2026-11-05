@@ -22,15 +22,16 @@ class EOA(object):
     :param termination: Termination class; defaults to ``MaxGenTermination``.
     :param elitism: Elitism class; defaults to ``Elites``.
     :param num_parents: Number of parents selected each generation. If omitted,
-        it is derived from ``parents_porp``.
-    :param parents_porp: Parent proportion used when ``num_parents`` is omitted;
-        defaults to ``0.1``.
-    :param elits_porp: Proportion used to calculate the elite count; defaults to
-        ``0.2``.
+        it is derived from ``parents_prop``.
+    :param parents_prop: Parent proportion used when ``num_parents`` is omitted;
+        defaults to ``0.1``. The legacy spelling ``parents_porp`` is accepted.
+    :param elites_prop: Proportion used to calculate the elite count; defaults to
+        ``0.2``. The legacy spelling ``elits_porp`` is accepted.
     :param mutation_prob: Probability of changing each individual element;
         defaults to ``0.05``.
-    :param max_generation: Maximum generation count for the default termination
-        operator; defaults to ``50``.
+    :param max_generations: Maximum generation count for the default termination
+        operator; defaults to ``50``. The legacy spelling ``max_generation`` is
+        accepted.
     :param genes: Complete gene list used by ``Mutation``. Inferred from the
         population when omitted.
     :param init_genes: Genes allowed in the first position during mutation.
@@ -43,10 +44,34 @@ class EOA(object):
     CHECKPOINT_VERSION = 1
 
 
-    def __init__(self, population, fitness, **kwargs):
+    def __init__(
+        self,
+        population,
+        fitness,
+        *,
+        parents_prop=None,
+        elites_prop=None,
+        max_generations=None,
+        **kwargs,
+    ):
 
         from collections import OrderedDict
         import random
+
+        def _resolve_alias(name, value, legacy_name, default):
+            if legacy_name in kwargs:
+                if value is not None:
+                    raise TypeError(
+                        f"Specify either {name!r} or legacy {legacy_name!r}, not both."
+                    )
+                return kwargs.pop(legacy_name)
+            return default if value is None else value
+
+        parents_prop = _resolve_alias("parents_prop", parents_prop, "parents_porp", 0.1)
+        elites_prop = _resolve_alias("elites_prop", elites_prop, "elits_porp", 0.2)
+        max_generations = _resolve_alias(
+            "max_generations", max_generations, "max_generation", 50
+        )
 
         self.population = population
         self.random_state = kwargs.pop("random_state", None)
@@ -58,7 +83,7 @@ class EOA(object):
         self.termination = kwargs.pop("termination", MaxGenTermination)(**kwargs)
         self.elitism = kwargs.pop("elitism", Elites)(**kwargs)
         self.population_size = len(self.population)
-        self.parents_porp = kwargs.pop("parents_porp", 0.1)
+        self.parents_porp = parents_prop
         self.num_parents = kwargs.pop(
             "num_parents", 2 * int(self.population_size * self.parents_porp / 2.0)
         )
@@ -71,10 +96,10 @@ class EOA(object):
                     population_size=self.population_size,
                 )
             )
-        self.elits_porp = kwargs.pop("elits_porp", 0.2)
+        self.elits_porp = elites_prop
         self.num_elites = int(self.elits_porp * self.num_parents)
         self.mutation_prob = kwargs.pop("mutation_prob", 0.05)
-        self.max_generations = kwargs.pop("max_generation", 50)
+        self.max_generations = max_generations
         self.generation_num = 0
         self.genes = kwargs.pop("genes", [])
         self.init_genes = kwargs.pop("init_genes", [])

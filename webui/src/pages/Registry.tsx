@@ -373,7 +373,7 @@ function PromoteCard({ task, versions, onDone }: { task: string; versions: strin
   });
 
   return (
-    <Card title="Promote" sub="Requires N unique named approvers; the target alias is updated atomically.">
+    <Card title="Promote" sub="Runs bundle quality checks and requires N unique named approvers before updating the target alias.">
       <div className="row">
         <div className="field fixed" style={{ flex: "0 1 320px", minWidth: 240 }}>
           <label>Model version</label>

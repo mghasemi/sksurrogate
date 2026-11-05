@@ -111,6 +111,174 @@ class DateTime2Num(TransformerMixin, BaseEstimator):
         return self.transform(X)
 
 
+def _datetime_frame_to_epoch_seconds(X):
+    transformed = pandas.DataFrame(index=X.index)
+    for column in X.columns:
+        values = pandas.to_datetime(X[column], errors="coerce")
+        seconds = values.astype("int64").astype(float) / 1e9
+        seconds[values.isna()] = numpy.nan
+        transformed[column] = seconds
+    return transformed
+
+
+def _flatten_text_column(X):
+    return pandas.DataFrame(X).iloc[:, 0].fillna("").astype(str).to_numpy()
+
+
+class FoldLocalDataPreprocessor(TransformerMixin, BaseEstimator):
+    """Fit DataFrame preprocessing within the current training partition.
+
+    Use this transformer inside an sklearn ``Pipeline`` so every cross-
+    validation fold learns its own imputations, category vocabulary, and text
+    vocabulary. Numeric columns receive median imputation, booleans and
+    non-text object/category columns receive imputation and one-hot encoding,
+    datetimes are converted to epoch seconds and imputed, and pandas
+    ``StringDtype`` columns receive per-column TF-IDF features.
+
+    The existing :class:`DataPreprocess` class remains available for eager
+    whole-frame transformations; this transformer is the leakage-safe choice
+    when preprocessing is part of model selection or cross-validation.
+    """
+
+    def __init__(self, scale_numeric=False):
+        self.scale_numeric = scale_numeric
+
+    def fit(self, X, y=None):
+        from sklearn.compose import ColumnTransformer
+        from sklearn.feature_extraction.text import TfidfVectorizer
+        from sklearn.impute import SimpleImputer
+        from sklearn.pipeline import Pipeline
+        from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardScaler
+
+        if not isinstance(X, pandas.DataFrame):
+            raise TypeError("FoldLocalDataPreprocessor requires a pandas DataFrame")
+        if X.columns.has_duplicates:
+            raise ValueError("FoldLocalDataPreprocessor requires unique column names")
+        if X.shape[1] == 0:
+            raise ValueError("FoldLocalDataPreprocessor requires at least one feature")
+
+        self._input_columns = list(X.columns)
+        self.n_features_in_ = X.shape[1]
+        if hasattr(self, "feature_names_in_"):
+            del self.feature_names_in_
+        if all(isinstance(column, str) for column in self._input_columns):
+            self.feature_names_in_ = numpy.asarray(self._input_columns, dtype=object)
+
+        numeric_columns = []
+        categorical_columns = []
+        datetime_columns = []
+        text_columns = []
+        for index, column in enumerate(X.columns):
+            dtype = X[column].dtype
+            if pandas.api.types.is_datetime64_any_dtype(dtype):
+                datetime_columns.append(index)
+            elif isinstance(dtype, pandas.StringDtype):
+                text_columns.append(index)
+            elif pandas.api.types.is_bool_dtype(dtype):
+                categorical_columns.append(index)
+            elif pandas.api.types.is_numeric_dtype(dtype):
+                numeric_columns.append(index)
+            else:
+                categorical_columns.append(index)
+
+        transformers = []
+        if numeric_columns:
+            numeric_steps = [
+                ("imputer", SimpleImputer(strategy="median", keep_empty_features=True))
+            ]
+            if self.scale_numeric:
+                numeric_steps.append(("scaler", StandardScaler()))
+            transformers.append(
+                (
+                    "numeric",
+                    Pipeline(numeric_steps),
+                    numeric_columns,
+                )
+            )
+        if categorical_columns:
+            transformers.append(
+                (
+                    "categorical",
+                    Pipeline(
+                        [
+                            (
+                                "imputer",
+                                SimpleImputer(
+                                    strategy="constant",
+                                    fill_value="__MISSING__",
+                                    keep_empty_features=True,
+                                ),
+                            ),
+                            ("onehot", OneHotEncoder(handle_unknown="ignore")),
+                        ]
+                    ),
+                    categorical_columns,
+                )
+            )
+        if datetime_columns:
+            datetime_steps = [
+                (
+                    "epoch_seconds",
+                    FunctionTransformer(
+                        _datetime_frame_to_epoch_seconds,
+                        feature_names_out="one-to-one",
+                    ),
+                ),
+                ("imputer", SimpleImputer(strategy="median", keep_empty_features=True)),
+            ]
+            if self.scale_numeric:
+                datetime_steps.append(("scaler", StandardScaler()))
+            transformers.append(
+                (
+                    "datetime",
+                    Pipeline(datetime_steps),
+                    datetime_columns,
+                )
+            )
+        for index in text_columns:
+            transformers.append(
+                (
+                    "text_%d" % index,
+                    Pipeline(
+                        [
+                            ("flatten", FunctionTransformer(_flatten_text_column)),
+                            ("tfidf", TfidfVectorizer(min_df=1)),
+                        ]
+                    ),
+                    [index],
+                )
+            )
+
+        self.transformer_ = ColumnTransformer(
+            transformers,
+            remainder="drop",
+            verbose_feature_names_out=True,
+        )
+        self.transformer_.fit(X, y)
+        return self
+
+    def transform(self, X):
+        if not hasattr(self, "transformer_"):
+            raise RuntimeError("FoldLocalDataPreprocessor has not been fitted")
+        if not isinstance(X, pandas.DataFrame):
+            raise TypeError("FoldLocalDataPreprocessor requires a pandas DataFrame")
+        if X.columns.has_duplicates:
+            raise ValueError("FoldLocalDataPreprocessor requires unique column names")
+        missing = [column for column in self._input_columns if column not in X.columns]
+        extra = [column for column in X.columns if column not in self._input_columns]
+        if missing or extra:
+            raise ValueError(
+                "Input columns do not match fitted columns; missing=%r, extra=%r"
+                % (missing, extra)
+            )
+        return self.transformer_.transform(X.loc[:, self._input_columns])
+
+    def get_feature_names_out(self, input_features=None):
+        if not hasattr(self, "transformer_"):
+            raise RuntimeError("FoldLocalDataPreprocessor has not been fitted")
+        return self.transformer_.get_feature_names_out()
+
+
 class DataPreprocess(object):
     """
     This class performs a few reprocessing task on the input DataFrame to provide a ML ready dataset.
@@ -200,6 +368,13 @@ class DataPreprocess(object):
         if self.types[clmn] == 'object':
             return True
         return False
+
+    def is_numeric_string(self, clmn):
+        """Return whether an object column contains only numeric values and nulls."""
+        if self.types[clmn] != 'object':
+            return False
+        values = pandas.to_numeric(self.df[clmn].dropna(), errors='coerce')
+        return len(values) > 0 and values.notna().all()
 
     def is_datetime(self, clmn):
         """
@@ -291,7 +466,12 @@ class DataPreprocess(object):
         for clmn in self.columns:
             if clmn in self.pivot_types:
                 continue
-            if self.is_label(clmn):
+            if self.is_numeric_string(clmn):
+                values = pandas.to_numeric(self.df[clmn].dropna(), errors='coerce')
+                typ = 'int64' if (values % 1 == 0).all() else 'float64'
+                self.deduced_types[typ].append(clmn)
+                self.pivot_types[clmn] = typ
+            elif self.is_label(clmn):
                 self.deduced_types['label'].append(clmn)
                 self.pivot_types[clmn] = 'label'
             elif self.is_text(clmn):

@@ -559,6 +559,17 @@ class ModelRegistry:
         version = task["aliases"][alias]
         return load_bundle(self.root / task["versions"][version]["path"], **kwargs)
 
+    def load_version(self, task_name, model_version, **kwargs):
+        """Load an exact registered version without resolving a lifecycle alias."""
+        index = self._read_index()
+        task = index["models"].get(task_name)
+        if task is None or model_version not in task["versions"]:
+            raise KeyError(
+                "Unknown model version %r for task %r" % (model_version, task_name)
+            )
+        path = self.root / task["versions"][model_version]["path"]
+        return load_bundle(path, **kwargs)
+
     def history(self, task_name):
         index = self._read_index()
         task = index["models"].get(task_name)

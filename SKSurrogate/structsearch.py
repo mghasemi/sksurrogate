@@ -265,7 +265,9 @@ class SurrogateSearch(object):
         self.search_sphere = kwargs.pop("search_sphere", False)
         poly_deg = kwargs.pop("deg", 3)
         self.MinEvals = kwargs.pop("min_evals", binom(n_ + poly_deg, n_))
-        self.regressor = kwargs.pop("regressor", None)
+        requested_regressor = kwargs.pop("regressor", None)
+        self.regressor = requested_regressor
+        regressor_source = "user" if requested_regressor is not None else "default"
         self.scipy_solver = kwargs.get("scipy_solver", "COBYLA")
         self.termination_reason = None
         self.summary_ = {}
@@ -283,6 +285,19 @@ class SurrogateSearch(object):
             new_n_evals = binom(n_ + 3, n_)
             if self.MinEvals < new_n_evals:
                 self.MinEvals = new_n_evals
+        regressor_type = type(self.regressor)
+        self.surrogate_info_ = {
+            "regressor": "%s.%s" % (regressor_type.__module__, regressor_type.__qualname__),
+            "source": regressor_source,
+            "min_evals": int(self.MinEvals),
+            "automatic_fallback": None,
+            "fit_attempts": 0,
+            "fit_failures": 0,
+            "prediction_failures": 0,
+            "local_optimization_failures": 0,
+            "fit_history": [],
+        }
+        self.surrogate_fit_history_ = self.surrogate_info_["fit_history"]
         self.other = kwargs
 
     def __save(self):
@@ -408,8 +423,43 @@ class SurrogateSearch(object):
                     "Found enough number of points (%d) for approximation."
                     % n_close_points
                 )
-            self.regressor.fit(array(X), array(y))
-            apprx = lambda x: self.regressor.predict(array([x]))[0]
+            fit_record = {
+                "iteration": int(self.iteration),
+                "training_points": int(n_close_points),
+                "fit_status": "started",
+                "optimization_status": "not_run",
+            }
+            self.surrogate_fit_history_.append(fit_record)
+            self.surrogate_info_["fit_attempts"] += 1
+            try:
+                self.regressor.fit(array(X), array(y))
+            except Exception as exc:
+                fit_record.update(
+                    fit_status="failed",
+                    failure_stage="fit",
+                    failure_type=type(exc).__name__,
+                )
+                self.surrogate_info_["fit_failures"] += 1
+                raise
+            fit_record["fit_status"] = "complete"
+
+            def apprx(x):
+                try:
+                    prediction = array(self.regressor.predict(array([x])))
+                    if prediction.size != 1 or not isfinite(float(prediction.reshape(-1)[0])):
+                        raise ValueError(
+                            "Surrogate predictions must contain exactly one finite value"
+                        )
+                except Exception as exc:
+                    fit_record.update(
+                        status="failed",
+                        failure_stage="predict",
+                        failure_type=type(exc).__name__,
+                    )
+                    self.surrogate_info_["prediction_failures"] += 1
+                    raise
+                return float(prediction.reshape(-1)[0])
+
             cns = []
             if self.search_sphere:
                 r = self.radius * (self.contraction ** int(self.NumFailedLocOptim / 2))
@@ -419,9 +469,19 @@ class SurrogateSearch(object):
                 cns = [{"type": "ineq", "fun": cns_f}]
             for inq in self.ineqs:
                 cns.append({"type": "ineq", "fun": inq})
-            min_res = self.__round_optim(apprx, x0, cns)
+            try:
+                min_res = self.__round_optim(apprx, x0, cns)
+            except Exception as exc:
+                if "failure_stage" not in fit_record:
+                    fit_record.update(
+                        status="failed",
+                        failure_stage="local_optimization",
+                        failure_type=type(exc).__name__,
+                    )
+                raise
             x_0 = min_res.x
             if min_res.success:
+                fit_record["optimization_status"] = "success"
                 self.NumFailedLocOptim = 0
                 try:
                     val = self.objective(x_0)
@@ -447,6 +507,9 @@ class SurrogateSearch(object):
                         print("""Error in function evaluation.""")
                     return
             else:
+                fit_record["optimization_status"] = "failed"
+                fit_record["optimizer_status"] = getattr(min_res, "status", None)
+                self.surrogate_info_["local_optimization_failures"] += 1
                 self.NumFailedLocOptim += 1
                 if self.verbose > 1:
                     print("The local optimization was not successful.")
@@ -534,6 +597,7 @@ class SurrogateSearch(object):
                 "evaluations": len(self.evaluated),
             },
             "current_value": getattr(self, "current_val", None),
+            "surrogate": self.surrogate_info_,
         }
         return self.current, self.current_val
 
@@ -827,6 +891,7 @@ class SurrogateRandomCV(BaseSearchCV):
         self.termination_reason = None
         self.summary_ = {}
         self.failure_summary_ = {}
+        self.surrogate_info_ = {}
 
     def _validate_search_space(self):
         """Validate parameter definitions before starting model evaluation."""
@@ -1298,6 +1363,7 @@ class SurrogateRandomCV(BaseSearchCV):
             prune_threshold=self.prune_threshold,
             min_partial_folds=self.min_partial_folds,
         )
+        self.surrogate_info_ = self.OPTIM.surrogate_info_
         x, scr = self.OPTIM()
         best_params_ = {}
         idx = 0

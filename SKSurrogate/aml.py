@@ -7,6 +7,14 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from typing import Any
 
 
+class _DefaultScoring:
+    def __repr__(self):
+        return "default"
+
+
+_DEFAULT_SCORING = _DefaultScoring()
+
+
 class StackingEstimator(BaseEstimator, TransformerMixin):
     """
     Meta-transformer for adding predictions and/or class probabilities as synthetic feature(s).
@@ -378,6 +386,27 @@ default_config = {
     }
 
 
+def _preset_config(preset):
+    """Build a bounded task-specific search space using only scikit-learn."""
+    estimator_suffix = "Classifier" if preset == "classification" else "Regressor"
+    estimators = ("RandomForest", "ExtraTrees")
+    config = {}
+    for estimator_name in estimators:
+        estimator = "sklearn.ensemble.%s%s" % (estimator_name, estimator_suffix)
+        config[estimator] = {
+            "n_estimators": Integer(50, 150),
+            "min_samples_leaf": Integer(1, 10),
+            "max_features": Categorical(["sqrt", "log2", None]),
+        }
+    return config
+
+
+def _preset_surrogates():
+    from sklearn.gaussian_process import GaussianProcessRegressor
+    from .structsearch import BoxSample
+
+    return [(GaussianProcessRegressor(), 50, BoxSample, "L-BFGS-B")]
+
 
 class AML(object):
     """
@@ -386,10 +415,18 @@ class AML(object):
     an optimum combination based on training data.
 
     :param config: A dictionary whose keys are scikit-learn-style objects (as strings) and its corresponding
-        values are dictionaries of the parameters and their acceptable ranges/values
-    :param length: default=5; Maximum number of objects in generated pipelines
-    :param scoring: default='accuracy'; The scoring method to be optimized. Must follow the sklearn scoring signature
-    :param cat_cols: default=None; The list of indices of categorical columns
+        values are dictionaries of the parameters and their acceptable ranges/values. Mutually exclusive with
+        ``preset``.
+    :param preset: Optional ``"classification"`` or ``"regression"`` search preset. Presets use only
+        scikit-learn estimators, one-estimator pipelines, and at most 20 evaluations per candidate by default.
+    :param length: Maximum number of objects in generated pipelines; defaults to 5 for the legacy
+        configuration and 1 for task-specific presets
+    :param scoring: Scoring method to optimize. Defaults to accuracy for classification, negative RMSE for
+        regression presets, and accuracy for the legacy default configuration.
+    :param cat_cols: default=None; Categorical column names for DataFrames or
+        indices for array-like inputs. When set, one-hot encoding is fitted as
+        part of each candidate pipeline, within each CV training fold; fitted
+        models accept the original unencoded input.
     :param surrogates: default=None; A list of 4-tuples determining surrogates. The first entity of each tuple is
         a scikit-learn regressor and the
         2nd entity is the number of iterations that this surrogate needs to be estimated and optimized.
@@ -421,8 +458,8 @@ class AML(object):
     def __init__(
             self,
             config=None,
-            length=5,
-            scoring="accuracy",
+            length=None,
+            scoring=_DEFAULT_SCORING,
             cat_cols=None,
             surrogates=None,
             min_random_evals=15,
@@ -442,14 +479,20 @@ class AML(object):
             memory_limit=None,
             forbidden=(),
             conditional=(),
+            preset=None,
     ):
         from collections import OrderedDict
 
-        self.config: dict = {}
-        if config is None:
-            self.config = default_config
+        if preset not in (None, "classification", "regression"):
+            raise ValueError("preset must be None, 'classification', or 'regression'")
+        if preset is not None and config is not None:
+            raise ValueError("config and preset are mutually exclusive")
+        self.preset = preset
+        self._uses_preset_scoring = scoring is _DEFAULT_SCORING
+        if preset is None:
+            self.config: dict = default_config if config is None else config
         else:
-            self.config = config
+            self.config = _preset_config(preset)
         self.config_types = {}
         self.couldBlast = []
         self.couldBfirst = []
@@ -481,10 +524,24 @@ class AML(object):
             "skrebate.TuRF",
         }
         self.letters = self.config_types.keys()
-        self.length = length
-        self.scoring = scoring
+        self._uses_default_length = length is None
+        self.length = length if length is not None else (1 if preset is not None else 5)
+        if scoring is _DEFAULT_SCORING:
+            self.scoring = (
+                "neg_root_mean_squared_error"
+                if preset == "regression"
+                else "accuracy"
+            )
+        else:
+            self.scoring = scoring
         self.cat_cols = cat_cols
-        self.surrogates = surrogates
+        if preset is not None and surrogates is None:
+            self.surrogates = _preset_surrogates()
+            self._uses_preset_surrogates = True
+        else:
+            self.surrogates = surrogates
+            self._uses_preset_surrogates = False
+        self._uses_implicit_surrogates = surrogates is None
         self.check_point = check_point
         self.min_random_evals = min_random_evals
         self.stack_res = stack_res
@@ -493,7 +550,7 @@ class AML(object):
         self.stack_cv = stack_cv
         self.stack_n_jobs = stack_n_jobs
         self.verbose = verbose
-        self.num_features = 2
+        self.num_features_upper_bound = 2
         self.cpu_limit = cpu_limit
         self.memory_limit = memory_limit
         self.forbidden = tuple(forbidden)
@@ -501,7 +558,8 @@ class AML(object):
         self.n_jobs = n_jobs
         self.random_state = random_state
         self.time_limit = time_limit
-        self.max_evals = max_evals
+        self._uses_default_max_evals = max_evals is None
+        self.max_evals = 20 if max_evals is None and preset is not None else max_evals
         self._apply_resource_limits()
         if cv is None:
             self.cv = 3
@@ -536,6 +594,17 @@ class AML(object):
             raise ValueError("cpu_limit must be a positive integer")
         if self.n_jobs == -1 or self.n_jobs > limit:
             self.n_jobs = limit
+
+    def _feature_count_upper_bound(self, X):
+        import numpy as np
+
+        values = np.asarray(X)
+        upper_bound = values.shape[1]
+        if self.cat_cols is not None:
+            # Each encoded categorical column can contribute at most one
+            # output column per input row; use shape only, not held-out values.
+            upper_bound += values.shape[0] * len(self.cat_cols)
+        return upper_bound
 
     def types(self):
         """
@@ -632,7 +701,8 @@ class AML(object):
         Evaluates and optimizes all acceptable combinations of length `n`
 
         :param n: The length of pipelines
-        :param X: Training data
+        :param X: Training data. If ``cat_cols`` is set, pass the original,
+            unencoded feature matrix.
         :param y: Observed values
         :return: None
         """
@@ -710,30 +780,18 @@ class AML(object):
         """
         Generates and optimizes all legitimate pipelines. The best pipeline can be retrieved from `self.best_estimator_`
 
-        :param X: Training data
+        :param X: Training data. If ``cat_cols`` is set, pass the original,
+            unencoded feature matrix.
         :param y: Corresponding observations
         :return: `self`
         """
-        import numpy as np
-
         self.models.clear()
         self.evaluation_history_.clear()
         self.termination_reason = None
         self.summary_ = {}
-        _X, _y = X, y
-        if self.cat_cols is not None:
-            from category_encoders.one_hot import OneHotEncoder
-
-            enc = OneHotEncoder(
-                cols=self.cat_cols, return_df=False, handle_unknown="ignore"
-            )
-            enc.fit(X)
-            _X = enc.transform(X)
-
-        X_, y_ = _X, _y
-        self.num_features = np.asarray(X_).shape[1]
+        self.num_features_upper_bound = self._feature_count_upper_bound(X)
         for l in range(1, self.length + 1):
-            self._cast(l, X_, y_)
+            self._cast(l, X, y)
         self.best_estimator_ = list(self.get_top(1).items())[0][1][0]
         self.best_estimator_score = list(self.get_top(1).items())[0][1][1]
         return self
@@ -769,12 +827,12 @@ class AML(object):
         """
         Applies evolutionary optimization methods to find an optimum pipeline
 
-        :param X: Training data
+        :param X: Training data. If ``cat_cols`` is set, pass the original,
+            unencoded feature matrix.
         :param y: Corresponding observations
         :param kwargs: `EOA` parameters
         :return: `self`
         """
-        import numpy as np
         from .structsearch import BoxSample, CompactSample
         from .eoa import EOA
 
@@ -782,17 +840,7 @@ class AML(object):
         self.evaluation_history_.clear()
         self.termination_reason = None
         self.summary_ = {}
-        _X, _y = X, y
-        if self.cat_cols is not None:
-            from category_encoders.one_hot import OneHotEncoder
-
-            enc = OneHotEncoder(
-                cols=self.cat_cols, return_df=False, handle_unknown="ignore"
-            )
-            enc.fit(X)
-            _X = enc.transform(X)
-        X_, y_ = _X, _y
-        self.num_features = np.asarray(X_).shape[1]
+        self.num_features_upper_bound = self._feature_count_upper_bound(X)
         Pop = []
         for l in range(1, self.length + 1):
             candidates = self.words.Generate(l)
@@ -853,7 +901,7 @@ class AML(object):
 
             fitted = OrderedDict([])
             for seq in ppl:
-                best_mdl, best_scr = self.optimize_pipeline(seq, X_, y_)
+                best_mdl, best_scr = self.optimize_pipeline(seq, X, y)
                 if seq not in self.models:
                     self.models[seq] = (best_mdl, best_scr)
                     self.evaluation_history_.append(
@@ -870,12 +918,16 @@ class AML(object):
                 fitted[seq] = -best_scr
             return fitted
 
-        num_parents = kwargs.pop("num_parents", 30)
+        num_parents = kwargs.pop("num_parents", None)
+        parent_prop_names = {"parents_prop", "parents_porp"}
+        if num_parents is not None:
+            kwargs["num_parents"] = num_parents
+        elif not parent_prop_names.intersection(kwargs):
+            kwargs["num_parents"] = 30
         mutation_prob = kwargs.pop("mutation_prob", 0.1)
         _eoa = EOA(
             population=Pop,
             fitness=_eval,
-            num_parents=num_parents,
             mutation_prob=mutation_prob,
             term_genes=self.couldBlast,
             init_genes=self.couldBfirst,
@@ -950,7 +1002,8 @@ class AML(object):
     def get_params(self, deep=True):
         """Return constructor parameters using the scikit-learn convention."""
         return {
-            "config": self.config,
+            "config": None if self.preset is not None else self.config,
+            "preset": self.preset,
             "length": self.length,
             "scoring": self.scoring,
             "cat_cols": self.cat_cols,
@@ -980,8 +1033,54 @@ class AML(object):
         invalid = sorted(set(params) - set(valid_params))
         if invalid:
             raise ValueError("Invalid AML parameters: %s" % ", ".join(invalid))
+        preset = params.get("preset", self.preset)
+        if preset not in (None, "classification", "regression"):
+            raise ValueError("preset must be None, 'classification', or 'regression'")
+        config = params.get("config", None if preset is not None else self.config)
+        if preset is not None and config is not None:
+            raise ValueError("config and preset are mutually exclusive")
+        previous_preset = self.preset
+        if "preset" in params and previous_preset != preset:
+            if self._uses_default_length and "length" not in params:
+                self.length = 1 if preset is not None else 5
+            if self._uses_default_max_evals and "max_evals" not in params:
+                self.max_evals = 20 if preset is not None else None
+        if "preset" in params and "scoring" not in params and self._uses_preset_scoring:
+            self.scoring = (
+                "neg_root_mean_squared_error"
+                if preset == "regression"
+                else "accuracy"
+            )
+        if "scoring" in params:
+            self.scoring = params["scoring"]
+            self._uses_preset_scoring = False
+        if ("preset" in params or "config" in params):
+            self.preset = preset
+            self.config = default_config if preset is None and config is None else (
+                config if preset is None else _preset_config(preset)
+            )
+            self.config_types = {}
+            self.couldBlast = []
+            self.couldBfirst = []
+            self.feature_selector = set()
+            self.types()
+            self.letters = self.config_types.keys()
+            self.words = Words(self.letters, last=self.couldBlast, first=self.couldBfirst)
+        if "preset" in params and previous_preset != preset and self._uses_implicit_surrogates:
+            self.surrogates = _preset_surrogates() if preset is not None else None
+            self._uses_preset_surrogates = preset is not None
+        if "surrogates" in params:
+            self.surrogates = params["surrogates"]
+            self._uses_preset_surrogates = False
+            self._uses_implicit_surrogates = False
         for key, value in params.items():
+            if key in {"config", "preset", "scoring", "surrogates"}:
+                continue
             setattr(self, key, value)
+        if "length" in params:
+            self._uses_default_length = False
+        if "max_evals" in params:
+            self._uses_default_max_evals = False
         self._apply_resource_limits()
         self.best_estimator_ = None
         self.evaluation_history_ = []
@@ -1015,6 +1114,19 @@ class AML(object):
         steps = []
         config = {}
         task_name = self.check_point + "_".join(seq)
+        if self.cat_cols is not None:
+            from category_encoders.one_hot import OneHotEncoder
+
+            steps.append(
+                (
+                    "categorical_encoder",
+                    OneHotEncoder(
+                        cols=self.cat_cols,
+                        return_df=False,
+                        handle_unknown="value",
+                    ),
+                )
+            )
         while ent_idx < n:
             est = seq[ent_idx]
             clss = self._get_class(est)
@@ -1069,7 +1181,7 @@ class AML(object):
                             threshold=-inf,
                         )
                         self.config[est][int_pre + "__" + "max_features"] = Integer(
-                            1, self.num_features
+                            1, self.num_features_upper_bound
                         )
                         for kw in self.config[next_est]:
                             self.config[est][

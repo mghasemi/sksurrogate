@@ -1,6 +1,7 @@
 """Scheduler-agnostic retraining entry points."""
 
 from .modelbundle import ModelBundle
+from .ci import check_bundle_quality
 
 
 class RetrainingJob:
@@ -26,6 +27,11 @@ class RetrainingJob:
             bundle.task_name = self.task_name
         elif bundle.task_name != self.task_name:
             raise ValueError("trainer returned a bundle for a different task")
+        quality_report = None
+        if self.promotion_state is not None:
+            quality_report = check_bundle_quality(bundle)
+            if not quality_report["passed"]:
+                raise ValueError("Retrained bundle failed quality gates")
         model_version = self.registry.register(bundle)
         if self.promotion_state is not None:
             self.registry.promote(self.task_name, model_version, self.promotion_state)
@@ -34,6 +40,7 @@ class RetrainingJob:
             "model_version": model_version,
             "task_name": self.task_name,
             "promotion_state": self.promotion_state,
+            "quality_report": quality_report,
             "context": context,
         }
 

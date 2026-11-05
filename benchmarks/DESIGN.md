@@ -1,6 +1,6 @@
 # SKSurrogate Benchmark Suite — Design (B1)
 
-Status: **v1.9** (2026-10-24; B=30 and B=60 surrogate-surface comparison results recorded in §12 — the un-tuned RBF-GP surface beats the default cubic Hilbert at both budgets, decisively so at B=60 ($p \approx 10^{-4}$); stock KernelRidge is worse than no surrogate). Datasets and baselines are pinned below; this doc is the
+Status: **v1.12** (2026-11-05; corrected real-workload surrogate selection and diagnostics). Datasets and baselines are pinned below; this doc is the
 contract for B2 (runner), B3 (ablation), B4 (publication). Changes after B2 starts require a
 version bump here.
 
@@ -134,6 +134,95 @@ v1.9 (2026-10-24; results recorded — §12):
   no-surrogate arm on mean CV in all six datasets at B=60. Positioning versus Optuna-TPE is unchanged from v1.6 —
   flat-landscape regime; TPE top in 5/6 datasets at B=30, and convergence speed (primary gap metric) shows no
   method separation at either budget.
+
+v1.10 (2026-11-04; total wall-time coverage and overhead accounting):
+- **Random-search timing gap fixed.** `run_random` now records `total_wall_s` over candidate sampling and evaluation,
+  matching the search-only timing scope used by the SRS and Optuna arms. The field excludes the final held-out
+  evaluation. Per-evaluation `wall_s` continues to capture candidate evaluation time.
+- **Focused budget sweep.** Re-ran the three arms on local Galaxy3 (1,600 rows, 20 features), with 10-tree
+  random forests, seeds 0–2, and budgets 8/30/60. Median SRS overhead (total search time minus summed candidate
+  time, divided by total) rose from 0.7% at B=8 to 7.1% at B=30 and 14.7% at B=60; the no-surrogate arm stayed
+  below 0.7%, and random search was approximately 0%. Median best CV accuracy for SRS vs random was 0.6305 vs
+  0.6305 (B=8), 0.6492 vs 0.6469 (B=30), and 0.6492 vs 0.6469 (B=60). This is one dataset and three seeds,
+  so it is descriptive, not evidence of a general quality or runtime advantage. Reproduce each budget with
+  `python -m benchmarks.run --dataset galaxy3 --methods random,sksurrogate,srs-no-surrogate --budget B --seeds 3 --n-estimators 10`.
+- **Historical overhead estimate.** Existing canonical runs have total wall time for the surrogate and no-surrogate
+  SRS arms, but random-search records predate the added total timer. Using
+  `max(total_wall_s - sum(record.wall_s), 0) / total_wall_s` as the search-overhead fraction, median overhead across
+  six datasets × seven seeds was 9.2% for SRS at B=30 and 27.8% at B=60; the no-surrogate SRS control was 0.1% at
+  both budgets. This is a residual estimate (not a fit-vs-acquisition breakdown) and excludes historical random
+  runs because their total timer was not recorded. No search behavior or defaults are changed from this evidence.
+- **Decision.** No core optimization or default change is justified yet: the residual timer cannot separate
+  surrogate fitting from acquisition, and the focused quality differences are small. Profile those components
+  directly before attempting an optimization.
+
+v1.11 (2026-11-05; noise-aware GP validation on real search objectives; Hilbert comparison superseded by v1.12):
+- **Probe.** Added `benchmarks/dtrack/real_noise_gp_probe.py`, intended to compare Hilbert, stock RBF-GP,
+  RBF+WhiteKernel GP, random-forest surrogate, SRS without a surrogate, and uniform random search on Galaxy3.
+  The probe also supports
+  bundled scikit-learn datasets (`wine`, `breast_cancer`, and `digits`). Every arm uses the same fixed-seed split
+  and candidate budget; machine/package metadata and raw run records are saved as JSON. For each dataset, output
+  is written to a dataset-specific file under `benchmarks/results/dtrack/` by default.
+- **Galaxy3 result.** On 1,600 rows and 20 features, stratified 80/20 splits and 5-fold CV, RF(10) candidates,
+  budget 30, and seeds 0–6 (42 runs), every arm completed exactly 30 evaluations. The arm labelled Hilbert
+  actually used the library's default stock GP, so its score duplicates the stock-GP comparison and must not be
+  cited as a Hilbert result. The paired noise-aware-GP versus stock-GP comparison remains valid: 1 win / 5 ties /
+  1 loss, with mean paired delta +0.00045. Median held-out accuracy was 0.6312 for the two standard-GP arms and
+  0.6219 for noise-aware GP. Two GP optimization convergence warnings were emitted.
+- **Additional checks.** On `wine` (178 rows, 13 features) and `breast_cancer` (569 rows, 30 features), at B=30
+  and seeds 0–2 (18 runs per dataset), every arm again completed its full budget. Noise-aware GP tied stock GP
+  on median CV and test accuracy for both datasets; paired CV results were 0/3/0 and 0/2/1 wins/ties/losses.
+  Reproduce the Galaxy3 run with:
+  `python -m benchmarks.dtrack.real_noise_gp_probe --dataset galaxy3 --budget 30 --seeds 7 --n-estimators 10`.
+  Reproduce the additional checks with:
+  `python -m benchmarks.dtrack.real_noise_gp_probe --dataset wine --budget 30 --seeds 3 --n-estimators 10`
+  and the same command with `--dataset breast_cancer`.
+- **Limitations and decision.** These are three fixed-fold tabular classification workloads, not repeated
+  stochastic evaluations or a broad scientific-task sample; the two additional datasets use only three seeds.
+  The noise-aware GP did not demonstrate a reliable improvement over stock GP, so no default change or
+  automatic fallback is justified. The real-workload Hilbert comparison is invalid and is corrected in v1.12.
+
+v1.12 (2026-11-05; corrected response-surface selection):
+- **Audit finding.** `SurrogateSearch` now defaults to `GaussianProcessRegressor`, but the benchmark's
+  `run_sksurrogate` arm did not pass a regressor and still labelled its output as Hilbert. Thus the v1.11
+  “Hilbert” rows were actually stock-GP rows. The comparison between explicitly supplied stock GP and
+  noise-aware GP was still valid; Hilbert-specific real-workload results were not.
+- **Runner fix.** `run_sksurrogate` now explicitly supplies `HilbertRegressor(deg=3)`, all surface arms use the
+  same 20-point engagement floor, and `RunRecord.extra` records the selected fully qualified class and source
+  from `search.surrogate_info_`. A focused integration test runs the Hilbert arm and checks both its budget and
+  runtime-selected class.
+- **Corrected real-workload results.** Re-ran all 78 runs with the intended six arms, budget 30, RF(10)
+  candidates, and the same fixed splits: Galaxy3 used seven seeds; wine and breast-cancer used three each.
+  Every arm completed its full budget. On Galaxy3, median best CV accuracy was 0.6305 for Hilbert,
+  0.6359 for stock GP and noise-aware GP, 0.6305 for RF and no-surrogate SRS, and 0.6125 for random
+  search. Hilbert versus GP had 0/5/2 CV wins/ties/losses (mean paired delta -0.00324). Noise-aware
+  GP versus stock GP had 1/5/1 (mean +0.00045). Median held-out accuracy was 0.6312 for Hilbert,
+  stock GP, RF, and no-surrogate SRS, and 0.6219 for noise-aware GP.
+- On wine, median CV accuracy was 0.9643 for all methods; median held-out accuracy was 1.0000 for
+  Hilbert and both GP arms, and 0.9722 for RF, no-surrogate SRS, and random search. On breast cancer,
+  median CV accuracy was 0.9560 for Hilbert and both GP arms, 0.9516 for RF/no-surrogate SRS, and
+  0.9582 for random search; median held-out accuracy was 0.9474 for Hilbert, RF, and no-surrogate
+  SRS, 0.9561 for both GP arms, and 0.9386 for random search. Noise-aware-versus-stock GP paired CV
+  results were 0/3/0 on wine and 0/2/1 on breast cancer (mean delta -0.00073 on breast cancer).
+- Median residual overhead fractions (search wall time minus summed candidate-CV time, divided by
+  search wall time) for Hilbert / stock GP / noise-aware GP / RF surrogate / no-surrogate SRS /
+  random were respectively 41.0% / 6.8% / 4.9% / 23.7% / 0.5% / 0.0% on Galaxy3,
+  44.4% / 7.6% / 5.8% / 25.6% / 0.6% / 0.0% on wine, and
+  40.9% / 6.5% / 3.9% / 22.8% / 0.5% / 0.0% on breast cancer. These are small fixed-seed
+  comparisons, not general performance guarantees.
+- **Component profile.** Reproduce with
+  `python -m benchmarks.dtrack.profile_search_overhead --dataset galaxy3 --budget 30 --seed 0 --n-estimators 10`.
+  One cProfile run attributed about 2.37 seconds to candidate CV for Hilbert and stock GP, versus
+  2.30 seconds for no-surrogate SRS. The stock-GP local optimizer and prediction wrapper took 0.093
+  and 0.071 cumulative seconds; the Hilbert arm spent 0.744 cumulative seconds in repeated
+  `HilbertRegressor.fit` work and 0.390 in local optimization. cProfile times overlap by call nesting
+  and are diagnostic rather than unprofiled wall times. On these runs the current default GP has
+  modest overhead relative to candidate evaluation, while optimizing Hilbert's fit path would only
+  benefit callers selecting that legacy surface; no optimization is justified yet.
+- **Decision.** The corrected comparison supports keeping the stock GP default: noise-aware GP did
+  not show a reliable quality gain, while its search overhead was similar. No automatic fallback is
+  added. The reproducible component profiler narrows the legacy Hilbert overhead source, but P1.2
+  remains open pending evidence that optimizing it improves time-to-result for a supported workload.
 
 ## 1. Goal
 

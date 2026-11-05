@@ -26,6 +26,8 @@ from SKSurrogate import (
     BundleQualityGateError,
     check_bundle_quality,
     DataPreprocess,
+    FoldLocalDataPreprocessor,
+    HilbertRegressor,
     DeploymentApprovalGate,
     DaskExecutionBackend,
     LocalProcessExecutionBackend,
@@ -348,6 +350,7 @@ class TestOptimizedPaths(unittest.TestCase):
             self.assertEqual(skipped["status"], "skipped")
             self.assertEqual(result["status"], "completed")
             self.assertEqual(result["promotion_state"], "staging")
+            self.assertTrue(result["quality_report"]["passed"])
             self.assertEqual(calls, [{"new_data": True}])
             self.assertEqual(registry.audit_log("phase9-retraining")[-1]["to"], "staging")
 
@@ -371,6 +374,13 @@ class TestOptimizedPaths(unittest.TestCase):
                     approvers=["alice", "bob"],
                     quality_report={"passed": False},
                 )
+            with self.assertRaisesRegex(ValueError, "quality report is required"):
+                gate.promote(
+                    "phase9-deploy",
+                    first,
+                    "production",
+                    approvers=["alice", "bob"],
+                )
 
             promoted = gate.promote(
                 "phase9-deploy",
@@ -379,11 +389,18 @@ class TestOptimizedPaths(unittest.TestCase):
                 approvers=["alice", "bob", "alice"],
                 quality_report={"passed": True},
             )
-            gate.promote("phase9-deploy", second, "production", approvers=["carol", "dana"])
+            gate.promote(
+                "phase9-deploy",
+                second,
+                "production",
+                approvers=["carol", "dana"],
+                quality_report={"passed": True},
+            )
             rollback = gate.rollback("phase9-deploy", "production", model_version=first)
             audit = registry.audit_log("phase9-deploy")
 
             self.assertEqual(promoted["status"], "promoted")
+            self.assertEqual(registry.load_version("phase9-deploy", first).model_version, first)
             self.assertEqual(rollback["status"], "rolled_back")
             self.assertEqual(sum(event["event_type"] == "approval" for event in audit), 4)
             self.assertEqual(audit[-1]["event_type"], "rollback")
@@ -619,6 +636,209 @@ class TestOptimizedPaths(unittest.TestCase):
         stacked.fit(X, y)
         self.assertEqual(stacked.transform(X).shape, (4, 4))
 
+    def test_fold_local_preprocessor_learns_only_from_fit_partition(self):
+        frame = pd.DataFrame(
+            {
+                "number": [1.0, np.nan, 3.0, 5.0, 999.0, 1000.0],
+                "category": ["a", "b", "c", "d", "heldout", "heldout"],
+                "date": pd.to_datetime(
+                    [
+                        "2020-01-01",
+                        "2020-01-02",
+                        "2020-01-03",
+                        "2020-01-04",
+                        "2030-01-01",
+                        "2030-01-02",
+                    ]
+                ),
+                "text": pd.Series(
+                    [
+                        "alpha beta",
+                        "alpha gamma",
+                        "beta gamma",
+                        "alpha beta",
+                        "heldouttoken",
+                        "heldouttoken",
+                    ],
+                    dtype="string",
+                ),
+            }
+        )
+        train = frame.iloc[:4]
+        heldout = frame.iloc[4:]
+        preprocessor = FoldLocalDataPreprocessor().fit(train)
+
+        fitted = preprocessor.transformer_
+        numeric_imputer = fitted.named_transformers_["numeric"].named_steps["imputer"]
+        self.assertEqual(numeric_imputer.statistics_[0], 3.0)
+        categories = fitted.named_transformers_["categorical"].named_steps[
+            "onehot"
+        ].categories_[0]
+        self.assertNotIn("heldout", categories)
+        date_imputer = fitted.named_transformers_["datetime"].named_steps["imputer"]
+        self.assertLess(date_imputer.statistics_[0], 1_893_456_000.0)
+        text_vocabulary = fitted.named_transformers_["text_3"].named_steps[
+            "tfidf"
+        ].vocabulary_
+        self.assertNotIn("heldouttoken", text_vocabulary)
+        self.assertEqual(preprocessor.transform(heldout).shape[0], 2)
+
+        with self.assertRaisesRegex(ValueError, "missing=.*number"):
+            preprocessor.transform(heldout.drop(columns=["number"]))
+
+    def test_fold_local_preprocessor_works_inside_cross_validation_pipeline(self):
+        from sklearn.model_selection import cross_val_score
+
+        X = pd.DataFrame(
+            {
+                "number": np.arange(12, dtype=float),
+                "category": ["a", "b", "c"] * 4,
+                "text": pd.Series(
+                    ["alpha beta", "beta gamma", "alpha gamma"] * 4,
+                    dtype="string",
+                ),
+            }
+        )
+        y = np.array([0, 1] * 6)
+        pipeline = Pipeline(
+            [
+                ("preprocess", FoldLocalDataPreprocessor(scale_numeric=True)),
+                ("classifier", LogisticRegression(max_iter=200)),
+            ]
+        )
+
+        scores = cross_val_score(
+            pipeline,
+            X,
+            y,
+            cv=KFold(n_splits=3, shuffle=False),
+            error_score="raise",
+        )
+
+        self.assertEqual(scores.shape, (3,))
+
+    def test_hilbert_regressor_rejects_rank_deficient_basis(self):
+        rng = np.random.default_rng(42)
+        X = rng.uniform(-1.0, 1.0, size=(10, 3))
+        y = np.sin(X[:, 0]) + X[:, 1] ** 2 - X[:, 2]
+
+        with self.assertRaisesRegex(ValueError, "linearly dependent"):
+            HilbertRegressor(deg=3).fit(X, y)
+
+    def test_hilbert_regressor_fits_full_rank_basis(self):
+        X = np.array([[-1.0], [0.0], [1.0]])
+        y = 2.0 * X[:, 0] + 1.0
+        model = HilbertRegressor(deg=1).fit(X, y)
+
+        np.testing.assert_allclose(model.predict(X), y, atol=1e-10)
+
+    def test_aml_fits_categorical_encoder_within_each_cv_fold(self):
+        from unittest.mock import patch
+        from category_encoders.one_hot import OneHotEncoder
+
+        X = np.array(
+            [["a"], ["b"], ["a"], ["b"], ["c"], ["d"], ["c"], ["d"]],
+            dtype=object,
+        )
+        y = np.array([0, 1, 0, 1, 0, 1, 0, 1])
+        fitted_categories = []
+        original_fit = OneHotEncoder.fit
+
+        def record_fit(encoder, values, target=None, **kwargs):
+            fitted_categories.append(set(np.asarray(values)[:, 0]))
+            return original_fit(encoder, values, target, **kwargs)
+
+        automl = AML(
+            config={"sklearn.linear_model.LogisticRegression": {}},
+            cat_cols=[0],
+            cv=KFold(n_splits=2, shuffle=False),
+            n_jobs=1,
+            verbose=0,
+        )
+        with patch.object(OneHotEncoder, "fit", new=record_fit):
+            automl.fit(X, y)
+
+        self.assertEqual(automl.num_features_upper_bound, X.shape[1] + X.shape[0])
+        self.assertIn({"c", "d"}, fitted_categories)
+        self.assertIn({"a", "b"}, fitted_categories)
+        self.assertIn({"a", "b", "c", "d"}, fitted_categories)
+        np.testing.assert_array_equal(automl.predict(X), y)
+        unseen_prediction = automl.predict(np.array([["unseen"]], dtype=object))
+        self.assertEqual(unseen_prediction.shape, (1,))
+
+    def test_aml_preserves_dataframe_names_and_accepts_named_categorical_columns(self):
+        X = pd.DataFrame(
+            {"measurement_a": [0.0, 0.1, 0.9, 1.0], "measurement_b": [1.0, 0.8, 0.2, 0.0]}
+        )
+        y = np.array([0, 0, 1, 1])
+        named_model = AML(
+            config={"sklearn.linear_model.LogisticRegression": {}},
+            length=1,
+            cv=2,
+            n_jobs=1,
+            verbose=0,
+        ).fit(X, y)
+
+        estimator = named_model.best_estimator_.steps[-1][1]
+        self.assertEqual(list(estimator.feature_names_in_), list(X.columns))
+
+        categorical = pd.DataFrame(
+            {
+                "segment": ["a", "b", "a", "b", "c", "d", "c", "d"],
+                "measurement": [0.0, 1.0, 0.1, 0.9, 0.2, 0.8, 0.3, 0.7],
+            }
+        )
+        categorical_model = AML(
+            config={"sklearn.linear_model.LogisticRegression": {}},
+            cat_cols=["segment"],
+            length=1,
+            cv=KFold(n_splits=2, shuffle=False),
+            n_jobs=1,
+            verbose=0,
+        ).fit(categorical, np.array([0, 1, 0, 1, 0, 1, 0, 1]))
+        self.assertEqual(len(categorical_model.predict(categorical)), len(categorical))
+
+    def test_aml_eoa_fits_categorical_encoder_within_each_cv_fold(self):
+        from unittest.mock import patch
+        from category_encoders.one_hot import OneHotEncoder
+
+        X = np.array(
+            [["a"], ["b"], ["a"], ["b"], ["c"], ["d"], ["c"], ["d"]],
+            dtype=object,
+        )
+        y = np.array([0, 1, 0, 1, 0, 1, 0, 1])
+        fitted_categories = []
+        original_fit = OneHotEncoder.fit
+
+        def record_fit(encoder, values, target=None, **kwargs):
+            fitted_categories.append(set(np.asarray(values)[:, 0]))
+            return original_fit(encoder, values, target, **kwargs)
+
+        class ImmediateEOA:
+            def __init__(self, population, fitness, **kwargs):
+                self.population = population
+                self.fitness = fitness
+
+            def __call__(self):
+                self.fitness(self.population[:1])
+
+        automl = AML(
+            config={"sklearn.linear_model.LogisticRegression": {}},
+            cat_cols=[0],
+            cv=KFold(n_splits=2, shuffle=False),
+            n_jobs=1,
+            verbose=0,
+        )
+        with patch.object(OneHotEncoder, "fit", new=record_fit):
+            with patch("SKSurrogate.eoa.EOA", ImmediateEOA):
+                automl.eoa_fit(X, y)
+
+        self.assertEqual(automl.num_features_upper_bound, X.shape[1] + X.shape[0])
+        self.assertIn({"c", "d"}, fitted_categories)
+        self.assertIn({"a", "b"}, fitted_categories)
+        self.assertIn({"a", "b", "c", "d"}, fitted_categories)
+        np.testing.assert_array_equal(automl.predict(X), y)
+
     def test_stacking_fit_transform_uses_out_of_fold_predictions(self):
         X = np.arange(24, dtype=float).reshape(12, 2)
         y = np.array([0, 1] * 6)
@@ -655,6 +875,15 @@ class TestOptimizedPaths(unittest.TestCase):
             self.assertIs(first_split[2], second_split[2])
             self.assertIsNotNone(metrics["logloss"])
             self.assertEqual(len(tracker.allPlots(model.mltrack_id)), 2)
+
+    def test_mltrace_warns_when_eager_preprocessing_is_enabled(self):
+        frame = pd.DataFrame(
+            {"feature": [1.0, 2.0, 3.0, 4.0], "target": [0.0, 1.0, 0.0, 1.0]}
+        )
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            tracker = mltrack("eager-preprocessing-warning", db_name=database.name, encode=True)
+            with self.assertWarnsRegex(UserWarning, "fits preprocessing on the complete"):
+                tracker.RegisterData(frame, "target")
 
     def test_dataset_fingerprint_and_schema_are_stable_and_sensitive(self):
         with tempfile.NamedTemporaryFile(suffix=".db") as database:
@@ -985,6 +1214,92 @@ class TestOptimizedPaths(unittest.TestCase):
         self.assertEqual(automl.score([[0.0], [1.0]], [0.0, 1.0]), 1.0)
         automl.set_params(verbose=0)
         self.assertIsNone(automl.best_estimator_)
+
+    def test_aml_task_presets_are_bounded_and_fit_with_task_scoring(self):
+        x_class, y_class = make_classification(
+            n_samples=48,
+            n_features=4,
+            n_informative=3,
+            n_redundant=0,
+            random_state=8,
+        )
+        x_reg = np.linspace(-2.0, 2.0, 48).reshape(-1, 1)
+        y_reg = 3.0 * x_reg[:, 0] + np.sin(x_reg[:, 0])
+
+        with tempfile.TemporaryDirectory() as checkpoint:
+            classification = AML(
+                preset="classification",
+                check_point=checkpoint + "/",
+                cv=2,
+                min_random_evals=2,
+                max_evals=5,
+                n_jobs=1,
+                random_state=8,
+                verbose=0,
+            )
+            regression = AML(
+                preset="regression",
+                check_point=checkpoint + "/",
+                cv=2,
+                min_random_evals=2,
+                max_evals=5,
+                time_limit=30,
+                n_jobs=1,
+                random_state=8,
+                verbose=0,
+            )
+
+            self.assertEqual(classification.length, 1)
+            self.assertEqual(regression.length, 1)
+            self.assertEqual(classification.scoring, "accuracy")
+            self.assertEqual(regression.scoring, "neg_root_mean_squared_error")
+            self.assertEqual(
+                set(classification.config),
+                {
+                    "sklearn.ensemble.RandomForestClassifier",
+                    "sklearn.ensemble.ExtraTreesClassifier",
+                },
+            )
+            self.assertEqual(
+                set(regression.config),
+                {
+                    "sklearn.ensemble.RandomForestRegressor",
+                    "sklearn.ensemble.ExtraTreesRegressor",
+                },
+            )
+
+            classification.fit(x_class, y_class)
+            regression.fit(x_reg, y_reg)
+
+            self.assertEqual(len(classification.predict(x_class[:3])), 3)
+            self.assertEqual(len(regression.predict(x_reg[:3])), 3)
+            self.assertEqual(regression.summary_["budget"]["max_evals"], 5)
+            self.assertEqual(regression.summary_["budget"]["time_limit"], 30)
+
+        preset = AML(preset="classification")
+        self.assertEqual(preset.max_evals, 20)
+        self.assertIsNone(preset.get_params()["config"])
+        preset.set_params(preset="regression")
+        self.assertEqual(preset.scoring, "neg_root_mean_squared_error")
+        self.assertEqual(preset.config_types["sklearn.ensemble.RandomForestRegressor"], "regressor")
+        preset.set_params(scoring="neg_mean_absolute_error")
+        self.assertEqual(preset.scoring, "neg_mean_absolute_error")
+
+        legacy = AML(config={})
+        legacy.set_params(preset="classification")
+        self.assertEqual(legacy.length, 1)
+        self.assertEqual(legacy.max_evals, 20)
+        self.assertEqual(legacy.scoring, "accuracy")
+
+    def test_aml_preset_rejects_unknown_or_conflicting_configuration(self):
+        with self.assertRaisesRegex(ValueError, "preset must be"):
+            AML(preset="fast")
+        with self.assertRaisesRegex(ValueError, "mutually exclusive"):
+            AML(config={}, preset="classification")
+        legacy = AML(config={})
+        self.assertEqual(legacy.length, 5)
+        self.assertEqual(legacy.max_evals, None)
+        self.assertEqual(legacy.scoring, "accuracy")
 
     def test_aml_records_budget_termination_summary(self):
         X = np.array([[0.0], [1.0], [2.0], [3.0]], dtype=float)

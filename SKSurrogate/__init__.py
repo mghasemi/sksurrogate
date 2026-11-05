@@ -28,7 +28,7 @@ from .mltrace import (
     mltrack,
     np2df,
 )
-from .DataProcess import DataPreprocess
+from .DataProcess import DataPreprocess, FoldLocalDataPreprocessor
 from .ci import BundleQualityGateError, assert_bundle_quality, check_bundle_quality
 from .deployment import DeploymentApprovalGate
 from .execution import DaskExecutionBackend, ExecutionBackend, LocalProcessExecutionBackend
@@ -60,6 +60,7 @@ __all__ = [
     "cv_to_spec",
     "default_cv_spec",
     "DataPreprocess",
+    "FoldLocalDataPreprocessor",
     "DeploymentApprovalGate",
     "DaskExecutionBackend",
     "ExecutionBackend",

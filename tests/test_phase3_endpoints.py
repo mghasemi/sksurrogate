@@ -32,6 +32,7 @@ from SKSurrogate import ModelBundle, ModelRegistry, save_bundle
 from api.config import settings
 from api.deps import open_tracker
 from api.routers import bundles as bundles_router
+from api.routers.registry import PromoteRequest, RegisterRequest
 from api.routers import registry as registry_router
 
 #: Small binary-classification dataset shipped with the repo (1600 rows, 21 columns).
@@ -116,6 +117,45 @@ class TestPhase3Endpoints(unittest.TestCase):
         self.assertEqual(payload["metrics_tried"], ["score"])
         self.assertEqual(payload["model_version"], GOOD_VERSION)
         self.assertAlmostEqual(payload["value"], 0.91, places=6)
+
+    def test_promote_requires_server_computed_quality_report(self):
+        registry_router.register_bundle(TASK, RegisterRequest(model_version=GOOD_VERSION))
+
+        payload = registry_router.promote_bundle(
+            TASK,
+            PromoteRequest(
+                model_version=GOOD_VERSION,
+                state="validated",
+                approvers=["reviewer"],
+            ),
+        )
+
+        self.assertEqual(payload["status"], "promoted")
+        self.assertTrue(payload["quality_report"]["passed"])
+        self.assertTrue(
+            any(
+                check["name"] == "schema_compatibility" and check["passed"]
+                for check in payload["quality_report"]["checks"]
+            )
+        )
+
+    def test_promote_rejects_a_failed_submitted_quality_report(self):
+        registry_router.register_bundle(TASK, RegisterRequest(model_version=GOOD_VERSION))
+
+        with self.assertRaises(HTTPException) as ctx:
+            registry_router.promote_bundle(
+                TASK,
+                PromoteRequest(
+                    model_version=GOOD_VERSION,
+                    state="validated",
+                    approvers=["reviewer"],
+                    quality_report={"passed": False},
+                ),
+            )
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        registry = ModelRegistry(settings.registry_dir)
+        self.assertEqual(registry.version_state(TASK, GOOD_VERSION), "candidate")
 
     def test_best_prefers_the_first_metric_that_ranks_anything(self):
         estimator = self._bundle_model(WEAK_VERSION)

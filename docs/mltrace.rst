@@ -114,6 +114,35 @@ split handling.
     # 'logloss': 4.089427586800243, 'variance': None, 'max_error': None, 'mse': None,
     # 'mae': None, 'r2': None}
 
+For a bounded starting point, ``AML`` also provides explicit scikit-learn-only
+presets. The classification preset uses accuracy; the regression preset uses
+negative root mean squared error. Both search random forests and extremely
+randomized trees in one-estimator pipelines, with a default budget of 20
+evaluations per candidate. Users can override the candidate count, wall-clock
+limit, scoring method, and pipeline length. Categorical DataFrame columns can
+be supplied through ``cat_cols`` and are encoded within each CV fold::
+
+    from SKSurrogate import AML
+
+    classifier = AML(preset="classification", time_limit=300, random_state=7)
+    classifier.fit(X, y)
+
+    regressor = AML(preset="regression", max_evals=30, random_state=7)
+    regressor.fit(X_reg, y_reg)
+
+These are deliberately small baseline searches, not quality guarantees.
+``max_evals`` and ``time_limit`` apply per candidate pipeline; overall work
+also depends on cross-validation folds and the number of candidates. Passing
+``config=...`` continues to use the fully customizable search and cannot be
+combined with ``preset``. Omitting both preserves the existing legacy default
+search space.
+
+``AML.fit`` accepts a pandas DataFrame directly; estimators that preserve their
+input representation receive the original feature names. For categorical
+columns, pass DataFrame column names or array column indices through
+``cat_cols``. Categorical encoding is learned inside each CV training fold and
+intentionally converts the encoded matrix to an array before estimator fitting.
+
 **Step 4.** Search for best (in terms of accuracy) classifier as a combination of
 ``naive_bayes.GaussianNB``, ``linear_model.LogisticRegression``, ``lightgbm.LGBMClassifier``,
 ``preprocessing.StandardScaler``, and ``preprocessing.Normalizer``::

@@ -37,7 +37,7 @@ The default operators are:
 ``Elites``
     Carries the best parents into the next generation.
 ``MaxGenTermination``
-    Stops when ``generation_num`` reaches ``max_generation``.
+    Stops when ``generation_num`` reaches ``max_generations``.
 
 Quick start
 ===========
@@ -69,7 +69,7 @@ This complete example can be run from the repository root with::
         fitness=fitness,
         num_parents=4,
         mutation_prob=0.1,
-        max_generation=5,
+        max_generations=5,
         task_name="letters",
         check_point="./eoa-checkpoints/",
     )
@@ -121,17 +121,17 @@ Constructor parameters
 ``elitism``
     Class used to preserve strong parents. Defaults to ``Elites``.
 ``num_parents``
-    Number of parents. If omitted, it is derived from ``parents_porp``.
-``parents_porp``
+    Number of parents. If omitted, it is derived from ``parents_prop``.
+``parents_prop``
     Parent proportion used when ``num_parents`` is omitted. The implementation
     default is ``0.1``.
-``elits_porp``
+``elites_prop``
     Proportion used to calculate the number of elites. The default is ``0.2``.
 ``mutation_prob``
     Probability of changing each child element. The default is ``0.05``.
-``max_generation``
+``max_generations``
     Maximum generation count for the default termination operator. The default
-    is ``50``. The keyword is singular: ``max_generation``.
+    is ``50``.
 ``genes``
     Complete gene list used by mutation. If omitted, it is inferred from the
     population.
@@ -144,6 +144,10 @@ Constructor parameters
 ``check_point``
     Directory prefix for checkpoints. The file is formed as
     ``check_point + task_name + '.eoa'`` and the directory must already exist.
+
+The corrected names ``parents_prop``, ``elites_prop``, and ``max_generations``
+are preferred. The legacy spellings ``parents_porp``, ``elits_porp``, and
+``max_generation`` remain accepted for compatibility.
 
 Custom operators
 ================
