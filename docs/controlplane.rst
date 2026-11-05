@@ -79,6 +79,11 @@ response schemas. The web UI provides corresponding workflow pages, including
 dashboard, datasets, experiments, evaluation, model bundles, registry and
 deployment, inference, monitoring, retraining, and settings.
 
+Experiment and retraining search requests use ``max_generations`` for the
+generation budget. Existing clients may continue sending ``max_generation``
+during migration; the API accepts that legacy spelling, while OpenAPI and the
+web UI use the corrected field. Sending both names in one request is rejected.
+
 The Python library can also be used without running either service. See
 :doc:`code` for the package API and the other guides for library workflows.
 For a complete UI walkthrough with screenshots and links from each screen to

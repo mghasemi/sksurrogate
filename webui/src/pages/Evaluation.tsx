@@ -422,6 +422,7 @@ export default function EvaluationPage() {
 
   const [tab, setTab] = useState<string>(OVERVIEW_TAB);
   const [trainPartition, setTrainPartition] = useState("train");
+  const [pinballAlpha, setPinballAlpha] = useState("0.5");
 
   // Metric tabs describe metrics of *this* task's models, so drop the selection on task change.
   useEffect(() => {
@@ -473,12 +474,22 @@ export default function EvaluationPage() {
   const lcMetrics = lcMetricsQ.data?.metrics ?? [];
   const activeMetric = lcMetrics.find((m) => m.value === tab) ?? null;
   const modelVersions = useMemo(() => bundles.map((b) => b.model_version), [bundles]);
+  const pinballAlphaValue = Number(pinballAlpha);
+  const validPinballAlpha = pinballAlphaValue > 0 && pinballAlphaValue < 1;
+  const activePinballAlpha = activeMetric?.requires_alpha
+    ? pinballAlphaValue
+    : undefined;
 
   // Curves are expensive, so each metric tab loads on demand only while it is open.
   const curvesQ = useQuery({
-    queryKey: ["learning-curves", task, tab, trainPartition, modelVersions],
-    queryFn: () => getLearningCurves(task, { scoring: tab, trainPartition, modelVersions }),
-    enabled: !!task && activeMetric !== null,
+    queryKey: ["learning-curves", task, tab, trainPartition, modelVersions, activePinballAlpha],
+    queryFn: () => getLearningCurves(task, {
+      scoring: tab,
+      pinballAlpha: activePinballAlpha,
+      trainPartition,
+      modelVersions,
+    }),
+    enabled: !!task && activeMetric !== null && (!activeMetric.requires_alpha || validPinballAlpha),
     retry: false,
   });
 
@@ -572,8 +583,24 @@ export default function EvaluationPage() {
                     <label>Train partition</label>
                     <input value={trainPartition} onChange={(e) => setTrainPartition(e.target.value)} spellCheck={false} />
                   </div>
+                  {activeMetric.requires_alpha && (
+                    <div className="field fixed" style={{ flex: "0 1 150px", minWidth: 120 }}>
+                      <label>Pinball quantile (0–1)</label>
+                      <input
+                        type="number"
+                        min="0.001"
+                        max="0.999"
+                        step="0.05"
+                        value={pinballAlpha}
+                        onChange={(e) => setPinballAlpha(e.target.value)}
+                      />
+                    </div>
+                  )}
                 </div>
 
+                {activeMetric.requires_alpha && !validPinballAlpha && (
+                  <p className="muted">Enter a quantile strictly between 0 and 1 to calculate this curve.</p>
+                )}
                 {curvesQ.isLoading && <Loading label="Fitting learning curves…" />}
                 {curvesQ.isError && <ErrorNote error={curvesQ.error} />}
 
@@ -588,6 +615,7 @@ export default function EvaluationPage() {
                   <>
                     <h4 className="hm-title">
                       {activeMetric.label} vs training size — {lcMetricsQ.data?.family ?? "unknown family"}
+                      {activeMetric.requires_alpha && ` (q=${pinballAlpha})`}
                     </h4>
                     <div style={{ height: 320 }}>
                       <ResponsiveContainer width="100%" height="100%">

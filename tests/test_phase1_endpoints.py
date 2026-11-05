@@ -22,10 +22,12 @@ import matplotlib
 
 matplotlib.use("Agg")
 
+import numpy as np
 import pandas as pd
 from fastapi import HTTPException
 from sklearn.linear_model import LinearRegression, LogisticRegression, QuantileRegressor
-from sklearn.metrics import mean_pinball_loss
+from sklearn.metrics import make_scorer, mean_pinball_loss
+from sklearn.model_selection import learning_curve
 
 from SKSurrogate import ModelBundle, load_bundle, save_bundle
 
@@ -256,6 +258,66 @@ class TestPhase1Endpoints(unittest.TestCase):
             evaluation_router.bundle_curves(TASK, "does-not-exist")
 
         self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_learning_curve_supports_explicit_pinball_alpha(self):
+        frame = self._frame.iloc[:1200].reset_index(drop=True)
+        settings.task_dataset_dir(TASK).mkdir(parents=True, exist_ok=True)
+        frame.to_csv(
+            settings.task_dataset_dir(TASK) / "train.csv",
+            index=False,
+        )
+        metrics = evaluation_router.evaluation_metrics(TASK, REGRESSOR_VERSION)
+        pinball_metric = next(
+            metric
+            for metric in metrics["metrics"]
+            if metric["value"] == "neg_mean_pinball_loss"
+        )
+        self.assertTrue(pinball_metric["requires_alpha"])
+
+        with self.assertRaises(HTTPException) as missing_alpha:
+            evaluation_router.evaluation_learning_curves(
+                TASK,
+                scoring="neg_mean_pinball_loss",
+                model_versions=REGRESSOR_VERSION,
+            )
+        self.assertEqual(missing_alpha.exception.status_code, 400)
+        self.assertIn("pinball_alpha is required", missing_alpha.exception.detail)
+
+        alpha = 0.8
+        response = evaluation_router.evaluation_learning_curves(
+            TASK,
+            scoring="neg_mean_pinball_loss",
+            pinball_alpha=alpha,
+            model_versions=REGRESSOR_VERSION,
+            n_points=2,
+        )
+        self.assertEqual(response["pinball_alpha"], alpha)
+        self.assertEqual(response["scoring_label"], "Pinball loss (q=0.8)")
+        self.assertEqual(len(response["series"]), 1, response["errors"])
+
+        model = load_bundle(
+            settings.task_bundles_dir(TASK) / (REGRESSOR_VERSION + ".bundle"),
+            strict_dependencies=False,
+        ).model
+        sizes, _, validation_scores = learning_curve(
+            model,
+            frame.drop(columns=[TARGET]).to_numpy(),
+            frame[TARGET].to_numpy(),
+            cv=3,
+            scoring=make_scorer(
+                mean_pinball_loss,
+                alpha=alpha,
+                greater_is_better=False,
+            ),
+            train_sizes=np.linspace(0.1, 1.0, 2),
+            n_jobs=1,
+        )[:3]
+        curve = response["series"][0]
+        self.assertEqual(curve["train_sizes"], sizes.tolist())
+        np.testing.assert_allclose(
+            curve["validation_scores_mean"],
+            -np.mean(validation_scores, axis=1),
+        )
 
     # ------------------------------------------------------------ 1.1 nested CV
 

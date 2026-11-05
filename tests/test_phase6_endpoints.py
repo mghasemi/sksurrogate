@@ -25,6 +25,7 @@ from api.routers import retraining as retraining_router
 from api.routers.experiments import RunExperimentRequest
 from api.routers.retraining import (
     BaselineTrainerConfig,
+    ExperimentTrainerConfig,
     RunRetrainingRequest,
     TriggerRetrainingRequest,
 )
@@ -50,6 +51,44 @@ class TestPhase6JobEndpoints(unittest.TestCase):
     def tearDown(self):
         settings.root = self._original_root
         self._tmp.cleanup()
+
+    def test_experiment_generation_field_accepts_legacy_and_canonical_names(self):
+        experiment_schema = RunExperimentRequest.model_json_schema(mode="validation")
+        trainer_schema = ExperimentTrainerConfig.model_json_schema(mode="validation")
+        self.assertIn("max_generations", experiment_schema["properties"])
+        self.assertNotIn("max_generation", experiment_schema["properties"])
+        self.assertIn("max_generations", trainer_schema["properties"])
+        self.assertNotIn("max_generation", trainer_schema["properties"])
+
+        experiment = RunExperimentRequest(config={}, max_generations=5)
+        legacy_experiment = RunExperimentRequest(config={}, max_generation=6)
+        trainer = ExperimentTrainerConfig(config={}, max_generations=7)
+        legacy_trainer = ExperimentTrainerConfig(config={}, max_generation=8)
+        retraining = RunRetrainingRequest(
+            trainer={
+                "kind": "experiment",
+                "config": {},
+                "max_generation": 9,
+            }
+        )
+        self.assertEqual(experiment.max_generations, 5)
+        self.assertEqual(legacy_experiment.max_generations, 6)
+        self.assertEqual(trainer.max_generations, 7)
+        self.assertEqual(legacy_trainer.max_generations, 8)
+        self.assertEqual(retraining.trainer.max_generations, 9)
+
+        with self.assertRaises(ValidationError):
+            RunExperimentRequest(
+                config={},
+                max_generations=5,
+                max_generation=6,
+            )
+        with self.assertRaises(ValidationError):
+            ExperimentTrainerConfig(
+                config={},
+                max_generations=5,
+                max_generation=6,
+            )
 
     def test_failed_experiment_resumes_with_original_checkpoint_and_run_id(self):
         body = RunExperimentRequest(config={}, run_id=None)

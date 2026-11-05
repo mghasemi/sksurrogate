@@ -92,6 +92,7 @@ def evaluation_metrics(task_name: str, model_version: str | None = None):
 def evaluation_learning_curves(
     task_name: str,
     scoring: str = "accuracy",
+    pinball_alpha: float | None = None,
     train_partition: str = "train",
     n_points: int = 5,
     model_versions: str | None = None,
@@ -103,6 +104,19 @@ def evaluation_learning_curves(
     splitter, …) are reported in ``errors`` rather than failing the request, so
     the remaining bundles still render.
     """
+    if pinball_alpha is not None and not (
+        np.isfinite(pinball_alpha) and 0.0 < pinball_alpha < 1.0
+    ):
+        raise bad_request("pinball_alpha must be between 0 and 1")
+    if scoring == "neg_mean_pinball_loss" and pinball_alpha is None:
+        raise bad_request(
+            "pinball_alpha is required when scoring is 'neg_mean_pinball_loss'"
+        )
+    if scoring != "neg_mean_pinball_loss" and pinball_alpha is not None:
+        raise bad_request(
+            "pinball_alpha is only valid when scoring is 'neg_mean_pinball_loss'"
+        )
+
     versions = (
         [version.strip() for version in model_versions.split(",") if version.strip()]
         if model_versions
@@ -119,6 +133,7 @@ def evaluation_learning_curves(
                     bundle,
                     task_name=task_name,
                     scoring=scoring,
+                    pinball_alpha=pinball_alpha,
                     train_partition=train_partition,
                     n_points=n_points,
                 )
@@ -131,7 +146,8 @@ def evaluation_learning_curves(
     return {
         "task_name": task_name,
         "scoring": scoring,
-        "scoring_label": learning_curve_metric_label(scoring),
+        "pinball_alpha": pinball_alpha,
+        "scoring_label": learning_curve_metric_label(scoring, pinball_alpha),
         "train_partition": train_partition,
         "n_points": n_points,
         "series": series,

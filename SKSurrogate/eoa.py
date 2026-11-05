@@ -57,6 +57,7 @@ class EOA(object):
 
         from collections import OrderedDict
         import random
+        import warnings
 
         def _resolve_alias(name, value, legacy_name, default):
             if legacy_name in kwargs:
@@ -64,6 +65,11 @@ class EOA(object):
                     raise TypeError(
                         f"Specify either {name!r} or legacy {legacy_name!r}, not both."
                     )
+                warnings.warn(
+                    f"{legacy_name!r} is deprecated; use {name!r} instead.",
+                    DeprecationWarning,
+                    stacklevel=3,
+                )
                 return kwargs.pop(legacy_name)
             return default if value is None else value
 

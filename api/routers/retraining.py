@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from SKSurrogate import ModelRegistry, RetrainingJob
 
@@ -41,11 +41,25 @@ class ExperimentTrainerConfig(BaseModel):
     kind: str = "experiment"
     config: dict[str, dict[str, ParamValue]]
     length: int = 2
-    max_generation: int = 3
+    max_generations: int = Field(
+        default=3,
+        validation_alias=AliasChoices("max_generations", "max_generation"),
+    )
     num_parents: int = 4
     train_partition: str = "train"
     scoring: str = "accuracy"
     random_state: int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_conflicting_generation_names(cls, values):
+        if (
+            isinstance(values, dict)
+            and "max_generations" in values
+            and "max_generation" in values
+        ):
+            raise ValueError("Use only 'max_generations'; do not send both spellings.")
+        return values
 
 
 class RunRetrainingRequest(BaseModel):
@@ -95,7 +109,7 @@ def _make_trainer(task_name, trainer_config, checkpoint_dir, owner, run_id):
                 config=config,
                 checkpoint_dir=checkpoint_dir,
                 length=trainer_config.length,
-                max_generation=trainer_config.max_generation,
+                max_generation=trainer_config.max_generations,
                 num_parents=trainer_config.num_parents,
                 train_partition=trainer_config.train_partition,
                 scoring=trainer_config.scoring,

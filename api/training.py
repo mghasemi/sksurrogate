@@ -104,6 +104,13 @@ _LEARNING_CURVE_METRICS = {
         {"value": "r2", "label": "R²", "negate": False, "higher_is_better": True},
         {"value": "neg_root_mean_squared_error", "label": "RMSE", "negate": True, "higher_is_better": False},
         {"value": "neg_mean_absolute_error", "label": "MAE", "negate": True, "higher_is_better": False},
+        {
+            "value": "neg_mean_pinball_loss",
+            "label": "Pinball loss",
+            "negate": True,
+            "higher_is_better": False,
+            "requires_alpha": True,
+        },
         {"value": "explained_variance", "label": "Explained Variance", "negate": False, "higher_is_better": True},
     ],
 }
@@ -125,9 +132,15 @@ def learning_curve_metric_options(family):
     available = set(get_scorer_names())
     entries = _LEARNING_CURVE_METRICS.get(family or "", [])
     metrics = [
-        {key: entry[key] for key in ("value", "label", "higher_is_better")}
+        {
+            **{
+                key: entry[key]
+                for key in ("value", "label", "higher_is_better")
+            },
+            **({"requires_alpha": True} if entry.get("requires_alpha") else {}),
+        }
         for entry in entries
-        if entry["value"] in available
+        if entry["value"] in available or entry.get("requires_alpha")
     ]
     return {
         "family": family,
@@ -136,11 +149,13 @@ def learning_curve_metric_options(family):
     }
 
 
-def learning_curve_metric_label(scoring):
+def learning_curve_metric_label(scoring, pinball_alpha=None):
     """Display label for a metric: the curated label when known, else the derived scorer label."""
     for entries in _LEARNING_CURVE_METRICS.values():
         for entry in entries:
             if entry["value"] == scoring:
+                if entry.get("requires_alpha") and pinball_alpha is not None:
+                    return "%s (q=%g)" % (entry["label"], pinball_alpha)
                 return entry["label"]
     return _scoring_label(scoring)
 
@@ -154,7 +169,15 @@ def _learning_curve_sign(scoring):
     return 1.0
 
 
-def compute_learning_curve(bundle, *, task_name, scoring="accuracy", train_partition="train", n_points=5):
+def compute_learning_curve(
+    bundle,
+    *,
+    task_name,
+    scoring="accuracy",
+    train_partition="train",
+    n_points=5,
+    pinball_alpha=None,
+):
     """Cross-validated learning curve for one bundle under a scikit-learn scorer.
 
     Scores are averaged over the folds of the splitter persisted for the task
@@ -165,8 +188,26 @@ def compute_learning_curve(bundle, *, task_name, scoring="accuracy", train_parti
     import numpy as np
     from sklearn.model_selection import learning_curve
 
-    if scoring not in set(get_scorer_names()):
-        raise bad_request("Unknown scoring metric %r" % (scoring,))
+    if scoring == "neg_mean_pinball_loss":
+        if pinball_alpha is None:
+            raise bad_request(
+                "pinball_alpha is required when scoring is 'neg_mean_pinball_loss'"
+            )
+        from sklearn.metrics import make_scorer, mean_pinball_loss
+
+        scorer = make_scorer(
+            mean_pinball_loss,
+            alpha=pinball_alpha,
+            greater_is_better=False,
+        )
+    else:
+        if pinball_alpha is not None:
+            raise bad_request(
+                "pinball_alpha is only valid when scoring is 'neg_mean_pinball_loss'"
+            )
+        if scoring not in set(get_scorer_names()):
+            raise bad_request("Unknown scoring metric %r" % (scoring,))
+        scorer = scoring
     estimator = getattr(bundle, "model", None)
     if estimator is None or not hasattr(estimator, "fit"):
         raise bad_request("Bundle %r carries no fittable estimator" % bundle.model_version)
@@ -186,13 +227,14 @@ def compute_learning_curve(bundle, *, task_name, scoring="accuracy", train_parti
     train_sizes = np.linspace(0.1, 1.0, n_points)
 
     sizes, train_scores, validation_scores = learning_curve(
-        estimator, X, y, cv=cv, scoring=scoring, train_sizes=train_sizes, n_jobs=1
+        estimator, X, y, cv=cv, scoring=scorer, train_sizes=train_sizes, n_jobs=1
     )[:3]
 
     sign = _learning_curve_sign(scoring)
     n_samples = float(len(y))
     return {
         "model_version": bundle.model_version,
+        "pinball_alpha": pinball_alpha,
         "train_sizes": [int(size) for size in sizes],
         "train_sizes_fraction": [round(float(size) / n_samples, 4) for size in sizes],
         "train_scores_mean": [finite_or_none(sign * float(np.mean(row))) for row in train_scores],
@@ -544,7 +586,7 @@ def fit_experiment_bundle(
         # A single lightweight regressor replaces the default KRR+GPR pair; the
         # iteration budget bounds how many candidate points each surrogate pass tries.
         aml.add_surrogate(LinearRegression(), int(surrogate_itrs) if surrogate_itrs else 20)
-    aml.eoa_fit(X, y, max_generation=max_generation, num_parents=num_parents)
+    aml.eoa_fit(X, y, max_generations=max_generation, num_parents=num_parents)
     # SurrogateRandomCV refits best_estimator_ on the full dataset (refit=True),
     # so it is ready for scoring/serving without an extra fit here. When every
     # candidate was rejected (e.g. the forbidden rules ban the whole space) it

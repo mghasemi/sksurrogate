@@ -147,7 +147,9 @@ Constructor parameters
 
 The corrected names ``parents_prop``, ``elites_prop``, and ``max_generations``
 are preferred. The legacy spellings ``parents_porp``, ``elits_porp``, and
-``max_generation`` remain accepted for compatibility.
+``max_generation`` remain accepted for compatibility but emit
+``DeprecationWarning``. Migrate calls to the corrected names before a future
+major release; no removal version has been scheduled.
 
 Custom operators
 ================

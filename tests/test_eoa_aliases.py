@@ -29,19 +29,25 @@ def test_eoa_accepts_corrected_parameter_names(tmp_path):
 
 
 def test_eoa_keeps_legacy_parameter_names(tmp_path):
-    optimizer = EOA(
-        population=_population(),
-        fitness=lambda individuals: individuals,
-        parents_porp=0.4,
-        elits_porp=0.5,
-        max_generation=7,
-        num_parents=4,
-        check_point=f"{tmp_path}/",
-    )
+    with pytest.warns(DeprecationWarning) as captured:
+        optimizer = EOA(
+            population=_population(),
+            fitness=lambda individuals: individuals,
+            parents_porp=0.4,
+            elits_porp=0.5,
+            max_generation=7,
+            num_parents=4,
+            check_point=f"{tmp_path}/",
+        )
 
     assert optimizer.parents_porp == 0.4
     assert optimizer.elits_porp == 0.5
     assert optimizer.max_generations == 7
+    messages = [str(warning.message) for warning in captured]
+    assert len(messages) == 3
+    assert any("'parents_porp' is deprecated; use 'parents_prop'" in message for message in messages)
+    assert any("'elits_porp' is deprecated; use 'elites_prop'" in message for message in messages)
+    assert any("'max_generation' is deprecated; use 'max_generations'" in message for message in messages)
 
 
 def test_eoa_rejects_conflicting_aliases(tmp_path):

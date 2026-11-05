@@ -1021,6 +1021,8 @@ export interface LearningCurveMetric {
   label: string;
   /** False for error metrics such as RMSE — the curve then decreases with more data. */
   higher_is_better: boolean;
+  /** The metric requires an explicit quantile level. */
+  requires_alpha?: boolean;
 }
 
 export interface LearningCurveMetricsResponse {
@@ -1047,6 +1049,7 @@ export interface LearningCurveSeries {
 export interface LearningCurvesResponse {
   task_name: string;
   scoring: string;
+  pinball_alpha: number | null;
   scoring_label: string;
   train_partition: string;
   n_points: number;
@@ -1064,9 +1067,16 @@ export const getLearningCurveMetrics = (task: string, modelVersion?: string) =>
 /** Cross-validated learning curves for every (or the given) bundle under one metric. */
 export function getLearningCurves(
   task: string,
-  opts: { scoring: string; trainPartition?: string; nPoints?: number; modelVersions?: string[] },
+  opts: {
+    scoring: string;
+    pinballAlpha?: number;
+    trainPartition?: string;
+    nPoints?: number;
+    modelVersions?: string[];
+  },
 ): Promise<LearningCurvesResponse> {
   const params = new URLSearchParams({ scoring: opts.scoring });
+  if (opts.pinballAlpha !== undefined) params.set("pinball_alpha", String(opts.pinballAlpha));
   if (opts.trainPartition) params.set("train_partition", opts.trainPartition);
   if (opts.nPoints) params.set("n_points", String(opts.nPoints));
   if (opts.modelVersions?.length) params.set("model_versions", opts.modelVersions.join(","));
@@ -1200,7 +1210,7 @@ export const STACKING_COMPONENT = {
 export interface RunExperimentRequest {
   config: SearchSpace;
   length?: number;
-  max_generation?: number;
+  max_generations?: number;
   num_parents?: number;
   train_partition?: string;
   scoring?: string;
@@ -1362,7 +1372,7 @@ export interface ExperimentTrainerConfig {
   kind: "experiment";
   config: SearchSpace;
   length?: number;
-  max_generation?: number;
+  max_generations?: number;
   num_parents?: number;
   train_partition?: string;
   scoring?: string;

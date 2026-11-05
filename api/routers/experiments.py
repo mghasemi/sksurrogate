@@ -9,7 +9,7 @@ Fitting logic is shared with the Bundles and Retraining routers via
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from SKSurrogate import save_bundle
 
@@ -49,7 +49,10 @@ def _dump_config(config):
 class RunExperimentRequest(BaseModel):
     config: SearchSpace
     length: int = 2
-    max_generation: int = 3
+    max_generations: int = Field(
+        default=3,
+        validation_alias=AliasChoices("max_generations", "max_generation"),
+    )
     num_parents: int = 4
     train_partition: str = "train"
     scoring: str = "accuracy"
@@ -60,6 +63,17 @@ class RunExperimentRequest(BaseModel):
     surrogate_itrs: int | None = None  # per-surrogate iteration budget (surrogate mode only)
     forbidden: list[list] | None = None  # [["param", value], ...] disallowed combinations
     backend: Literal["local", "dask"] = "local"
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_conflicting_generation_names(cls, values):
+        if (
+            isinstance(values, dict)
+            and "max_generations" in values
+            and "max_generation" in values
+        ):
+            raise ValueError("Use only 'max_generations'; do not send both spellings.")
+        return values
 
 
 @router.get("/scoring-options")
@@ -90,7 +104,7 @@ def submit_experiment(task_name, body, *, checkpoint_job_id=None, run_id=None):
                 config=config,
                 checkpoint_dir=settings.task_checkpoint_dir(task_name, checkpoint_job_id or job_id),
                 length=body.length,
-                max_generation=body.max_generation,
+                max_generation=body.max_generations,
                 num_parents=body.num_parents,
                 train_partition=body.train_partition,
                 scoring=body.scoring,

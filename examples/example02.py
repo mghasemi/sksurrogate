@@ -48,5 +48,5 @@ A = AML(
     verbose=2,
     scoring="neg_mean_squared_error",
 )
-A.eoa_fit(X, y, max_generation=5, num_parents=8)
+A.eoa_fit(X, y, max_generations=5, num_parents=8)
 print(A.get_top(5))

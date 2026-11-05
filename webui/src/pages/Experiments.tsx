@@ -148,7 +148,7 @@ export default function ExperimentsPage() {
       const body: RunExperimentRequest = {
         config: parsed.config,
         length,
-        max_generation: maxGeneration,
+        max_generations: maxGeneration,
         num_parents: numParents,
         train_partition: trainPartition,
         scoring,

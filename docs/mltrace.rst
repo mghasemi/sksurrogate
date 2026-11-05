@@ -179,7 +179,7 @@ intentionally converts the encoded matrix to an array before estimator fitting.
     }
     # initiate and perform the search
     A = AML(config=config, length=3, check_point='./sample/', verbose=1)
-    A.eoa_fit(X, y, max_generation=15, num_parents=20)
+    A.eoa_fit(X, y, max_generations=15, num_parents=20)
     # retrieve and log the best
     eoa_clf = A.best_estimator_
     eoa_clf = MLTr.LogModel(eoa_clf, "Best of EOA Surrogate Search")
@@ -243,8 +243,9 @@ For nested-CV API requests, set ``scoring`` to
 ``"neg_mean_pinball_loss"`` and provide ``pinball_alpha`` in the open interval
 ``(0, 1)``. The API requires this value explicitly so it can match the
 estimator's ``quantile`` setting. Custom callable scorers remain available in
-the Python API. The learning-curve metric catalog does not yet offer
-alpha-specific pinball loss or quantile-interval diagnostics.
+the Python API. The Evaluation page also offers pinball-loss learning curves
+with an explicit quantile level and reports the loss in its natural positive
+scale. Quantile-interval diagnostics remain outside the current workflow.
 
 **Step 5.** Plot learning curves for accuracy, :math:`F_1`, area under ROC, calibration lift and
  cumulative curves for the two models::
@@ -465,7 +466,7 @@ quick ``SKSurrogate`` search over ``SGDClassifier``, ``Nystroem`` and ``RBFSampl
 
 
     A_svm = AML(config=config, length=3, check_point='./svm/', verbose=1)
-    A_svm.eoa_fit(X, y, max_generation=10, num_parents=10)
+    A_svm.eoa_fit(X, y, max_generations=10, num_parents=10)
     print(A_svm.get_top(4))
 
 Which results in::

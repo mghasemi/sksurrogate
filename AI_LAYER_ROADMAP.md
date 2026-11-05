@@ -89,13 +89,13 @@ scope or status.
 | EDA and data intelligence | Partial | P2.1 adds bounded mixed-type dataset profiles and registered-partition API access, with exploratory/non-causal caveats. Unit inference and document extraction remain deferred. |
 | Evaluation uncertainty and statistical comparison | Partial | Nested/repeated evaluation and interval summaries already exist. P1.4 adds paired repeat-score bootstrap intervals/effect sizes and split-conformal regression; broader inferential tests remain future work. |
 | Explanations and diagnostic plots | Partial | Sensitivity analysis and P1.4 diagnostics exist; P1.5 adds bounded permutation importance and partial-dependence/ICE plots. SHAP remains a separately evaluated, deferred optional integration. |
-| Additional scientific problem classes | Deferred | Time-series, survival, and other specialized tasks require task-specific protocols; retain under P3 rather than extending generic search without validation. |
+| Additional scientific problem classes | Partial | P3 adds chronological splitter-level nested evaluation and quantile regression scoring/learning curves; full forecasting protocols, survival analysis, and quantile-interval diagnostics remain deferred. |
 | Data provenance and lineage | Partial | P2.2 snapshots training settings, partition identity, environment, and evaluation protocol on newly trained API bundles, with JSON/Markdown exports and persisted nested-CV uncertainty. Target construction and upstream exclusions remain user-supplied provenance gaps. |
 | Research projects, notebooks, and reports | Partial | P2.2 adds reproducibility exports; P2.3 adds executable offline scientific and standard-library Python API client notebooks. Research-project/hypothesis management remains P2.5. |
 | Promotion quality gates | Existing | The server-side gate is implemented and shared by UI/API promotion flows (P0.4); do not duplicate this recommendation. |
 | Monitoring persistence and retention | Partial | Inference measurements persist as JSONL and can be reloaded; automatic expiration is unresolved (P0.5). Avoid imposing a retention duration without a deployment requirement. |
 | Automated retraining | Partial | Scheduled/on-data trigger entry points and retraining logic exist, but no automatic scheduler/webhook evaluates and submits due work (P1.7). |
-| Sensitive-feature scanning | Partial | Current checks are name-based. Value-pattern scanning remains P1.6 and requires privacy/false-positive constraints before implementation. |
+| Sensitive-feature scanning | Complete for scoped patterns | P1.6 scans bounded local rows for email, formatted US SSN, and formatted US phone patterns, returning aggregate counts only; broader formats and locale-specific detection are not claimed. |
 | Notebook-native UI and conversational assistant | Deferred | Preserve the existing operational UI; notebook interoperability is P2.3. A research assistant is a later product direction, not a prerequisite for deterministic scientific tools. |
 
 - [x] Audit the concrete claims in `ailayer.md` against implementation, tests,
@@ -295,8 +295,8 @@ quality, and the chosen behavior is covered by tests.
 - [x] Introduce corrected `snake_case` aliases for EOA's misspelled
   `parents_porp`/`elits_porp` and singular `max_generation` arguments while
   retaining the legacy spellings.
-- [ ] Add deprecation warnings and migration documentation for any eventual
-  breaking change.
+- [x] Warn when legacy EOA constructor spellings are used and document the
+  migration; retain the aliases with no scheduled removal version.
 
 **Done when:** named inputs retain useful feature names and existing callers
 continue to work through a documented migration period.
@@ -531,13 +531,14 @@ service that launches reruns directly from project metadata are deferred.
 - [x] Assess survival-analysis feasibility, including target representation,
   censoring-aware estimators, splitters, and metrics; implementation is deferred.
 - [x] Verify the generic Python quantile-regression path with a matching
-  pinball-loss scorer; learning-curve catalogs and quantile diagnostics remain
-  gaps.
+  pinball-loss scorer.
 - [x] Add an explicit-alpha pinball-loss option to nested-CV API evaluation.
+- [x] Offer alpha-specific pinball loss in regression learning curves and the
+  Evaluation UI.
 - [ ] Add survival API workflows only after a concrete censoring-aware protocol
   and dependency choice are justified.
-- [ ] Extend quantile metrics to learning curves and add quantile-interval
-  diagnostics only after selecting the desired supported workflow.
+- [ ] Add quantile-interval diagnostics only after selecting a supported
+  interval protocol and documenting its assumptions.
 - [ ] Investigate domain-specific scientific formats and semantic/unit-aware
   data understanding only with clear user needs and a bounded first format.
 - [ ] Treat document extraction, full LLM research assistance, symbolic
@@ -559,7 +560,11 @@ acceptance criteria are met.
 
 ### Progress log
 
-- **2026-11-06 — P3 time-series evaluation:** verified that the existing
+- **2026-11-05 — Roadmap status reconciliation:** updated the recommendation
+  summary to reflect scoped time-series and quantile support, and to distinguish
+  completed bounded PII-pattern scanning from broader locale-specific coverage.
+  No new capability is claimed beyond the verified P1.6 and P3 work below.
+- **2026-11-05 — P3 time-series evaluation:** verified that the existing
   `TimeSeriesSplit` round-trips with its gap and test-window settings and
   added support for serialized splitter specs in the nested-CV API. Reproduced
   and fixed explicit scorer handling so the requested sklearn metric is used
@@ -568,7 +573,7 @@ acceptance criteria are met.
   order, gap, negative MAE, and API splitter validation. Documentation makes
   row ordering and caller-managed forecast feature/target construction
   explicit; this does not add a forecasting-specific workflow.
-- **2026-11-06 — P3 survival and quantile feasibility:** found no survival
+- **2026-11-05 — P3 survival and quantile feasibility:** found no survival
   estimators or survival package in the dependencies, and the current data and
   nested-evaluation path model one ordinary target column rather than a
   censoring/event-time contract. Defer survival support until an estimator,
@@ -578,12 +583,35 @@ acceptance criteria are met.
   that point the API lacked alpha-specific pinball loss; the nested-CV API gap
   is closed in the following entry, while learning-curve metrics and quantile
   diagnostics remain deferred.
-- **2026-11-06 — P3 quantile nested-CV API:** added
+- **2026-11-05 — P3 quantile nested-CV API:** added
   ``scoring="neg_mean_pinball_loss"`` with an explicit ``pinball_alpha`` to
   the API route, validated before job submission. Verified outer-fold and
   final-validation scores against scikit-learn's pinball loss using a
   ``QuantileRegressor`` bundle. Other named scoring behavior is unchanged;
-  learning-curve metrics and interval diagnostics remain deferred.
+  interval diagnostics remain deferred.
+- **2026-11-05 — P3 quantile learning curves:** exposed alpha-specific pinball
+  loss in regression metric options, API learning-curve requests, result labels,
+  and the Evaluation UI. The UI requires a quantile in ``(0, 1)`` and uses it
+  in the query key; the API rejects missing/out-of-range alpha and mismatched
+  parameters. Endpoint output was compared with ``sklearn.model_selection.learning_curve``
+  using the same scorer. The nested-CV, time-series, and quantile endpoint
+  suites pass (21 tests), along with Python compilation and the web UI build.
+  Quantile-interval diagnostics remain deferred.
+- **2026-11-05 — P1.3 EOA alias migration:** the legacy EOA constructor
+  spellings ``parents_porp``, ``elits_porp``, and ``max_generation`` now emit
+  ``DeprecationWarning`` pointing callers to corrected names. Documented that
+  compatibility remains and no removal release is scheduled. The API's
+  first-party experiment helper now passes ``max_generations`` to EOA, avoiding
+  an internal deprecation warning for normal API calls, and all EOA examples
+  now use corrected names. Experiment and retraining requests expose
+  ``max_generations`` in their schemas and UI while accepting the old
+  ``max_generation`` payload for saved-client compatibility; conflicting
+  spellings are rejected. The control-plane guide documents the migration.
+  Alias tests verify legacy values remain unchanged and all three warnings are
+  emitted; request compatibility and experiment/retraining endpoint tests pass.
+  Canonical schema names and legacy payload parsing were verified for both
+  experiment and retraining requests; the UI build and documentation build
+  pass.
 - **Planning:** roadmap created from the two assessments in `ailayer.md`.
   Existing MLOps and UI roadmap overlap was noted.
 - **2026-11-04 — P0.1/P0.2 audit:** confirmed eager full-frame fitting in
