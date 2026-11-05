@@ -67,6 +67,45 @@ drift.
 Governance and fairness checks
 ==============================
 
+Bounded dataset profiling
+=========================
+
+Use ``dataset_profile`` before model search to inspect mixed-type distributions,
+missingness, target associations, and highly associated feature pairs:
+
+.. code-block:: python
+
+    from SKSurrogate import dataset_profile
+
+    report = dataset_profile(
+        frame,
+        target="outcome",
+        max_rows=5000,
+        max_features=50,
+        max_categories=10,
+        random_state=0,
+    )
+
+Numeric columns include finite-value summaries and a separate count of positive
+or negative infinity values. Other columns include bounded frequency summaries;
+categorical target frequencies can help reveal class balance. Target and
+feature-pair associations use Pearson correlation for numeric pairs, correlation
+ratio for mixed pairs, and Cramer's V for categorical pairs. Pairwise feature
+associations are sorted by strength to help prioritize redundancy checks.
+
+The helper samples without replacement when the row limit is exceeded. If a
+dataset has more features than ``max_features``, select the features explicitly
+instead of silently truncating them. ``POST /api/datasets/{task_name}/profile``
+profiles a registered partition (``train`` by default), infers the target from
+registration metadata when available, and accepts the same row, feature, and
+category bounds. Its response includes the registered partition fingerprint.
+API limits are at most 10,000 rows, 100 features, and 50 categories.
+
+These are exploratory diagnostics: association does not establish causation,
+leakage, or scientific mechanisms. A strong feature association is a prompt for
+review, not proof of redundancy or a reason to remove a feature automatically.
+Missing values are reported separately from the summarized distributions.
+
 The monitoring module also includes governance checks for model fairness and sensitive
 feature use before training or production serving. Use ``sensitive_feature_report`` to
 highlight PII-like and user-declared sensitive columns before they reach a model:

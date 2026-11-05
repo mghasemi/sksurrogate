@@ -248,6 +248,56 @@ def get_stored_cv(task_name):
         raise bad_request("Stored CV splitter %r for task %r could not be rebuilt" % (spec, task_name))
 
 
+def _reproducibility_record(
+    task_name,
+    metadata,
+    frame,
+    target,
+    train_partition,
+    *,
+    configuration,
+    evaluation_protocol,
+    transformations,
+):
+    partitions = metadata.get("dataset_partition_history", {})
+    train_data = partitions.get(train_partition, {})
+    environment_keys = (
+        "python_version",
+        "numpy_version",
+        "pandas_version",
+        "scikit_learn_version",
+        "sksurrogate_version",
+    )
+    return {
+        "schema_version": 1,
+        "task_name": task_name,
+        "data": {
+            "train_partition": train_partition,
+            "train_fingerprint": train_data.get("fingerprint"),
+            "rows_used": int(len(frame)),
+            "features": [column for column in frame.columns if column != target],
+            "target": {
+                "column": target,
+                "construction": "not recorded; target is used as registered",
+            },
+            "excluded_observations": {
+                "explicit_api_exclusions": 0,
+                "upstream_exclusions": "not recorded",
+            },
+        },
+        "configuration": configuration,
+        "transformations": transformations,
+        "evaluation_protocol": evaluation_protocol,
+        "environment": {
+            key: metadata[key] for key in environment_keys if key in metadata
+        },
+        "known_gaps": [
+            "Target construction and upstream row exclusions are not recorded.",
+            "Metrics without a repeated-CV evaluation have no uncertainty estimate.",
+        ],
+    }
+
+
 def fit_baseline_bundle(
     task_name,
     *,
@@ -278,12 +328,51 @@ def fit_baseline_bundle(
             metrics["score"] = float(model.score(validation_X, validation_y))
 
     schema = {column: {"dtype": str(train_X[column].dtype)} for column in train_X.columns}
+    run_record = _reproducibility_record(
+        task_name,
+        metadata,
+        train_frame,
+        target,
+        train_partition,
+        configuration={
+            "kind": "baseline",
+            "estimator": estimator,
+            "estimator_parameters": BASELINE_ESTIMATORS[estimator]().get_params(
+                deep=False
+            ),
+            "validation_partition": validation_partition if "score" in metrics else None,
+            "validation_partition_fingerprint": (
+                metadata.get("dataset_partition_history", {})
+                .get(validation_partition, {})
+                .get("fingerprint")
+                if "score" in metrics
+                else None
+            ),
+        },
+        transformations=[
+            {"class": "sklearn.preprocessing.StandardScaler", "parameters": {}},
+            {
+                "class": "%s.%s"
+                % (
+                    BASELINE_ESTIMATORS[estimator].__module__,
+                    BASELINE_ESTIMATORS[estimator].__qualname__,
+                ),
+                "parameters": BASELINE_ESTIMATORS[estimator]().get_params(deep=False),
+            },
+        ],
+        evaluation_protocol={
+            "selection": "none; fixed baseline estimator",
+            "metric": "estimator.score",
+            "metric_scope": "validation partition" if "score" in metrics else None,
+        },
+    )
     bundle = ModelBundle(
         model,
         task_name=task_name,
         schema=schema,
         metrics=metrics,
-        dataset_fingerprint=metadata.get("dataset_fingerprint"),
+        metadata={"reproducibility": run_record},
+        dataset_fingerprint=run_record["data"]["train_fingerprint"],
         owner=owner,
         run_id=run_id,
     )
@@ -427,6 +516,7 @@ def fit_experiment_bundle(
     X = frame[feature_columns].values
     y = frame[target].values
 
+    requested_config = config
     config, stacking = extract_stacking(config)
     parsed_config = {
         estimator: {name: build_search_param(spec) for name, spec in params.items()}
@@ -474,12 +564,44 @@ def fit_experiment_bundle(
     train_score = float(aml.score(X, y))
 
     schema = {column: {"dtype": str(frame[column].dtype)} for column in feature_columns}
+    run_record = _reproducibility_record(
+        task_name,
+        metadata,
+        frame,
+        target,
+        train_partition,
+        configuration={
+            "kind": "automl_experiment",
+            "search_space": requested_config,
+            "length": length,
+            "max_generation": max_generation,
+            "num_parents": num_parents,
+            "random_state": random_state,
+            "surrogate_mode": surrogate_mode,
+            "surrogate_iterations": int(surrogate_itrs) if surrogate_itrs else None,
+            "forbidden": [list(list(rule.items())[0]) for rule in forbidden_rules],
+            "conditional": conditional,
+            "stacking": stacking or None,
+        },
+        transformations=[
+            {
+                "class": "%s.%s" % (step.__class__.__module__, step.__class__.__qualname__)
+            }
+            for step in getattr(best_estimator, "steps", [])
+        ],
+        evaluation_protocol={
+            "scoring": scoring,
+            "cv": cv_spec if cv_spec is not None else {"folds": 3, "source": "default"},
+            "metric_scope": "cross-validation search score; reported train_score is refit training score",
+        },
+    )
     bundle = ModelBundle(
         best_estimator,
         task_name=task_name,
         schema=schema,
         metrics={"train_score": train_score},
-        dataset_fingerprint=metadata.get("dataset_fingerprint"),
+        metadata={"reproducibility": run_record},
+        dataset_fingerprint=run_record["data"]["train_fingerprint"],
         owner=owner,
         run_id=run_id,
     )
@@ -606,12 +728,43 @@ def fit_pipeline_bundle(
         )
 
     schema = {column: {"dtype": str(frame[column].dtype)} for column in feature_columns}
+    run_record = _reproducibility_record(
+        task_name,
+        metadata,
+        frame,
+        target,
+        train_partition,
+        configuration={
+            "kind": "pipeline_optimization",
+            "pipeline": list(seq),
+            "search_space": config or {},
+            "length": len(seq),
+            "random_state": random_state,
+            "surrogate": {
+                "estimator": "sklearn.linear_model.LinearRegression",
+                "iterations": 10,
+            },
+            "stacking": stacking or None,
+        },
+        transformations=[
+            {
+                "class": "%s.%s" % (step.__class__.__module__, step.__class__.__qualname__)
+            }
+            for step in getattr(pipeline, "steps", [])
+        ],
+        evaluation_protocol={
+            "scoring": scoring,
+            "cv": cv_spec if cv_spec is not None else {"folds": 3, "source": "default"},
+            "metric_scope": "cross-validation search score; reported train_score is refit training score",
+        },
+    )
     bundle = ModelBundle(
         pipeline,
         task_name=task_name,
         schema=schema,
         metrics={"train_score": train_score},
-        dataset_fingerprint=metadata.get("dataset_fingerprint"),
+        metadata={"reproducibility": run_record},
+        dataset_fingerprint=run_record["data"]["train_fingerprint"],
         owner=owner,
         run_id=run_id,
     )

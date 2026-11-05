@@ -211,6 +211,19 @@ class TestPhase4Endpoints(unittest.TestCase):
         self.assertTrue(result["pareto"])
         for point in result["pareto"]:
             self.assertEqual(set(point), {"pipeline", "score", "duration"})
+        from SKSurrogate import load_bundle
+
+        bundle = load_bundle(Path(result["bundle_path"]), strict_dependencies=False)
+        provenance = bundle.metadata["reproducibility"]
+        self.assertEqual(provenance["configuration"]["kind"], "automl_experiment")
+        self.assertIn(
+            "sklearn.linear_model.LogisticRegression",
+            provenance["configuration"]["search_space"],
+        )
+        self.assertEqual(provenance["evaluation_protocol"]["scoring"], "accuracy")
+        self.assertEqual(
+            bundle.dataset_fingerprint, provenance["data"]["train_fingerprint"]
+        )
 
     def test_run_experiment_surrogate_mode_records_audit_event(self):
         body = RunExperimentRequest(

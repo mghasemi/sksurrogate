@@ -139,6 +139,38 @@ The directory contains ``MLmodel``, the sklearn ``model.pkl``, and ``bundle.json
 the full bundle metadata. Environments that install MLflow can consume the standard
 ``MLmodel`` and sklearn flavor artifacts.
 
+Run configuration and reports
+=============================
+
+Bundles created by the API's baseline, AutoML experiment, and pipeline-optimization
+workflows snapshot the settings needed to describe their training run. The snapshot
+includes the training-partition fingerprint, row count, features and target, search or
+estimator configuration, transformations, scoring/CV protocol, random seed, and runtime
+versions available at training time. It records unknown target construction and
+upstream exclusions as gaps rather than assuming they did not occur. The bundle's
+``dataset_fingerprint`` identifies the training partition used for that model.
+
+Export the machine-readable run configuration or a concise Markdown report:
+
+.. code-block:: text
+
+    GET /api/bundles/{task_name}/{model_version}/run-config
+    GET /api/bundles/{task_name}/{model_version}/report.md
+
+The JSON response is versioned and includes model/data lineage, stored metrics,
+dependencies, and any repeated-CV evaluations saved for that bundle. The Markdown
+report summarizes methodology, metrics, uncertainty, limitations, and lineage.
+Run nested cross-validation through ``POST /api/evaluation/{task_name}/nested-cv``
+to attach its repeat-level confidence interval and protocol to the bundle. The
+interval is a normal approximation over repeat-level mean outer scores; a single
+repeat yields a degenerate, non-informative interval. Baseline or search metrics
+without a saved repeated-CV evaluation are point estimates with no reported
+uncertainty.
+
+Older or manually-created bundles may lack a provenance snapshot. Their export still
+works, but explicitly reports the missing fields; it cannot reconstruct settings that
+were not persisted when the model was trained.
+
 Compatibility metadata
 ======================
 

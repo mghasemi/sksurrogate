@@ -39,6 +39,7 @@ from SKSurrogate import (
     StackingEstimator,
     export_mlflow,
     predict_batch,
+    dataset_profile,
     drift_report,
     InferenceMonitor,
     delayed_label_performance,
@@ -72,6 +73,77 @@ class MeanRecordingRegressor(RegressorMixin, BaseEstimator):
 
 
 class TestOptimizedPaths(unittest.TestCase):
+    def test_dataset_profile_summarizes_mixed_data_and_associations(self):
+        frame = pd.DataFrame(
+            {
+                "signal": [1.0, 2.0, 3.0, 4.0, np.inf],
+                "redundant": [2.0, 4.0, 6.0, 8.0, np.inf],
+                "group": ["a", "a", "b", "b", None],
+                "target": ["low", "low", "high", "high", "high"],
+            }
+        )
+
+        report = dataset_profile(frame, target="target", max_categories=5)
+
+        self.assertEqual(report["rows"], 5)
+        self.assertEqual(report["sampled_rows"], 5)
+        self.assertEqual(report["target"]["distribution"]["unique"], 2)
+        self.assertEqual(report["target"]["distribution"]["top"][0]["value"], "high")
+        numeric = next(item for item in report["columns"] if item["column"] == "signal")
+        self.assertEqual(numeric["distribution"]["non_finite_count"], 1)
+        self.assertEqual(numeric["distribution"]["count"], 4)
+        pair = next(
+            item
+            for item in report["feature_associations"]
+            if {item["feature_a"], item["feature_b"]} == {"signal", "redundant"}
+        )
+        self.assertEqual(pair["method"], "pearson")
+        self.assertAlmostEqual(pair["value"], 1.0)
+        target_group = next(
+            item for item in report["target_associations"] if item["feature"] == "group"
+        )
+        self.assertEqual(target_group["method"], "cramers_v")
+        self.assertIn("not establish causation", report["interpretation"])
+
+    def test_dataset_profile_sampling_is_deterministic_and_wide_data_requires_selection(self):
+        frame = pd.DataFrame(
+            {
+                "feature": np.arange(100),
+                "other": np.arange(100) % 4,
+                "target": np.arange(100) % 2,
+            }
+        )
+        first = dataset_profile(frame, target="target", max_rows=20, random_state=17)
+        second = dataset_profile(frame, target="target", max_rows=20, random_state=17)
+
+        self.assertEqual(first["sampled_rows"], 20)
+        self.assertTrue(first["row_sampling"]["truncated"])
+        self.assertEqual(first["columns"], second["columns"])
+        self.assertEqual(first["target_associations"], second["target_associations"])
+        with self.assertRaisesRegex(ValueError, "select features explicitly"):
+            dataset_profile(frame, target="target", max_features=1)
+        selected = dataset_profile(
+            frame,
+            target="target",
+            features=["other"],
+            max_features=1,
+        )
+        self.assertEqual(selected["feature_count"], 1)
+
+    def test_dataset_profile_rejects_bad_inputs_and_supports_small_frames(self):
+        frame = pd.DataFrame({"value": [1.0], "target": [None]})
+
+        report = dataset_profile(frame, target="target")
+
+        self.assertEqual(report["target"]["distribution"]["count"], 0)
+        self.assertEqual(report["target"]["distribution"]["unique"], 0)
+        self.assertEqual(report["target"]["distribution"]["top"], [])
+        self.assertEqual(report["target"]["missing_rate"], 1.0)
+        with self.assertRaisesRegex(ValueError, "target column"):
+            dataset_profile(frame, target="missing")
+        with self.assertRaisesRegex(ValueError, "between 1 and 10000"):
+            dataset_profile(frame, max_rows=10001)
+
     def test_drift_report_separates_schema_quality_and_distribution_changes(self):
         reference = pd.DataFrame(
             {"amount": np.arange(100, dtype=float), "segment": ["a", "b"] * 50}

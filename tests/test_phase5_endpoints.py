@@ -84,6 +84,44 @@ class TestPhase5Endpoints(unittest.TestCase):
         self.assertEqual(metadata["dataset_deduced_types"]["measurement"], "int64")
         self.assertTrue((settings.task_dataset_dir(TASK) / "train.csv").exists())
 
+    def test_profile_registered_dataset_returns_bounded_target_diagnostics(self):
+        registration = self._register()
+        report = datasets_router.profile_registered_dataset(
+            TASK,
+            datasets_router.DatasetProfileRequest(
+                partition="train",
+                max_rows=3,
+                random_state=4,
+            ),
+        )
+
+        self.assertEqual(report["target"]["column"], "target")
+        self.assertEqual(report["sampled_rows"], 3)
+        self.assertTrue(report["row_sampling"]["truncated"])
+        self.assertEqual(
+            report["dataset_fingerprint"], registration["dataset_fingerprint"]
+        )
+        self.assertTrue(report["target_associations"])
+        json.dumps(report)
+
+    def test_profile_rejects_missing_partition_and_implicit_feature_truncation(self):
+        self._register()
+
+        with self.assertRaises(HTTPException) as missing:
+            datasets_router.profile_registered_dataset(
+                TASK,
+                datasets_router.DatasetProfileRequest(partition="missing"),
+            )
+        self.assertEqual(missing.exception.status_code, 400)
+
+        with self.assertRaises(HTTPException) as wide:
+            datasets_router.profile_registered_dataset(
+                TASK,
+                datasets_router.DatasetProfileRequest(max_features=1),
+            )
+        self.assertEqual(wide.exception.status_code, 400)
+        self.assertIn("select features explicitly", wide.exception.detail)
+
     def test_register_rejects_unknown_override_column_without_persisting(self):
         with self.assertRaises(HTTPException) as ctx:
             self._register(overrides={"missing": "float64"})

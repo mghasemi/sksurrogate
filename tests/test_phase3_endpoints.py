@@ -13,6 +13,7 @@ as ``train`` / ``validation`` partitions — matching the phase 1 test pattern.
 """
 
 import io
+import json
 import tempfile
 import unittest
 import zipfile
@@ -32,6 +33,7 @@ from SKSurrogate import ModelBundle, ModelRegistry, save_bundle
 from api.config import settings
 from api.deps import open_tracker
 from api.routers import bundles as bundles_router
+from api.routers import lineage as lineage_router
 from api.routers.registry import PromoteRequest, RegisterRequest
 from api.routers import registry as registry_router
 
@@ -188,6 +190,46 @@ class TestPhase3Endpoints(unittest.TestCase):
             bundles_router.best_bundle(TASK, metric="train_score")
 
         self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_run_configuration_and_markdown_report_export(self):
+        response = bundles_router.train_baseline(
+            TASK,
+            bundles_router.TrainBaselineRequest(
+                estimator="logistic_regression",
+                run_id="baseline-run-1",
+            ),
+        )
+
+        config = bundles_router.export_run_configuration(TASK, response["model_version"])
+        report = bundles_router.export_run_report(TASK, response["model_version"])
+        with open_tracker(TASK) as tracker:
+            partitions = tracker.dataset_splits()
+            train_fingerprint = partitions["train"]["fingerprint"]
+        lineage = lineage_router.get_lineage(TASK, response["model_version"])
+
+        self.assertEqual(config["schema"], "sksurrogate.run-configuration.v1")
+        self.assertEqual(config["run_id"], "baseline-run-1")
+        self.assertEqual(config["run"]["data"]["train_partition"], "train")
+        self.assertEqual(config["run"]["data"]["train_fingerprint"], train_fingerprint)
+        self.assertEqual(config["lineage"]["dataset_fingerprint"], train_fingerprint)
+        self.assertEqual(
+            config["run"]["configuration"]["validation_partition_fingerprint"],
+            partitions["validation"]["fingerprint"],
+        )
+        self.assertEqual(
+            lineage["dataset"]["dataset_fingerprint"], train_fingerprint
+        )
+        self.assertEqual(
+            lineage["dataset"]["training"]["train_partition"], "train"
+        )
+        self.assertIn("StandardScaler", config["run"]["transformations"][0]["class"])
+        self.assertTrue(config["metrics"])
+        self.assertEqual(report.media_type, "text/markdown")
+        self.assertIn("## Methodology", report.body.decode("utf-8"))
+        self.assertIn("## Uncertainty", report.body.decode("utf-8"))
+        self.assertIn("point estimates", report.body.decode("utf-8"))
+        self.assertIn("## Lineage", report.body.decode("utf-8"))
+        json.dumps(config)
 
     # ------------------------------------------------------------ 3.1 preserve
 

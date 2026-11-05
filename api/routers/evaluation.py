@@ -16,12 +16,13 @@ Endpoints:
 """
 
 import sqlite3
+from datetime import datetime, timezone
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from SKSurrogate import load_bundle, mltrack
+from SKSurrogate import load_bundle, mltrack, save_bundle
 
 from ..config import settings
 from ..deps import (
@@ -206,6 +207,7 @@ def run_nested_cv(task_name: str, body: NestedCVRequest):
                 repeats=body.repeats,
                 confidence_level=body.confidence_level,
             )
+            tracker_metadata = tracker.GetMetadata()
 
         def _clean(value):
             if isinstance(value, dict):
@@ -217,6 +219,61 @@ def run_nested_cv(task_name: str, body: NestedCVRequest):
         result = _clean(result)
         result["model_version"] = bundle.model_version
         result["task_name"] = task_name
+        bundle.metadata = dict(bundle.metadata or {})
+        evaluations = list(bundle.metadata.get("evaluations", []))
+        partition_history = tracker_metadata.get("dataset_partition_history", {})
+        evaluations.append(
+            {
+                "type": "nested_cv",
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+                "protocol": {
+                    "inner_cv": body.inner_cv,
+                    "outer_cv": body.outer_cv,
+                    "train_partition": body.train_partition,
+                    "validation_partition": body.validation_partition,
+                    "scoring": body.scoring,
+                    "repeats": body.repeats,
+                    "confidence_level": body.confidence_level,
+                },
+                "data": {
+                    "train_fingerprint": partition_history.get(
+                        body.train_partition, {}
+                    ).get("fingerprint"),
+                    "validation_fingerprint": partition_history.get(
+                        body.validation_partition, {}
+                    ).get("fingerprint"),
+                },
+                "metrics": {
+                    "mean_outer_score": result.get("mean_outer_score"),
+                    "final_validation_score": result.get("final_validation_score"),
+                },
+                "uncertainty": {
+                    "repeated_outer_scores": result.get("repeated_outer_scores", []),
+                    "confidence_interval": result.get("confidence_interval"),
+                    "method": "normal approximation over repeat-level mean outer scores",
+                    "informative": body.repeats > 1,
+                },
+            }
+        )
+        bundle.metadata["evaluations"] = evaluations[-20:]
+        local_bundle_path = (
+            settings.task_bundles_dir(task_name) / (bundle.model_version + ".bundle")
+        )
+        registry_bundle_path = (
+            settings.registry_dir / task_name / (bundle.model_version + ".bundle")
+        )
+        bundle_paths = (
+            (registry_bundle_path, local_bundle_path)
+            if body.alias is not None
+            else (local_bundle_path, registry_bundle_path)
+        )
+        bundle_path = next((path for path in bundle_paths if path.exists()), None)
+        if bundle_path is None:
+            raise FileNotFoundError(
+                "Resolved bundle %r has no persistent bundle file"
+                % bundle.model_version
+            )
+        save_bundle(bundle, bundle_path)
         return result
 
     job_id = job_manager.submit(task_name, "nested-cv", lambda job_id: _task)

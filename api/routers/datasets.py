@@ -14,7 +14,7 @@ from typing import Annotated
 
 import pandas as pd
 from fastapi import APIRouter, File, Form, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from SKSurrogate import (
     STANDARD_CV_SPLITTERS,
@@ -22,6 +22,7 @@ from SKSurrogate import (
     ModelRegistry,
     cv_param_defs,
     default_cv_spec,
+    dataset_profile,
     sensitive_feature_report,
 )
 
@@ -79,6 +80,47 @@ class SetCVRequest(BaseModel):
 
     spec: dict | int
     params: dict[str, object] | None = None
+
+
+class DatasetProfileRequest(BaseModel):
+    partition: str = "train"
+    target: str | None = None
+    features: list[str] | None = None
+    max_rows: int = Field(default=5000, ge=1, le=10000)
+    max_features: int = Field(default=50, ge=1, le=100)
+    max_categories: int = Field(default=10, ge=1, le=50)
+    random_state: int | None = 0
+
+
+@router.post("/{task_name}/profile")
+def profile_registered_dataset(task_name: str, body: DatasetProfileRequest):
+    """Return bounded descriptive statistics and association diagnostics."""
+    if not settings.mltrace_db_path(task_name).exists():
+        raise not_found("No dataset registered for task %r" % task_name)
+    try:
+        with open_tracker(task_name) as tracker:
+            frame = tracker.get_dataframe(partition=body.partition)
+            metadata = tracker.GetMetadata()
+        target = body.target or metadata.get("target_name")
+        report = dataset_profile(
+            frame,
+            target=target,
+            features=body.features,
+            max_rows=body.max_rows,
+            max_features=body.max_features,
+            max_categories=body.max_categories,
+            random_state=body.random_state,
+        )
+    except ValueError as exc:
+        raise bad_request(str(exc))
+    return {
+        "task_name": task_name,
+        "partition": body.partition,
+        "dataset_fingerprint": metadata.get("dataset_partition_history", {})
+        .get(body.partition, {})
+        .get("fingerprint"),
+        **report,
+    }
 
 
 @router.get("/{task_name}/cv")

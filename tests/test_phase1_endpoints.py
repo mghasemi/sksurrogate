@@ -26,12 +26,13 @@ import pandas as pd
 from fastapi import HTTPException
 from sklearn.linear_model import LinearRegression, LogisticRegression
 
-from SKSurrogate import ModelBundle, save_bundle
+from SKSurrogate import ModelBundle, load_bundle, save_bundle
 
 from api.config import settings
 from api.deps import open_tracker
 from api.jobs import job_manager
 from api.routers import datasets as datasets_router
+from api.routers import bundles as bundles_router
 from api.routers import evaluation as evaluation_router
 from api.routers import sensitivity as sensitivity_router
 
@@ -86,6 +87,7 @@ class TestPhase1Endpoints(unittest.TestCase):
         with open_tracker(TASK) as tracker:
             tracker.RegisterData(train, TARGET, partition="train")
             tracker.RegisterData(validation, TARGET, partition="validation")
+            self._train_fingerprint = tracker.dataset_splits()["train"]["fingerprint"]
 
         self._save_bundle(
             LogisticRegression(max_iter=300).fit(
@@ -292,6 +294,58 @@ class TestPhase1Endpoints(unittest.TestCase):
 
         for fold in result["fold_metrics"]:
             self.assertEqual(len(fold["outer_predictions"]), len(fold["outer_truth"]))
+
+        bundle = load_bundle(
+            settings.task_bundles_dir(TASK)
+            / (CLASSIFIER_VERSION + ".bundle"),
+            strict_dependencies=False,
+        )
+        evaluation = bundle.metadata["evaluations"][-1]
+        self.assertEqual(evaluation["type"], "nested_cv")
+        self.assertEqual(evaluation["protocol"]["repeats"], 1)
+        self.assertEqual(
+            evaluation["data"]["train_fingerprint"], self._train_fingerprint
+        )
+        self.assertFalse(evaluation["uncertainty"]["informative"])
+        run_config = bundles_router.run_configuration(TASK, CLASSIFIER_VERSION)
+        self.assertEqual(len(run_config["evaluations"]), 1)
+        self.assertIn(
+            "confidence_interval",
+            run_config["evaluations"][0]["uncertainty"],
+        )
+        report = bundles_router.export_run_report(TASK, CLASSIFIER_VERSION)
+        self.assertIn("confidence interval", report.body.decode("utf-8"))
+
+    def test_nested_cv_persists_evaluation_to_the_selected_registry_version(self):
+        from SKSurrogate import ModelRegistry
+
+        model = load_bundle(
+            settings.task_bundles_dir(TASK)
+            / (CLASSIFIER_VERSION + ".bundle"),
+            strict_dependencies=False,
+        )
+        ModelRegistry(settings.registry_dir).register(model)
+
+        submitted = evaluation_router.run_nested_cv(
+            TASK,
+            evaluation_router.NestedCVRequest(
+                alias="latest",
+                inner_cv=2,
+                outer_cv=2,
+                repeats=2,
+            ),
+        )
+        record = _wait_for_job(submitted["job_id"])
+        self.assertEqual(record["status"], "completed", record["error"])
+
+        registered = load_bundle(
+            settings.registry_dir / TASK / (CLASSIFIER_VERSION + ".bundle"),
+            strict_dependencies=False,
+        )
+        evaluation = registered.metadata["evaluations"][-1]
+        self.assertEqual(evaluation["protocol"]["repeats"], 2)
+        self.assertTrue(evaluation["uncertainty"]["informative"])
+        self.assertEqual(len(evaluation["uncertainty"]["repeated_outer_scores"]), 2)
 
     def test_nested_cv_requires_exactly_one_bundle_selector(self):
         with self.assertRaises(HTTPException) as ctx:

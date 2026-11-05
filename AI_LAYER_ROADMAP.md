@@ -79,12 +79,12 @@ scope or status.
 | Fold-safe preprocessing and column routing | Partial | AML's candidate preprocessing is fold-local, with `FoldLocalDataPreprocessor` available (P0.2). The legacy eager `DataPreprocess.encode()` workflow remains distinct and is documented as unsafe to fit before CV. High-cardinality/text improvements are not included in this completed fix. |
 | Search cost and surrogate robustness | Partial | Hilbert numerical guards and surrogate diagnostics are implemented (P0.3). The previous real-workload probe mislabeled the library's default GP arm as Hilbert; the benchmark now injects and records Hilbert explicitly, and corrected real-workload comparisons are documented. Component profiling is complete; optimization remains P1.2. |
 | Ensembling, TabPFN, and pruning integrations | Deferred | A bounded holdout-selected ensemble probe (P1.8) showed only a small, inconsistent gain; do not ship a production ensemble API without representative evidence. Do not add heavyweight dependencies by default. |
-| EDA and data intelligence | Missing | Data typing/preprocessing is not a scientific EDA report. Scope a bounded profile under P2.1; unit inference and document extraction remain deferred. |
+| EDA and data intelligence | Partial | P2.1 adds bounded mixed-type dataset profiles and registered-partition API access, with exploratory/non-causal caveats. Unit inference and document extraction remain deferred. |
 | Evaluation uncertainty and statistical comparison | Partial | Nested/repeated evaluation and interval summaries already exist. P1.4 adds paired repeat-score bootstrap intervals/effect sizes and split-conformal regression; broader inferential tests remain future work. |
 | Explanations and diagnostic plots | Partial | Sensitivity analysis and P1.4 diagnostics exist; P1.5 adds bounded permutation importance and partial-dependence/ICE plots. SHAP remains a separately evaluated, deferred optional integration. |
 | Additional scientific problem classes | Deferred | Time-series, survival, and other specialized tasks require task-specific protocols; retain under P3 rather than extending generic search without validation. |
-| Data provenance and lineage | Partial | Fingerprints, schema/partition identity, run metadata, and model lineage exist in the MLOps foundation. Scientific transformation/target provenance and exports remain P2.2. |
-| Research projects, notebooks, and reports | Missing | Existing tracking and API workflows are foundations, not project/hypothesis management or reproducible notebook/report generation; retain P2.3/P2.5. |
+| Data provenance and lineage | Partial | P2.2 snapshots training settings, partition identity, environment, and evaluation protocol on newly trained API bundles, with JSON/Markdown exports and persisted nested-CV uncertainty. Target construction and upstream exclusions remain user-supplied provenance gaps. |
+| Research projects, notebooks, and reports | Partial | P2.2 adds reproducibility exports; P2.3 adds executable offline scientific and standard-library Python API client notebooks. Research-project/hypothesis management remains P2.5. |
 | Promotion quality gates | Existing | The server-side gate is implemented and shared by UI/API promotion flows (P0.4); do not duplicate this recommendation. |
 | Monitoring persistence and retention | Partial | Inference measurements persist as JSONL and can be reloaded; automatic expiration is unresolved (P0.5). Avoid imposing a retention duration without a deployment requirement. |
 | Automated retraining | Partial | Scheduled/on-data trigger entry points and retraining logic exist, but no automatic scheduler/webhook evaluates and submits due work (P1.7). |
@@ -389,42 +389,81 @@ are specified. The current bounded result and reproduction command are in
 
 #### P2.1 Add a useful scientific EDA entry point
 
-- [ ] Provide a bounded dataset profile covering distributions, missingness,
+- **Status:** Complete — added a bounded mixed-type profile helper and a
+  registered-partition API endpoint with target inference and partition
+  fingerprints.
+- [x] Provide a bounded dataset profile covering distributions, missingness,
   target balance/distribution, associations, and potential redundancy.
-- [ ] Include row/feature limits and clear handling of mixed types and small
+- [x] Include row/feature limits and clear handling of mixed types and small
   datasets.
-- [ ] Present findings as diagnostic signals, not proof of leakage, causation,
+- [x] Present findings as diagnostic signals, not proof of leakage, causation,
   or scientific mechanisms.
-- [ ] Reuse existing dataset and API/UI flows where possible.
+- [x] Reuse existing registered-dataset and API flows; no separate UI was
+  needed for this API-scoped change.
 
 **Done when:** a user can inspect data quality and basic target/feature
 relationships before launching model search, with tests for mixed data.
+**Verified:** ``dataset_profile`` reports numeric quantiles and non-finite
+counts, categorical frequencies, missingness, target and pairwise associations;
+sampling is bounded and seeded when requested. The registered API supports a
+selected partition, target inference, and partition fingerprint. It rejects
+implicit feature truncation, and its report explicitly disclaims causal,
+leakage, and mechanism claims. Focused validation: 97 tests passed across
+``tests/test_optimized_paths.py`` and ``tests/test_phase5_endpoints.py``;
+changed Python modules compiled and ``git diff --check`` passed.
 
 #### P2.2 Improve scientific provenance and result export
 
-- [ ] Build on existing dataset fingerprints, partitions, run metadata, and
+- **Status:** Complete for API-created baseline, AutoML, and pipeline-optimization
+  bundles; legacy/manual bundles remain explicitly incomplete.
+- [x] Build on existing dataset fingerprints, partitions, run metadata, and
   model lineage.
-- [ ] Identify any missing reproducibility fields (transformations, target
+- [x] Identify any missing reproducibility fields (transformations, target
   construction, excluded observations, seeds, environment, and evaluation
-  protocol) and persist only fields needed to reconstruct a run.
-- [ ] Export a machine-readable run configuration and a concise Markdown or
+  protocol) and persist only fields needed to reconstruct or audit a run.
+- [x] Export a machine-readable run configuration and a concise Markdown or
   HTML report with methodology, metrics, uncertainty, limitations, and lineage.
 
 **Done when:** a saved report/config can identify the data and settings used
 and reproduce the analysis to the documented level of determinism.
+**Verified:** new API-trained bundles snapshot the exact training-partition
+fingerprint, selected features, target, row count, transformations, estimator
+or search configuration, seeds, scoring/CV protocol, and runtime versions.
+Baseline, AutoML, and fixed-pipeline training are covered; model
+``dataset_fingerprint`` now points to the training partition rather than the
+last partition registered. Repeated nested-CV summaries (protocol, partition
+fingerprints, repeat-level scores, and confidence interval) are saved to the
+selected bundle, including registry-alias bundles, with the most recent 20
+evaluations retained. The API exports a versioned JSON configuration and a
+downloadable Markdown report; lineage now identifies the bundle's exact
+training data. Missing target-construction and upstream-exclusion provenance is
+reported as unknown. Manual/legacy bundles remain readable but may not have
+settings that were never recorded. Focused validation: 52 tests passed across
+the evaluation, bundle, and experiment endpoint suites; changed Python modules
+compiled and ``git diff --check`` passed.
 
 #### P2.3 Support Jupyter without building a new notebook environment
 
-- [ ] Ensure major API workflows are usable from Python clients.
-- [ ] Add a small set of notebook examples/templates for data inspection,
+- **Status:** Complete — added two source-only notebooks and user-facing
+  setup/run documentation; Jupyter remains optional.
+- [x] Ensure major API workflows are usable from Python clients.
+- [x] Add a small set of notebook examples/templates for data inspection,
   search, evaluation, and interpretation.
-- [ ] Prefer portable, executable notebooks/config exports over screenshots or
+- [x] Prefer portable, executable notebooks/config exports over screenshots or
   a proprietary notebook runtime.
-- [ ] Consider interactive widgets only where they materially improve notebook
-  use and do not introduce a mandatory UI service.
+- [x] Keep widgets and a notebook service out of the package runtime; neither
+  improves these bounded starter workflows enough to justify an extra
+  dependency or service.
 
 **Done when:** documented notebook workflows run against the public Python/API
 surface and produce reproducible outputs.
+**Verified:** ``scientific_workflow.ipynb`` executed end-to-end using seeded
+synthetic data, bounded classification search, repeated nested-CV, and
+validation-partition permutation importance. ``python_api_workflow.ipynb``
+executed end-to-end against a temporary local API server, including multipart
+partition registration, profile, search job polling, nested-CV polling, and
+JSON/Markdown report retrieval. Both notebooks parse as nbformat 4 JSON and all
+code cells compile. Sphinx documentation build and ``git diff --check`` passed.
 
 #### P2.4 Prototype experiment design and active learning
 

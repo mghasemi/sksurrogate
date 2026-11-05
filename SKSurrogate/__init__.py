@@ -38,6 +38,7 @@ from .inference import SchemaValidationError, create_app, predict_batch, serve
 from .monitoring import (
     InferenceMonitor,
     delayed_label_performance,
+    dataset_profile,
     drift_report,
     fairness_report,
     loss_report,
@@ -100,6 +101,7 @@ __all__ = [
     "SchemaValidationError",
     "create_app",
     "serve",
+    "dataset_profile",
     "drift_report",
     "fairness_report",
     "prediction_distribution_report",

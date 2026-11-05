@@ -46,6 +46,295 @@ def _numeric_drift(reference, current, bins):
     return {"method": "psi", "value": psi, "bins": edges.tolist()}
 
 
+def _profile_column_kind(series):
+    if pd.api.types.is_numeric_dtype(series.dtype) and not pd.api.types.is_bool_dtype(
+        series.dtype
+    ) and not pd.api.types.is_complex_dtype(series.dtype):
+        return "numeric"
+    return "categorical"
+
+
+def _numeric_summary(series):
+    values = pd.to_numeric(series, errors="coerce").dropna().to_numpy(dtype=float)
+    finite = np.isfinite(values)
+    non_finite_count = int(np.sum(~finite))
+    values = values[finite]
+    if not values.size:
+        return {
+            "count": 0,
+            "non_finite_count": non_finite_count,
+            "mean": None,
+            "std": None,
+            "min": None,
+            "q25": None,
+            "median": None,
+            "q75": None,
+            "max": None,
+        }
+    quantiles = np.quantile(values, [0.25, 0.5, 0.75])
+    return {
+        "count": int(values.size),
+        "non_finite_count": non_finite_count,
+        "mean": float(np.mean(values)),
+        "std": float(np.std(values, ddof=1)) if values.size > 1 else 0.0,
+        "min": float(np.min(values)),
+        "q25": float(quantiles[0]),
+        "median": float(quantiles[1]),
+        "q75": float(quantiles[2]),
+        "max": float(np.max(values)),
+    }
+
+
+def _profile_categorical_values(series, max_categories):
+    counts = series.dropna().astype(str).value_counts()
+    total = int(counts.sum())
+    return {
+        "count": total,
+        "unique": int(counts.size),
+        "top": [
+            {
+                "value": str(value),
+                "count": int(count),
+                "proportion": float(count / total) if total else 0.0,
+            }
+            for value, count in counts.head(max_categories).items()
+        ],
+        "other_count": int(counts.iloc[max_categories:].sum()),
+    }
+
+
+def _profile_categorical_codes(series, max_categories):
+    values = series.astype("string").fillna("<missing>")
+    counts = values.value_counts()
+    retained = set(counts.head(max_categories).index)
+    return values.where(values.isin(retained), "<other>").astype(str)
+
+
+def _cramers_v(left, right, max_categories):
+    left_codes = _profile_categorical_codes(left, max_categories)
+    right_codes = _profile_categorical_codes(right, max_categories)
+    table = pd.crosstab(left_codes, right_codes).to_numpy(dtype=float)
+    sample_count = float(table.sum())
+    if sample_count < 2 or min(table.shape) < 2:
+        return None
+    expected = np.outer(table.sum(axis=1), table.sum(axis=0)) / sample_count
+    valid = expected > 0
+    chi_square = float(np.sum(((table - expected) ** 2)[valid] / expected[valid]))
+    denominator = sample_count * min(table.shape[0] - 1, table.shape[1] - 1)
+    return float(np.sqrt(chi_square / denominator)) if denominator > 0 else None
+
+
+def _correlation_ratio(categories, values, max_categories):
+    category_codes = _profile_categorical_codes(categories, max_categories)
+    numeric_values = pd.to_numeric(values, errors="coerce").replace(
+        [np.inf, -np.inf], np.nan
+    )
+    valid = numeric_values.notna()
+    numeric_values = numeric_values[valid].to_numpy(dtype=float)
+    category_codes = category_codes[valid.to_numpy()]
+    if numeric_values.size < 2 or np.var(numeric_values) == 0:
+        return None
+    mean = float(np.mean(numeric_values))
+    between = 0.0
+    for category in np.unique(category_codes):
+        group = numeric_values[category_codes == category]
+        between += len(group) * (float(np.mean(group)) - mean) ** 2
+    return float(np.sqrt(between / (numeric_values.size * np.var(numeric_values))))
+
+
+def _profile_association(left, right, left_kind, right_kind, max_categories):
+    if left_kind == "numeric" and right_kind == "numeric":
+        pair = pd.concat(
+            [
+                pd.to_numeric(left, errors="coerce").replace([np.inf, -np.inf], np.nan).rename("left"),
+                pd.to_numeric(right, errors="coerce").replace([np.inf, -np.inf], np.nan).rename("right"),
+            ],
+            axis=1,
+        ).dropna()
+        if len(pair) < 2 or pair["left"].nunique() < 2 or pair["right"].nunique() < 2:
+            return "pearson", None
+        return "pearson", float(pair["left"].corr(pair["right"]))
+    if left_kind == "categorical" and right_kind == "categorical":
+        return "cramers_v", _cramers_v(left, right, max_categories)
+    if left_kind == "categorical":
+        return "correlation_ratio", _correlation_ratio(left, right, max_categories)
+    return "correlation_ratio", _correlation_ratio(right, left, max_categories)
+
+
+def dataset_profile(
+    frame,
+    *,
+    target=None,
+    features=None,
+    max_rows=5000,
+    max_features=50,
+    max_categories=10,
+    random_state=0,
+):
+    """Return bounded mixed-type EDA summaries and association diagnostics.
+
+    Numeric columns use descriptive quantiles; other columns use bounded
+    frequency summaries. Target associations and pairwise feature associations
+    use Pearson correlation, correlation ratio, or Cramer's V as appropriate.
+    Rows are sampled without replacement when needed. These statistics are
+    exploratory associations, not evidence of causation or scientific
+    mechanisms.
+    """
+    if not isinstance(frame, pd.DataFrame):
+        raise TypeError("frame must be a pandas DataFrame")
+    if frame.empty:
+        raise ValueError("frame must contain at least one row")
+    for name, value, maximum in (
+        ("max_rows", max_rows, 10000),
+        ("max_features", max_features, 100),
+        ("max_categories", max_categories, 50),
+    ):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, np.integer))
+            or value < 1
+            or value > maximum
+        ):
+            raise ValueError("%s must be an integer between 1 and %d" % (name, maximum))
+    if random_state is not None and (
+        isinstance(random_state, bool)
+        or not isinstance(random_state, (int, np.integer))
+    ):
+        raise ValueError("random_state must be an integer or None")
+    if frame.columns.duplicated().any():
+        raise ValueError("frame column names must be unique")
+    if target is not None and target not in frame.columns:
+        raise ValueError("target column %r is not in frame" % target)
+
+    all_features = [column for column in frame.columns if column != target]
+    if features is None:
+        if len(all_features) > max_features:
+            raise ValueError(
+                "Dataset has %d features, exceeding max_features=%d; "
+                "select features explicitly" % (len(all_features), max_features)
+            )
+        selected_features = all_features
+    else:
+        if isinstance(features, str):
+            features = [features]
+        if not isinstance(features, (list, tuple)) or not features:
+            raise ValueError("features must be a non-empty sequence")
+        if len(features) > max_features:
+            raise ValueError("Selected features exceed max_features=%d" % max_features)
+        if len(features) != len(set(features)):
+            raise ValueError("features must be unique")
+        invalid = [column for column in features if column not in all_features]
+        if invalid:
+            raise ValueError("Unknown or non-feature columns selected: %s" % invalid)
+        selected_features = list(features)
+    if not selected_features:
+        raise ValueError("At least one feature column is required")
+
+    original_rows = len(frame)
+    if original_rows > max_rows:
+        sample_seed = None if random_state is None else int(random_state)
+        sample = frame.sample(n=max_rows, replace=False, random_state=sample_seed)
+    else:
+        sample = frame.copy()
+
+    kinds = {column: _profile_column_kind(sample[column]) for column in selected_features}
+    profile_columns = []
+    for column in selected_features:
+        series = sample[column]
+        kind = kinds[column]
+        profile_columns.append(
+            {
+                "column": column,
+                "dtype": str(frame[column].dtype),
+                "kind": kind,
+                "missing_count": int(series.isna().sum()),
+                "missing_rate": float(series.isna().mean()),
+                "unique_count": int(series.nunique(dropna=True)),
+                "distribution": (
+                    _numeric_summary(series)
+                    if kind == "numeric"
+                    else _profile_categorical_values(series, max_categories)
+                ),
+            }
+        )
+
+    target_profile = None
+    target_associations = []
+    if target is not None:
+        target_series = sample[target]
+        target_kind = _profile_column_kind(target_series)
+        target_profile = {
+            "column": target,
+            "dtype": str(frame[target].dtype),
+            "kind": target_kind,
+            "missing_count": int(target_series.isna().sum()),
+            "missing_rate": float(target_series.isna().mean()),
+            "unique_count": int(target_series.nunique(dropna=True)),
+            "distribution": (
+                _numeric_summary(target_series)
+                if target_kind == "numeric"
+                else _profile_categorical_values(target_series, max_categories)
+            ),
+        }
+        for column in selected_features:
+            method, value = _profile_association(
+                sample[column],
+                target_series,
+                kinds[column],
+                target_kind,
+                max_categories,
+            )
+            target_associations.append(
+                {"feature": column, "method": method, "value": value}
+            )
+        target_associations.sort(
+            key=lambda item: (
+                item["value"] is None,
+                -item["value"] if item["value"] is not None else 0.0,
+                str(item["feature"]),
+            )
+        )
+
+    feature_associations = []
+    for left_index, left in enumerate(selected_features):
+        for right in selected_features[left_index + 1 :]:
+            method, value = _profile_association(
+                sample[left], sample[right], kinds[left], kinds[right], max_categories
+            )
+            if value is not None:
+                feature_associations.append(
+                    {
+                        "feature_a": left,
+                        "feature_b": right,
+                        "method": method,
+                        "value": value,
+                    }
+                )
+    feature_associations.sort(
+        key=lambda item: (-abs(item["value"]), str(item["feature_a"]), str(item["feature_b"]))
+    )
+    return {
+        "rows": int(original_rows),
+        "sampled_rows": int(len(sample)),
+        "row_limit": int(max_rows),
+        "random_state": int(random_state) if random_state is not None else None,
+        "row_sampling": {
+            "method": "without_replacement" if original_rows > max_rows else "none",
+            "truncated": bool(original_rows > max_rows),
+        },
+        "feature_count": int(len(selected_features)),
+        "feature_limit": int(max_features),
+        "target": target_profile,
+        "columns": profile_columns,
+        "target_associations": target_associations,
+        "feature_associations": feature_associations,
+        "interpretation": (
+            "Descriptive diagnostics and associations only; results do not "
+            "establish causation, leakage, or scientific mechanisms."
+        ),
+    }
+
+
 def drift_report(
     reference,
     current,
