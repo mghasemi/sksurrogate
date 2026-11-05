@@ -307,6 +307,12 @@ class TestPhase2Endpoints(unittest.TestCase):
         self.assertIn("customer_name", report["pii_columns"])
         self.assertIn("api_key", report["sensitive_columns"])
         self.assertNotIn("age", report["pii_columns"])
+        self.assertIn(
+            {"column": "user_email", "pattern_counts": {"email": 10}, "scanned_values": 10},
+            report["value_findings"],
+        )
+        self.assertEqual(report["value_scan"]["rows_scanned"], 10)
+        self.assertNotIn("a@x.com", repr(report))
         self.assertTrue(report["warnings"])
 
     def test_sensitive_scan_accepts_explicit_columns(self):
@@ -366,6 +372,15 @@ class TestPhase2Endpoints(unittest.TestCase):
         self.assertIn("user_email", scan["pii_columns"])
         self.assertIn("customer_name", scan["pii_columns"])
         self.assertIn("api_key", scan["sensitive_columns"])
+        self.assertIn(
+            {
+                "column": "user_email",
+                "pattern_counts": {"email": 20},
+                "scanned_values": 20,
+            },
+            scan["value_findings"],
+        )
+        self.assertNotIn("a0@x.com", repr(scan))
         self.assertTrue(scan["warnings"])
 
 

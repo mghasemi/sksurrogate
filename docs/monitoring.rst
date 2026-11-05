@@ -77,16 +77,29 @@ highlight PII-like and user-declared sensitive columns before they reach a model
     from SKSurrogate import sensitive_feature_report
 
     frame = pd.DataFrame({
-        "email": ["a@example.com", "b@example.com"],
-        "ssn": ["123", "456"],
+        "contact": ["a@example.com", "b@example.com"],
+        "reference": ["123-45-6789", "not an SSN"],
         "amount": [25.0, 42.0],
     })
-    report = sensitive_feature_report(frame, sensitive_features=["ssn"])
+    report = sensitive_feature_report(
+        frame, sensitive_features=["reference"], max_scan_rows=1000
+    )
 
 The report returns ``pii_columns`` and ``sensitive_columns`` together with a list of
-warning strings, which can be attached to a training run or CI gate before model
-registration. Sensitive keys such as ``api_key``, ``password``, and ``token`` are also
-redacted automatically from bundle audit metadata and registry event payloads.
+warning strings, plus ``value_findings`` containing the column name and counts for
+email, formatted US SSN, and formatted US phone patterns. It scans at most the first
+1,000 rows by default (up to 10,000 when explicitly configured) and reports the row
+limit and whether the frame was truncated. Only text and integer cells are checked.
+Matched cell contents are never returned or included in warnings; the scan is local
+and does not persist data. Pattern matches are indicators, not verified identities,
+and may produce false positives. A lack of matches does not prove that a dataset is
+free of PII. Unnamed columns are still scanned by value. Column-name matching uses
+whole tokens, avoiding false matches such as ``Unnamed: 0`` matching ``name``.
+
+The dataset preview, registration response, and stored-partition sensitive-scan
+endpoint all return the same bounded count-only report. Sensitive keys such as
+``api_key``, ``password``, and ``token`` are also redacted automatically from bundle
+audit metadata and registry event payloads.
 
 Use ``fairness_report`` to compare selection rates and true-positive rates across
 configured groups. This is useful for detecting demographic parity or equal-opportunity

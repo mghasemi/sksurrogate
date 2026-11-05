@@ -7,13 +7,25 @@ from .ci import check_bundle_quality
 class RetrainingJob:
     """Run a trainer when a scheduled or data-driven trigger is satisfied."""
 
-    def __init__(self, trainer, registry, task_name, promotion_state=None):
+    def __init__(
+        self,
+        trainer,
+        registry,
+        task_name,
+        promotion_state=None,
+        quality_metric_thresholds=None,
+    ):
         if not callable(trainer):
             raise TypeError("trainer must be callable")
+        if quality_metric_thresholds is not None and not isinstance(
+            quality_metric_thresholds, dict
+        ):
+            raise TypeError("quality_metric_thresholds must be a dictionary or None")
         self.trainer = trainer
         self.registry = registry
         self.task_name = task_name
         self.promotion_state = promotion_state
+        self.quality_metric_thresholds = quality_metric_thresholds or {}
 
     def run(self, *, trigger=None, context=None):
         context = {} if context is None else dict(context)
@@ -29,7 +41,9 @@ class RetrainingJob:
             raise ValueError("trainer returned a bundle for a different task")
         quality_report = None
         if self.promotion_state is not None:
-            quality_report = check_bundle_quality(bundle)
+            quality_report = check_bundle_quality(
+                bundle, metric_thresholds=self.quality_metric_thresholds
+            )
             if not quality_report["passed"]:
                 raise ValueError("Retrained bundle failed quality gates")
         model_version = self.registry.register(bundle)

@@ -178,6 +178,45 @@ class TestOptimizedPaths(unittest.TestCase):
         self.assertIn("ssn", report["sensitive_columns"])
         self.assertTrue(report["warnings"])
 
+    def test_sensitive_feature_report_scans_bounded_values_without_returning_them(self):
+        private_email = "person@example.org"
+        private_ssn = "123-45-6789"
+        private_phone = "(212) 555-0199"
+        frame = pd.DataFrame(
+            {
+                0: [private_email, "not-an-email", "later@example.org"],
+                "reference": [private_ssn, "invoice 1234567890", "000-00-0000"],
+                "comment": [private_phone, "order 2125550199", "555-55-5555"],
+            }
+        )
+
+        report = sensitive_feature_report(frame, max_scan_rows=2)
+
+        findings = {
+            item["column"]: item["pattern_counts"]
+            for item in report["value_findings"]
+        }
+        self.assertEqual(findings[0], {"email": 1})
+        self.assertEqual(findings["reference"], {"ssn": 1})
+        self.assertEqual(findings["comment"], {"phone": 1})
+        self.assertEqual(
+            report["value_scan"],
+            {"rows_scanned": 2, "row_limit": 2, "truncated": True},
+        )
+        rendered_report = repr(report)
+        for private_value in (private_email, private_ssn, private_phone):
+            self.assertNotIn(private_value, rendered_report)
+
+        false_positive_frame = pd.DataFrame(
+            {"Unnamed: 0": ["order 1234567890", "ordinary text", None]}
+        )
+        false_positive_report = sensitive_feature_report(false_positive_frame)
+        self.assertEqual(false_positive_report["value_findings"], [])
+        self.assertEqual(false_positive_report["pii_columns"], [])
+
+        with self.assertRaisesRegex(ValueError, "between 1 and 10000"):
+            sensitive_feature_report(frame, max_scan_rows=10001)
+
     def test_registry_retention_deletes_artifacts_by_task_model_and_dataset(self):
         with tempfile.TemporaryDirectory() as directory:
             registry = ModelRegistry(directory)
@@ -366,6 +405,24 @@ class TestOptimizedPaths(unittest.TestCase):
             self.assertTrue(result["quality_report"]["passed"])
             self.assertEqual(calls, [{"new_data": True}])
             self.assertEqual(registry.audit_log("phase9-retraining")[-1]["to"], "staging")
+
+    def test_phase9_retraining_quality_threshold_blocks_registration_and_promotion(self):
+        model = DummyClassifier(strategy="most_frequent").fit(
+            np.array([[0.0], [1.0]]), np.array([0, 1])
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            registry = ModelRegistry(directory)
+            job = RetrainingJob(
+                lambda context: ModelBundle(model, metrics={"accuracy": 0.7}),
+                registry,
+                "quality-gated-retraining",
+                promotion_state="staging",
+                quality_metric_thresholds={"accuracy": 0.8},
+            )
+
+            with self.assertRaisesRegex(ValueError, "failed quality gates"):
+                job.run(context={})
+            self.assertFalse((Path(directory) / "quality-gated-retraining").exists())
 
     def test_phase9_deployment_gate_requires_approval_and_preserves_rollback_audit(self):
         model = DummyClassifier(strategy="most_frequent").fit(

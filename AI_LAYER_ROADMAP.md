@@ -13,8 +13,11 @@ P1.1 quick-start presets are complete, P1.2 has baseline and component
 profiles with optimization still open, P1.3 has corrected EOA aliases, and
 P1.4 evaluation diagnostics are complete for the scoped tasks. P1.5 model
 explanations are complete for bounded permutation importance and
-partial-dependence/ICE plots; optional SHAP integration remains deferred. The
-broader recommendation audit is complete.
+partial-dependence/ICE plots; optional SHAP integration remains deferred.
+P1.6 bounded sensitive-feature detection and P1.7 external triggered
+retraining are complete for the scoped integrations. P1.8 was evaluated and
+deferred because the bounded ensemble probe showed no consistent useful gain.
+The broader recommendation audit is complete.
 
 The source assessments describe possible gaps based largely on documentation,
 not a verified code audit. Before implementing any item, check the current
@@ -75,7 +78,7 @@ scope or status.
 | DataFrame names and categorical columns in AML | Existing | The source claim that AML strips DataFrames is stale: inputs and named categorical columns are preserved in current paths; keep compatibility work in P1.3 rather than redoing the feature. |
 | Fold-safe preprocessing and column routing | Partial | AML's candidate preprocessing is fold-local, with `FoldLocalDataPreprocessor` available (P0.2). The legacy eager `DataPreprocess.encode()` workflow remains distinct and is documented as unsafe to fit before CV. High-cardinality/text improvements are not included in this completed fix. |
 | Search cost and surrogate robustness | Partial | Hilbert numerical guards and surrogate diagnostics are implemented (P0.3). The previous real-workload probe mislabeled the library's default GP arm as Hilbert; the benchmark now injects and records Hilbert explicitly, and corrected real-workload comparisons are documented. Component profiling is complete; optimization remains P1.2. |
-| Ensembling, TabPFN, and pruning integrations | Deferred | Not needed to close a verified correctness gap; evaluate bounded optional ensembling under P1.8. Do not add heavyweight dependencies by default. |
+| Ensembling, TabPFN, and pruning integrations | Deferred | A bounded holdout-selected ensemble probe (P1.8) showed only a small, inconsistent gain; do not ship a production ensemble API without representative evidence. Do not add heavyweight dependencies by default. |
 | EDA and data intelligence | Missing | Data typing/preprocessing is not a scientific EDA report. Scope a bounded profile under P2.1; unit inference and document extraction remain deferred. |
 | Evaluation uncertainty and statistical comparison | Partial | Nested/repeated evaluation and interval summaries already exist. P1.4 adds paired repeat-score bootstrap intervals/effect sizes and split-conformal regression; broader inferential tests remain future work. |
 | Explanations and diagnostic plots | Partial | Sensitivity analysis and P1.4 diagnostics exist; P1.5 adds bounded permutation importance and partial-dependence/ICE plots. SHAP remains a separately evaluated, deferred optional integration. |
@@ -334,38 +337,53 @@ feature-profile APIs.
 
 #### P1.6 Improve sensitive-feature detection carefully
 
-- [ ] Assess whether value-pattern scanning is required beyond column-name
+- **Status:** Complete — bounded local email, formatted US SSN, and formatted
+  US phone pattern scanning returns aggregate counts only.
+- [x] Assess whether value-pattern scanning is required beyond column-name
   checks, and define the supported patterns and false-positive behavior.
-- [ ] If added, scan locally, avoid persisting or displaying matched values,
+- [x] If added, scan locally, avoid persisting or displaying matched values,
   and return only the minimum useful finding.
-- [ ] Test unnamed columns, common formats, and false-positive cases.
+- [x] Test unnamed columns, common formats, and false-positive cases.
 
 **Done when:** detection is documented, privacy-preserving, and does not expose
-cell contents in logs, reports, or API responses.
+cell contents in logs, reports, or API responses. The scan inspects at most
+1,000 rows by default and allows callers to request up to 10,000 rows; the
+report indicates when input rows were truncated.
 
 #### P1.7 Automate retraining triggers safely
 
-- [ ] Reuse the existing retraining runner and `scheduled`/`on_data` trigger
+- **Status:** Complete for the webhook integration. External schedulers and
+  ingestion watchers can submit bounded, deduplicated triggers; no in-process
+  recurring scheduler or distributed queue is added.
+- [x] Reuse the existing retraining runner and `scheduled`/`on_data` trigger
   checks; do not duplicate training or promotion logic.
-- [ ] Add an external-scheduler or webhook integration that evaluates a
-  documented due/drift condition and submits an idempotent job.
-- [ ] Require audit history, quality-gated promotion, and clear behavior for
+- [x] Add an external-scheduler or webhook integration that evaluates a
+  documented due/new-data condition and submits an idempotent job.
+- [x] Require audit history, metric quality-gated staging promotion, and clear behavior for
   duplicate, stale, or missing trigger data.
 
 **Done when:** scheduled and data-driven jobs can run without manual API
-requests and cannot bypass existing promotion checks.
+requests from a user (the external scheduler still calls the API), and cannot
+bypass existing promotion checks. Idempotency is process-local; run one API
+worker for this file-backed job manager.
 
 #### P1.8 Evaluate optional post-hoc ensembles
 
-- [ ] Compare the current best pipeline with small voting/averaging ensembles
-  assembled from the already-fitted top candidates.
-- [ ] Use out-of-fold or held-out predictions for selection and calibration so
-  candidate ranking does not leak into ensemble weights.
-- [ ] Preserve the single-best model as the default/fallback and record
-  ensemble members and selection metrics in the model bundle.
+- **Status:** Evaluated and deferred — the bounded probe showed no consistent
+  benefit sufficient to justify a production API. Keep the single-best model
+  as the default.
+- [x] Compare the CV-best individual model with small probability-averaging
+  subsets selected from top candidates.
+- [x] Use training-only CV for candidate ranking, a separate calibration
+  partition for ensemble selection, and an untouched test partition for the
+  comparison.
+- [x] Preserve the single-best model as the default; do not add bundle or
+  inference complexity before evidence supports shipping an ensemble.
 
-**Done when:** a deterministic, bounded comparison demonstrates benefit
-without weakening evaluation or inference contracts.
+**Revisit when:** representative scientific workloads and repeated outer
+evaluation demonstrate a reproducible gain and bundle provenance requirements
+are specified. The current bounded result and reproduction command are in
+[`benchmarks/DESIGN.md`](./benchmarks/DESIGN.md).
 
 ### P2 — Reproducible research workflows
 
@@ -653,3 +671,38 @@ acceptance criteria are met.
   files compile, Pylance reports no syntax errors, and `git diff --check`
   passes. The test run reports existing sklearn convergence warnings and a
   Matplotlib/Python pickle deprecation warning when persisting a figure.
+- **2026-11-05 — Started P1.6 sensitive-feature detection:** confirmed the
+  existing scanner only inspected names and that the stored-partition API
+  intentionally passed empty frames. The scoped implementation adds local,
+  bounded pattern counts for email and formatted US SSN/phone values without
+  returning cell contents, and makes stored-partition scans use the selected
+  data locally. Column-name matching now uses whole tokens so `Unnamed: 0`
+  does not spuriously match `name`. Validation passed: 102 tests across
+  `test_optimized_paths.py` and `test_phase2_endpoints.py`; changed Python
+  files compile, Pylance syntax checks and `git diff --check` pass. Existing
+  sklearn convergence and Matplotlib/Python pickle deprecation warnings remain.
+- **2026-11-05 — P1.7 external retraining triggers:** added
+  `POST /api/retraining/{task_name}/trigger` for scheduler and ingestion
+  webhooks. Events must be timezone-aware and no more than ten minutes old;
+  data events must match the current registered training partition and
+  fingerprint. Duplicate scheduled event IDs and data partition/fingerprint
+  pairs return their existing job, while changed requests using the same key
+  receive HTTP 409. Automated promotion is limited to staging and requires
+  at least one finite metric threshold; failed thresholds block registration
+  and promotion. Trigger evidence, thresholds, job result, and registry
+  history are persisted. The existing JSON job manager guarantees duplicate
+  suppression within one API process only; documentation calls out its
+  single-worker deployment limit. Validation passed: 95 tests across
+  `test_phase6_endpoints.py` and `test_optimized_paths.py`, plus compilation,
+  Pylance syntax checks, and `git diff --check`.
+- **2026-11-05 — P1.8 post-hoc ensemble evaluation:** added the reproducible
+  `benchmarks/dtrack/posthoc_ensemble_probe.py`. On breast cancer, iris, and
+  wine (10 deterministic stratified 60/20/20 splits each), candidates were
+  ranked by training-only 3-fold CV; equal-weight subsets of the top three
+  were selected on calibration and compared on untouched test data with the
+  CV-best individual. The selected ensemble beat/tied/lost 5/21/4 times,
+  mean paired accuracy delta +0.00112, median 0; a multi-model subset was
+  selected in only 2/30 runs. Since the gain is small and inconsistent,
+  no production ensemble API or bundle changes were made. Full protocol,
+  results, and deferral rationale are documented in
+  `benchmarks/DESIGN.md`.

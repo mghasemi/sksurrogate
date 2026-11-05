@@ -189,6 +189,56 @@ for the configured task; mismatched task names and invalid return values fail
 before registry promotion. Cron, Airflow, event queues, and data watchers can
 call these methods without being dependencies of the library.
 
+External scheduler and data-webhook API
+---------------------------------------
+
+The control plane exposes ``POST /api/retraining/{task_name}/trigger`` for an
+external scheduler or ingestion watcher. It accepts a constrained trigger
+event rather than executable callback code. Both trigger types require an
+event ID, a timezone-aware ``occurred_at`` timestamp no more than ten minutes
+old (future timestamps beyond 30 seconds are rejected), trainer settings,
+and at least one finite metric threshold. Automatic promotion is limited to
+``staging``; production promotion remains an explicit approval workflow.
+
+For ``scheduled`` events, the sender supplies ``due`` and a unique ``event_id``.
+A false due condition is persisted as a skipped job. Retries with the same
+event ID and unchanged settings return the original job; reusing the ID with
+different settings returns HTTP 409.
+
+For ``on_data`` events, the sender supplies ``data_partition`` and
+``data_fingerprint`` from a successfully registered dataset, and the trainer's
+``train_partition`` must match. The API checks that the current partition
+exists and still has that fingerprint. A partition/fingerprint pair can
+trigger at most one job, even if an ingestion system retries with another
+event ID; missing or changed data returns an error rather than training on a
+stale version.
+
+For example, the data watcher can construct this request from the dataset
+registration response::
+
+    {
+      "trigger": "on_data",
+      "event_id": "ingest-2026-11-05-001",
+      "occurred_at": "2026-11-05T09:00:00Z",
+      "trainer": {
+        "kind": "baseline",
+        "estimator": "random_forest_regressor",
+        "train_partition": "train"
+      },
+      "data_partition": "train",
+      "data_fingerprint": "<dataset_fingerprint from registration>",
+      "metric_thresholds": {"r2": 0.75}
+    }
+
+The trigger event, metric thresholds, and promotion target are saved in the
+job record. The retraining runner applies the required metric quality gate
+before registering/promoting, and the registry keeps its normal model
+registration and promotion audit history. Duplicate suppression coordinates
+request handlers in one API process using the existing file-backed job
+manager; run a single API worker when relying on this endpoint's idempotency.
+This is not a distributed queue or a built-in timer: cron, Airflow, or an
+ingestion service remains responsible for delivering events.
+
 Approval-gated deployment and rollback
 ======================================
 

@@ -150,12 +150,16 @@ loss_report(y_true, y_pred, groups=None, *, positive_label=1)   # wrapper, metri
 
 ### 2.4 Sensitive-feature / PII scan — `monitoring.sensitive_feature_report`
 Signature (`monitoring.py:296`): `sensitive_feature_report(frame, *, sensitive_features=None)
--> {pii_columns[], sensitive_columns[], warnings[]}`.
+-> {pii_columns[], sensitive_columns[], value_findings[], value_scan{}, warnings[]}`.
+The value scan checks at most 1,000 rows by default (up to 10,000 when requested)
+for email, formatted US SSN, and formatted US phone patterns. It returns counts
+only, never matched cell values; findings may be false positives.
 1. **API** — two wirings (both cheap, synchronous):
    - Extend the dataset registration response (Phase 5.1) with a `sensitive_scan` field computed
      on the uploaded frame;
    - Standalone: `POST /api/monitoring/{task}/sensitive-scan` taking an inline column list or a
-     partition name, plus optional explicit `sensitive_features`.
+     partition name, plus optional explicit `sensitive_features` and a bounded
+     `max_scan_rows` limit. A partition scan uses its stored values locally.
 2. **client.ts** — `scanSensitiveFeatures(task, body)`.
 3. **UI (Monitoring.tsx)** — "PII & sensitive columns" card listing flagged columns with warning
    text; also surfaced inline on the Datasets registration result (Phase 5).

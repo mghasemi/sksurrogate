@@ -1,6 +1,7 @@
 """Data-quality and drift monitoring for tabular model inputs."""
 
 from collections import Counter
+import re
 
 import numpy as np
 import pandas as pd
@@ -293,10 +294,23 @@ def loss_report(y_true, y_pred, groups=None, *, positive_label=1):
     return subgroup_performance_report(y_true, y_pred, groups, metric="loss", positive_label=positive_label)
 
 
-def sensitive_feature_report(frame, *, sensitive_features=None):
-    """Flag sensitive and PII-like columns before model training or serving."""
+def sensitive_feature_report(frame, *, sensitive_features=None, max_scan_rows=1000):
+    """Flag name-based sensitive columns and common PII-like value patterns.
+
+    Value scanning is limited to the first ``max_scan_rows`` rows and inspects
+    only text and integer cells. The report contains pattern counts and column
+    names, never the matched cell contents. Pattern matches are indicators,
+    not validation that a value is genuine PII.
+    """
     if not isinstance(frame, pd.DataFrame):
         raise TypeError("frame must be a pandas DataFrame")
+    if (
+        isinstance(max_scan_rows, bool)
+        or not isinstance(max_scan_rows, (int, np.integer))
+        or max_scan_rows < 1
+        or max_scan_rows > 10000
+    ):
+        raise ValueError("max_scan_rows must be an integer between 1 and 10000")
     explicit_sensitive = set(sensitive_features or [])
     pii_tokens = (
         "email",
@@ -314,10 +328,18 @@ def sensitive_feature_report(frame, *, sensitive_features=None):
     pii_columns = []
     sensitive_columns = []
     for column in frame.columns:
-        lowered = str(column).lower()
-        if any(token in lowered for token in pii_tokens):
+        normalized_name = re.sub(
+            r"[^a-z0-9]+",
+            "_",
+            re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", str(column)).lower(),
+        ).strip("_")
+        padded_name = "_" + normalized_name + "_"
+        if any("_%s_" % token in padded_name for token in pii_tokens):
             pii_columns.append(column)
-        if column in explicit_sensitive or any(token in lowered for token in ("ssn", "secret", "password", "token", "api_key")):
+        if column in explicit_sensitive or any(
+            "_%s_" % token in padded_name
+            for token in ("ssn", "secret", "password", "token", "api_key")
+        ):
             sensitive_columns.append(column)
     pii_columns = sorted(set(pii_columns))
     sensitive_columns = sorted(set(sensitive_columns))
@@ -326,9 +348,57 @@ def sensitive_feature_report(frame, *, sensitive_features=None):
         warnings.append("PII-like columns detected: %s" % ", ".join(pii_columns))
     if sensitive_columns:
         warnings.append("Sensitive columns detected: %s" % ", ".join(sensitive_columns))
+
+    patterns = {
+        "email": re.compile(
+            r"(?<![\w.+-])[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}(?![\w.-])",
+            re.IGNORECASE,
+        ),
+        "ssn": re.compile(r"(?<!\d)\d{3}-\d{2}-\d{4}(?!\d)"),
+        "phone": re.compile(
+            r"(?<!\w)(?:\+?1[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]\d{3}[\s.-]\d{4}(?!\w)"
+        ),
+    }
+    scan_frame = frame.head(int(max_scan_rows))
+    value_findings = []
+    for column in scan_frame.columns:
+        counts = {name: 0 for name in patterns}
+        scanned_values = 0
+        for value in scan_frame[column]:
+            if isinstance(value, str):
+                text = value
+            elif isinstance(value, (int, np.integer)) and not isinstance(value, (bool, np.bool_)):
+                text = str(value)
+            else:
+                continue
+            scanned_values += 1
+            for name, pattern in patterns.items():
+                if pattern.search(text):
+                    counts[name] += 1
+        matched_counts = {name: count for name, count in counts.items() if count}
+        if matched_counts:
+            value_findings.append(
+                {
+                    "column": column,
+                    "pattern_counts": matched_counts,
+                    "scanned_values": int(scanned_values),
+                }
+            )
+    if value_findings:
+        warnings.append(
+            "PII-like value patterns detected in %d column(s); review findings "
+            "without treating pattern matches as verified identities."
+            % len(value_findings)
+        )
     return {
         "pii_columns": pii_columns,
         "sensitive_columns": sensitive_columns,
+        "value_findings": value_findings,
+        "value_scan": {
+            "rows_scanned": int(len(scan_frame)),
+            "row_limit": int(max_scan_rows),
+            "truncated": bool(len(frame) > max_scan_rows),
+        },
         "warnings": warnings,
     }
 

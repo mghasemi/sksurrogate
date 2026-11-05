@@ -97,8 +97,9 @@ Open **Datasets**. For each CSV partition:
    descriptive partition name).
 2. Drop the CSV into the upload area or click it to browse.
 3. Click **Inspect CSV**. This previews the row count, columns, inferred data
-   types, possible target columns, and a name-based scan for PII-like or
-   sensitive column names. Inspection does not commit the file.
+   types, possible target columns, and a bounded PII-like value-pattern and
+   sensitive-column scan. The scan reports pattern counts only; it does not
+   expose matched cell contents. Inspection does not commit the file.
 4. Choose the **Target column**. Review the detected type of every column and
    change any incorrect type before committing. If appropriate, enable
    **Binarize / ordinal-encode target labels** to encode target categories.
@@ -379,8 +380,10 @@ Open **Monitoring** after scoring data:
 * **Prediction distribution drift** compares two prediction series from
   partitions, persisted batch artifacts, or inline values.
 * **Subgroup performance** compares a selected metric across groups.
-* **PII & sensitive columns** scans column names for PII-like and explicitly
-  sensitive names. This check does not read cell values.
+* **PII & sensitive columns** scans names and up to 1,000 rows per column for
+  common email, formatted US SSN, and formatted US phone patterns. It reports
+  counts only and never includes matched cell contents; pattern matches may
+  be false positives and are not identity validation.
 * **Fairness** compares group-level selection rates and true-positive rates.
   Supply correctly aligned ``y_true``, ``y_pred``, and group arrays.
 * **Delayed-label performance** compares saved predictions with labels that
@@ -419,8 +422,13 @@ Open **Retraining** when you need a new model version:
 The Python workflow maps to ``SKSurrogate.retraining.RetrainingJob`` and the
 execution backends. The trigger choices are evaluated by a submitted run;
 they do not install a recurring scheduler or continuously watch for new data.
-Review the resulting bundle and quality gates before using a new production
-version.
+For automated delivery, an external scheduler or ingestion watcher can call
+``POST /api/retraining/{task_name}/trigger`` with a fresh event ID and
+timestamp. Data-trigger events must reference the registered training
+partition and its current fingerprint; repeated delivery of the same
+partition/fingerprint is deduplicated. Automated promotion requires metric
+thresholds and is limited to **staging**; use the approval workflow for
+production. See :doc:`phase9` for the event contract and operational limits.
 
 .. figure:: images/ui-retraining.png
    :alt: Retraining page with trainer and trigger controls

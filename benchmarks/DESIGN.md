@@ -1,6 +1,6 @@
 # SKSurrogate Benchmark Suite — Design (B1)
 
-Status: **v1.12** (2026-11-05; corrected real-workload surrogate selection and diagnostics). Datasets and baselines are pinned below; this doc is the
+Status: **v1.13** (2026-11-05; bounded post-hoc ensemble probe). Datasets and baselines are pinned below; this doc is the
 contract for B2 (runner), B3 (ablation), B4 (publication). Changes after B2 starts require a
 version bump here.
 
@@ -528,3 +528,42 @@ optimization proceeds with the best parameters found and no cell failed because 
 **Recommendation.** Make RBF-GP (`GaussianProcessRegressor` with stock RBF kernel) SKSurrogate's recommended
 default surface for `SurrogateRandomCV`: optional via the public `regressor=` kwarg (no library code change needed
 for benchmarks), documented as a v0.2 candidate in an upstream issue with §12 as evidence. Do not ship KernelRidge.
+
+## 13. Bounded post-hoc ensemble probe (P1.8)
+
+**Question.** Does selecting a small equal-weight probability ensemble from
+the top CV-ranked candidates improve held-out accuracy enough to justify
+shipping selection, model-bundle, and inference support?
+
+**Protocol.** Reproduce with:
+
+```bash
+python -m benchmarks.dtrack.posthoc_ensemble_probe --seeds 10
+```
+
+For each fixed seed and bundled `breast_cancer`, `iris`, and `wine` dataset,
+the probe uses stratified 60/20/20 train/calibration/test partitions. Four
+classifiers (standardized logistic regression, random forest, extra trees,
+and histogram gradient boosting) are ranked using training-only stratified
+3-fold CV. The top three candidates are refitted on training data. The
+calibration partition selects among their singletons and all equal-weight
+probability-averaging subsets of up to three; one final comparison is made on
+the untouched test partition against the CV-best individual model. Ties in
+selection prefer fewer members and are then resolved by member name. No test
+labels participate in candidate or ensemble selection.
+
+**Results (10 seeds per dataset).**
+
+| Dataset | Test-accuracy wins/ties/losses vs. CV-best individual | Mean paired delta | Median paired delta | Multi-model selection rate |
+| --- | ---: | ---: | ---: | ---: |
+| breast cancer | 3 / 6 / 1 | +0.00614 | 0.00000 | 10% |
+| iris | 1 / 8 / 1 | +0.00000 | 0.00000 | 0% |
+| wine | 1 / 7 / 2 | -0.00278 | 0.00000 | 10% |
+| **All 30 runs** | **5 / 21 / 4** | **+0.00112** | **0.00000** | **6.7%** |
+
+These are small, finite bundled-dataset probes, not a significance claim or
+generalization guarantee. Calibration selection usually chose one model, and
+the mean gain is small with four paired losses. **Decision:** do not add a
+production ensemble API or change the default single-best model in this
+iteration. Revisit only with representative scientific workloads, repeated
+outer evaluation, and bundle provenance requirements established.

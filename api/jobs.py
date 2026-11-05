@@ -20,6 +20,7 @@ from .config import settings
 
 _executor = ThreadPoolExecutor(max_workers=4)
 _write_lock = threading.Lock()
+_idempotency_lock = threading.Lock()
 
 
 def _now():
@@ -120,6 +121,52 @@ class JobManager:
 
         _executor.submit(_run)
         return job_id
+
+    def submit_idempotent(
+        self,
+        task_name,
+        kind,
+        idempotency_key,
+        request_fingerprint,
+        fn_factory,
+        *,
+        backend="local",
+        metadata_factory=None,
+    ):
+        """Submit once per task/kind/key and reject key reuse for another request.
+
+        The lock coordinates submitters in this API process. The JSON job store
+        is not a distributed queue and does not provide cross-process locking.
+        """
+        with _idempotency_lock:
+            for record in self.list(task_name):
+                if (
+                    record.get("kind") == kind
+                    and record.get("idempotency_key") == idempotency_key
+                ):
+                    if record.get("request_fingerprint") != request_fingerprint:
+                        raise ValueError(
+                            "Idempotency key was already used for a different request"
+                        )
+                    return record["job_id"], False
+
+            def idempotent_metadata(job_id):
+                metadata = {
+                    "idempotency_key": idempotency_key,
+                    "request_fingerprint": request_fingerprint,
+                }
+                if metadata_factory is not None:
+                    metadata.update(metadata_factory(job_id))
+                return metadata
+
+            job_id = self.submit(
+                task_name,
+                kind,
+                fn_factory,
+                backend=backend,
+                metadata_factory=idempotent_metadata,
+            )
+            return job_id, True
 
 
 job_manager = JobManager()

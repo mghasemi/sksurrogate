@@ -258,33 +258,38 @@ class SensitiveScanRequest(BaseModel):
     partition: str | None = None
     columns: list[str] | None = None
     sensitive_features: list[str] | None = None
+    max_scan_rows: int = Field(default=1000, ge=1, le=10000)
 
 
 @router.post("/{task_name}/sensitive-scan")
 def scan_sensitive(task_name: str, body: SensitiveScanRequest):
-    """Flag PII-like and explicitly sensitive columns in a stored partition.
+    """Flag PII-like and explicitly sensitive columns and values in a partition.
 
     ``columns`` (optional) restricts the scan to a subset of the partition's
-    columns; without it every column is inspected. The scan only looks at
-    column *names* — no cell values are read or returned.
+    columns; without it every column is inspected. Value scanning is limited
+    by ``max_scan_rows``. Only pattern counts are returned, never cell values.
     """
     if body.partition is None and not body.columns:
         raise bad_request("Provide either a partition name or an explicit column list")
 
-    frame = pd.DataFrame(index=range(0))  # empty frame; only the columns matter
+    frame = pd.DataFrame(index=range(0))
     if body.partition is not None:
         stored = _load_partition(task_name, body.partition)
         if body.columns:
             missing = [column for column in body.columns if column not in stored.columns]
             if missing:
                 raise bad_request("Unknown columns in partition %r: %s" % (body.partition, ", ".join(missing)))
-            frame = pd.DataFrame(index=range(0), columns=body.columns)
+            frame = stored[body.columns]
         else:
-            frame = pd.DataFrame(index=range(0), columns=list(stored.columns))
+            frame = stored
     else:
         frame = pd.DataFrame(index=range(0), columns=list(body.columns or []))
 
-    return sensitive_feature_report(frame, sensitive_features=body.sensitive_features)
+    return sensitive_feature_report(
+        frame,
+        sensitive_features=body.sensitive_features,
+        max_scan_rows=body.max_scan_rows,
+    )
 
 
 @router.post("/{task_name}/drift")

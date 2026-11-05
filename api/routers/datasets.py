@@ -122,9 +122,9 @@ def set_cv(task_name: str, body: SetCVRequest):
 async def inspect_dataset(task_name: str, file: UploadFile = File(...)):
     """Preview a CSV's deduced schema without persisting anything (Phase 5.1).
 
-    Runs ``DataPreprocess.deduce_types`` and the name-based sensitive-column scan
+    Runs ``DataPreprocess.deduce_types`` and the bounded sensitive-feature scan
     so the UI can show an editable review table before the user commits the upload
-    via ``POST /{task}/register``.
+    via ``POST /{task}/register``. The scan reports pattern counts, not cell values.
     """
     if not (file.filename or "").lower().endswith(".csv"):
         raise bad_request("Only CSV uploads are supported")
@@ -220,7 +220,7 @@ async def register_dataset(task_name: str, target: str = Form(...), partition: s
         "dataset_schema": metadata.get("dataset_schema"),
         "dataset_deduced_types": metadata.get("dataset_deduced_types"),
         "deduced_types": pivot_types,
-        # Name-based PII / sensitive-column scan of the uploaded frame (Phase 2.4).
+        # Return bounded, count-only PII pattern findings for the uploaded frame.
         "sensitive_scan": sensitive_feature_report(frame),
     }
 
