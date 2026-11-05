@@ -236,3 +236,10 @@ exist yet).
   service is the control plane (management, UI, batch jobs) and calls the
   same underlying `predict_batch`/`ModelBundle.predict` code directly for its
   own "online test console" rather than proxying to the WSGI server.
+
+## Update: Docker and workflow-oriented UI
+
+The sidebar is grouped by stage (Data, Model, Release, Operate). Added pages:
+Projects, Explain, Experiment Design; Experiments gained a Quick start tab.
+The production Docker image serves the UI and API from one port. See
+`UI_DOCKER_UPGRADE_PLAN.md` and `docs/ui-manual.rst`.

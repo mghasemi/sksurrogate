@@ -10,9 +10,16 @@ import {
   YAxis,
 } from "recharts";
 
-import { DEFAULT_EXPERIMENT_CONFIG, STACKING_COMPONENT, getScoringOptions, optimizePipeline, runExperiment } from "../api/client";
+import {
+  DEFAULT_EXPERIMENT_CONFIG,
+  STACKING_COMPONENT,
+  getPresets,
+  getScoringOptions,
+  optimizePipeline,
+  runExperiment,
+} from "../api/client";
 import type { ExperimentResult, ParamSpec, RunExperimentRequest, SearchSpace } from "../api/client";
-import { Card, ErrorNote, Table, fmtNum } from "../components/ui";
+import { Card, ErrorNote, Table, Tabs, fmtNum } from "../components/ui";
 import { JobTracker } from "../components/JobTracker";
 import { ScoringSelect } from "../components/ScoringSelect";
 import { useTask } from "../lib/task-context";
@@ -116,6 +123,11 @@ export default function ExperimentsPage() {
   const { task } = useTask();
   const qc = useQueryClient();
 
+  const [mode, setMode] = useState<"quick" | "advanced">("quick");
+  const [preset, setPreset] = useState<"classification" | "regression">("classification");
+  const [quickScoring, setQuickScoring] = useState("");
+  const [budget, setBudget] = useState(1);
+  const [engine, setEngine] = useState<"eoa" | "surrogate">("eoa");
   const [configJson, setConfigJson] = useState(defaultConfigJson);
   const [length, setLength] = useState(2);
   const [maxGeneration, setMaxGeneration] = useState(3);
@@ -136,6 +148,8 @@ export default function ExperimentsPage() {
   });
   const availableBackends = backendOptionsQ.data?.backends ?? ["local"];
 
+  const presetsQ = useQuery({ queryKey: ["experiment-presets"], queryFn: getPresets, staleTime: Infinity });
+  const presetInfo = presetsQ.data?.presets.find((p) => p.value === preset);
   const parsed = useMemo(() => parseSpace(configJson), [configJson]);
   const warnings = useMemo(
     () => ("error" in parsed ? [] : spaceWarnings(parsed, parsed.forbidden)),
@@ -156,9 +170,26 @@ export default function ExperimentsPage() {
         surrogate_itrs: strategy === "surrogate" ? surrogateItrs : null,
         forbidden: parsed.forbidden,
         backend,
+        strategy: engine,
       };
       return runExperiment(task, body);
     },
+    onSuccess: (res) => {
+      setJobId(res.job_id);
+      setResult(null);
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+    },
+  });
+
+  const quickMut = useMutation({
+    mutationFn: () =>
+      runExperiment(task, {
+        preset,
+        strategy: "surrogate",
+        length: budget,
+        scoring: quickScoring || presetInfo?.default_scoring,
+        random_state: 0,
+      }),
     onSuccess: (res) => {
       setJobId(res.job_id);
       setResult(null);
@@ -217,11 +248,57 @@ export default function ExperimentsPage() {
     <div className="stack">
       <div className="page-head">
         <h1>Experiments</h1>
-        <span className="desc">AML/EOA pipeline search over a JSON-defined space — runs as a background job for task “{task || "…"}”</span>
+        <span className="desc">Find the best model for task “{task || "…"}” — runs as a background job</span>
       </div>
 
       {!task && <div className="error-note">Pick a task name in the top bar first.</div>}
 
+      <Tabs
+        tabs={[
+          { id: "quick", label: "Quick start" },
+          { id: "advanced", label: "Advanced" },
+        ]}
+        active={mode}
+        onChange={(id) => setMode(id as "quick" | "advanced")}
+      />
+
+      {mode === "quick" && (
+        <Card title="Quick start" sub="Pick the kind of problem and a time budget. No search space to write — a bounded, safe search is used.">
+          <div className="row">
+            <div className="field">
+              <label>Problem type</label>
+              <select value={preset} onChange={(e) => setPreset(e.target.value as "classification" | "regression")}>
+                {(presetsQ.data?.presets ?? []).map((p) => (
+                  <option key={p.value} value={p.value}>{p.label}</option>
+                ))}
+              </select>
+              {presetInfo && <span className="hint">{presetInfo.description}</span>}
+            </div>
+            <div className="field">
+              <label>Budget</label>
+              <select value={budget} onChange={(e) => setBudget(Number(e.target.value))}>
+                <option value={1}>Fast (1 pipeline stage)</option>
+                <option value={2}>Balanced (up to 2 stages)</option>
+                <option value={3}>Thorough (up to 3 stages)</option>
+              </select>
+            </div>
+            <ScoringSelect
+              value={quickScoring || presetInfo?.default_scoring || "accuracy"}
+              onChange={setQuickScoring}
+              disabled={!task}
+            />
+          </div>
+          {quickMut.isError && <ErrorNote error={quickMut.error} />}
+          <button className="btn primary" disabled={!task || quickMut.isPending} onClick={() => quickMut.mutate()}>
+            {quickMut.isPending ? "Submitting…" : "Find best model"}
+          </button>
+          <p className="muted">
+            Need your own search space, stacking or forbidden rules? Switch to the <b>Advanced</b> tab.
+          </p>
+        </Card>
+      )}
+
+      {mode === "advanced" && (<>
       <Card title="Search space" sub="Keys are fully-qualified estimator class names; values map hyperparameters to real / integer / categorical specs. Optional per-param “depends_on” and top-level “forbidden” rules shape the search.">
         <textarea
           className="mono"
@@ -282,6 +359,14 @@ export default function ExperimentsPage() {
           </div>
           <ScoringSelect value={scoring} onChange={setScoring} disabled={!task} />
           <div className="field">
+            <label>Search engine</label>
+            <select value={engine} onChange={(e) => setEngine(e.target.value as "eoa" | "surrogate")}>
+              <option value="eoa">Evolutionary (EOA)</option>
+              <option value="surrogate">Surrogate only (no evolution)</option>
+            </select>
+            {engine === "surrogate" && <span className="hint">Generation and parent settings are ignored.</span>}
+          </div>
+          <div className="field">
             <label>Execution backend</label>
             <select value={backend} onChange={(e) => setBackend(e.target.value as "local" | "dask")}>
               <option value="local">Local</option>
@@ -326,6 +411,7 @@ export default function ExperimentsPage() {
           {runMut.isPending ? "Submitting…" : "Start experiment"}
         </button>
       </Card>
+      </>)}
 
       {jobId && (
         <>

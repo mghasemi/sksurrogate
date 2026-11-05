@@ -133,6 +133,12 @@ htmlhelp_basename = 'SKSurrogatedoc'
 
 # -- Options for LaTeX output ---------------------------------------------
 
+# xelatex handles the Unicode characters used in the docs; makeindex avoids
+# requiring xindy, whose absence aborts the build before the table of contents
+# and index are generated.
+latex_engine = 'xelatex'
+latex_use_xindy = False
+
 latex_elements = {
     # The paper size ('letterpaper' or 'a4paper').
     #

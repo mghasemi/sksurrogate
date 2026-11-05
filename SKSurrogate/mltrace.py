@@ -844,7 +844,8 @@ class mltrack(object):
             if not expected.get("nullable", True) and actual.isna().any():
                 raise ValueError("Column '%s' contains null values but the schema marks it as non-nullable." % column)
             allowed_categories = expected.get("categorical_values")
-            if allowed_categories:
+            # Continuous float columns are not categorical: unseen values are expected.
+            if allowed_categories and getattr(actual.dtype, "kind", "") != "f":
                 actual_values = set(str(value) for value in actual.dropna().unique())
                 unknown = sorted(actual_values - set(allowed_categories))
                 if unknown and unknown_categories == "raise":

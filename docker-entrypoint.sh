@@ -1,7 +1,13 @@
 #!/bin/sh
 set -e
 
-# The repo bind mount shadows the image's webui/node_modules, so re-link it
+# SKSURROGATE_MODE=prod: one process; FastAPI serves the built UI and the API.
+if [ "${SKSURROGATE_MODE:-dev}" = "prod" ]; then
+  cd /app
+  exec uvicorn api.main:app --host 0.0.0.0 --port 8013
+fi
+
+# dev: the repo bind mount shadows the image's webui/node_modules, so re-link it
 # from the stashed copy (only if the host doesn't have its own).
 if [ ! -x /app/webui/node_modules/.bin/vite ] && [ -d /opt/webui-node-modules ]; then
   ln -sfn /opt/webui-node-modules /app/webui/node_modules

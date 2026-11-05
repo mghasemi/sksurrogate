@@ -1742,6 +1742,20 @@ class TestOptimizedPaths(unittest.TestCase):
                 tracker.validate_data(unknown_category, unknown_categories="ignore")
             )
 
+    def test_unseen_float_values_are_not_treated_as_categories(self):
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            tracker = mltrack("float-schema", db_name=database.name)
+            reference = pd.DataFrame(
+                {"x": [0.1, 0.2, 0.3, 0.4], "label": ["a", "b", "a", "b"], "target": [0.0, 1.0, 0.0, 1.0]}
+            )
+            tracker.RegisterData(reference, "target")
+            fresh = reference.copy()
+            fresh["x"] = [0.15, 0.25, 0.35, 0.45]
+            self.assertTrue(tracker.validate_data(fresh))
+            fresh.loc[0, "label"] = "z"
+            with self.assertRaises(ValueError):
+                tracker.validate_data(fresh)
+
     def test_dataset_provenance_and_partition_metadata_are_recorded(self):
         with tempfile.NamedTemporaryFile(suffix=".db") as database:
             tracker = mltrack("provenance-test", db_name=database.name)

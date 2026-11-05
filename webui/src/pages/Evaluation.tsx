@@ -308,7 +308,12 @@ function CurvesCard({ task, bundles }: { task: string; bundles: BundleSummary[] 
       />
 
       {curvesQ.isLoading && <Loading label="Computing curves…" />}
-      {curvesQ.isError && <ErrorNote error={curvesQ.error} />}
+      {curvesQ.isError &&
+        (String(curvesQ.error).includes("classification bundle") ? (
+          <p className="muted">Diagnostic curves apply to classification bundles. For a regression model, use the metric tabs below and the Explain page.</p>
+        ) : (
+          <ErrorNote error={curvesQ.error} />
+        ))}
 
       {data && (
         <>

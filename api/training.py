@@ -550,6 +550,9 @@ def fit_experiment_bundle(
     surrogate_mode=False,
     surrogate_itrs=None,
     forbidden=None,
+    preset=None,
+    strategy="eoa",
+    resume=False,
 ):
     """Run an AML/EOA pipeline search and wrap the best fitted pipeline into a ``ModelBundle``.
 
@@ -563,8 +566,14 @@ def fit_experiment_bundle(
     X = frame[feature_columns].values
     y = frame[target].values
 
+    if preset is not None and config:
+        raise bad_request("Send either a preset or a config, not both")
+    if preset is None and not config:
+        raise bad_request("A search-space config or a preset is required")
+    if strategy not in ("eoa", "surrogate"):
+        raise bad_request("strategy must be 'eoa' or 'surrogate'")
     requested_config = config
-    config, stacking = extract_stacking(config)
+    config, stacking = extract_stacking(config or {})
     parsed_config = {
         estimator: {name: build_search_param(spec) for name, spec in params.items()}
         for estimator, params in config.items()
@@ -577,7 +586,9 @@ def fit_experiment_bundle(
     cv = get_stored_cv(task_name)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     aml = AML(
-        config=parsed_config,
+        config=parsed_config if preset is None else None,
+        preset=preset,
+        resume=resume,
         length=length,
         scoring=scoring,
         check_point=str(checkpoint_dir) + "/",
@@ -591,7 +602,10 @@ def fit_experiment_bundle(
         # A single lightweight regressor replaces the default KRR+GPR pair; the
         # iteration budget bounds how many candidate points each surrogate pass tries.
         aml.add_surrogate(LinearRegression(), int(surrogate_itrs) if surrogate_itrs else 20)
-    aml.eoa_fit(X, y, max_generations=max_generation, num_parents=num_parents)
+    if strategy == "eoa":
+        aml.fit(X, y, strategy="eoa", max_generations=max_generation, num_parents=num_parents)
+    else:
+        aml.fit(X, y, strategy="surrogate")
     # SurrogateRandomCV refits best_estimator_ on the full dataset (refit=True),
     # so it is ready for scoring/serving without an extra fit here. When every
     # candidate was rejected (e.g. the forbidden rules ban the whole space) it
@@ -619,6 +633,8 @@ def fit_experiment_bundle(
         train_partition,
         configuration={
             "kind": "automl_experiment",
+            "preset": preset,
+            "strategy": strategy,
             "search_space": requested_config,
             "length": length,
             "max_generation": max_generation,

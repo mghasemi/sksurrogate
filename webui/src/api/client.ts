@@ -148,7 +148,7 @@ export interface PartitionInfo {
 /* Health                                                              */
 /* ------------------------------------------------------------------ */
 
-export const health = () => get<{ status: string }>("/api/health");
+export const health = () => get<{ status: string; version?: string }>("/api/health");
 
 /* ------------------------------------------------------------------ */
 /* Tasks                                                               */
@@ -1208,7 +1208,12 @@ export const STACKING_COMPONENT = {
 };
 
 export interface RunExperimentRequest {
-  config: SearchSpace;
+  /** Omit when `preset` is given. */
+  config?: SearchSpace;
+  /** Quick-start preset (bounded search space); mutually exclusive with `config`. */
+  preset?: "classification" | "regression";
+  /** `eoa` (evolutionary, default) or `surrogate` (surrogate search only). */
+  strategy?: "eoa" | "surrogate";
   length?: number;
   max_generations?: number;
   num_parents?: number;
@@ -1427,3 +1432,128 @@ export interface LineageRecord {
 
 export const getLineage = (task: string, modelVersion: string) =>
   get<LineageRecord>(`/api/lineage/${encodeURIComponent(task)}/${encodeURIComponent(modelVersion)}`);
+
+/* ------------------------------------------------------------------ */
+/* Quick-start presets                                                 */
+/* ------------------------------------------------------------------ */
+
+export interface ExperimentPreset {
+  value: "classification" | "regression";
+  label: string;
+  description: string;
+  default_scoring: string;
+}
+
+export const getPresets = () => get<{ presets: ExperimentPreset[] }>("/api/experiments/presets");
+
+/* ------------------------------------------------------------------ */
+/* Explanations and prediction intervals                               */
+/* ------------------------------------------------------------------ */
+
+export interface ExplainResult {
+  model_version: string;
+  partition: string;
+  rows: number;
+  importance: Array<{ feature: string; mean: number | null; std: number | null }>;
+  partial_dependence: Array<{ feature: string; grid: Array<number | null>; average: Array<number | null> }>;
+  errors: Array<{ feature: string; detail: string }>;
+}
+
+export const explainBundle = (
+  task: string,
+  version: string,
+  body: { partition?: string; max_rows?: number; n_repeats?: number; top_k?: number } = {},
+) =>
+  post<ExplainResult>(
+    `/api/evaluation/${encodeURIComponent(task)}/${encodeURIComponent(version)}/explain`,
+    body,
+  );
+
+export interface IntervalResult {
+  model_version: string;
+  method: string;
+  coverage_assumption: string;
+  alpha: number;
+  nominal_coverage: number;
+  half_width: number | null;
+  calibration_size: number;
+  holdout_rows: number;
+  empirical_coverage: number | null;
+  points: Array<{ actual: number | null; prediction: number | null; lower: number | null; upper: number | null }>;
+}
+
+export const getIntervals = (
+  task: string,
+  version: string,
+  body: { alpha?: number; train_partition?: string; holdout_partition?: string | null } = {},
+) =>
+  post<IntervalResult>(
+    `/api/evaluation/${encodeURIComponent(task)}/${encodeURIComponent(version)}/intervals`,
+    body,
+  );
+
+/* ------------------------------------------------------------------ */
+/* Experiment design                                                   */
+/* ------------------------------------------------------------------ */
+
+export interface DesignVariable {
+  name: string;
+  low: number;
+  high: number;
+}
+
+export const latinHypercube = (body: { variables: DesignVariable[]; n_samples: number; random_state?: number }) =>
+  post<{ columns: string[]; points: number[][] }>("/api/design/latin-hypercube", body);
+
+export const suggestNextPoint = (body: {
+  variables: DesignVariable[];
+  samples: number[][];
+  values: number[];
+  n_candidates?: number;
+  beta?: number;
+}) => post<{ columns: string[]; result: Record<string, unknown> }>("/api/design/suggest-next", body);
+
+/* ------------------------------------------------------------------ */
+/* Research projects                                                   */
+/* ------------------------------------------------------------------ */
+
+export interface ProjectArtifact {
+  kind: "dataset_partition" | "model_bundle" | "job";
+  task_name: string;
+  artifact_id: string;
+  label?: string | null;
+}
+
+export interface Project {
+  project_id: string;
+  name: string;
+  description: string;
+  research_questions: string[];
+  artifacts: ProjectArtifact[];
+  notes: Array<{ note_id: string; text: string; created_at: string }>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectSummary {
+  project_id: string;
+  artifacts: Array<ProjectArtifact & { exists: boolean; status: string | null }>;
+  stages: Array<{ stage: string; label: string; done: boolean }>;
+}
+
+export const listProjects = () => get<{ projects: Project[] }>("/api/projects");
+export const getProjectSummary = (id: string) => get<ProjectSummary>(`/api/projects/${encodeURIComponent(id)}/summary`);
+export const createProject = (body: {
+  name: string;
+  description?: string;
+  research_questions?: string[];
+  artifacts?: ProjectArtifact[];
+}) => post<Project>("/api/projects", body);
+
+export const updateProject = (
+  id: string,
+  body: { name: string; description?: string; research_questions?: string[]; artifacts?: ProjectArtifact[] },
+) => request<Project>("PUT", `/api/projects/${encodeURIComponent(id)}`, body);
+
+export const addProjectNote = (id: string, text: string) =>
+  post<Project>(`/api/projects/${encodeURIComponent(id)}/notes`, { text });

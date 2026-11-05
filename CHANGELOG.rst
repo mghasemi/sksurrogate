@@ -4,6 +4,35 @@ Changelog
 Unreleased
 ----------
 
+Docker and web UI upgrade
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Docker: multi-target ``Dockerfile`` (``dev`` with hot reload, ``prod`` with
+  the built UI served by FastAPI on one port, non-root, healthcheck, ``/data``
+  volume, ``EXTRAS`` build arg); compose profiles ``dev`` and ``prod``;
+  ``SKSURROGATE_MODE`` and ``SKSURROGATE_WEBUI_DIST``; CI ``docker-smoke`` job.
+* API: ``/api/experiments`` accepts ``preset``, ``strategy`` and resumes with
+  ``AML(resume=True)``; new ``GET /api/experiments/presets``,
+  ``POST /api/evaluation/{task}/{version}/explain`` and ``/intervals``,
+  ``POST /api/design/latin-hypercube`` and ``/suggest-next``, and
+  ``GET /api/projects/{id}/summary``.
+* Web UI: Quick start experiments, Explain, Experiment Design and Projects
+  pages; navigation grouped by workflow stage; Dashboard getting-started guide.
+
+Walkthrough, validation fix and UI polish
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Docs: new ``docs/walkthrough.rst``, an end-to-end diabetes tutorial with
+  screenshots and the matching REST and Python calls; sample CSVs
+  ``docs/walkthrough-diabetes-{train,validation}.csv``; a "Run the web UI and
+  API with Docker" section in the readme.
+* Fix: ``mltrack.validate_data`` and the inference preflight no longer reject
+  unseen values in continuous (float) columns as "unknown categories".
+* ``/api/health`` returns the library version; Settings shows a Server card;
+  the lineage rail also appears on Inference, Explain and Projects.
+* Web UI: metric cards no longer wrap digit by digit; Explain labels every
+  feature; Evaluation shows a muted note for classification-only curves.
+
 JOSS submission and documentation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

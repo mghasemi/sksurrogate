@@ -38,6 +38,19 @@ Open the local URL printed by Vite. Its development server forwards ``/api``
 requests and job-progress WebSockets to ``http://localhost:8013``. Build the
 static frontend with ``npm run build`` from ``webui/``.
 
+Docker
+======
+
+.. code-block:: console
+
+   docker compose --profile prod up --build -d   # UI + API on :8013
+   docker compose --profile dev up --build       # hot reload, UI on :5174
+
+The ``prod`` image serves the built UI and API from one port, runs as a
+non-root user, exposes ``/api/health`` as its healthcheck and stores data in
+the ``sksurrogate-data`` volume (``/data``). Set ``SKSURROGATE_API_KEY`` for
+non-local use and ``--build-arg EXTRAS="..."`` to add optional packages.
+
 Configuration and storage
 =========================
 
@@ -94,4 +107,5 @@ web UI use the corrected field. Sending both names in one request is rejected.
 The Python library can also be used without running either service. See
 :doc:`code` for the package API and the other guides for library workflows.
 For a complete UI walkthrough with screenshots and links from each screen to
-its corresponding SKSurrogate feature, see :doc:`ui-manual`.
+its corresponding SKSurrogate feature, see :doc:`ui-manual`; for an end-to-end
+example with screenshots and API equivalents, see :doc:`walkthrough`.

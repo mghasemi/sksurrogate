@@ -13,6 +13,7 @@ origins are allowed.
 """
 
 import json
+import os
 from urllib.parse import parse_qsl
 
 from fastapi import FastAPI
@@ -23,8 +24,10 @@ from .config import settings
 from .routers import (
     bundles,
     datasets,
+    design,
     evaluation,
     experiments,
+    explain,
     inference,
     jobs,
     lineage,
@@ -141,11 +144,15 @@ app.include_router(jobs.router)
 app.include_router(retraining.router)
 app.include_router(lineage.router)
 app.include_router(evaluation.router)
+app.include_router(explain.router)
+app.include_router(design.router)
 
 
 @app.get("/api/health", tags=["health"])
 def health():
-    return {"status": "ok"}
+    from SKSurrogate import __version__
+
+    return {"status": "ok", "version": __version__}
 
 
 @app.get("/api/tasks", tags=["tasks"])
@@ -178,3 +185,34 @@ def list_tasks():
             if isinstance(name, str) and name:
                 names.add(name)
     return {"tasks": sorted(names)}
+
+
+def _mount_webui() -> None:
+    """Serve the built SPA (``webui/dist``) with an index.html fallback.
+
+    Active only when the build exists (production image, or after ``npm run
+    build``); in development the Vite dev server serves the UI instead.
+    Registered last so it never shadows an ``/api`` route.
+    """
+    from pathlib import Path
+
+    from fastapi import HTTPException
+    from fastapi.responses import FileResponse
+
+    dist = Path(os.environ.get("SKSURROGATE_WEBUI_DIST") or Path(__file__).resolve().parent.parent / "webui" / "dist")
+    index = dist / "index.html"
+    if not index.is_file():
+        return
+    root = dist.resolve()
+
+    @app.get("/{path:path}", include_in_schema=False)
+    def spa(path: str):
+        if path == "api" or path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not Found")
+        candidate = (root / path).resolve()
+        if path and candidate.is_file() and root in candidate.parents:
+            return FileResponse(candidate)
+        return FileResponse(index)
+
+
+_mount_webui()

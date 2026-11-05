@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { getApiKey, getApiBase, getEffectiveApiBase, registryAudit, setApiKey, setApiBase } from "../api/client";
+import { health, getApiKey, getApiBase, getEffectiveApiBase, registryAudit, setApiKey, setApiBase } from "../api/client";
 import type { AuditEvent } from "../api/client";
 import { Badge, Card, ErrorNote, Loading, Table, fmtNum } from "../components/ui";
 import { useTask } from "../lib/task-context";
@@ -54,6 +54,22 @@ function ApiBaseCard() {
         Sent as an <code>X-API-Key</code> header on every request (and a query parameter for job streams) when the server requires one. Leave empty for local, keyless use.
       </p>
       {saved && <p className="success-note">Saved — all views now talk to the new endpoint.</p>}
+    </Card>
+  );
+}
+
+function ServerCard() {
+  const q = useQuery({ queryKey: ["health"], queryFn: health, retry: false });
+  return (
+    <Card title="Server" sub="The control-plane API this browser is connected to.">
+      {q.isLoading && <Loading />}
+      {q.isError && <ErrorNote error={q.error} />}
+      {q.data && (
+        <p>
+          <Badge tone="ok">{q.data.status}</Badge> SKSurrogate{" "}
+          <span className="mono">{q.data.version ?? "unknown version"}</span>
+        </p>
+      )}
     </Card>
   );
 }
@@ -126,6 +142,7 @@ export default function SettingsPage() {
       </div>
 
       <ApiBaseCard />
+      <ServerCard />
       <AuditLogCard task={task} />
     </div>
   );

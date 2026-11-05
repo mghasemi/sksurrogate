@@ -50,7 +50,8 @@ def _validate_input(bundle, frame):
             if isinstance(schema[column], dict)
             else []
         )
-        if expected_categories:
+        # Continuous float columns are not categorical: unseen values are expected.
+        if expected_categories and not pd.api.types.is_float_dtype(frame[column].dtype):
             unknown = sorted(
                 {str(value) for value in frame[column].dropna().unique()}
                 - set(expected_categories)

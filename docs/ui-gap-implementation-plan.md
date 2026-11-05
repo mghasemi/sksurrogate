@@ -440,3 +440,18 @@ version is passed as the `model_version` query parameter and preselected in both
 **Testing notes**: extend `tests/test_optimized_paths.py` patterns for each new endpoint (happy
 path + one error path); for nested CV and curves use the small Galaxy3 dataset already under
 `data/`; keep matplotlib out of the request path entirely (Phase 1 computes arrays, not figures).
+
+---
+
+## Addendum: AI-layer / API-simplification UI coverage (Docker + UI upgrade)
+
+Tracked in `UI_DOCKER_UPGRADE_PLAN.md`. Coverage of the newer library/API features:
+
+| Feature | API | UI page |
+|---|---|---|
+| `AML(preset=...)`, `fit(strategy=...)`, resume | `/api/experiments` (`preset`, `strategy`), `/api/experiments/presets` | Experiments (Quick start / Advanced) |
+| Permutation importance + partial dependence | `/api/evaluation/{task}/{version}/explain` | Explain |
+| Split-conformal prediction intervals | `/api/evaluation/{task}/{version}/intervals` | Explain |
+| Latin-hypercube design, suggest-next | `/api/design/latin-hypercube`, `/suggest-next` | Experiment Design |
+| Project grouping and stage progress | `/api/projects`, `/api/projects/{id}/summary` | Projects, Dashboard |
+| Provenance / notebook export | library only | Not exposed (deferred) |

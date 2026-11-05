@@ -2,6 +2,9 @@
 Step-by-Step Web UI User Manual
 =====================================
 
+For a complete worked example on a real dataset, with screenshots and the
+matching REST and Python calls for every step, see :doc:`walkthrough`.
+
 This manual walks through a typical SKSurrogate workflow in the web UI:
 register data, inspect features, search and evaluate models, package and
 approve a model, run inference, and monitor its behavior. Each screen is tied
@@ -42,6 +45,19 @@ keys, CORS, and storage configuration. In brief:
 3. Open the local URL printed by Vite. The UI's development server proxies
    ``/api`` requests and job WebSockets to port ``8013`` by default.
 
+Alternatively, run everything with Docker (see :doc:`controlplane`):
+
+.. code-block:: console
+
+   docker compose --profile prod up --build -d   # UI and API on http://localhost:8013
+   docker compose --profile dev up --build       # hot reload; UI on http://localhost:5174
+
+The production image serves the built UI and the API from one port, runs as a
+non-root user, reports health at ``/api/health``, and keeps data in the named
+volume ``sksurrogate-data`` (``/data``). Set ``SKSURROGATE_API_KEY`` for any
+non-local deployment. Optional Python packages can be added at build time with
+``--build-arg EXTRAS="pkg1 pkg2"``.
+
 For a local walkthrough, download the
 :download:`training CSV <ui-manual-example.csv>` and the separate
 :download:`validation CSV <ui-manual-validation.csv>`. They are small,
@@ -60,8 +76,15 @@ The workflow at a glance
 The UI is organized around a task, which groups data, runs, bundles, registry
 history, inference records, and monitoring. The usual flow is:
 
-``Task → Datasets → Feature Analysis → Experiments → Evaluation → Model Bundles
-→ Quality Gates → Registry & Deployment → Inference → Monitoring → Retraining``
+``Task → Datasets → Feature Analysis → Experiments → Evaluation → Explain →
+Model Bundles → Quality Gates → Registry & Deployment → Inference → Monitoring
+→ Retraining``
+
+The sidebar groups pages by stage (Data, Model, Release, Operate). **Projects**
+groups the datasets, bundles and jobs of one investigation and shows which
+stages are done; **Experiment Design** plans physical or simulated experiments
+before any data exists. A "Getting started" card on the Dashboard walks a first
+run.
 
 You can also train a baseline directly under **Model Bundles**, skip optional
 feature analysis, or use the API and Python package independently of the UI.
@@ -173,7 +196,14 @@ do not treat an importance ranking as proof of causality.
 4. Search model pipelines
 -------------------------
 
-Open **Experiments**. The page starts with a JSON search-space example. Each
+Open **Experiments**. The **Quick start** tab needs no search space: choose
+*Classification* or *Regression*, a budget (Fast, Balanced, Thorough), and a
+scoring metric (a sensible default is preselected), then click **Find best
+model**. It runs a bounded random-forest / extra-trees search through
+``AML(preset=...)`` with the surrogate strategy. Use the **Advanced** tab for
+full control, described next.
+
+In **Advanced**, the page starts with a JSON search-space example. Each
 top-level key identifies a fully-qualified scikit-learn estimator class;
 parameter definitions specify real, integer, or categorical ranges. Validate
 the JSON and search-space definitions before starting. The **Add stacking
@@ -188,9 +218,12 @@ Then configure the run:
    The selected scorer is the objective the search optimizes.
 3. Choose **Evolutionary (EOA)** or **Surrogate-assisted** search. The latter
    adds surrogate iterations and may take longer per generation.
-4. Keep the **Local** execution backend unless a Dask-enabled API environment
+4. **Search engine** selects ``AML.fit(strategy="eoa")`` (default) or
+   ``strategy="surrogate"`` (surrogate search only; generation and parent
+   settings are ignored).
+5. Keep the **Local** execution backend unless a Dask-enabled API environment
    is available.
-5. Click **Start experiment**, then follow progress on the page or in **Jobs**.
+6. Click **Start experiment**, then follow progress on the page or in **Jobs**.
 
 The API builds an ``SKSurrogate.aml.AML`` search and uses
 ``SKSurrogate.eoa.EOA`` for evolutionary optimization; the surrogate path can
@@ -240,6 +273,16 @@ failure rather than treating it as a score.
 
    Evaluation controls and metric comparison. Charts appear after at least one
    bundle has been created.
+
+Explain a model
+~~~~~~~~~~~~~~~
+
+Open **Explain**, choose a bundle, and click **Explain model** for permutation
+importance (the score drop when a feature is shuffled) and partial-dependence
+curves for the top features. For regression bundles, **Compute intervals**
+produces split-conformal prediction intervals at 80/90/95% target coverage and
+reports the coverage observed on held-out rows. The guarantee is marginal and
+assumes exchangeable data; check it before relying on the interval.
 
 6. Create and inspect model bundles
 ------------------------------------

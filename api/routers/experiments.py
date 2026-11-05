@@ -47,7 +47,9 @@ def _dump_config(config):
 
 
 class RunExperimentRequest(BaseModel):
-    config: SearchSpace
+    config: SearchSpace | None = None  # omit when a preset is given
+    preset: Literal["classification", "regression"] | None = None
+    strategy: Literal["eoa", "surrogate"] = "eoa"
     length: int = 2
     max_generations: int = Field(
         default=3,
@@ -55,7 +57,7 @@ class RunExperimentRequest(BaseModel):
     )
     num_parents: int = 4
     train_partition: str = "train"
-    scoring: str = "accuracy"
+    scoring: str | None = None  # defaults to the preset's metric, else accuracy
     random_state: int | None = None
     owner: str | None = None
     run_id: str | None = None
@@ -67,6 +69,10 @@ class RunExperimentRequest(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def reject_conflicting_generation_names(cls, values):
+        if isinstance(values, dict) and values.get("config") is None and not values.get("preset"):
+            raise ValueError("Provide a search-space config or a preset.")
+        if isinstance(values, dict) and values.get("config") and values.get("preset"):
+            raise ValueError("Provide either a config or a preset, not both.")
         if (
             isinstance(values, dict)
             and "max_generations" in values
@@ -74,6 +80,29 @@ class RunExperimentRequest(BaseModel):
         ):
             raise ValueError("Use only 'max_generations'; do not send both spellings.")
         return values
+
+
+#: Quick-start presets mirror ``AML(preset=...)``; each is a small, bounded search.
+PRESETS = [
+    {
+        "value": "classification",
+        "label": "Classification",
+        "description": "Random forest and extra trees with a bounded search; scored by accuracy.",
+        "default_scoring": "accuracy",
+    },
+    {
+        "value": "regression",
+        "label": "Regression",
+        "description": "Random forest and extra trees with a bounded search; scored by negative RMSE.",
+        "default_scoring": "neg_root_mean_squared_error",
+    },
+]
+
+
+@router.get("/presets")
+def presets():
+    """Quick-start presets for the Experiments page (no search space to write)."""
+    return {"presets": PRESETS}
 
 
 @router.get("/scoring-options")
@@ -90,12 +119,19 @@ def scoring_options():
     return {"groups": standard_scoring_options(), "default": "accuracy", "backends": backends}
 
 
+def _effective_scoring(body):
+    if body.scoring:
+        return body.scoring
+    defaults = {preset["value"]: preset["default_scoring"] for preset in PRESETS}
+    return defaults.get(body.preset, "accuracy")
+
+
 def submit_experiment(task_name, body, *, checkpoint_job_id=None, run_id=None):
     if body.backend == "dask" and not dask_available():
         raise HTTPException(status_code=503, detail="Dask backend requested but dask.distributed is not installed")
     if body.surrogate_itrs is not None and body.surrogate_itrs < 1:
         raise bad_request("surrogate_itrs must be a positive integer")
-    config = _dump_config(body.config)
+    config = _dump_config(body.config) if body.config else None
 
     def make_job(job_id):
         def _run():
@@ -107,13 +143,16 @@ def submit_experiment(task_name, body, *, checkpoint_job_id=None, run_id=None):
                 max_generation=body.max_generations,
                 num_parents=body.num_parents,
                 train_partition=body.train_partition,
-                scoring=body.scoring,
+                scoring=_effective_scoring(body),
                 random_state=body.random_state,
                 owner=body.owner,
                 run_id=run_id or body.run_id or job_id,
                 surrogate_mode=body.surrogate_mode,
                 surrogate_itrs=body.surrogate_itrs,
                 forbidden=body.forbidden,
+                preset=body.preset,
+                strategy=body.strategy,
+                resume=checkpoint_job_id is not None,
             )
             bundles_dir = settings.task_bundles_dir(task_name)
             bundles_dir.mkdir(parents=True, exist_ok=True)

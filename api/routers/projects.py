@@ -178,6 +178,33 @@ def get_project(project_id: str):
     return _read_project(project_id)
 
 
+@router.get("/{project_id}/summary")
+def project_summary(project_id: str):
+    """Workflow progress for a project: which linked artifacts still exist, plus a stage checklist."""
+    project = _read_project(project_id)
+    artifacts = []
+    for item in project["artifacts"]:
+        exists, status = True, None
+        try:
+            _validate_artifacts([ProjectArtifactReference(**item)])
+        except Exception:
+            exists = False
+        if item["kind"] == "job" and exists:
+            status = (job_manager.get(item["artifact_id"]) or {}).get("status")
+        artifacts.append({**item, "exists": exists, "status": status})
+    present = lambda kind: any(a["kind"] == kind and a["exists"] for a in artifacts)
+    stages = [
+        {"stage": "data", "label": "Data registered", "done": present("dataset_partition")},
+        {
+            "stage": "model",
+            "label": "Experiment finished",
+            "done": any(a["kind"] == "job" and a["status"] == "completed" for a in artifacts),
+        },
+        {"stage": "release", "label": "Model bundle linked", "done": present("model_bundle")},
+    ]
+    return {"project_id": project_id, "artifacts": artifacts, "stages": stages}
+
+
 @router.put("/{project_id}")
 def update_project(project_id: str, body: UpdateProjectRequest):
     _validate_artifacts(body.artifacts)

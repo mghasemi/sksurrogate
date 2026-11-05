@@ -70,7 +70,20 @@ More workflows are covered in the
 and `monitoring guide <https://sksurrogate.readthedocs.io/en/latest/monitoring.html>`_.
 For the API and UI, see the
 `control-plane guide <https://sksurrogate.readthedocs.io/en/latest/controlplane.html>`_
-and `UI walkthrough <https://sksurrogate.readthedocs.io/en/latest/ui-manual.html>`_.
+`UI manual <https://sksurrogate.readthedocs.io/en/latest/ui-manual.html>`_ and
+`worked example with screenshots <https://sksurrogate.readthedocs.io/en/latest/walkthrough.html>`_.
+
+Run the web UI and API with Docker
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+From a source checkout (Docker with Compose required)::
+
+    docker compose --profile prod up --build -d   # UI and API on http://localhost:8013
+    docker compose --profile dev up --build       # hot reload; UI on http://localhost:5174
+
+Set ``SKSURROGATE_PORT`` to change the port and ``SKSURROGATE_API_KEY`` to
+require an API key. Data persists in the ``sksurrogate-data`` volume. See the
+control-plane guide for details.
 
 Benchmarks
 ----------

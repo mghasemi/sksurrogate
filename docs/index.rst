@@ -26,6 +26,7 @@ Welcome to SKSurrogate's documentation!
    monitoring
    controlplane
    ui-manual
+   walkthrough
    phase9
    phase10
    release

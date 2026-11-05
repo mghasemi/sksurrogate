@@ -7,14 +7,17 @@ import {
   ClipboardCheck,
   Cpu,
   Database,
+  FolderKanban,
   FlaskConical,
   Gauge,
+  Lightbulb,
   LayoutDashboard,
   LineChart,
   ListChecks,
   Menu,
   RefreshCw,
   Settings2,
+  Ruler,
   Sigma,
 } from "lucide-react";
 
@@ -38,6 +41,9 @@ const MonitoringPage = lazy(() => import("./pages/Monitoring"));
 const RetrainingPage = lazy(() => import("./pages/Retraining"));
 const JobsPage = lazy(() => import("./pages/Jobs"));
 const SettingsPage = lazy(() => import("./pages/Settings"));
+const ProjectsPage = lazy(() => import("./pages/Projects"));
+const ExplainPage = lazy(() => import("./pages/Explain"));
+const DesignPage = lazy(() => import("./pages/Design"));
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
@@ -52,27 +58,37 @@ interface NavEntry {
 const NAV_GROUPS: Array<{ label: string; items: NavEntry[] }> = [
   {
     label: "Overview",
-    items: [{ to: "/", label: "Dashboard", icon: LayoutDashboard }],
+    items: [
+      { to: "/", label: "Dashboard", icon: LayoutDashboard },
+      { to: "/projects", label: "Projects", icon: FolderKanban },
+    ],
   },
   {
-    label: "Pipeline",
+    label: "1. Data",
     items: [
       { to: "/datasets", label: "Datasets", icon: Database },
       { to: "/features", label: "Feature Analysis", icon: Sigma },
+      { to: "/design", label: "Experiment Design", icon: Ruler },
+    ],
+  },
+  {
+    label: "2. Model",
+    items: [
       { to: "/experiments", label: "Experiments", icon: FlaskConical },
       { to: "/evaluation", label: "Evaluation", icon: LineChart },
+      { to: "/explain", label: "Explain", icon: Lightbulb },
       { to: "/bundles", label: "Model Bundles", icon: Boxes },
     ],
   },
   {
-    label: "Release",
+    label: "3. Release",
     items: [
       { to: "/quality-gates", label: "Quality Gates", icon: ClipboardCheck },
       { to: "/registry", label: "Registry & Deployment", icon: Gauge },
     ],
   },
   {
-    label: "Serve",
+    label: "4. Operate",
     items: [
       { to: "/inference", label: "Inference", icon: Cpu },
       { to: "/monitoring", label: "Monitoring", icon: Activity },
@@ -90,6 +106,9 @@ const NAV_GROUPS: Array<{ label: string; items: NavEntry[] }> = [
 
 const TITLES: Record<string, string> = {
   "/": "Dashboard",
+  "/projects": "Projects",
+  "/design": "Experiment Design",
+  "/explain": "Explain",
   "/datasets": "Datasets",
   "/features": "Feature Analysis",
   "/experiments": "Experiments",
@@ -230,6 +249,9 @@ function Shell() {
           <Suspense fallback={<Loading label="Loading page…" />}>
           <Routes>
             <Route path="/" element={<DashboardPage />} />
+            <Route path="/projects" element={<ProjectsPage />} />
+            <Route path="/design" element={<DesignPage />} />
+            <Route path="/explain" element={<ExplainPage />} />
             <Route path="/datasets" element={<DatasetsPage />} />
             <Route path="/features" element={<FeatureAnalysisPage />} />
             <Route path="/experiments" element={<ExperimentsPage />} />
