@@ -24,9 +24,12 @@ real-data model-tuning checks are complete for the scoped MVP; broader
 scientific/physical validation and other variable types remain future work.
 P2.5's API-first project metadata workflow is complete for the scoped MVP:
 projects link existing dataset partitions, model bundles, and jobs, and the
-API notebook verifies linked lineage without duplicating artifact storage. A
-project UI or rerun-from-project service remains future work. The broader
-recommendation audit is complete. P3 adds a Python split-conformalized
+API notebook verifies linked lineage without duplicating artifact storage.
+Projects now also support append-only hypothesis/analysis/finding/conclusion
+records with supporting or contradicting links to project artifacts, plus
+immutable metadata fingerprints/configuration snapshots; full data/run artifact
+snapshots and research orchestration remain future work. The
+broader recommendation audit is complete. P3 adds a Python split-conformalized
 quantile-interval helper; UI/API integration and unrelated research bets remain
 deferred.
 
@@ -69,7 +72,9 @@ implementation and tests before extending them:
 
 This roadmap is not a replacement for the MLOps or UI plans. Coordinate work
 with them and update both documents when an implementation changes their
-scope or status.
+scope or status. Review-specific recommendations and follow-up decisions from
+[`ai_layer02.md`](./ai_layer02.md) are tracked in
+[`AI_LAYER02_FOLLOWUP_PLAN.md`](./AI_LAYER02_FOLLOWUP_PLAN.md).
 
 ## Prioritized plan
 
@@ -242,13 +247,21 @@ without changing current inference behavior.
 #### P1.1 Add safe built-in AutoML presets
 
 - **Status:** Complete for bounded scikit-learn classification and regression
-  starting presets; the existing broad legacy default remains unchanged.
+  starting presets. Presets automatically apply fold-local preprocessing to
+  pandas DataFrames when ``cat_cols`` is omitted; array-like inputs should be
+  numeric unless the explicit categorical encoder path is used. The existing
+  broad legacy default remains unchanged.
 - [x] Provide small, documented task-appropriate defaults for common
   classification and regression workflows.
 - [x] Keep custom search spaces supported and make preset selection explicit
   and reproducible.
 - [x] Test estimator availability, time/evaluation limits, and small datasets.
 - [x] Avoid optional heavyweight estimators as mandatory dependencies.
+- [x] For DataFrame preset inputs without ``cat_cols``, add fold-local numeric,
+  categorical, datetime, and text preprocessing; preserve the explicit
+  ``cat_cols`` path and numeric array behavior.
+- [x] Raise a diagnostic error rather than returning an unfitted estimator
+  when every candidate pipeline fails.
 
 **Done when:** a user can start a bounded search with a minimal API call and
 can inspect the exact estimators and search space used. The presets are
@@ -320,9 +333,10 @@ continue to work through a documented migration period.
 #### P1.4 Improve evaluation diagnostics and statistical comparison
 
 - **Status:** Complete for single-target regression, multiclass ROC/calibration,
-  paired repeated-CV comparison, and split-conformal regression. Cumulative
-  gain/lift remain binary-only because they require a single positive-class
-  ranking.
+  protocol-aware paired repeated-CV comparison, and split-conformal regression.
+  Cumulative gain/lift remain binary-only because they require a single
+  positive-class ranking. Broader inferential methods remain tracked in the
+  AI Layer 02 follow-up plan.
 - [x] Add single-target regression diagnostics (predicted-versus-actual,
   residual summaries, and plots) on the tracker's existing split.
 - [x] Extend ROC and calibration plots with well-defined multiclass
@@ -330,6 +344,10 @@ continue to work through a documented migration period.
 - [x] Build paired comparisons on `nested_cv_evaluation` repeat-level scores.
 - [x] Add uncertainty-aware paired comparison with bootstrap intervals and a
   paired effect size; document alignment and dependence assumptions.
+- [x] Record nested-CV partition fingerprints, splitters, scoring identity,
+  preprocessing, repeat seed policy, group identity, fixed-estimator scope,
+  and validation use. Reject known protocol mismatches and mark unverifiable
+  comparisons explicitly.
 - [x] Prototype split-conformal regression intervals with documented coverage
   assumptions and tests for calibration/evaluation separation.
 
@@ -417,6 +435,15 @@ are specified. The current bounded result and reproduction command are in
   fingerprints.
 - [x] Provide a bounded dataset profile covering distributions, missingness,
   target balance/distribution, associations, and potential redundancy.
+- [x] Extend profile summaries with robust numeric statistics, IQR outlier
+  signals, constant/all-missing and exact duplicate feature flags, and
+  duplicate-row counts scoped to sampled rows and selected features.
+- [x] Add supplementary Spearman and Kendall rank coefficients for numeric
+  pairs while preserving existing Pearson association fields.
+- [x] Add complete-case VIF and standardized condition-number diagnostics,
+  with explicit rank-deficiency handling.
+- [x] Report bounded exact missingness patterns over selected features,
+  separately from marginal missing-value counts.
 - [x] Include row/feature limits and clear handling of mixed types and small
   datasets.
 - [x] Present findings as diagnostic signals, not proof of leakage, causation,
@@ -434,6 +461,16 @@ implicit feature truncation, and its report explicitly disclaims causal,
 leakage, and mechanism claims. Focused validation: 97 tests passed across
 ``tests/test_optimized_paths.py`` and ``tests/test_phase5_endpoints.py``;
 changed Python modules compiled and ``git diff --check`` passed.
+The profile follow-up adds robust statistics, duplicate/constant/outlier
+diagnostics, bounded descriptive numeric distributions by categorical group,
+and Spearman/Kendall rank coefficients, with sampled-scope documentation.
+It also reports complete-case VIF and standardized condition numbers for
+collinearity diagnostics and bounded missingness-pattern counts. Nested-CV
+comparison provenance is documented in P1.4 and remains unverified for
+default/opaque scoring or missing fingerprints. Follow-up validation passed
+127 tests across optimized paths, dataset-profile endpoints, time-series, and
+quantile evaluation suites; Sphinx HTML, Python compilation, Pylance checks,
+and whitespace checks passed.
 
 #### P2.2 Improve scientific provenance and result export
 
@@ -525,19 +562,23 @@ model-tuning tasks. The checks above meet this criterion for the scoped MVP.
 - [x] Keep production deployment and monitoring available as a separate
   operational workflow.
 
-**Status:** Complete for the API-first MVP. The API can persist project
-metadata and validate references to existing dataset partitions, bundles, and
-jobs. Project-level
-retrieval currently returns those stable references; clients follow the
-existing endpoints for the authoritative artifacts. The executable API
+**Status:** Complete for the API-first metadata MVP and extended with
+append-only research records, project-linked evidence, and captured source
+snapshots. The API can persist project metadata and validate references to
+existing dataset partitions, bundles, and jobs. Project-level retrieval
+returns those references and records; clients follow the existing endpoints
+for the authoritative artifacts.
+The executable API
 notebook creates a bounded analysis, links its dataset, search/evaluation jobs,
 and bundle in a project, then follows the links and verifies the training
 fingerprint and run ID. There is intentionally no second run or registry store.
 
 **Done when:** a project can link and reproduce existing analysis artifacts
 without duplicating experiment-tracking or registry concepts. The API notebook
-roundtrip meets this criterion for the API-first MVP; a project UI and a
-service that launches reruns directly from project metadata are deferred.
+roundtrip meets this criterion for the API-first MVP. The Projects UI now adds
+and displays research records and reports snapshot state. Recovering deleted
+sources, full workflow orchestration, and a service that launches reruns
+directly from project metadata are deferred.
 
 ### P3 — Defer until demand and foundations are established
 
@@ -953,3 +994,85 @@ acceptance criteria are met.
   notebook end-to-end validation, compilation, and `git diff --check` pass.
   Sphinx builds the project page and completes with 16 existing warnings in
   unrelated documentation.
+- **2026-11-05 — P2.1 / P1.4 follow-up:** extended ``dataset_profile`` with
+  robust numeric summaries and scoped data-quality flags, and made mixed-type
+  nested-CV preprocessing fold-local. Nested-CV results now carry evaluation
+  protocol metadata; paired comparison rejects known mismatches and labels
+  unverifiable alignment. Validation passed 111 focused tests and a Sphinx
+  HTML build; Python compilation and ``git diff --check`` passed.
+- **2026-11-05 — P2.1 group summaries:** added optional descriptive numeric
+  distributions by categorical group to ``dataset_profile`` and the
+  registered-partition profile API. Missing group labels are excluded and
+  categories beyond the display bound are combined; no hypothesis testing is
+  performed. Ten focused profile and endpoint tests passed.
+- **2026-11-05 — P2.1 rank associations:** added Spearman and Kendall
+  coefficients for numeric pairs without changing existing Pearson output.
+  These monotonic association diagnostics include pair counts and are
+  explicitly not presented as nonlinear dependence tests.
+- **2026-11-05 — P2.1 collinearity diagnostics:** added VIF and standardized
+  condition numbers over sampled complete-case numeric data, with explicit
+  handling for constants and rank-deficient designs.
+- **2026-11-05 — P2.1 validation:** 126 tests passed across optimized paths,
+  dataset-profile endpoints, time-series evaluation, and quantile evaluation.
+  Sphinx HTML built successfully with 15 warnings; changed-module compilation,
+  Pylance checks for the profile/API changes, and ``git diff --check`` passed.
+- **2026-11-05 — P2.1 missingness patterns:** added bounded exact missingness
+  pattern counts for selected features. The profile report limits returned
+  patterns, aggregates the remainder, and makes the sample scope explicit.
+  Final focused validation passed 127 tests; Sphinx HTML succeeded with 15
+  warnings.
+- **2026-11-05 — P3 interval reporting:** added a public held-out interval
+  diagnostics helper and surfaced Wilson coverage uncertainty, mean/median
+  width, Winkler score, split provenance, and optional subgroup coverage in
+  the endpoint and Explain UI. Combined EDA/API/evaluation regression suites
+  subsequently passed 141 tests and 21 subtests; the UI production build,
+  Sphinx HTML, syntax compilation, and whitespace checks passed.
+- **2026-11-05 — P2 paired-bootstrap simulation:** added seeded synthetic tests
+  for interval coverage under independent paired-score draws and for
+  constant-difference behavior. The simulated coverage was 96% across 100
+  experiments; this does not validate repeated-CV dependence or justify an
+  independent-sample significance claim. The simulation also exposed and fixed
+  a floating-point artifact in Cohen's ``d_z`` for constant decimal shifts.
+- **2026-11-05 — P2.5 research records:** added append-only project research
+  records with evidence references to linked dataset partitions and model
+  bundles, plus a bounded Projects UI for adding and viewing records. Findings
+  and conclusions require evidence; referenced artifacts cannot be unlinked.
+  Focused project endpoint tests and the web UI production build pass.
+  Snapshot change detection is now implemented and covered by tests. Deleted
+  artifact recovery, full workflow orchestration, and record editing/deletion
+  remain open.
+- **2026-11-05 — P2.5 artifact snapshots:** newly linked dataset partitions,
+  model bundles, and jobs now retain metadata/configuration fingerprints.
+  Project summaries report changed or missing sources, while existing links
+  preserve their original snapshots across project edits. Targeted endpoint
+  coverage verifies changed datasets and deleted bundles.
+- **2026-11-05 — P2.5 multi-source evidence and storage decision:** expanded
+  the Projects UI to attach multiple independently labeled evidence artifacts
+  to each record and added an HTTP-level roundtrip test. Deferred SQLite
+  migration because the documented single-process JSON store remains adequate
+  for current project metadata volume and query requirements.
+- **2026-11-05 — P1.5 interpretation labels:** Explain and sensitivity APIs now
+  identify model attribution, fitted-model response profiles, input sensitivity,
+  and descriptive association separately, with explicit non-causal caveats.
+  UI copy and docs describe dependence and generated-input limitations.
+  Explanation/API tests, UI build, and Sphinx HTML pass; three unrelated
+  toctree warnings remain.
+- **2026-11-05 — P1.5 correlated-input diagnostics:** added a deterministic
+  perfect-correlation test showing that marginal PDP can generate off-support
+  predictions despite zero predictions on every observed row. Documented ALE
+  as a candidate, while deferring implementation until categorical bins,
+  sparse support, and classifier-output semantics have a validated contract.
+- **2026-11-05 — P1.5 explanation reproducibility metadata:** Explain responses
+  now include the reference partition, source/used row counts, whether sampling
+  occurred, and the row cap, repeat count, and seed. API tests cover sampled
+  and all-row execution; the UI manual clarifies that this aids repeatability
+  but is not evidence of cross-sample stability.
+- **2026-11-05 — P1.5 explanation metadata in UI:** typed the reference sample
+  and settings fields in the API client and displayed source/used row counts,
+  sampling status/seed, and permutation-repeat count on Explain. The UI manual
+  now describes these visible details.
+- **2026-11-05 — P1.5 reference-sample sensitivity check:** the API regression
+  test verifies same-seed repeatability and confirms that a different seed
+  changes explanation output on the same dataset. This demonstrates sensitivity
+  to the sampled reference rows; it does not estimate a stability distribution
+  or generalize across datasets.

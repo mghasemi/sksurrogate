@@ -86,6 +86,7 @@ class DatasetProfileRequest(BaseModel):
     partition: str = "train"
     target: str | None = None
     features: list[str] | None = None
+    group_by: str | None = None
     max_rows: int = Field(default=5000, ge=1, le=10000)
     max_features: int = Field(default=50, ge=1, le=100)
     max_categories: int = Field(default=10, ge=1, le=50)
@@ -106,6 +107,7 @@ def profile_registered_dataset(task_name: str, body: DatasetProfileRequest):
             frame,
             target=target,
             features=body.features,
+            group_by=body.group_by,
             max_rows=body.max_rows,
             max_features=body.max_features,
             max_categories=body.max_categories,

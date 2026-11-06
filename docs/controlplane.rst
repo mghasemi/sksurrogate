@@ -93,8 +93,10 @@ dashboard, datasets, experiments, evaluation, model bundles, registry and
 deployment, inference, monitoring, retraining, and settings.
 
 Normal registry promotion requires a passing bundle-quality report by default;
-the current default check is schema compatibility, not a configured metric
-threshold policy. Automated retraining promotion is a separate workflow: it
+the default check verifies that the registered bundle can be loaded and does
+not apply custom metric thresholds. There is no configured metric-threshold
+policy on the normal promotion endpoint. Automated retraining promotion is a
+separate workflow: it
 requires at least one finite metric threshold and can promote automatically
 only to ``staging``. Production promotion remains approval-gated. See
 :doc:`phase9` for the retraining trigger and promotion contract.

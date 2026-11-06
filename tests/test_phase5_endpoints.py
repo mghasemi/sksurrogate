@@ -104,6 +104,19 @@ class TestPhase5Endpoints(unittest.TestCase):
         self.assertTrue(report["target_associations"])
         json.dumps(report)
 
+    def test_profile_registered_dataset_accepts_group_comparisons(self):
+        self._register()
+
+        report = datasets_router.profile_registered_dataset(
+            TASK,
+            datasets_router.DatasetProfileRequest(
+                partition="train",
+                group_by="category",
+            ),
+        )
+
+        self.assertEqual(report["group_comparisons"]["group_by"], "category")
+
     def test_profile_rejects_missing_partition_and_implicit_feature_truncation(self):
         self._register()
 

@@ -307,7 +307,7 @@ to override types (`DataPreprocess.set_type`, `transform_label_bin` are unexpose
      sensitive_scan}` **without persisting**.
    - Extend `POST /{task}/register` body with optional
      `type_overrides: dict[str, str]`, `target: str`, `binarize_label: bool`; apply
-     `DataPreprocess.set_type(...)` / `transform_label_bin(...)` before `RegisterData`.
+     `DataPreprocess.set_type(...)` / `transform_label_bin(...)` before `register_data`.
 2. **client.ts** — `inspectDataset(task, file)`, extended `registerDataset` body.
 3. **UI (Datasets.tsx)** — registration becomes a two-step flow: upload → review table with an
    editable type column per row (select of the deduced types), target picker, label-binarize

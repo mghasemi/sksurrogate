@@ -69,13 +69,13 @@ export default function FeatureAnalysisPage() {
     <div className="stack">
       <div className="page-head">
         <h1>Feature Analysis</h1>
-        <span className="desc">Sensitivity analysis (job-based) and fast correlation pruning for task “{task || "…"}”</span>
+        <span className="desc">Input sensitivity and descriptive feature association for task “{task || "…"}”</span>
       </div>
 
       {!task && <div className="error-note">Pick a task name in the top bar first.</div>}
 
       <div className="grid cols-2">
-        <Card title="Sensitivity analysis" sub="Ranks features via Sobol / Morris / delta-mmnt. Runs as a background job — can be slow on wide feature sets.">
+        <Card title="Input sensitivity" sub="How the fitted surrogate responds over independent, generated feature ranges; this is not feature–target correlation or a causal effect.">
           <div className="row">
             <div className="field fixed" style={{ flex: "0 1 170px", minWidth: 130 }}>
               <label>Method</label>
@@ -198,6 +198,7 @@ export default function FeatureAnalysisPage() {
                 <p className="muted" style={{ marginTop: 6 }}>
                   Pairwise correlation of the <code>{trainPartition}</code> partition, from{" "}
                   <code>/api/sensitivity/{task}/correlation-matrix</code>.
+                  This is descriptive association between observed feature values, not model attribution or causal evidence.
                 </p>
               </>
             )}
@@ -230,7 +231,7 @@ export default function FeatureAnalysisPage() {
       </Card>
 
       <p className="muted">
-        Tip: the top-N features from a sensitivity run can be fed into the Experiments stage to constrain the search space.
+        Sensitivity indices describe the fitted surrogate under generated input perturbations; correlated or categorical inputs may produce unrealistic combinations. Use correlation summaries for observed associations, and do not interpret either analysis as causal.
       </p>
     </div>
   );
@@ -325,6 +326,9 @@ function SensitivityHeatmap({ result }: { result: SensitivityJobResult }) {
       <p className="muted" style={{ marginTop: 6 }}>
         Weight = {unit}. Hover a cell for the exact value; the raw payload is under “Show result”.
       </p>
+      {result.interpretation?.limitations.map((limitation) => (
+        <p className="muted" key={limitation}>{limitation}</p>
+      ))}
     </>
   );
 }

@@ -127,10 +127,85 @@ def test_explain_intervals_and_project_summary(client):
     data = explained.json()
     assert data["importance"][0]["feature"] == "a"
     assert data["partial_dependence"] and data["partial_dependence"][0]["grid"]
+    assert data["reference_sample"] == {
+        "partition": "train",
+        "source_rows": 120,
+        "used_rows": 100,
+        "sampling": "random_without_replacement",
+    }
+    assert data["settings"] == {
+        "max_rows": 100,
+        "n_repeats": 2,
+        "top_k": 3,
+        "random_state": 0,
+    }
+    assert data["interpretation"]["importance"]["category"] == "model_attribution"
+    assert data["interpretation"]["partial_dependence"]["category"] == "fitted_model_response_profile"
+    assert data["interpretation"]["importance"]["causal_effect"] is False
+    assert data["interpretation"]["partial_dependence"]["causal_effect"] is False
+    assert data["interpretation"]["limitations"]
+    repeated_explanation = client.post(
+        "/api/evaluation/reg/%s/explain" % version,
+        json={"max_rows": 100, "n_repeats": 2},
+    ).json()
+    assert repeated_explanation["importance"] == data["importance"]
+    assert repeated_explanation["partial_dependence"] == data["partial_dependence"]
+    assert repeated_explanation["reference_sample"] == data["reference_sample"]
+    alternative_reference = client.post(
+        "/api/evaluation/reg/%s/explain" % version,
+        json={"max_rows": 100, "n_repeats": 2, "random_state": 1},
+    ).json()
+    assert alternative_reference["reference_sample"] == data["reference_sample"]
+    assert alternative_reference["settings"]["random_state"] == 1
+    assert (
+        alternative_reference["importance"] != data["importance"]
+        or alternative_reference["partial_dependence"] != data["partial_dependence"]
+    )
+    all_rows_explanation = client.post(
+        "/api/evaluation/reg/%s/explain" % version,
+        json={"max_rows": 500, "n_repeats": 2},
+    ).json()
+    assert all_rows_explanation["reference_sample"] == {
+        "partition": "train",
+        "source_rows": 120,
+        "used_rows": 120,
+        "sampling": "all_rows",
+    }
+    assert any("stability across alternative reference samples" in limitation for limitation in data["interpretation"]["limitations"])
 
-    intervals = client.post("/api/evaluation/reg/%s/intervals" % version, json={"alpha": 0.2})
+    sensitivity_response = client.post(
+        "/api/sensitivity/reg/run",
+        json={"method": "sobol", "n_features_to_select": 2, "train_partition": "train"},
+    )
+    assert sensitivity_response.status_code == 200, sensitivity_response.text
+    sensitivity_job = _wait(client, sensitivity_response.json()["job_id"])
+    assert sensitivity_job["status"] == "completed", sensitivity_job
+    sensitivity_result = sensitivity_job["result"]
+    assert sensitivity_result["interpretation"]["category"] == "input_sensitivity"
+    assert sensitivity_result["interpretation"]["causal_effect"] is False
+
+    correlation = client.get("/api/sensitivity/reg/correlation-matrix").json()
+    assert correlation["interpretation"]["category"] == "descriptive_association"
+    assert correlation["interpretation"]["measure"] == "Pearson correlation"
+    assert correlation["interpretation"]["causal_effect"] is False
+
+    intervals = client.post(
+        "/api/evaluation/reg/%s/intervals" % version,
+        json={"alpha": 0.2, "group_by": "a", "max_groups": 2},
+    )
     assert intervals.status_code == 200, intervals.text
-    assert 0.0 <= intervals.json()["empirical_coverage"] <= 1.0
+    interval_result = intervals.json()
+    assert 0.0 <= interval_result["empirical_coverage"] <= 1.0
+    assert interval_result["coverage_interval"]["method"] == "Wilson score interval"
+    assert interval_result["coverage_interval"]["lower"] <= interval_result["empirical_coverage"]
+    assert interval_result["empirical_coverage"] <= interval_result["coverage_interval"]["upper"]
+    assert interval_result["mean_interval_width"] is not None
+    assert interval_result["mean_interval_score"] is not None
+    assert interval_result["calibration_source_partition"] == "train"
+    assert interval_result["fit_rows"] > 0
+    assert "random holdout" in interval_result["holdout_partition"]
+    assert interval_result["group_by"] == "a"
+    assert len(interval_result["subgroup_coverage"]["groups"]) <= 3
 
     project = client.post(
         "/api/projects",

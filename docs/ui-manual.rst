@@ -136,7 +136,7 @@ training data; do not use a copy of the training rows as a holdout.
 
 If the task already has a registered schema, **Validate upload** checks a new
 CSV against it before you commit. The Python tracking layer is
-``SKSurrogate.mltrace.mltrack``: ``RegisterData`` records dataset metadata,
+``SKSurrogate.mltrace.mltrack``: ``register_data`` records dataset metadata,
 ``validate_data`` checks training data, and ``validate_prediction_data``
 checks inference inputs. The checks catch column, order, dtype, and category
 differences; use the explicit compatibility options in the Python API only
@@ -168,10 +168,12 @@ observations across folds.
 
 Open **Feature Analysis** after registering a training partition.
 
-* **Sensitivity analysis** ranks feature importance with Sobol, Morris, or
-  delta-moment methods. Choose the method, number of top features, and training
-  partition, then click **Run sensitivity analysis**. This runs as a background
-  job. Inspect its ranking and heatmap when complete.
+* **Input sensitivity** measures how the fitted surrogate responds over
+  generated independent feature ranges using Sobol, Morris, or delta-moment
+  methods. Choose the method, number of top features, and training partition,
+  then click **Run sensitivity analysis**. This runs as a background job.
+  Correlated and categorical inputs may produce unrealistic perturbations;
+  these indices are not observed feature associations or causal effects.
 * **Correlation pruning** applies a threshold to the absolute pairwise
   correlation between features. It reports which features would be kept or
   dropped; it does not silently rewrite the registered CSV.
@@ -184,8 +186,10 @@ Open **Feature Analysis** after registering a training partition.
 These correspond to ``SKSurrogate.sensapprx.SensAprx``,
 ``CorrelationThreshold``, and the feature-analysis methods on
 ``SKSurrogate.mltrace.mltrack`` (including ``heatmap`` and ``TopFeatures``).
-Use the analysis to guide a smaller experiment search space or a domain review;
-do not treat an importance ranking as proof of causality.
+Use these analyses to guide a smaller experiment search space or domain
+review. Correlations describe observed feature association; sensitivity
+indices describe surrogate responses to generated inputs. Neither is causal
+evidence.
 
 .. figure:: images/ui-features.png
    :alt: Feature Analysis page showing sensitivity and correlation controls
@@ -277,12 +281,28 @@ failure rather than treating it as a score.
 Explain a model
 ~~~~~~~~~~~~~~~
 
-Open **Explain**, choose a bundle, and click **Explain model** for permutation
-importance (the score drop when a feature is shuffled) and partial-dependence
-curves for the top features. For regression bundles, **Compute intervals**
+Open **Explain**, choose a bundle, and click **Explain model** for global model
+attribution by permutation importance (the score drop when a feature is
+shuffled) and fitted-model response profiles from partial-dependence curves.
+The former measures model-score sensitivity, not feature-target association;
+the latter can evaluate implausible combinations when features are dependent.
+Neither estimates causal effects. The explanation response reports its
+reference partition, source and used row counts, whether the rows were
+subsampled, and the row cap, permutation-repeat count, and seed. The seed
+controls both row subsampling (when needed) and permutation-repeat generation;
+this metadata aids repeatability but does not estimate stability across
+alternative reference samples. The Explain page shows the reference row counts,
+sampling status, seed when sampling occurs, and permutation-repeat count.
+For regression bundles, **Compute intervals**
 produces split-conformal prediction intervals at 80/90/95% target coverage and
-reports the coverage observed on held-out rows. The guarantee is marginal and
-assumes exchangeable data; check it before relying on the interval.
+reports observed coverage with a Wilson interval, mean and median width, and
+mean interval score on held-out rows. It identifies the fit, calibration, and
+holdout rows/partitions. The conformal guarantee is marginal and assumes
+exchangeable calibration and future data; the Wilson interval separately
+assumes independent held-out coverage indicators. Neither should be read as
+evidence of conditional coverage or protection against distribution shift.
+Optionally enter a feature column to inspect bounded subgroup coverage; these
+small-group estimates are diagnostic and do not imply conditional coverage.
 
 6. Create and inspect model bundles
 ------------------------------------
@@ -340,11 +360,12 @@ does not establish that a model is suitable for deployment.
 
 .. important::
 
-   Treat a passing gate as a release prerequisite, but note that the current
-   UI's **Promote** form does not automatically attach or enforce the gate
-   report. It is a separate step. Enforce the policy in your release process
-   or call the API with the passing ``quality_report`` when promotion must be
-   programmatically blocked on a failed check.
+   The **Promote** form reruns the default bundle check, but it does not carry
+   forward the custom metric thresholds from this page. The default check
+   verifies that the registered bundle can be loaded; it does not enforce
+   metric thresholds. Run this gate and enforce any required metric policy in
+   your release process. The normal promotion endpoint does not provide a
+   verified way to configure metric thresholds.
 
 8. Register, approve, and promote a model
 -----------------------------------------
@@ -514,7 +535,7 @@ additional Python examples, see :doc:`code`, :doc:`mltrace`,
 +----------------------+------------------------------------------------------+
 | UI area              | Main SKSurrogate feature                             |
 +======================+======================================================+
-| Datasets             | ``mltrack.RegisterData``, schema validation, CV      |
+| Datasets             | ``mltrack.register_data``, schema validation, CV     |
 +----------------------+------------------------------------------------------+
 | Feature Analysis     | ``SensAprx``, ``CorrelationThreshold``, ``mltrack``  |
 +----------------------+------------------------------------------------------+

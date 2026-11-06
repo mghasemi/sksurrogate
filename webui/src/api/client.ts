@@ -932,6 +932,13 @@ export interface SensitivityJobResult {
   top_feature_names: string[];
   /** One weight per entry of `feature_columns`; null where the value was not finite. */
   weights: Array<number | null>;
+  interpretation?: {
+    category: "input_sensitivity";
+    measure: string;
+    train_partition: string;
+    causal_effect: false;
+    limitations: string[];
+  };
 }
 
 /** Narrow an unknown job result to a sensitivity result, or return null. */
@@ -946,6 +953,7 @@ export function asSensitivityResult(result: unknown): SensitivityJobResult | nul
     top_feature_indices: r.top_feature_indices ?? [],
     top_feature_names: r.top_feature_names ?? [],
     weights: r.weights,
+    interpretation: r.interpretation,
   };
 }
 
@@ -972,6 +980,11 @@ export interface CorrelationMatrixResult extends HeatmapData {
   task_name: string;
   partition: string;
   kind: "correlation";
+  interpretation: {
+    category: "descriptive_association";
+    measure: "Pearson correlation";
+    causal_effect: false;
+  };
 }
 
 export const getCorrelationMatrix = (task: string, trainPartition = "train", maxFeatures = 60) =>
@@ -1454,9 +1467,35 @@ export interface ExplainResult {
   model_version: string;
   partition: string;
   rows: number;
+  reference_sample: {
+    partition: string;
+    source_rows: number;
+    used_rows: number;
+    sampling: "all_rows" | "random_without_replacement";
+  };
+  settings: {
+    max_rows: number;
+    n_repeats: number;
+    top_k: number;
+    random_state: number;
+  };
   importance: Array<{ feature: string; mean: number | null; std: number | null }>;
   partial_dependence: Array<{ feature: string; grid: Array<number | null>; average: Array<number | null> }>;
   errors: Array<{ feature: string; detail: string }>;
+  interpretation: {
+    importance: {
+      category: "model_attribution";
+      method: string;
+      score: string;
+      causal_effect: false;
+    };
+    partial_dependence: {
+      category: "fitted_model_response_profile";
+      reference_partition: string;
+      causal_effect: false;
+    };
+    limitations: string[];
+  };
 }
 
 export const explainBundle = (
@@ -1477,15 +1516,54 @@ export interface IntervalResult {
   nominal_coverage: number;
   half_width: number | null;
   calibration_size: number;
+  training_partition: string;
+  fit_rows: number;
+  calibration_source_partition: string;
+  holdout_partition: string;
+  random_state: number;
   holdout_rows: number;
   empirical_coverage: number | null;
+  coverage_interval: {
+    method: string;
+    confidence_level: number;
+    lower: number;
+    upper: number;
+  };
+  mean_interval_width: number | null;
+  median_interval_width: number | null;
+  finite_interval_count: number;
+  unbounded_interval_count: number;
+  mean_interval_score: number | null;
+  interval_score_method: string;
+  diagnostic_assumption: string;
+  group_by: string | null;
+  subgroup_coverage: {
+    group_limit: number;
+    missing_group_count: number;
+    other_group_count: number;
+    groups: Array<{
+      group: string;
+      row_count: number;
+      sample_size: number;
+      covered_count: number;
+      empirical_coverage: number;
+      coverage_interval: { method: string; confidence_level: number; lower: number; upper: number };
+    }>;
+    interpretation: string;
+  } | null;
   points: Array<{ actual: number | null; prediction: number | null; lower: number | null; upper: number | null }>;
 }
 
 export const getIntervals = (
   task: string,
   version: string,
-  body: { alpha?: number; train_partition?: string; holdout_partition?: string | null } = {},
+  body: {
+    alpha?: number;
+    train_partition?: string;
+    holdout_partition?: string | null;
+    group_by?: string;
+    max_groups?: number;
+  } = {},
 ) =>
   post<IntervalResult>(
     `/api/evaluation/${encodeURIComponent(task)}/${encodeURIComponent(version)}/intervals`,
@@ -1522,6 +1600,25 @@ export interface ProjectArtifact {
   task_name: string;
   artifact_id: string;
   label?: string | null;
+  snapshot?: {
+    schema: string;
+    captured_at: string;
+    fingerprint: string;
+    identity: { kind: string; task_name: string; artifact_id: string };
+    details: Record<string, unknown>;
+  };
+}
+
+export interface ProjectResearchRecord {
+  record_id: string;
+  kind: "hypothesis" | "analysis" | "finding" | "conclusion";
+  title: string;
+  text: string;
+  evidence: Array<{
+    relation: "supports" | "contradicts";
+    artifact: ProjectArtifact;
+  }>;
+  created_at: string;
 }
 
 export interface Project {
@@ -1530,6 +1627,7 @@ export interface Project {
   description: string;
   research_questions: string[];
   artifacts: ProjectArtifact[];
+  records: ProjectResearchRecord[];
   notes: Array<{ note_id: string; text: string; created_at: string }>;
   created_at: string;
   updated_at: string;
@@ -1537,7 +1635,13 @@ export interface Project {
 
 export interface ProjectSummary {
   project_id: string;
-  artifacts: Array<ProjectArtifact & { exists: boolean; status: string | null }>;
+  artifacts: Array<
+    ProjectArtifact & {
+      exists: boolean;
+      status: string | null;
+      snapshot_status: "current" | "changed" | "missing" | "unverified";
+    }
+  >;
   stages: Array<{ stage: string; label: string; done: boolean }>;
 }
 
@@ -1557,3 +1661,8 @@ export const updateProject = (
 
 export const addProjectNote = (id: string, text: string) =>
   post<Project>(`/api/projects/${encodeURIComponent(id)}/notes`, { text });
+
+export const addProjectRecord = (
+  id: string,
+  body: Omit<ProjectResearchRecord, "record_id" | "created_at">,
+) => post<Project>(`/api/projects/${encodeURIComponent(id)}/records`, body);

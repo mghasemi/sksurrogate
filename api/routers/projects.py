@@ -1,5 +1,6 @@
 """Persistent research-project metadata linked to existing API artifacts."""
 
+import hashlib
 import json
 import re
 import threading
@@ -7,8 +8,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter
-from pydantic import BaseModel, Field, field_validator
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from ..config import settings
 from ..deps import bad_request, not_found, open_tracker
@@ -30,6 +31,31 @@ class ProjectArtifactReference(BaseModel):
     task_name: str = Field(min_length=1, max_length=128)
     artifact_id: str = Field(min_length=1, max_length=128)
     label: str | None = Field(default=None, max_length=200)
+
+
+class ProjectEvidenceReference(BaseModel):
+    relation: Literal["supports", "contradicts"]
+    artifact: ProjectArtifactReference
+
+
+class AddProjectRecordRequest(BaseModel):
+    kind: Literal["hypothesis", "analysis", "finding", "conclusion"]
+    title: str = Field(min_length=1, max_length=200)
+    text: str = Field(min_length=1, max_length=10000)
+    evidence: list[ProjectEvidenceReference] = Field(default_factory=list, max_length=20)
+
+    @field_validator("title", "text")
+    @classmethod
+    def validate_nonblank(cls, value):
+        if not value.strip():
+            raise ValueError("record title and text must not be blank")
+        return value.strip()
+
+    @model_validator(mode="after")
+    def require_claim_evidence(self):
+        if self.kind in ("finding", "conclusion") and not self.evidence:
+            raise ValueError("findings and conclusions require at least one evidence reference")
+        return self
 
 
 class ProjectFields(BaseModel):
@@ -137,16 +163,113 @@ def _validate_artifacts(artifacts):
                 raise bad_request("job reference does not exist for the specified task")
 
 
-def _project_record(project_id, body, *, created_at=None, notes=None):
+def _stable_fingerprint(value):
+    serialized = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _artifact_snapshot(artifact):
+    if artifact.kind == "dataset_partition":
+        with open_tracker(artifact.task_name) as tracker:
+            partition = tracker.dataset_splits().get(artifact.artifact_id)
+        details = {
+            key: partition.get(key)
+            for key in (
+                "fingerprint",
+                "ingestion_timestamp",
+                "rows",
+                "columns",
+                "target",
+                "feature_count",
+            )
+        }
+    elif artifact.kind == "model_bundle":
+        from .bundles import run_configuration
+
+        configuration = run_configuration(artifact.task_name, artifact.artifact_id)
+        details = {
+            "model_version": configuration["model_version"],
+            "created_at": configuration["created_at"],
+            "run_id": configuration["run_id"],
+            "lineage": configuration["lineage"],
+            "run": configuration["run"],
+            "dependencies": configuration["dependencies"],
+        }
+    else:
+        job = job_manager.get(artifact.artifact_id)
+        if job is None:
+            raise bad_request("job reference no longer exists")
+        configuration = {
+            key: value
+            for key, value in job.items()
+            if key not in ("status", "updated_at", "result", "error")
+        }
+        details = {
+            "configuration_fingerprint": _stable_fingerprint(configuration),
+            "result_fingerprint": (
+                _stable_fingerprint(job["result"])
+                if job.get("result") is not None
+                else None
+            ),
+        }
+
+    identity = {
+        "kind": artifact.kind,
+        "task_name": artifact.task_name,
+        "artifact_id": artifact.artifact_id,
+    }
+    details = json.loads(
+        json.dumps(details, ensure_ascii=False, sort_keys=True, default=str)
+    )
+    return {
+        "schema": "sksurrogate.project-artifact-snapshot.v1",
+        "captured_at": _now(),
+        "identity": identity,
+        "fingerprint": _stable_fingerprint({"identity": identity, "details": details}),
+        "details": details,
+    }
+
+
+def _serialize_artifacts(artifacts, existing_artifacts=()):
+    prior = {
+        (item["kind"], item["task_name"], item["artifact_id"]): item
+        for item in existing_artifacts
+    }
+    serialized = []
+    for artifact in artifacts:
+        item = artifact.model_dump()
+        key = (artifact.kind, artifact.task_name, artifact.artifact_id)
+        previous = prior.get(key, {})
+        item["snapshot"] = previous.get("snapshot") or _artifact_snapshot(artifact)
+        serialized.append(item)
+    return serialized
+
+
+def _project_record(
+    project_id,
+    body,
+    *,
+    created_at=None,
+    notes=None,
+    records=None,
+    existing_artifacts=(),
+):
     timestamp = _now()
     return {
-        "schema": "sksurrogate.research-project.v1",
+        "schema": "sksurrogate.research-project.v2",
         "project_id": project_id,
         "name": body.name,
         "description": body.description,
         "research_questions": body.research_questions,
-        "artifacts": [item.model_dump() for item in body.artifacts],
+        "artifacts": _serialize_artifacts(body.artifacts, existing_artifacts),
         "notes": notes or [],
+        "records": records or [],
         "created_at": created_at or timestamp,
         "updated_at": timestamp,
     }
@@ -161,6 +284,8 @@ def list_projects():
             for path in settings.projects_dir.glob("*.json")
             if path.is_file()
         ]
+    for project in projects:
+        project.setdefault("records", [])
     return {"projects": sorted(projects, key=lambda project: project["updated_at"], reverse=True)}
 
 
@@ -175,7 +300,9 @@ def create_project(body: CreateProjectRequest):
 
 @router.get("/{project_id}")
 def get_project(project_id: str):
-    return _read_project(project_id)
+    project = _read_project(project_id)
+    project.setdefault("records", [])
+    return project
 
 
 @router.get("/{project_id}/summary")
@@ -187,11 +314,28 @@ def project_summary(project_id: str):
         exists, status = True, None
         try:
             _validate_artifacts([ProjectArtifactReference(**item)])
-        except Exception:
+        except HTTPException as exc:
+            if exc.status_code not in (400, 404):
+                raise
             exists = False
         if item["kind"] == "job" and exists:
             status = (job_manager.get(item["artifact_id"]) or {}).get("status")
-        artifacts.append({**item, "exists": exists, "status": status})
+        snapshot_status = "missing" if not exists else "unverified"
+        if exists and item.get("snapshot"):
+            current_snapshot = _artifact_snapshot(ProjectArtifactReference(**item))
+            snapshot_status = (
+                "current"
+                if current_snapshot["fingerprint"] == item["snapshot"].get("fingerprint")
+                else "changed"
+            )
+        artifacts.append(
+            {
+                **item,
+                "exists": exists,
+                "status": status,
+                "snapshot_status": snapshot_status,
+            }
+        )
     present = lambda kind: any(a["kind"] == kind and a["exists"] for a in artifacts)
     stages = [
         {"stage": "data", "label": "Data registered", "done": present("dataset_partition")},
@@ -210,12 +354,66 @@ def update_project(project_id: str, body: UpdateProjectRequest):
     _validate_artifacts(body.artifacts)
     with _PROJECT_LOCK:
         existing = _read_project(project_id)
+        linked_artifacts = {
+            (item.kind, item.task_name, item.artifact_id) for item in body.artifacts
+        }
+        required_artifacts = {
+            (
+                evidence["artifact"]["kind"],
+                evidence["artifact"]["task_name"],
+                evidence["artifact"]["artifact_id"],
+            )
+            for record in existing.get("records", [])
+            for evidence in record.get("evidence", [])
+        }
+        if not required_artifacts.issubset(linked_artifacts):
+            raise bad_request("artifact references used as research evidence cannot be removed")
         project = _project_record(
             project_id,
             body,
             created_at=existing["created_at"],
             notes=existing.get("notes", []),
+            records=existing.get("records", []),
+            existing_artifacts=existing.get("artifacts", []),
         )
+        _write_project(project)
+    return project
+
+
+@router.post("/{project_id}/records")
+def add_project_record(project_id: str, body: AddProjectRecordRequest):
+    with _PROJECT_LOCK:
+        project = _read_project(project_id)
+        artifact_keys = {
+            (item["kind"], item["task_name"], item["artifact_id"])
+            for item in project.get("artifacts", [])
+        }
+        evidence_keys = set()
+        for evidence in body.evidence:
+            artifact = evidence.artifact
+            key = (artifact.kind, artifact.task_name, artifact.artifact_id)
+            if key not in artifact_keys:
+                raise bad_request("research evidence must reference an artifact linked to this project")
+            evidence_key = (evidence.relation, *key)
+            if evidence_key in evidence_keys:
+                raise bad_request("research evidence references must be unique within a record")
+            evidence_keys.add(evidence_key)
+
+        record = {
+            "record_id": uuid.uuid4().hex,
+            "kind": body.kind,
+            "title": body.title,
+            "text": body.text,
+            "evidence": [
+                item.model_dump() for item in body.evidence
+            ],
+            "created_at": _now(),
+        }
+        records = project.setdefault("records", [])
+        if len(records) >= 1000:
+            raise bad_request("a project cannot contain more than 1000 research records")
+        records.append(record)
+        project["updated_at"] = _now()
         _write_project(project)
     return project
 

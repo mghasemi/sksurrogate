@@ -3,8 +3,9 @@ Research projects
 ==================
 
 The API provides a small metadata workspace for grouping research questions,
-notes, and references to existing SKSurrogate artifacts. A project does not
-copy datasets, runs, analysis outputs, or model bundles, and it does not replace
+notes, research records, and references to existing SKSurrogate artifacts.
+Projects do not copy datasets, bundles, or full job outputs; they retain
+bounded provenance snapshots of linked artifacts. Projects do not replace
 ``mltrack``, the job store, or the model registry.
 
 Create a project
@@ -12,7 +13,7 @@ Create a project
 
 Create a project and link an existing registered dataset partition::
 
-    curl -X POST http://127.0.0.1:8000/api/projects \
+    curl -X POST http://127.0.0.1:8013/api/projects \
       -H 'Content-Type: application/json' \
       -d '{
         "name": "Material degradation",
@@ -48,11 +49,17 @@ Projects accept references to:
 * ``job`` — ``artifact_id`` is a background job ID belonging to the same task.
   Use ``GET /api/jobs/{job_id}`` for its current status and result.
 
-References are validated on project creation and update; they are pointers, not
-snapshots. The target artifact can later be removed or changed, so clients
-should follow the linked resource's existing API and check its current
-availability. References with unsupported path characters, duplicate
-references, or mismatched task/job pairs are rejected.
+References are validated on project creation and update. A snapshot is captured
+when a reference is first linked and preserved by later project edits.
+Dataset snapshots include the registered partition fingerprint and schema
+metadata; bundle snapshots include run identity, lineage, configuration, and
+dependencies; job snapshots fingerprint their recorded configuration and
+result. ``GET /api/projects/{project_id}/summary`` reports each snapshot as
+``current``, ``changed``, ``missing``, or ``unverified``. Snapshots identify
+what was observed but do not freeze or copy the upstream artifact; a deleted
+artifact cannot be recovered from project metadata. References with
+unsupported path characters, duplicate references, or mismatched task/job
+pairs are rejected.
 
 Questions and notes
 ===================
@@ -64,14 +71,64 @@ artifact references; its creation time and existing notes are preserved.
 
 Append an observation with ``POST /api/projects/{project_id}/notes``::
 
-    curl -X POST http://127.0.0.1:8000/api/projects/PROJECT_ID/notes \
+    curl -X POST http://127.0.0.1:8013/api/projects/PROJECT_ID/notes \
       -H 'Content-Type: application/json' \
       -d '{"text": "The pilot suggests an interaction worth testing."}'
 
-Each note receives its own ID and creation timestamp. This first version has
-no UI, notebook execution, project deletion, report generation, or authorization
-model beyond the API's existing optional API-key middleware. Project records
+Each note receives its own ID and creation timestamp. The web UI's **Projects**
+page can create projects, show their progress, link available artifacts,
+append notes, and add research records. Projects do not yet support notebook
+execution, project deletion, or project-level report generation. Authorization
+is limited to the API's existing optional API-key middleware. Project records
 are stored as JSON under the configured API storage root; deployments should
 use a single API process for writes, as the file store is not a distributed
 multi-worker database. Deployment, registry, monitoring, and retraining remain
 separate operational workflows.
+
+Research records and evidence
+=============================
+
+Append a hypothesis, analysis, finding, or conclusion with
+``POST /api/projects/{project_id}/records``. Records are append-only and have
+their own IDs and timestamps. Findings and conclusions require at least one
+evidence reference; hypotheses and analysis notes may be recorded before
+evidence is linked. Evidence must point to an artifact already linked to the
+project and is labeled as supporting or contradicting::
+
+    curl -X POST http://127.0.0.1:8013/api/projects/PROJECT_ID/records \
+      -H 'Content-Type: application/json' \
+      -d '{
+        "kind": "finding",
+        "title": "The pilot result is inconclusive",
+        "text": "The registered data and fitted bundle give conflicting indications.",
+        "evidence": [
+          {
+            "relation": "supports",
+            "artifact": {
+              "kind": "dataset_partition",
+              "task_name": "degradation-pilot",
+              "artifact_id": "train"
+            }
+          },
+          {
+            "relation": "contradicts",
+            "artifact": {
+              "kind": "model_bundle",
+              "task_name": "degradation-pilot",
+              "artifact_id": "baseline-v1"
+            }
+          }
+        ]
+      }'
+
+Each record can include up to 20 evidence references, and a project can contain
+up to 1,000 records. The Projects page supports multiple evidence references
+and lets each be labeled independently.
+
+The project metadata stores references and claims, not copies of dataset,
+job, or bundle contents. An artifact used as evidence cannot be removed from
+the project through ``PUT``; remove or revise dependent records through a future
+versioned record-management API before changing that relationship. The Projects
+UI is a bounded record workspace rather than a full workflow orchestrator;
+record editing/deletion and rerunning analyses from project records are not
+provided.

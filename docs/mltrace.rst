@@ -127,8 +127,12 @@ presets. The classification preset uses accuracy; the regression preset uses
 negative root mean squared error. Both search random forests and extremely
 randomized trees in one-estimator pipelines, with a default budget of 20
 evaluations per candidate. Users can override the candidate count, wall-clock
-limit, scoring method, and pipeline length. Categorical DataFrame columns can
-be supplied through ``cat_cols`` and are encoded within each CV fold::
+limit, scoring method, and pipeline length. With a pandas DataFrame and no
+``cat_cols``, the preset automatically applies ``FoldLocalDataPreprocessor``
+inside each CV fold, including numeric imputation, categorical encoding, and
+per-column TF-IDF for ``StringDtype`` columns. Array-like input should already
+be numeric. Supplying ``cat_cols`` selects the explicit categorical-encoding
+path instead::
 
     from SKSurrogate import AML
 
@@ -203,11 +207,16 @@ intentionally converts the encoded matrix to an array before estimator fitting.
     # 'mae': None, 'r2': None}
 
 For model selection that must remain separate from final evaluation,
-``nested_cv_evaluation`` uses the training partition for inner selection and outer
-fold estimates, then evaluates the selected model once on the untouched validation
-partition. It stores fold-level predictions and metrics, mean outer scores, repeated-CV
-confidence intervals, and the final validation score in task metadata. Group-aware
-splitters preserve group labels through the evaluation path.
+``nested_cv_evaluation`` computes inner-CV scores and outer-fold estimates for
+the supplied estimator, then evaluates it on the untouched validation partition.
+It does not search among estimators or tune hyperparameters. Mixed-type
+DataFrame features are preprocessed inside each training fold; unseen categories
+are ignored at scoring time rather than being used to build the fold's category
+vocabulary. Numeric DataFrames and arrays retain their direct numeric path. The
+result identifies its preprocessing path and stores fold-level predictions and
+metrics, mean outer scores, repeated-CV confidence intervals, and the final
+validation score in task metadata. Group-aware splitters preserve group labels
+through the evaluation path.
 
 For ordered observations, callers can use ``TimeSeriesSplit`` for both
 ``inner_cv`` and ``outer_cv``. Keep rows in chronological order before
@@ -279,7 +288,7 @@ the Python interval helpers are documented below.
     MLTr.plot_lift_curve(clf, title="Random Forest: Lift Curve")
 
 Regression diagnostics
-=====================
+======================
 For a single-target regressor, ``mltrack`` can report held-out summary
 metrics and save a four-panel diagnostic plot. Both methods reuse the same
 cached 75/25 split used by the other model plots::
@@ -306,9 +315,15 @@ protocol and compare their result dictionaries::
 
 The result reports the candidate-minus-reference mean and median repeat-score
 difference, a percentile bootstrap interval, and paired Cohen's :math:`d_z`.
-At least two aligned repeat scores are required. The caller must ensure both
-evaluations used the same data and split protocol. Since repeated CV repeats
-reuse observations and training sets, this interval summarizes variation
+At least two aligned repeat scores are required. Results from
+``nested_cv_evaluation`` include an evaluation protocol with registered
+partition fingerprints, CV splitter specifications, repeat seed policy,
+preprocessing path, scoring identity, and validation-set use. When both inputs
+carry that protocol, known mismatches are rejected and the result reports
+whether alignment could be verified. Default estimator scoring, opaque custom
+scorers, missing partition fingerprints, and older result dictionaries remain
+explicitly unverified; the caller must verify those cases. Since repeated CV
+repeats reuse observations and training sets, the interval summarizes variation
 across repeats; it is not an independent-sample significance test.
 
 For uncertainty-aware single-target regression, use split conformal prediction
@@ -330,6 +345,33 @@ calibration and future examples are exchangeable and that the fitted model was
 chosen independently of the calibration set. Use a separate untouched test
 set to measure empirical coverage; coverage is not guaranteed under
 distribution shift.
+
+To summarize intervals after collecting held-out labels, use
+``prediction_interval_diagnostics``::
+
+    diagnostics = prediction_interval_diagnostics(
+        y_holdout,
+        lower,
+        upper,
+        alpha=0.1,
+        confidence_level=0.95,
+        groups=holdout_groups,
+        max_groups=20,
+    )
+
+It reports nominal and empirical coverage, a Wilson score interval for the
+empirical coverage, mean and median width, and the mean Winkler score for a
+central two-sided interval. The Wilson interval assumes independent held-out
+coverage indicators; it describes finite-sample uncertainty and is not the
+split-conformal guarantee. Unbounded intervals are retained in the coverage
+calculation, but mean width and interval score are ``None`` if any interval is
+unbounded.
+Optional ``groups`` adds bounded per-group coverage counts and Wilson
+intervals; missing group labels are excluded and categories beyond
+``max_groups`` are combined. Small-group estimates can be highly uncertain,
+and marginal conformal coverage does not imply conditional or subgroup
+coverage. The registered bundle-interval endpoint accepts ``group_by`` to
+request the same diagnostic on a holdout feature.
 
 For two trained-on-training-partition quantile estimators, conformalized
 quantile regression adjusts interval width using a disjoint calibration
@@ -358,8 +400,8 @@ conditional coverage or protect against distribution shift.
 
 Model explanations
 ==================
-``permutation_importance`` provides a global, model-agnostic ranking using
-the estimator's score by default (or an explicit scikit-learn scorer) and
+``permutation_importance`` provides a global model-attribution diagnostic
+using the estimator's score by default (or an explicit scikit-learn scorer) and
 returns the score drops, repeat-level values, and reference-set metadata::
 
     importance = MLTr.permutation_importance(
@@ -402,11 +444,24 @@ six profiles are plotted per call, and ICE curves are capped at 100 per
 one-dimensional feature by default. Two-feature interactions show average
 partial dependence only, so request ``kind="average"`` when selecting a pair.
 Registered non-numeric columns are treated as categorical features. Both
-explanation methods save their plots in the tracker. These are descriptions
-of a fitted model's behavior on the chosen reference data, not causal effects;
-feature dependence, the selected reference population, and sampling can all
-change the apparent attribution or profile. These APIs do not promise
+explanation methods save their plots in the tracker. Permutation importance
+attributes changes in the chosen model score to shuffling a feature; it is not
+predictive association measured directly from the data. Partial dependence is
+a fitted-model response profile, not an estimate of an intervention or causal
+effect. Feature dependence, the selected reference population, and sampling
+can all change the apparent attribution or profile. These APIs do not promise
 stability across resamples.
+
+Accumulated local effects (ALE) are a possible alternative to partial
+dependence when correlated features make its marginal grid unrealistic: ALE
+accumulates local prediction differences over observed feature intervals,
+reducing reliance on predictions far outside the joint reference distribution.
+It still describes model behavior rather than causality and does not solve
+sparse-support or conditional-explanation problems automatically. The current
+explanation API does not expose ALE. A supported implementation needs an
+explicit contract for numeric versus categorical features, empty or sparse
+bins, classifier output scale, and stability under the bounded reference-set
+sampling policy before replacing or supplementing the existing profiles.
 
 ``plot_roc_curve`` supports multiclass classifiers with one-vs-rest curves for
 each class and a micro-average curve. ``plot_calibration_curve`` similarly

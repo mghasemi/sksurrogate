@@ -52,7 +52,7 @@ existing task, metadata, models, metrics, plots, data, and saved-model rows::
 
    tracker = mltrack("my-task", db_name="mltrack.db")
    print(tracker.get_metadata())
-   print(tracker.ListModels())
+   print(tracker.all_models())
    tracker.close()
 
 Use the backup to roll back if the database cannot be opened or if an

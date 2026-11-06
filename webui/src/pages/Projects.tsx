@@ -5,6 +5,7 @@ import { CheckCircle2, Circle } from "lucide-react";
 
 import {
   addProjectNote,
+  addProjectRecord,
   createProject,
   getDatasetMetadata,
   getProjectSummary,
@@ -30,6 +31,14 @@ function ProjectDetail({ project }: { project: Project }) {
   const { task } = useTask();
   const qc = useQueryClient();
   const [note, setNote] = useState("");
+  const [recordKind, setRecordKind] = useState<"hypothesis" | "analysis" | "finding" | "conclusion">("hypothesis");
+  const [recordTitle, setRecordTitle] = useState("");
+  const [recordText, setRecordText] = useState("");
+  const [evidenceKey, setEvidenceKey] = useState("");
+  const [evidenceRelation, setEvidenceRelation] = useState<"supports" | "contradicts">("supports");
+  const [recordEvidence, setRecordEvidence] = useState<
+    Array<{ key: string; relation: "supports" | "contradicts" }>
+  >([]);
 
   const summaryQ = useQuery({
     queryKey: ["project-summary", project.project_id, project.updated_at],
@@ -48,6 +57,33 @@ function ProjectDetail({ project }: { project: Project }) {
       refresh();
     },
   });
+
+  const recordMut = useMutation({
+    mutationFn: () => {
+      return addProjectRecord(project.project_id, {
+        kind: recordKind,
+        title: recordTitle,
+        text: recordText,
+        evidence: recordEvidence.flatMap(({ key, relation }) => {
+          const artifact = project.artifacts.find((candidate) => keyOf(candidate) === key);
+          return artifact ? [{ relation, artifact }] : [];
+        }),
+      });
+    },
+    onSuccess: () => {
+      setRecordTitle("");
+      setRecordText("");
+      setEvidenceKey("");
+      setRecordEvidence([]);
+      refresh();
+    },
+  });
+
+  const addEvidence = () => {
+    if (!evidenceKey || recordEvidence.some((item) => item.key === evidenceKey)) return;
+    setRecordEvidence((current) => [...current, { key: evidenceKey, relation: evidenceRelation }]);
+    setEvidenceKey("");
+  };
 
   // Offer every dataset partition, bundle and completed job of the current task that is not linked yet.
   const candidatesQ = useQuery({
@@ -113,7 +149,7 @@ function ProjectDetail({ project }: { project: Project }) {
 
       <Card
         title="Linked artifacts"
-        sub="References only — nothing is copied."
+        sub="Artifact payloads stay in their stores; project links retain metadata snapshots."
         actions={
           available.length > 0 ? (
             <button className="btn" disabled={linkMut.isPending} onClick={() => linkMut.mutate(available)}>
@@ -133,7 +169,133 @@ function ProjectDetail({ project }: { project: Project }) {
                 <Badge tone="info">{a.kind.replace("_", " ")}</Badge> <span className="mono">{a.task_name}/{a.artifact_id}</span>{" "}
                 {a.status && <StatusBadge status={a.status} />}
                 {!a.exists && <Badge tone="err">missing</Badge>}
+                {a.snapshot_status && (
+                  <Badge
+                    tone={
+                      a.snapshot_status === "current"
+                        ? "ok"
+                        : a.snapshot_status === "unverified"
+                          ? "warn"
+                          : "err"
+                    }
+                  >
+                    {a.snapshot_status === "current" ? "snapshot current" : `snapshot ${a.snapshot_status}`}
+                  </Badge>
+                )}
                 {a.kind === "model_bundle" && a.exists && <LineageRail task={a.task_name} modelVersion={a.artifact_id} />}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
+
+      <Card
+        title="Research records"
+        sub="Append hypotheses, analysis notes, findings, and conclusions linked to up to 20 project artifacts."
+      >
+        <div className="row">
+          <div className="field">
+            <label>Record type</label>
+            <select value={recordKind} onChange={(e) => setRecordKind(e.target.value as typeof recordKind)}>
+              <option value="hypothesis">Hypothesis</option>
+              <option value="analysis">Analysis</option>
+              <option value="finding">Finding</option>
+              <option value="conclusion">Conclusion</option>
+            </select>
+          </div>
+          <div className="field">
+            <label>Title</label>
+            <input value={recordTitle} onChange={(e) => setRecordTitle(e.target.value)} />
+          </div>
+        </div>
+        <div className="field">
+          <label>Record</label>
+          <textarea rows={2} value={recordText} onChange={(e) => setRecordText(e.target.value)} />
+        </div>
+        <div className="row">
+          <div className="field">
+            <label>Evidence artifact</label>
+            <select value={evidenceKey} onChange={(e) => setEvidenceKey(e.target.value)}>
+              <option value="">Select an artifact</option>
+              {project.artifacts.map((artifact) => (
+                <option
+                  key={keyOf(artifact)}
+                  value={keyOf(artifact)}
+                  disabled={recordEvidence.some((item) => item.key === keyOf(artifact))}
+                >
+                  {artifact.kind.replace("_", " ")} — {artifact.task_name}/{artifact.artifact_id}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label>Evidence relation</label>
+            <select
+              value={evidenceRelation}
+              onChange={(e) => setEvidenceRelation(e.target.value as typeof evidenceRelation)}
+            >
+              <option value="supports">Supports</option>
+              <option value="contradicts">Contradicts</option>
+            </select>
+          </div>
+          <button className="btn" type="button" disabled={!evidenceKey} onClick={addEvidence}>
+            Add evidence
+          </button>
+        </div>
+        {recordEvidence.length > 0 && (
+          <ul>
+            {recordEvidence.map(({ key, relation }) => {
+              const artifact = project.artifacts.find((candidate) => keyOf(candidate) === key);
+              if (!artifact) return null;
+              return (
+                <li key={key}>
+                  <Badge tone={relation === "supports" ? "ok" : "warn"}>{relation}</Badge>{" "}
+                  {artifact.kind.replace("_", " ")}{" "}
+                  <span className="mono">{artifact.task_name}/{artifact.artifact_id}</span>{" "}
+                  <button
+                    className="btn"
+                    type="button"
+                    aria-label={`Remove evidence ${artifact.task_name}/${artifact.artifact_id}`}
+                    onClick={() => setRecordEvidence((current) => current.filter((item) => item.key !== key))}
+                  >
+                    Remove
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <div className="row">
+          <button
+            className="btn primary"
+            disabled={
+              !recordTitle.trim()
+              || !recordText.trim()
+              || recordMut.isPending
+              || ((recordKind === "finding" || recordKind === "conclusion") && recordEvidence.length === 0)
+            }
+            onClick={() => recordMut.mutate()}
+          >
+            Add record
+          </button>
+        </div>
+        {recordMut.isError && <ErrorNote error={recordMut.error} />}
+        {project.records.length === 0 ? (
+          <EmptyState title="No research records yet" />
+        ) : (
+          <ul>
+            {[...project.records].reverse().map((record) => (
+              <li key={record.record_id}>
+                <Badge tone="info">{record.kind}</Badge> <strong>{record.title}</strong>
+                <p>{record.text}</p>
+                {record.evidence.map((evidence) => (
+                  <div key={`${record.record_id}:${keyOf(evidence.artifact)}:${evidence.relation}`} className="muted">
+                    {evidence.relation} — {evidence.artifact.kind.replace("_", " ")}{" "}
+                    <span className="mono">
+                      {evidence.artifact.task_name}/{evidence.artifact.artifact_id}
+                    </span>
+                  </div>
+                ))}
               </li>
             ))}
           </ul>

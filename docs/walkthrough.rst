@@ -105,8 +105,8 @@ Python::
     from SKSurrogate.mltrace import mltrack
 
     track = mltrack("diabetes")
-    track.RegisterData(pd.read_csv("walkthrough-diabetes-train.csv"),
-                       target="progression", partition="train")
+    track.register_data(pd.read_csv("walkthrough-diabetes-train.csv"),
+                        target="progression", partition="train")
 
 The **Validate** panel (``POST /api/datasets/diabetes/validate``,
 ``mltrack.validate_data``) checks a new file against the registered schema, for
@@ -274,9 +274,10 @@ Open **Explain**, choose the model version and click **Explain model**.
 
 Under **Prediction intervals** choose a coverage (80 / 90 / 95 %) and click
 **Compute intervals**. The UI reports the half-width of a split-conformal
-interval and how often held-out rows actually fell inside it
-(87.9 % observed for a 90 % target, a good match on 66 rows). Intervals are
-available for regression bundles only.
+interval, observed coverage with a Wilson interval, mean interval width and
+score, and how many held-out rows were evaluated. The diagnostic confidence
+interval is descriptive and is distinct from the marginal split-conformal
+coverage claim. Intervals are available for regression bundles only.
 
 .. figure:: images/wt-13-explain-intervals.png
    :alt: Split-conformal prediction intervals
@@ -325,8 +326,9 @@ Python::
 Open **Registry & Deployment**.
 
 1. **Register** the bundle: it enters the registry as a *candidate*.
-2. **Promote** it along ``validated → staging → production``. Each step runs
-   the quality checks again and needs *N* unique approver names
+2. **Promote** it along ``validated → staging → production``. Each step reruns
+   the default bundle check (not the custom metric thresholds from the
+   Quality Gates page) and needs *N* unique approver names
    (comma-separated, e.g. ``alice, bob`` with *Required approvals* = 2).
    Approvers are free text in this version; there is no authentication.
 3. The lifecycle strip shows which version holds each alias, with a **Use in

@@ -50,6 +50,7 @@ from SKSurrogate import (
     latin_hypercube,
     mltrack,
     np2df,
+    prediction_interval_diagnostics,
     save_bundle,
     sensitive_feature_report,
     fairness_report,
@@ -214,6 +215,162 @@ class TestOptimizedPaths(unittest.TestCase):
         )
         self.assertEqual(target_group["method"], "cramers_v")
         self.assertIn("not establish causation", report["interpretation"])
+
+    def test_dataset_profile_reports_robust_statistics_and_sampled_data_quality(self):
+        frame = pd.DataFrame(
+            {
+                "value": [1.0, 2.0, 2.0, 3.0, 100.0, 2.0],
+                "duplicate_value": [1.0, 2.0, 2.0, 3.0, 100.0, 2.0],
+                "constant": ["same"] * 6,
+                "all_missing": [None] * 6,
+            }
+        )
+
+        report = dataset_profile(frame)
+
+        numeric = next(item for item in report["columns"] if item["column"] == "value")
+        self.assertAlmostEqual(numeric["distribution"]["median_absolute_deviation"], 0.5)
+        self.assertEqual(numeric["distribution"]["iqr_outlier_count"], 1)
+        self.assertEqual(numeric["distribution"]["iqr_outlier_rate"], 1 / 6)
+        self.assertIsNotNone(numeric["distribution"]["skewness"])
+        self.assertIsNotNone(numeric["distribution"]["excess_kurtosis"])
+        quality = report["data_quality"]
+        self.assertEqual(quality["duplicate_rows"]["count"], 2)
+        self.assertEqual(quality["duplicate_rows"]["scope"], "sampled rows and selected features")
+        self.assertEqual(quality["constant_features"], ["constant"])
+        self.assertEqual(quality["all_missing_features"], ["all_missing"])
+        self.assertEqual(
+            quality["duplicate_features"],
+            [{"feature": "duplicate_value", "duplicate_of": "value"}],
+        )
+
+    def test_dataset_profile_reports_bounded_missingness_patterns(self):
+        frame = pd.DataFrame(
+            {
+                "first": [None, None, 1.0, 1.0, 1.0],
+                "second": [1.0, 1.0, None, None, 1.0],
+                "target": [0, 1, 0, 1, 1],
+            }
+        )
+
+        report = dataset_profile(frame, target="target", max_categories=1)
+
+        patterns = report["missingness_patterns"]
+        self.assertEqual(patterns["patterns"][0]["missing_features"], ["first"])
+        self.assertEqual(patterns["patterns"][0]["count"], 2)
+        self.assertAlmostEqual(patterns["patterns"][0]["proportion"], 0.4)
+        self.assertEqual(patterns["other_count"], 3)
+        self.assertEqual(patterns["pattern_limit"], 1)
+
+    def test_dataset_profile_extreme_finite_values_remain_json_safe(self):
+        report = dataset_profile(
+            pd.DataFrame({"value": [1.0e308, 1.0e308, 1.0e308, 1.0e308]})
+        )
+
+        distribution = report["columns"][0]["distribution"]
+        self.assertEqual(distribution["mean"], 1.0e308)
+        self.assertEqual(distribution["std"], 0.0)
+        json.dumps(report, allow_nan=False)
+
+    def test_dataset_profile_computes_bounded_descriptive_group_comparisons(self):
+        frame = pd.DataFrame(
+            {
+                "group": ["A", "A", "B", "B", "C", None, "A"],
+                "measurement": [1.0, 3.0, 10.0, np.inf, 100.0, 8.0, 5.0],
+                "target": [2.0, 4.0, 11.0, 12.0, 101.0, 9.0, 6.0],
+            }
+        )
+
+        report = dataset_profile(
+            frame,
+            target="target",
+            group_by="group",
+            max_categories=1,
+        )
+
+        comparison = report["group_comparisons"]
+        self.assertEqual(comparison["method"], "descriptive_numeric_distribution_by_group")
+        self.assertEqual(comparison["missing_group_count"], 1)
+        self.assertEqual(comparison["group_limit"], 1)
+        self.assertEqual(
+            [group["group"] for group in comparison["comparisons"][0]["groups"]],
+            ["A", "Other (combined)"],
+        )
+        self.assertEqual(
+            [item["column"] for item in comparison["comparisons"]],
+            ["measurement", "target"],
+        )
+        self.assertEqual(comparison["comparisons"][0]["groups"][0]["count"], 3)
+        self.assertEqual(comparison["comparisons"][0]["groups"][0]["row_count"], 3)
+        self.assertEqual(comparison["comparisons"][0]["groups"][1]["count"], 3)
+        self.assertEqual(comparison["comparisons"][0]["groups"][1]["row_count"], 3)
+        self.assertEqual(
+            comparison["comparisons"][0]["groups"][1]["non_finite_count"], 1
+        )
+        self.assertIn("no hypothesis test", comparison["interpretation"])
+        json.dumps(report, allow_nan=False)
+
+    def test_dataset_profile_reports_rank_associations_for_monotonic_pairs(self):
+        frame = pd.DataFrame(
+            {
+                "linear": [1.0, 2.0, 3.0, 4.0, np.inf],
+                "monotonic": [1.0, 4.0, 9.0, 16.0, 25.0],
+                "constant": [1.0] * 5,
+                "target": [2.0, 3.0, 5.0, 8.0, 10.0],
+            }
+        )
+
+        report = dataset_profile(frame, target="target")
+
+        monotonic = [
+            item
+            for item in report["rank_associations"]["features"]
+            if {item["feature_a"], item["feature_b"]} == {"linear", "monotonic"}
+        ]
+        self.assertEqual(len(monotonic), 2)
+        self.assertEqual({item["method"] for item in monotonic}, {"spearman", "kendall_tau"})
+        for item in monotonic:
+            self.assertAlmostEqual(item["value"], 1.0)
+            self.assertEqual(item["n"], 4)
+        target_rank = next(
+            item
+            for item in report["rank_associations"]["target"]
+            if item["feature"] == "linear"
+        )
+        self.assertEqual(target_rank["method"], "spearman")
+        self.assertEqual(target_rank["n"], 4)
+        self.assertIn("do not detect all nonlinear dependence", report["rank_associations"]["interpretation"])
+
+    def test_dataset_profile_reports_multicollinearity_without_nonfinite_json(self):
+        frame = pd.DataFrame(
+            {
+                "signal": [0.0, 1.0, 2.0, 3.0, 4.0, 5.0],
+                "duplicate_signal": [0.0, 2.0, 4.0, 6.0, 8.0, 10.0],
+                "independent": [0.0, 1.0, 4.0, 2.0, 5.0, 3.0],
+            }
+        )
+
+        report = dataset_profile(frame)
+
+        diagnostic = report["multicollinearity"]
+        self.assertEqual(diagnostic["complete_case_rows"], 6)
+        self.assertIsNone(diagnostic["condition_number"])
+        self.assertEqual(diagnostic["condition_number_reason"], "rank_deficient")
+        for column in ("signal", "duplicate_signal"):
+            result = next(item for item in diagnostic["vif"] if item["feature"] == column)
+            self.assertIsNone(result["value"])
+            self.assertEqual(result["reason"], "perfect_or_near_linear_dependence")
+        json.dumps(report, allow_nan=False)
+
+    def test_dataset_profile_validates_group_column_selection_and_type(self):
+        frame = pd.DataFrame(
+            {"category": ["A", "B"], "value": [1.0, 2.0], "target": [3.0, 4.0]}
+        )
+
+        with self.assertRaisesRegex(ValueError, "included in the selected features"):
+            dataset_profile(frame, target="target", features=["value"], group_by="category")
+        with self.assertRaisesRegex(ValueError, "must be categorical"):
+            dataset_profile(frame, target="target", group_by="value")
 
     def test_dataset_profile_sampling_is_deterministic_and_wide_data_requires_selection(self):
         frame = pd.DataFrame(
@@ -1337,6 +1494,34 @@ class TestOptimizedPaths(unittest.TestCase):
                 )
             plt.close("all")
 
+    def test_partial_dependence_can_leave_perfectly_correlated_feature_support(self):
+        from sklearn.inspection import partial_dependence
+
+        class DifferenceRegressor(RegressorMixin, BaseEstimator):
+            def fit(self, X, y):
+                self.n_features_in_ = np.asarray(X).shape[1]
+                return self
+
+            def predict(self, X):
+                values = np.asarray(X)
+                return np.square(values[:, 0] - values[:, 1])
+
+        values = np.linspace(-1.0, 1.0, 101)
+        reference = pd.DataFrame({"first": values, "second": values})
+        model = DifferenceRegressor().fit(reference, np.zeros(len(reference)))
+
+        observed_predictions = model.predict(reference)
+        profile = partial_dependence(
+            model,
+            reference,
+            [0],
+            method="brute",
+            grid_resolution=9,
+        )
+
+        self.assertEqual(float(np.max(observed_predictions)), 0.0)
+        self.assertGreater(float(np.max(profile["average"])), 1.0)
+
     def test_mltrace_rejects_classifiers_for_regression_diagnostics(self):
         X, y = make_classification(n_samples=80, n_features=4, random_state=2)
         frame = np2df(np.column_stack((X, y)), ["f0", "f1", "f2", "f3", "target"])()
@@ -1431,6 +1616,8 @@ class TestOptimizedPaths(unittest.TestCase):
 
         self.assertEqual(result, repeated_result)
         self.assertEqual(result["repeat_count"], 4)
+        self.assertEqual(result["comparability"]["status"], "unverified")
+        self.assertIn("evaluation_protocol", result["comparability"]["unverified_fields"])
         self.assertAlmostEqual(result["mean_difference"], float(np.mean(differences)))
         self.assertAlmostEqual(
             result["cohens_dz"],
@@ -1439,6 +1626,82 @@ class TestOptimizedPaths(unittest.TestCase):
         interval = result["confidence_interval"]
         self.assertLessEqual(interval["lower"], result["mean_difference"])
         self.assertGreaterEqual(interval["upper"], result["mean_difference"])
+
+    def test_mltrace_paired_bootstrap_covers_seeded_iid_score_shift(self):
+        rng = np.random.default_rng(2026)
+        true_shift = 0.08
+        covered = 0
+        observed_differences = []
+
+        for _ in range(100):
+            reference = rng.normal(0.7, 0.15, 30)
+            candidate = reference + true_shift + rng.normal(0.0, 0.06, 30)
+            result = mltrack.compare_repeated_cv_results(
+                {"repeated_outer_scores": reference.tolist()},
+                {"repeated_outer_scores": candidate.tolist()},
+                n_resamples=1000,
+                random_state=int(rng.integers(0, 2**31 - 1)),
+            )
+            interval = result["confidence_interval"]
+            covered += interval["lower"] <= true_shift <= interval["upper"]
+            observed_differences.append(result["mean_difference"])
+
+        self.assertGreaterEqual(covered / 100, 0.80)
+        self.assertLess(covered / 100, 1.0)
+        self.assertAlmostEqual(float(np.mean(observed_differences)), true_shift, delta=0.02)
+
+    def test_mltrace_paired_comparison_handles_constant_differences(self):
+        result = mltrack.compare_repeated_cv_results(
+            {"repeated_outer_scores": [0.70, 0.80, 0.75]},
+            {"repeated_outer_scores": [0.80, 0.90, 0.85]},
+            n_resamples=200,
+            random_state=17,
+        )
+
+        self.assertAlmostEqual(result["mean_difference"], 0.1)
+        self.assertIsNone(result["cohens_dz"])
+        self.assertAlmostEqual(result["confidence_interval"]["lower"], 0.1)
+        self.assertAlmostEqual(result["confidence_interval"]["upper"], 0.1)
+
+    def test_mltrace_repeated_cv_comparison_rejects_mismatched_protocols(self):
+        protocol = {
+            "train_fingerprint": "train-a",
+            "validation_fingerprint": "validation-a",
+            "validation_used": True,
+            "inner_cv": {"type": "n_splits", "value": 2},
+            "outer_cv": {"type": "n_splits", "value": 2},
+            "repeat_count": 2,
+            "integer_split_seed": 42,
+            "preprocessing": "none",
+            "scoring": {"type": "sklearn_scorer", "verified": True},
+            "group_fingerprint": None,
+            "model_selection": "fixed_estimator_no_hyperparameter_search",
+        }
+        reference = {
+            "repeated_outer_scores": [0.7, 0.8],
+            "evaluation_protocol": protocol,
+        }
+        aligned_candidate = {
+            "repeated_outer_scores": [0.75, 0.85],
+            "evaluation_protocol": dict(protocol),
+        }
+        aligned_result = mltrack.compare_repeated_cv_results(
+            reference, aligned_candidate, n_resamples=100, random_state=2
+        )
+        self.assertEqual(aligned_result["comparability"]["status"], "verified")
+
+        candidate = {
+            "repeated_outer_scores": [0.75, 0.85],
+            "evaluation_protocol": {
+                **protocol,
+                "train_fingerprint": "train-b",
+            },
+        }
+
+        with self.assertRaisesRegex(ValueError, "train_fingerprint"):
+            mltrack.compare_repeated_cv_results(
+                reference, candidate, n_resamples=100, random_state=2
+            )
 
     def test_mltrace_paired_repeated_cv_comparison_rejects_unpaired_inputs(self):
         with self.assertRaisesRegex(ValueError, "at least two repeat scores"):
@@ -1478,6 +1741,65 @@ class TestOptimizedPaths(unittest.TestCase):
         self.assertEqual(result["quantile"], 5.0)
         self.assertEqual(result["coverage_level"], 0.75)
         self.assertIn("exchangeability", result["coverage_assumption"])
+
+    def test_prediction_interval_diagnostics_report_coverage_uncertainty_and_scores(self):
+        result = prediction_interval_diagnostics(
+            np.array([0.0, 2.0, 4.0, 10.0]),
+            np.array([-1.0, 1.0, 1.0, 0.0]),
+            np.array([1.0, 3.0, 3.0, 8.0]),
+            alpha=0.2,
+            confidence_level=0.95,
+        )
+
+        self.assertEqual(result["sample_size"], 4)
+        self.assertEqual(result["covered_count"], 2)
+        self.assertEqual(result["nominal_coverage"], 0.8)
+        self.assertEqual(result["empirical_coverage"], 0.5)
+        self.assertEqual(result["coverage_interval"]["method"], "Wilson score interval")
+        self.assertLessEqual(result["coverage_interval"]["lower"], 0.5)
+        self.assertGreaterEqual(result["coverage_interval"]["upper"], 0.5)
+        self.assertEqual(result["mean_interval_width"], 3.5)
+        self.assertEqual(result["median_interval_width"], 2.0)
+        self.assertEqual(result["mean_interval_score"], 11.0)
+        self.assertIn("independent held-out", result["diagnostic_assumption"])
+
+    def test_prediction_interval_diagnostics_flag_unbounded_intervals(self):
+        result = prediction_interval_diagnostics(
+            np.array([2.0]),
+            np.array([-np.inf]),
+            np.array([np.inf]),
+            alpha=0.1,
+        )
+
+        self.assertEqual(result["empirical_coverage"], 1.0)
+        self.assertEqual(result["unbounded_interval_count"], 1)
+        self.assertIsNone(result["mean_interval_width"])
+        self.assertIsNone(result["mean_interval_score"])
+
+    def test_prediction_interval_diagnostics_report_bounded_subgroup_coverage(self):
+        result = prediction_interval_diagnostics(
+            [1.0, 2.0, 3.0, 4.0, 5.0],
+            [0.0] * 5,
+            [2.0] * 5,
+            groups=["A", "A", "B", "B", None],
+            max_groups=1,
+        )
+
+        subgroups = result["subgroup_coverage"]
+        self.assertEqual(subgroups["missing_group_count"], 1)
+        self.assertEqual(subgroups["other_group_count"], 2)
+        self.assertEqual([item["group"] for item in subgroups["groups"]], ["A", "Other (combined)"])
+        self.assertEqual(subgroups["groups"][0]["empirical_coverage"], 1.0)
+        self.assertEqual(subgroups["groups"][1]["empirical_coverage"], 0.0)
+        self.assertIn("does not imply conditional", subgroups["interpretation"])
+
+    def test_prediction_interval_diagnostics_reject_malformed_intervals(self):
+        with self.assertRaisesRegex(ValueError, "ordered bounds"):
+            prediction_interval_diagnostics([0.0], [1.0], [0.0])
+        with self.assertRaisesRegex(ValueError, "equal length"):
+            prediction_interval_diagnostics([0.0, 1.0], [0.0], [1.0, 2.0])
+        with self.assertRaisesRegex(ValueError, "same number of rows"):
+            prediction_interval_diagnostics([0.0], [0.0], [1.0], groups=["A", "B"])
 
     def test_split_conformal_regression_corrects_small_calibration_quantile(self):
         result = split_conformal_regression_interval(
@@ -1836,7 +2158,7 @@ class TestOptimizedPaths(unittest.TestCase):
             self.assertIn("validation", split_map)
             self.assertEqual(split_map["validation"]["rows"], 2)
 
-    def test_nested_cv_evaluation_uses_train_split_for_selection_and_validation_for_final_score(self):
+    def test_nested_cv_evaluation_preprocesses_mixed_features_within_each_fold(self):
         with tempfile.NamedTemporaryFile(suffix=".db") as database:
             tracker = mltrack("nested-cv", db_name=database.name)
             train = pd.DataFrame(
@@ -1849,7 +2171,7 @@ class TestOptimizedPaths(unittest.TestCase):
             validation = pd.DataFrame(
                 {
                     "feature_a": [7.0, 8.0],
-                    "feature_b": ["x", "y"],
+                    "feature_b": ["validation-only", "y"],
                     "target": [0, 1],
                 }
             )
@@ -1866,8 +2188,48 @@ class TestOptimizedPaths(unittest.TestCase):
             self.assertIn("outer_scores", results)
             self.assertIn("mean_outer_score", results)
             self.assertIn("final_validation_score", results)
+            self.assertEqual(results["preprocessing"], "fold_local")
+            self.assertEqual(
+                results["evaluation_protocol"]["train_fingerprint"],
+                tracker.dataset_splits()["train"]["fingerprint"],
+            )
+            self.assertTrue(results["evaluation_protocol"]["validation_used"])
             self.assertGreaterEqual(results["final_validation_score"], 0.0)
             self.assertLessEqual(results["mean_outer_score"], 1.0)
+
+    def test_nested_cv_fold_local_pipeline_preserves_accuracy_fallback(self):
+        class ModePredictor(BaseEstimator):
+            def fit(self, X, y):
+                self.value_ = pd.Series(y).mode().iloc[0]
+                return self
+
+            def predict(self, X):
+                return np.repeat(self.value_, len(X))
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as database:
+            tracker = mltrack("nested-cv-score-fallback", db_name=database.name)
+            train = pd.DataFrame(
+                {
+                    "category": ["a", "b", "a", "b", "c", "a"],
+                    "target": [0, 1, 0, 1, 0, 1],
+                }
+            )
+            validation = pd.DataFrame(
+                {"category": ["unseen", "b"], "target": [0, 1]}
+            )
+            tracker.RegisterData(train, "target", partition="train")
+            tracker.RegisterData(validation, "target", partition="validation")
+
+            results = tracker.nested_cv_evaluation(
+                ModePredictor(),
+                inner_cv=2,
+                outer_cv=2,
+                train_partition="train",
+                validation_partition="validation",
+            )
+
+        self.assertEqual(results["preprocessing"], "fold_local")
+        self.assertGreaterEqual(results["final_validation_score"], 0.0)
 
     def test_nested_cv_evaluation_supports_group_kfold_configuration(self):
         with tempfile.NamedTemporaryFile(suffix=".db") as database:
@@ -1974,6 +2336,7 @@ class TestOptimizedPaths(unittest.TestCase):
             self.assertIn("upper", results["confidence_interval"])
             self.assertIn("repeated_outer_scores", results)
             self.assertEqual(len(results["repeated_outer_scores"]), 3)
+            self.assertEqual(results["preprocessing"], "fold_local")
 
     def test_uniform_parent_sampling_is_unique(self):
         class Reference:
@@ -2076,6 +2439,95 @@ class TestOptimizedPaths(unittest.TestCase):
         self.assertEqual(legacy.length, 1)
         self.assertEqual(legacy.max_evals, 20)
         self.assertEqual(legacy.scoring, "accuracy")
+
+    def test_aml_presets_preprocess_dataframes_without_manual_cat_cols(self):
+        n_samples = 36
+        X = pd.DataFrame(
+            {
+                "signal": np.linspace(-2.0, 2.0, n_samples),
+                "category": ["a", "b", "c"] * 12,
+                "text": pd.Series(
+                    ["warm sample", "cool sample", "stable sample"] * 12,
+                    dtype="string",
+                ),
+            }
+        )
+        X.loc[::7, "signal"] = np.nan
+        y_classification = np.array([0, 1] * (n_samples // 2))
+        y_regression = (
+            X["signal"].fillna(0.0).to_numpy()
+            + X["category"].map({"a": 0.0, "b": 1.0, "c": 2.0}).to_numpy()
+        )
+
+        with tempfile.TemporaryDirectory() as checkpoint:
+            for preset, target in (
+                ("classification", y_classification),
+                ("regression", y_regression),
+            ):
+                with self.subTest(preset=preset):
+                    preset_checkpoint = Path(checkpoint, preset)
+                    preset_checkpoint.mkdir()
+                    automl = AML(
+                        preset=preset,
+                        check_point=str(preset_checkpoint) + "/",
+                        cv=2,
+                        min_random_evals=2,
+                        max_evals=2,
+                        n_jobs=1,
+                        random_state=8,
+                        verbose=0,
+                    ).fit(X, target)
+
+                    self.assertIn("preprocess", automl.best_estimator_.named_steps)
+                    predictions = automl.predict(X)
+                    self.assertEqual(len(predictions), n_samples)
+                    self.assertTrue(np.all(np.isfinite(predictions)))
+
+    def test_aml_preset_retains_explicit_cat_cols_path(self):
+        X = pd.DataFrame(
+            {
+                "category": ["a", "b", "a", "b"] * 6,
+                "measurement": np.linspace(0.0, 1.0, 24),
+            }
+        )
+        y = np.array([0, 1] * 12)
+
+        with tempfile.TemporaryDirectory() as checkpoint:
+            automl = AML(
+                preset="classification",
+                cat_cols=["category"],
+                check_point=checkpoint + "/",
+                cv=2,
+                min_random_evals=2,
+                max_evals=2,
+                n_jobs=1,
+                random_state=8,
+                verbose=0,
+            ).fit(X, y)
+
+        self.assertIn("categorical_encoder", automl.best_estimator_.named_steps)
+        self.assertNotIn("preprocess", automl.best_estimator_.named_steps)
+        self.assertEqual(len(automl.predict(X)), len(y))
+
+    def test_aml_rejects_all_failed_candidate_pipelines(self):
+        X = pd.DataFrame({"category": ["a", "b", "a", "b"] * 4})
+        y = np.array([0, 1] * 8)
+        automl = AML(
+            config={"sklearn.linear_model.LogisticRegression": {"C": Real(0.1, 1.0)}},
+            cv=2,
+            min_random_evals=2,
+            max_evals=2,
+            n_jobs=1,
+            random_state=8,
+            verbose=0,
+        )
+
+        with self.assertRaisesRegex(
+            ValueError, "All candidate pipelines failed to produce a finite CV score"
+        ) as error:
+            automl.fit(X, y)
+
+        self.assertIn("could not convert string to float", str(error.exception))
 
     def test_aml_preset_rejects_unknown_or_conflicting_configuration(self):
         with self.assertRaisesRegex(ValueError, "preset must be"):

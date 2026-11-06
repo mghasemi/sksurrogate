@@ -3,6 +3,8 @@ Optimized Pipeline Detector
 ===============================
 
 """
+import math
+
 from sklearn.base import BaseEstimator, TransformerMixin
 from typing import Any
 
@@ -402,6 +404,7 @@ class AML(BaseEstimator):
         ``preset``.
     :param preset: Optional ``"classification"`` or ``"regression"`` search preset. Presets use only
         scikit-learn estimators, one-estimator pipelines, and at most 20 evaluations per candidate by default.
+        For pandas DataFrames with ``cat_cols=None``, preprocessing is fitted within each CV fold.
     :param length: Maximum number of objects in generated pipelines; defaults to 5 for the legacy
         configuration and 1 for task-specific presets
     :param scoring: Scoring method to optimize. Defaults to accuracy for classification, negative RMSE for
@@ -712,8 +715,9 @@ class AML(BaseEstimator):
         Evaluates and optimizes all acceptable combinations of length `n`
 
         :param n: The length of pipelines
-        :param X: Training data. If ``cat_cols`` is set, pass the original,
-            unencoded feature matrix.
+        :param X: Training data. Preset DataFrames without ``cat_cols`` are
+            preprocessed inside each CV fold. If ``cat_cols`` is set, pass the
+            original, unencoded feature matrix.
         :param y: Observed values
         :return: None
         """
@@ -780,9 +784,10 @@ class AML(BaseEstimator):
                 continue
             best_mdl, best_scr = self.optimize_pipeline(seq, X, y)
             self.models[seq] = (best_mdl, best_scr)
-            self.evaluation_history_.append(
-                {"pipeline": seq, "estimator": best_mdl, "score": best_scr}
-            )
+            result = {"pipeline": seq, "estimator": best_mdl, "score": best_scr}
+            if self.last_candidate_errors_:
+                result["errors"] = list(self.last_candidate_errors_)
+            self.evaluation_history_.append(result)
             if self.verbose > 0:
                 print("score:%f" % best_scr)
                 print(best_mdl)
@@ -791,8 +796,9 @@ class AML(BaseEstimator):
         """
         Generates and optimizes all legitimate pipelines. The best pipeline can be retrieved from `self.best_estimator_`
 
-        :param X: Training data. If ``cat_cols`` is set, pass the original,
-            unencoded feature matrix.
+        :param X: Training data. Preset DataFrames without ``cat_cols`` are
+            preprocessed inside each CV fold. If ``cat_cols`` is set, pass the
+            original, unencoded feature matrix.
         :param y: Corresponding observations
         :param strategy: ``"surrogate"`` (default) or ``"eoa"``; the latter is the same as calling
             :meth:`eoa_fit` and forwards ``kwargs`` to it.
@@ -806,14 +812,37 @@ class AML(BaseEstimator):
             raise TypeError("unexpected fit arguments for strategy='surrogate': %s" % sorted(kwargs))
         self.models.clear()
         self.evaluation_history_.clear()
+        self.last_candidate_errors_ = []
         self.termination_reason = None
         self.summary_ = {}
         self.num_features_upper_bound = self._feature_count_upper_bound(X)
         for l in range(1, self.length + 1):
             self._cast(l, X, y)
-        self.best_estimator_ = list(self.get_top(1).items())[0][1][0]
-        self.best_estimator_score = list(self.get_top(1).items())[0][1][1]
+        self._set_best_candidate()
         return self
+
+    def _set_best_candidate(self):
+        best = self.get_top(1)
+        if not best:
+            raise ValueError("AML generated no candidate pipelines")
+        best_sequence, (best_estimator, best_score) = next(iter(best.items()))
+        if not math.isfinite(best_score):
+            errors = next(
+                (
+                    item.get("errors", [])
+                    for item in self.evaluation_history_
+                    if item.get("pipeline") == best_sequence and item.get("errors")
+                ),
+                [],
+            )
+            detail = "; ".join(dict.fromkeys(errors))
+            message = "All candidate pipelines failed to produce a finite CV score"
+            if detail:
+                message += ": " + detail
+            raise ValueError(message)
+        self.best_estimator_ = best_estimator
+        self.best_estimator_score = best_score
+        return best_estimator
 
     @staticmethod
     def _get_class(library):
@@ -846,8 +875,9 @@ class AML(BaseEstimator):
         """
         Applies evolutionary optimization methods to find an optimum pipeline
 
-        :param X: Training data. If ``cat_cols`` is set, pass the original,
-            unencoded feature matrix.
+        :param X: Training data. Preset DataFrames without ``cat_cols`` are
+            preprocessed inside each CV fold. If ``cat_cols`` is set, pass the
+            original, unencoded feature matrix.
         :param y: Corresponding observations
         :param kwargs: `EOA` parameters
         :return: `self`
@@ -923,14 +953,15 @@ class AML(BaseEstimator):
                 best_mdl, best_scr = self.optimize_pipeline(seq, X, y)
                 if seq not in self.models:
                     self.models[seq] = (best_mdl, best_scr)
-                    self.evaluation_history_.append(
-                        {
-                            "pipeline": seq,
-                            "estimator": best_mdl,
-                            "score": best_scr,
-                            "duration": getattr(self, "last_candidate_duration_", None),
-                        }
-                    )
+                    result = {
+                        "pipeline": seq,
+                        "estimator": best_mdl,
+                        "score": best_scr,
+                        "duration": getattr(self, "last_candidate_duration_", None),
+                    }
+                    if self.last_candidate_errors_:
+                        result["errors"] = list(self.last_candidate_errors_)
+                    self.evaluation_history_.append(result)
                 if self.verbose > 0:
                     print("score:%f" % best_scr)
                     print(best_mdl)
@@ -955,7 +986,7 @@ class AML(BaseEstimator):
             **kwargs
         )
         _eoa()
-        self.best_estimator_ = list(self.get_top(1).items())[0][1][0]
+        self._set_best_candidate()
         return self
 
     def get_top(self, num=5):
@@ -1115,10 +1146,12 @@ class AML(BaseEstimator):
         estimators and transformers.
 
         :param seq: the tuple of steps of the pipeline to be optimized
-        :param X: numpy array of training features
+        :param X: Training features; preset DataFrames without ``cat_cols``
+            are preprocessed inside the candidate pipeline.
         :param y: numpy array of training values
         :return: the optimized pipeline and its score
         """
+        self.last_candidate_errors_ = []
         from .structsearch import SurrogateRandomCV
         surrogates = self.surrogates
         if surrogates is None:
@@ -1135,7 +1168,14 @@ class AML(BaseEstimator):
         steps = []
         config = {}
         task_name = self.check_point + "_".join(seq)
-        if self.cat_cols is not None:
+        if self.preset is not None and self.cat_cols is None:
+            import pandas as pd
+
+            if isinstance(X, pd.DataFrame):
+                from .DataProcess import FoldLocalDataPreprocessor
+
+                steps.append(("preprocess", FoldLocalDataPreprocessor()))
+        elif self.cat_cols is not None:
             from category_encoders.one_hot import OneHotEncoder
 
             steps.append(
@@ -1257,6 +1297,7 @@ class AML(BaseEstimator):
             self.last_candidate_duration_ = perf_counter() - started
             return ppln, score
         best_stage = None
+        failed_trial_errors = []
         for srgt in surrogates:
             OPTIM = SurrogateRandomCV(
                 ppln,
@@ -1280,6 +1321,12 @@ class AML(BaseEstimator):
                 conditional=self.conditional,
             )
             OPTIM.fit(X, y)
+            if not math.isfinite(OPTIM.best_estimator_score):
+                failed_trial_errors.extend(
+                    item["error"]
+                    for item in OPTIM.evaluation_history_
+                    if item.get("error")
+                )
             # A later stage may run out of budget and evaluate nothing; keep the best stage.
             if best_stage is None or OPTIM.best_estimator_score <= best_stage[1]:
                 best_stage = (OPTIM.best_estimator_, OPTIM.best_estimator_score)
@@ -1290,5 +1337,10 @@ class AML(BaseEstimator):
                 self.summary_ = dict(OPTIM.summary_)
         if OPTIM is None:
             raise RuntimeError("No surrogate search was executed")
+        self.last_candidate_errors_ = (
+            failed_trial_errors
+            if best_stage is not None and not math.isfinite(best_stage[1])
+            else []
+        )
         self.last_candidate_duration_ = perf_counter() - started
         return best_stage

@@ -12,7 +12,10 @@ import numpy as np
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
-from SKSurrogate.mltrace import split_conformal_regression_interval
+from SKSurrogate.mltrace import (
+    prediction_interval_diagnostics,
+    split_conformal_regression_interval,
+)
 
 from ..deps import bad_request, finite_or_none, unprocessable
 from ..training import get_registered_target, load_partition, problem_family
@@ -36,6 +39,9 @@ class IntervalRequest(BaseModel):
     train_partition: str = "train"
     holdout_partition: str | None = None  # defaults to a slice of the train partition
     alpha: float = Field(default=0.1, gt=0.0, lt=1.0)
+    diagnostic_confidence_level: float = Field(default=0.95, gt=0.0, lt=1.0)
+    group_by: str | None = None
+    max_groups: int = Field(default=20, ge=1, le=50)
     random_state: int = 0
 
 
@@ -55,7 +61,9 @@ def explain_bundle(task_name: str, model_version: str, body: ExplainRequest):
     if problem_family(bundle.model) is None:
         raise unprocessable("Explanations need a scikit-learn estimator")
     X, y = _features_and_target(task_name, body.partition)
-    if len(X) > body.max_rows:
+    source_rows = len(X)
+    sampled = source_rows > body.max_rows
+    if sampled:
         keep = np.random.RandomState(body.random_state).choice(len(X), body.max_rows, replace=False)
         X, y = X.iloc[keep], y[keep]
     names = list(X.columns)
@@ -92,9 +100,40 @@ def explain_bundle(task_name: str, model_version: str, body: ExplainRequest):
         "model_version": model_version,
         "partition": body.partition,
         "rows": int(len(X)),
+        "reference_sample": {
+            "partition": body.partition,
+            "source_rows": int(source_rows),
+            "used_rows": int(len(X)),
+            "sampling": "random_without_replacement" if sampled else "all_rows",
+        },
+        "settings": {
+            "max_rows": body.max_rows,
+            "n_repeats": body.n_repeats,
+            "top_k": body.top_k,
+            "random_state": body.random_state,
+        },
         "importance": importance,
         "partial_dependence": curves,
         "errors": errors,
+        "interpretation": {
+            "importance": {
+                "category": "model_attribution",
+                "method": "permutation_importance",
+                "score": "estimator.score",
+                "causal_effect": False,
+            },
+            "partial_dependence": {
+                "category": "fitted_model_response_profile",
+                "reference_partition": body.partition,
+                "causal_effect": False,
+            },
+            "limitations": [
+                "Permutation importance measures score sensitivity to shuffled columns, not causal influence; correlated features can share or mask importance.",
+                "Partial dependence averages model predictions over reference rows while varying selected features and can include implausible combinations when features are dependent.",
+                "Results describe this fitted model on the selected partition and are not estimates of causal effects.",
+                "The endpoint does not estimate stability across alternative reference samples.",
+            ],
+        },
     }
 
 
@@ -119,6 +158,14 @@ def prediction_intervals(task_name: str, model_version: str, body: IntervalReque
         raise bad_request("Need at least 10 training rows to split into fit and calibration sets")
     cut = int(0.7 * len(pool))
     fit_index, cal_index = pool[:cut], pool[cut:]
+    group_values = None
+    if body.group_by is not None:
+        if body.group_by not in X_hold.columns:
+            raise bad_request(
+                "Subgroup feature %r is not present in the holdout partition"
+                % body.group_by
+            )
+        group_values = X_hold[body.group_by].to_numpy()
     try:
         out = split_conformal_regression_interval(
             bundle.model,
@@ -129,10 +176,18 @@ def prediction_intervals(task_name: str, model_version: str, body: IntervalReque
             X_hold.to_numpy(),
             alpha=body.alpha,
         )
+        diagnostics = prediction_interval_diagnostics(
+            y_hold,
+            out["lower"],
+            out["upper"],
+            alpha=body.alpha,
+            confidence_level=body.diagnostic_confidence_level,
+            groups=group_values,
+            max_groups=body.max_groups,
+        )
     except ValueError as exc:
         raise bad_request(str(exc))
     y_hold = np.asarray(y_hold, dtype=float)
-    covered = (y_hold >= out["lower"]) & (y_hold <= out["upper"])
     points = [
         {
             "actual": finite_or_none(y_hold[i]),
@@ -150,7 +205,26 @@ def prediction_intervals(task_name: str, model_version: str, body: IntervalReque
         "nominal_coverage": out["coverage_level"],
         "half_width": finite_or_none(out["quantile"]),
         "calibration_size": out["calibration_size"],
+        "training_partition": body.train_partition,
+        "fit_rows": int(len(fit_index)),
+        "calibration_source_partition": body.train_partition,
+        "holdout_partition": (
+            body.holdout_partition
+            if body.holdout_partition
+            else "random holdout slice of %s" % body.train_partition
+        ),
+        "random_state": body.random_state,
         "holdout_rows": int(len(y_hold)),
-        "empirical_coverage": finite_or_none(covered.mean()) if len(y_hold) else None,
+        "empirical_coverage": diagnostics["empirical_coverage"],
+        "coverage_interval": diagnostics["coverage_interval"],
+        "mean_interval_width": finite_or_none(diagnostics["mean_interval_width"]),
+        "median_interval_width": finite_or_none(diagnostics["median_interval_width"]),
+        "finite_interval_count": diagnostics["finite_interval_count"],
+        "unbounded_interval_count": diagnostics["unbounded_interval_count"],
+        "mean_interval_score": finite_or_none(diagnostics["mean_interval_score"]),
+        "interval_score_method": diagnostics["interval_score_method"],
+        "diagnostic_assumption": diagnostics["diagnostic_assumption"],
+        "group_by": body.group_by,
+        "subgroup_coverage": diagnostics["subgroup_coverage"],
         "points": points,
     }

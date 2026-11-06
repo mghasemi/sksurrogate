@@ -58,8 +58,12 @@ tuples (integers or floats) and lists (categorical values)::
     search.best_params_, search.best_score_
 
 For automatic pipeline design, ``AML(preset="classification").fit(X, y)`` (or
-``preset="regression"``) needs no configuration, and ``fit(X, y, strategy="eoa")`` selects the
-evolutionary search.
+``preset="regression"``) needs no search configuration. For pandas DataFrames,
+the preset automatically fits numeric, categorical, datetime, and text
+preprocessing inside each cross-validation fold when ``cat_cols`` is omitted.
+Array-like inputs should already be numeric; ``cat_cols`` retains the explicit
+categorical-encoding path. ``fit(X, y, strategy="eoa")`` selects evolutionary
+search.
 
 More workflows are covered in the
 `surrogate-search guide <https://sksurrogate.readthedocs.io/en/latest/surrogate.html>`_,
@@ -118,7 +122,7 @@ Median-evaluations-to-target and seed-averaged best-so-far curves are in the ben
 Optimize with confidence: detect drift before inference
 -------------------------------------------------------
 ``SKSurrogate`` records a deterministic dataset fingerprint and a JSON-serializable schema for
-each tracked dataset. Each call to ``mltrack.RegisterData(...)`` stores dataset metadata,
+each tracked dataset. Each call to ``mltrack.register_data(...)`` stores dataset metadata,
 including the target column, row count, column names, dtypes, nullability, and categorical
 values. This lets a run be identified and later compared against a different dataset or a
 refreshed training sample — a differentiator that Optuna, TPOT, and SMAC all lack, because they
@@ -132,7 +136,7 @@ with ``missing_columns='ignore'`` or ``unknown_categories='ignore'``.
 
 The intended workflow is:
 
-1. Register the training dataset with ``mltrack.RegisterData(frame, target)``.
+1. Register the training dataset with ``mltrack.register_data(frame, target)``.
 2. Validate training data before fitting with ``tracker.validate_data(frame, target=...)``.
 3. Validate prediction inputs with ``tracker.validate_prediction_data(frame)`` before calling
    ``predict`` on a model or pipeline.

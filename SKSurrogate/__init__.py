@@ -27,6 +27,7 @@ from .mltrace import (
     default_cv_spec,
     mltrack,
     np2df,
+    prediction_interval_diagnostics,
     split_conformal_regression_interval,
     split_conformal_quantile_interval,
 )
@@ -93,6 +94,7 @@ __all__ = [
     "UniformRand",
     "Words",
     "mltrack",
+    "prediction_interval_diagnostics",
     "split_conformal_regression_interval",
     "split_conformal_quantile_interval",
     "assert_bundle_quality",

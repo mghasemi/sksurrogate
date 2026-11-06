@@ -136,6 +136,195 @@ def default_cv_spec():
     return cv_to_spec(ShuffleSplit(n_splits=3, test_size=0.25))
 
 
+def prediction_interval_diagnostics(
+    y_true,
+    lower,
+    upper,
+    *,
+    alpha=0.1,
+    confidence_level=0.95,
+    groups=None,
+    max_groups=20,
+):
+    """Summarize held-out coverage, interval width, and central interval score.
+
+    The Wilson interval quantifies binomial sampling uncertainty under an
+    independent-held-out-observations assumption. It is not the split-conformal
+    coverage guarantee and does not address distribution shift.
+    """
+    import math
+
+    import numpy as np
+    from scipy.stats import norm
+
+    if not math.isfinite(alpha) or not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must be between 0 and 1.")
+    if not math.isfinite(confidence_level) or not 0.0 < confidence_level < 1.0:
+        raise ValueError("confidence_level must be between 0 and 1.")
+    if (
+        isinstance(max_groups, bool)
+        or not isinstance(max_groups, (int, numpy.integer))
+        or not 1 <= max_groups <= 100
+    ):
+        raise ValueError("max_groups must be an integer between 1 and 100.")
+
+    targets = np.asarray(y_true, dtype=float)
+    lower_bounds = np.asarray(lower, dtype=float)
+    upper_bounds = np.asarray(upper, dtype=float)
+    if (
+        targets.ndim != 1
+        or lower_bounds.ndim != 1
+        or upper_bounds.ndim != 1
+        or targets.size == 0
+        or lower_bounds.shape != targets.shape
+        or upper_bounds.shape != targets.shape
+    ):
+        raise ValueError("Targets and interval bounds must be non-empty 1D arrays of equal length.")
+    if not np.isfinite(targets).all():
+        raise ValueError("Held-out targets must all be finite.")
+    if np.isnan(lower_bounds).any() or np.isnan(upper_bounds).any():
+        raise ValueError("Interval bounds cannot contain NaN.")
+    if (
+        np.isposinf(lower_bounds).any()
+        or np.isneginf(upper_bounds).any()
+        or np.any(lower_bounds > upper_bounds)
+    ):
+        raise ValueError("Intervals must have ordered bounds and may only be unbounded outward.")
+
+    covered = (targets >= lower_bounds) & (targets <= upper_bounds)
+    sample_size = int(targets.size)
+    covered_count = int(np.sum(covered))
+    empirical_coverage = covered_count / sample_size
+    z_value = float(norm.ppf((1.0 + confidence_level) / 2.0))
+    denominator = 1.0 + z_value**2 / sample_size
+    center = (
+        empirical_coverage + z_value**2 / (2.0 * sample_size)
+    ) / denominator
+    margin = z_value * math.sqrt(
+        empirical_coverage * (1.0 - empirical_coverage) / sample_size
+        + z_value**2 / (4.0 * sample_size**2)
+    ) / denominator
+
+    with np.errstate(over="ignore", invalid="ignore"):
+        widths = upper_bounds - lower_bounds
+        penalty = 2.0 / alpha
+        scores = (
+            widths
+            + penalty * np.maximum(lower_bounds - targets, 0.0)
+            + penalty * np.maximum(targets - upper_bounds, 0.0)
+        )
+
+    def safe_mean(values):
+        if not np.isfinite(values).all():
+            return None
+        scale = float(np.max(np.abs(values)))
+        if scale == 0.0:
+            return 0.0
+        result = float(np.mean(values / scale) * scale)
+        return result if math.isfinite(result) else None
+
+    def safe_median(values):
+        if not np.isfinite(values).all():
+            return None
+        scale = float(np.max(np.abs(values)))
+        if scale == 0.0:
+            return 0.0
+        result = float(np.median(values / scale) * scale)
+        return result if math.isfinite(result) else None
+
+    result = {
+        "sample_size": sample_size,
+        "covered_count": covered_count,
+        "nominal_coverage": float(1.0 - alpha),
+        "empirical_coverage": float(empirical_coverage),
+        "coverage_interval": {
+            "method": "Wilson score interval",
+            "confidence_level": float(confidence_level),
+            "lower": float(max(0.0, center - margin)),
+            "upper": float(min(1.0, center + margin)),
+        },
+        "mean_interval_width": safe_mean(widths),
+        "median_interval_width": safe_median(widths),
+        "finite_interval_count": int(np.isfinite(widths).sum()),
+        "unbounded_interval_count": int((~np.isfinite(widths)).sum()),
+        "mean_interval_score": safe_mean(scores),
+        "interval_score_method": "Winkler score for a central two-sided interval",
+        "diagnostic_assumption": (
+            "The Wilson interval assumes independent held-out coverage indicators; "
+            "it is descriptive and is not a conformal guarantee."
+        ),
+    }
+    if groups is not None:
+        import pandas as pd
+
+        group_values = pd.Series(groups, dtype="object").astype("string")
+        if group_values.size != sample_size:
+            raise ValueError("groups must have the same number of rows as the targets.")
+        group_codes, group_labels = pd.factorize(group_values, sort=False)
+        counts = numpy.bincount(
+            group_codes[group_codes >= 0], minlength=len(group_labels)
+        )
+        ordered_codes = sorted(
+            range(len(group_labels)),
+            key=lambda code: (-int(counts[code]), str(group_labels[code])),
+        )
+        retained = ordered_codes[: int(max_groups)]
+        subgroup_results = []
+        for code in retained:
+            mask = group_codes == code
+            subgroup = prediction_interval_diagnostics(
+                targets[mask],
+                lower_bounds[mask],
+                upper_bounds[mask],
+                alpha=alpha,
+                confidence_level=confidence_level,
+            )
+            subgroup_results.append(
+                {
+                    "group": str(group_labels[code]),
+                    "row_count": int(counts[code]),
+                    "sample_size": subgroup["sample_size"],
+                    "covered_count": subgroup["covered_count"],
+                    "empirical_coverage": subgroup["empirical_coverage"],
+                    "coverage_interval": subgroup["coverage_interval"],
+                }
+            )
+        other_count = int(sum(counts[code] for code in ordered_codes[max_groups:]))
+        if other_count:
+            mask = numpy.isin(group_codes, ordered_codes[max_groups:])
+            subgroup = prediction_interval_diagnostics(
+                targets[mask],
+                lower_bounds[mask],
+                upper_bounds[mask],
+                alpha=alpha,
+                confidence_level=confidence_level,
+            )
+            subgroup_results.append(
+                {
+                    "group": "Other (combined)",
+                    "row_count": other_count,
+                    "sample_size": subgroup["sample_size"],
+                    "covered_count": subgroup["covered_count"],
+                    "empirical_coverage": subgroup["empirical_coverage"],
+                    "coverage_interval": subgroup["coverage_interval"],
+                }
+            )
+        result["subgroup_coverage"] = {
+            "group_limit": int(max_groups),
+            "missing_group_count": int(numpy.sum(group_codes < 0)),
+            "other_group_count": other_count,
+            "groups": subgroup_results,
+            "interpretation": (
+                "Subgroup coverage estimates are diagnostic and can be highly "
+                "uncertain for small groups; marginal conformal coverage does "
+                "not imply conditional or subgroup coverage."
+            ),
+        }
+    else:
+        result["subgroup_coverage"] = None
+    return result
+
+
 def split_conformal_regression_interval(
     estimator,
     X_train,
@@ -793,7 +982,7 @@ class mltrack(object):
         metadata = self.GetMetadata()
         if "dataset_schema" not in metadata or "dataset_columns" not in metadata:
             raise ValueError(
-                "No registered dataset schema was found. Call RegisterData(...) before validating data."
+                "No registered dataset schema was found. Call register_data(...) before validating data."
             )
         return metadata
 
@@ -1131,23 +1320,57 @@ class mltrack(object):
         target = self.target or train_frame.columns[-1]
         y_train = train_frame[target].to_numpy()
         X_train_frame = train_frame.drop(columns=[target])
-        X_train = pd.get_dummies(X_train_frame, drop_first=False)
 
         try:
             validation_frame = self.get_dataframe(validation_partition)
             y_valid = validation_frame[target].to_numpy()
             X_valid_frame = validation_frame.drop(columns=[target])
-            X_valid = pd.get_dummies(X_valid_frame, drop_first=False)
         except ValueError:
-            X_valid = None
+            X_valid_frame = None
             y_valid = None
 
-        if X_valid is not None:
-            X_train, X_valid = X_train.align(X_valid, join="outer", axis=1, fill_value=0)
-            X_train = X_train.to_numpy()
-            X_valid = X_valid.to_numpy()
+        feature_dtypes = list(X_train_frame.dtypes)
+        if X_valid_frame is not None:
+            feature_dtypes.extend(X_valid_frame.dtypes)
+        uses_fold_local_preprocessing = any(
+            not pd.api.types.is_numeric_dtype(dtype)
+            or pd.api.types.is_bool_dtype(dtype)
+            or pd.api.types.is_complex_dtype(dtype)
+            for dtype in feature_dtypes
+        )
+
+        if X_valid_frame is not None:
+            X_train_frame, X_valid_frame = X_train_frame.align(
+                X_valid_frame,
+                join="outer",
+                axis=1,
+                fill_value=numpy.nan if uses_fold_local_preprocessing else 0,
+            )
+
+        if uses_fold_local_preprocessing:
+            X_train = X_train_frame
+            X_valid = X_valid_frame
         else:
-            X_train = X_train.to_numpy()
+            X_train = X_train_frame.to_numpy()
+            X_valid = X_valid_frame.to_numpy() if X_valid_frame is not None else None
+
+        def clone_for_fit():
+            candidate = clone(estimator)
+            if uses_fold_local_preprocessing:
+                from sklearn.pipeline import Pipeline
+
+                from .DataProcess import FoldLocalDataPreprocessor
+
+                return Pipeline(
+                    [
+                        ("preprocessor", FoldLocalDataPreprocessor()),
+                        ("estimator", candidate),
+                    ]
+                )
+            return candidate
+
+        def take_rows(data, indices):
+            return data.iloc[indices] if isinstance(data, pd.DataFrame) else data[indices]
 
         def can_use_stratified(labels, cv_spec):
             if not (is_classifier(estimator) and labels is not None):
@@ -1196,10 +1419,45 @@ class mltrack(object):
         def score_model(model, X, y):
             if scoring is not None:
                 return float(scoring(model, X, y))
-            if hasattr(model, "score"):
+
+            def has_score(candidate):
+                if hasattr(candidate, "steps") and candidate.steps:
+                    return has_score(candidate.steps[-1][1])
+                return callable(getattr(candidate, "score", None))
+
+            if has_score(model):
                 return float(model.score(X, y))
             predictions = model.predict(X)
             return float(accuracy_score(y, predictions))
+
+        if scoring is None:
+            scoring_protocol = {
+                "type": "estimator_default",
+                "verified": False,
+            }
+        elif hasattr(scoring, "_score_func"):
+            score_function = scoring._score_func
+            scoring_protocol = {
+                "type": "sklearn_scorer",
+                "function": "%s.%s" % (
+                    getattr(score_function, "__module__", type(score_function).__module__),
+                    getattr(score_function, "__qualname__", type(score_function).__qualname__),
+                ),
+                "kwargs": json.loads(
+                    json.dumps(getattr(scoring, "_kwargs", {}), sort_keys=True, default=str)
+                ),
+                "sign": getattr(scoring, "_sign", None),
+                "verified": True,
+            }
+        else:
+            scoring_protocol = {
+                "type": "callable",
+                "function": "%s.%s" % (
+                    getattr(scoring, "__module__", type(scoring).__module__),
+                    getattr(scoring, "__qualname__", type(scoring).__qualname__),
+                ),
+                "verified": False,
+            }
 
         repeated_outer_scores = []
         repeated_metrics = []
@@ -1213,14 +1471,14 @@ class mltrack(object):
 
             for outer_split in iter_splits(outer_splitter, X_train, y_train, groups, random_state_seed=42 + repeat_index):
                 outer_train_idx, outer_test_idx = outer_split
-                X_outer_train = X_train[outer_train_idx]
+                X_outer_train = take_rows(X_train, outer_train_idx)
                 y_outer_train = y_train[outer_train_idx]
-                X_outer_test = X_train[outer_test_idx]
+                X_outer_test = take_rows(X_train, outer_test_idx)
                 y_outer_test = y_train[outer_test_idx]
 
                 fold_scores = []
                 if len(numpy.unique(y_outer_train)) < 2:
-                    candidate = clone(estimator)
+                    candidate = clone_for_fit()
                     candidate.fit(X_outer_train, y_outer_train)
                     score = score_model(candidate, X_outer_test, y_outer_test)
                     fold_scores = [float(score)]
@@ -1229,19 +1487,22 @@ class mltrack(object):
                     for inner_split in iter_splits(inner_splitter, X_outer_train, y_outer_train, inner_groups, random_state_seed=42 + repeat_index):
                         inner_train_idx, inner_valid_idx = inner_split
                         if len(numpy.unique(y_outer_train[inner_train_idx])) < 2:
-                            candidate = clone(estimator)
+                            candidate = clone_for_fit()
                             candidate.fit(X_outer_train, y_outer_train)
                         else:
-                            candidate = clone(estimator)
-                            candidate.fit(X_outer_train[inner_train_idx], y_outer_train[inner_train_idx])
+                            candidate = clone_for_fit()
+                            candidate.fit(
+                                take_rows(X_outer_train, inner_train_idx),
+                                y_outer_train[inner_train_idx],
+                            )
                         score = score_model(
                             candidate,
-                            X_outer_train[inner_valid_idx],
+                            take_rows(X_outer_train, inner_valid_idx),
                             y_outer_train[inner_valid_idx],
                         )
                         fold_scores.append(float(score))
 
-                best_candidate = clone(estimator)
+                best_candidate = clone_for_fit()
                 best_candidate.fit(X_outer_train, y_outer_train)
                 outer_predictions = best_candidate.predict(X_outer_test)
                 outer_score = score_model(best_candidate, X_outer_test, y_outer_test)
@@ -1288,10 +1549,43 @@ class mltrack(object):
             "repeat_count": repeats,
             "repeated_outer_scores": repeated_outer_scores,
             "confidence_interval": confidence_interval,
+            "preprocessing": (
+                "fold_local" if uses_fold_local_preprocessing else "none"
+            ),
+        }
+
+        partition_history = self.dataset_splits()
+        train_identity = partition_history.get(str(train_partition), {})
+        validation_identity = partition_history.get(str(validation_partition), {})
+        group_fingerprint = None
+        if groups is not None:
+            group_values = groups.tolist() if hasattr(groups, "tolist") else list(groups)
+            group_payload = json.dumps(group_values, sort_keys=True, default=str)
+            group_fingerprint = hashlib.sha256(group_payload.encode("utf-8")).hexdigest()
+        result["evaluation_protocol"] = {
+            "train_partition": train_partition,
+            "train_fingerprint": train_identity.get("fingerprint"),
+            "validation_partition": validation_partition,
+            "validation_fingerprint": (
+                validation_identity.get("fingerprint") if X_valid is not None else None
+            ),
+            "validation_used": X_valid is not None,
+            "inner_cv": json.loads(
+                json.dumps(cv_to_spec(inner_cv), sort_keys=True, default=str)
+            ),
+            "outer_cv": json.loads(
+                json.dumps(cv_to_spec(outer_cv), sort_keys=True, default=str)
+            ),
+            "repeat_count": repeats,
+            "integer_split_seed": 42,
+            "preprocessing": result["preprocessing"],
+            "scoring": scoring_protocol,
+            "group_fingerprint": group_fingerprint,
+            "model_selection": "fixed_estimator_no_hyperparameter_search",
         }
 
         if X_valid is not None and y_valid is not None:
-            final_model = clone(estimator)
+            final_model = clone_for_fit()
             final_model.fit(X_train, y_train)
             final_score = score_model(final_model, X_valid, y_valid)
             result["final_validation_score"] = final_score
@@ -1302,6 +1596,8 @@ class mltrack(object):
                 "outer_cv": outer_cv,
                 "train_partition": train_partition,
                 "validation_partition": validation_partition,
+                "preprocessing": result["preprocessing"],
+                "evaluation_protocol": result["evaluation_protocol"],
                 "repeat_count": repeats,
                 "confidence_interval": confidence_interval,
                 "outer_scores": result.get("outer_scores"),
@@ -1360,6 +1656,75 @@ class mltrack(object):
         if not np.isfinite(reference_scores).all() or not np.isfinite(candidate_scores).all():
             raise ValueError("Repeated CV scores must all be finite")
 
+        reference_protocol = reference_result.get("evaluation_protocol")
+        candidate_protocol = candidate_result.get("evaluation_protocol")
+        if isinstance(reference_protocol, dict) and isinstance(candidate_protocol, dict):
+            fields = (
+                "train_fingerprint",
+                "validation_fingerprint",
+                "validation_used",
+                "inner_cv",
+                "outer_cv",
+                "repeat_count",
+                "integer_split_seed",
+                "preprocessing",
+                "scoring",
+                "group_fingerprint",
+                "model_selection",
+            )
+            mismatched = [
+                field
+                for field in fields
+                if reference_protocol.get(field) is not None
+                and candidate_protocol.get(field) is not None
+                and reference_protocol.get(field) != candidate_protocol.get(field)
+            ]
+            if mismatched:
+                raise ValueError(
+                    "Incomparable repeated CV results; protocol fields differ: %s"
+                    % ", ".join(mismatched)
+                )
+            unverified = [
+                field
+                for field in fields
+                if (
+                    reference_protocol.get(field) is None
+                    or candidate_protocol.get(field) is None
+                )
+                and not (
+                    reference_protocol.get(field) is None
+                    and candidate_protocol.get(field) is None
+                    and field in ("validation_fingerprint", "group_fingerprint")
+                )
+            ]
+            if (
+                reference_protocol.get("train_fingerprint") is None
+                and candidate_protocol.get("train_fingerprint") is None
+            ):
+                unverified.append("train_fingerprint")
+            if (
+                reference_protocol.get("validation_used")
+                and reference_protocol.get("validation_fingerprint") is None
+                and candidate_protocol.get("validation_fingerprint") is None
+            ):
+                unverified.append("validation_fingerprint")
+            if (
+                not reference_protocol.get("scoring", {}).get("verified", False)
+                or not candidate_protocol.get("scoring", {}).get("verified", False)
+            ):
+                unverified.append("scoring")
+            comparability = {
+                "status": "unverified" if unverified else "verified",
+                "checked_fields": [field for field in fields if field not in unverified],
+                "unverified_fields": sorted(set(unverified)),
+            }
+        else:
+            comparability = {
+                "status": "unverified",
+                "checked_fields": [],
+                "unverified_fields": ["evaluation_protocol"],
+            }
+
         differences = candidate_scores - reference_scores
         rng = np.random.default_rng(random_state)
         bootstrap_means = np.empty(n_resamples, dtype=float)
@@ -1375,6 +1740,12 @@ class mltrack(object):
         interval = np.quantile(bootstrap_means, [alpha, 1.0 - alpha])
         difference_std = float(np.std(differences, ddof=1))
         mean_difference = float(np.mean(differences))
+        score_scale = max(
+            1.0,
+            float(numpy.max(numpy.abs(reference_scores))),
+            float(numpy.max(numpy.abs(candidate_scores))),
+        )
+        effect_size_defined = difference_std > numpy.finfo(float).eps * score_scale
         return {
             "repeat_count": int(differences.size),
             "reference_mean": float(np.mean(reference_scores)),
@@ -1383,7 +1754,7 @@ class mltrack(object):
             "median_difference": float(np.median(differences)),
             "cohens_dz": (
                 float(mean_difference / difference_std)
-                if difference_std > 0.0
+                if effect_size_defined
                 else None
             ),
             "confidence_interval": {
@@ -1392,6 +1763,7 @@ class mltrack(object):
                 "upper": float(interval[1]),
             },
             "resampling": "paired percentile bootstrap over repeat-level means",
+            "comparability": comparability,
             "random_state": int(random_state) if random_state is not None else None,
             "n_resamples": n_resamples,
         }

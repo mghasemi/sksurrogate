@@ -26,7 +26,7 @@ Python API client workflow
 Run ``python_api_workflow.ipynb`` after starting the API in a separate
 terminal::
 
-    python -m uvicorn api.main:app --host 127.0.0.1 --port 8000
+    python -m uvicorn api.main:app --host 127.0.0.1 --port 8013
     jupyter lab examples/notebooks/python_api_workflow.ipynb
 
 The notebook uses Python's standard-library HTTP client to upload two

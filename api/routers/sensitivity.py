@@ -76,6 +76,16 @@ def run_sensitivity(task_name: str, body: SensitivityRequest):
             "top_feature_indices": top_indices,
             "top_feature_names": [feature_columns[index] for index in top_indices],
             "weights": weights,
+            "interpretation": {
+                "category": "input_sensitivity",
+                "measure": body.method,
+                "train_partition": body.train_partition,
+                "causal_effect": False,
+                "limitations": [
+                    "Sensitivity describes the fitted surrogate's response over method-generated independent input ranges based on observed feature bounds plus a margin.",
+                    "Correlated or categorical features may produce unrealistic perturbations; these indices are not causal effects.",
+                ],
+            },
         }
 
     job_id = job_manager.submit(task_name, "sensitivity", lambda job_id: _task)
@@ -105,6 +115,11 @@ def get_correlation_matrix(task_name: str, train_partition: str = "train", max_f
         "task_name": task_name,
         "partition": train_partition,
         "kind": "correlation",
+        "interpretation": {
+            "category": "descriptive_association",
+            "measure": "Pearson correlation",
+            "causal_effect": False,
+        },
         **_heatmap_payload(frame, None, max_features),
     }
 

@@ -70,18 +70,123 @@ def _numeric_summary(series):
             "median": None,
             "q75": None,
             "max": None,
+            "median_absolute_deviation": None,
+            "skewness": None,
+            "excess_kurtosis": None,
+            "iqr_outlier_count": 0,
+            "iqr_outlier_rate": None,
+            "iqr_lower_fence": None,
+            "iqr_upper_fence": None,
         }
-    quantiles = np.quantile(values, [0.25, 0.5, 0.75])
+    magnitude = float(np.max(np.abs(values)))
+    scale_factor = magnitude if magnitude else 1.0
+    scaled_values = values / scale_factor
+    quantiles = np.quantile(scaled_values, [0.25, 0.5, 0.75])
+    q25_scaled, median_scaled, q75_scaled = (float(value) for value in quantiles)
+    iqr_scaled = q75_scaled - q25_scaled
+    lower_fence_scaled = q25_scaled - 1.5 * iqr_scaled
+    upper_fence_scaled = q75_scaled + 1.5 * iqr_scaled
+    outlier_count = int(
+        np.sum((scaled_values < lower_fence_scaled) | (scaled_values > upper_fence_scaled))
+    )
+    centered = scaled_values - float(np.mean(scaled_values))
+    scale = float(np.sqrt(np.mean(centered**2)))
+    standardized = centered / scale if scale > 0 else None
+
+    def rescale(value):
+        result = float(value * scale_factor)
+        return result if np.isfinite(result) else None
+
     return {
         "count": int(values.size),
         "non_finite_count": non_finite_count,
-        "mean": float(np.mean(values)),
-        "std": float(np.std(values, ddof=1)) if values.size > 1 else 0.0,
+        "mean": rescale(float(np.mean(scaled_values))),
+        "std": rescale(float(np.std(scaled_values, ddof=1))) if values.size > 1 else 0.0,
         "min": float(np.min(values)),
-        "q25": float(quantiles[0]),
-        "median": float(quantiles[1]),
-        "q75": float(quantiles[2]),
+        "q25": rescale(q25_scaled),
+        "median": rescale(median_scaled),
+        "q75": rescale(q75_scaled),
         "max": float(np.max(values)),
+        "median_absolute_deviation": rescale(
+            float(np.median(np.abs(scaled_values - median_scaled)))
+        ),
+        "skewness": (
+            float(np.mean(standardized**3))
+            if standardized is not None and values.size >= 3
+            else None
+        ),
+        "excess_kurtosis": (
+            float(np.mean(standardized**4) - 3.0)
+            if standardized is not None and values.size >= 4
+            else None
+        ),
+        "iqr_outlier_count": outlier_count,
+        "iqr_outlier_rate": float(outlier_count / values.size),
+        "iqr_lower_fence": rescale(lower_fence_scaled),
+        "iqr_upper_fence": rescale(upper_fence_scaled),
+    }
+
+
+def _profile_group_comparisons(sample, variables, group_by, max_categories):
+    group_values = sample[group_by].astype("string")
+    group_codes, group_labels = pd.factorize(group_values, sort=False)
+    counts = np.bincount(group_codes[group_codes >= 0], minlength=len(group_labels))
+    ordered_codes = sorted(
+        range(len(group_labels)),
+        key=lambda code: (-int(counts[code]), str(group_labels[code])),
+    )
+    retained_codes = set(ordered_codes[:max_categories])
+    grouped_codes = np.array(
+        [
+            code if code in retained_codes else -2
+            for code in group_codes
+        ],
+        dtype=int,
+    )
+    group_specs = [
+        (code, str(group_labels[code]), int(counts[code]))
+        for code in ordered_codes[:max_categories]
+    ]
+    other_count = int(np.sum((group_codes >= 0) & (grouped_codes == -2)))
+    if other_count:
+        group_specs.append((-2, "Other (combined)", other_count))
+
+    comparisons = []
+    for column in variables:
+        if _profile_column_kind(sample[column]) != "numeric":
+            continue
+        groups = []
+        for code, label, group_row_count in group_specs:
+            mask = grouped_codes == code
+            distribution = _numeric_summary(sample.loc[mask, column])
+            groups.append(
+                {
+                    "group": label,
+                    "row_count": group_row_count,
+                    "count": distribution["count"],
+                    "missing_count": int(sample.loc[mask, column].isna().sum()),
+                    "non_finite_count": distribution["non_finite_count"],
+                    "distribution": distribution,
+                }
+            )
+        comparisons.append(
+            {
+                "column": column,
+                "method": "descriptive_numeric_distribution_by_group",
+                "groups": groups,
+            }
+        )
+    return {
+        "group_by": group_by,
+        "method": "descriptive_numeric_distribution_by_group",
+        "group_limit": int(max_categories),
+        "missing_group_count": int(np.sum(group_codes < 0)),
+        "scope": "sampled rows; missing group labels excluded",
+        "comparisons": comparisons,
+        "interpretation": (
+            "Descriptive group summaries only; no hypothesis test or "
+            "adjustment for multiple comparisons is performed."
+        ),
     }
 
 
@@ -161,24 +266,174 @@ def _profile_association(left, right, left_kind, right_kind, max_categories):
     return "correlation_ratio", _correlation_ratio(right, left, max_categories)
 
 
+def _numeric_rank_associations(
+    left, right
+) -> list[dict[str, str | float | int]]:
+    pair = pd.concat(
+        [
+            pd.to_numeric(left, errors="coerce")
+            .replace([np.inf, -np.inf], np.nan)
+            .rename("left"),
+            pd.to_numeric(right, errors="coerce")
+            .replace([np.inf, -np.inf], np.nan)
+            .rename("right"),
+        ],
+        axis=1,
+    ).dropna()
+    if (
+        len(pair) < 2
+        or pair["left"].nunique() < 2
+        or pair["right"].nunique() < 2
+    ):
+        return []
+    results = []
+    for method in ("spearman", "kendall"):
+        value = float(pair["left"].corr(pair["right"], method=method))
+        if np.isfinite(value):
+            results.append(
+                {
+                    "method": "kendall_tau" if method == "kendall" else method,
+                    "value": value,
+                    "n": int(len(pair)),
+                }
+            )
+    return results
+
+
+def _profile_multicollinearity(sample, selected_features, kinds):
+    numeric_features = [column for column in selected_features if kinds[column] == "numeric"]
+    if not numeric_features:
+        return {
+            "numeric_features": [],
+            "complete_case_rows": 0,
+            "condition_number": None,
+            "condition_number_reason": "no_numeric_features",
+            "vif": [],
+            "scope": "sampled rows and selected numeric features",
+            "interpretation": (
+                "VIF and condition number are collinearity diagnostics, not "
+                "causal evidence or automatic feature-removal recommendations."
+            ),
+        }
+
+    numeric = sample[numeric_features].apply(pd.to_numeric, errors="coerce")
+    numeric = numeric.replace([np.inf, -np.inf], np.nan).dropna()
+    matrix = numeric.to_numpy(dtype=float)
+    if len(matrix) < 2:
+        return {
+            "numeric_features": numeric_features,
+            "complete_case_rows": int(len(matrix)),
+            "condition_number": None,
+            "condition_number_reason": "fewer_than_two_complete_rows",
+            "vif": [
+                {"feature": column, "value": None, "reason": "insufficient_complete_rows"}
+                for column in numeric_features
+            ],
+            "scope": "complete finite rows in the sampled rows and selected numeric features",
+            "interpretation": (
+                "VIF and condition number are collinearity diagnostics, not "
+                "causal evidence or automatic feature-removal recommendations."
+            ),
+        }
+
+    column_scales = np.max(np.abs(matrix), axis=0)
+    column_scales[column_scales == 0.0] = 1.0
+    matrix = matrix / column_scales
+    standard_deviations = np.std(matrix, axis=0)
+    variable_indices = np.flatnonzero(standard_deviations > 0.0)
+    variable_matrix = matrix[:, variable_indices]
+    condition_number = None
+    condition_reason = None
+    if len(variable_indices) < 2:
+        condition_reason = "fewer_than_two_nonconstant_features"
+    else:
+        standardized = (
+            variable_matrix - np.mean(variable_matrix, axis=0)
+        ) / standard_deviations[variable_indices]
+        rank = int(np.linalg.matrix_rank(standardized))
+        if rank < standardized.shape[1]:
+            condition_reason = "rank_deficient"
+        else:
+            condition_number = float(np.linalg.cond(standardized))
+
+    vif_results = []
+    for index, column in enumerate(numeric_features):
+        response = matrix[:, index]
+        total_sum_squares = float(np.sum((response - np.mean(response)) ** 2))
+        if total_sum_squares == 0.0:
+            vif_results.append(
+                {"feature": column, "value": None, "reason": "constant_feature"}
+            )
+            continue
+        predictor_indices = [
+            predictor
+            for predictor in variable_indices
+            if predictor != index
+        ]
+        if not predictor_indices:
+            vif_results.append({"feature": column, "value": 1.0, "r_squared": 0.0})
+            continue
+        design = np.column_stack(
+            [np.ones(len(matrix)), matrix[:, predictor_indices]]
+        )
+        coefficients, _, _, _ = np.linalg.lstsq(design, response, rcond=None)
+        residual = response - design @ coefficients
+        r_squared = float(
+            1.0 - np.sum(residual**2) / total_sum_squares
+        )
+        r_squared = min(1.0, max(0.0, r_squared))
+        if r_squared >= 1.0 - 1.0e-12:
+            vif_results.append(
+                {
+                    "feature": column,
+                    "value": None,
+                    "r_squared": r_squared,
+                    "reason": "perfect_or_near_linear_dependence",
+                }
+            )
+        else:
+            vif_results.append(
+                {
+                    "feature": column,
+                    "value": float(1.0 / (1.0 - r_squared)),
+                    "r_squared": r_squared,
+                }
+            )
+
+    return {
+        "numeric_features": numeric_features,
+        "complete_case_rows": int(len(matrix)),
+        "condition_number": condition_number,
+        "condition_number_reason": condition_reason,
+        "vif": vif_results,
+        "scope": "complete finite rows in the sampled rows and selected numeric features",
+        "interpretation": (
+            "VIF and condition number are collinearity diagnostics, not "
+            "causal evidence or automatic feature-removal recommendations."
+        ),
+    }
+
+
 def dataset_profile(
     frame,
     *,
     target=None,
     features=None,
+    group_by=None,
     max_rows=5000,
     max_features=50,
     max_categories=10,
-    random_state=0,
+    random_state: int | None = 0,
 ):
     """Return bounded mixed-type EDA summaries and association diagnostics.
 
     Numeric columns use descriptive quantiles; other columns use bounded
     frequency summaries. Target associations and pairwise feature associations
     use Pearson correlation, correlation ratio, or Cramer's V as appropriate.
-    Rows are sampled without replacement when needed. These statistics are
-    exploratory associations, not evidence of causation or scientific
-    mechanisms.
+    Optional group comparisons summarize numeric distributions by a selected
+    categorical feature without hypothesis tests. Rows are sampled without
+    replacement when needed. These statistics are exploratory associations,
+    not evidence of causation or scientific mechanisms.
     """
     if not isinstance(frame, pd.DataFrame):
         raise TypeError("frame must be a pandas DataFrame")
@@ -205,6 +460,9 @@ def dataset_profile(
         raise ValueError("frame column names must be unique")
     if target is not None and target not in frame.columns:
         raise ValueError("target column %r is not in frame" % target)
+    if group_by is not None:
+        if group_by not in frame.columns or group_by == target:
+            raise ValueError("group_by must name a non-target feature column")
 
     all_features = [column for column in frame.columns if column != target]
     if features is None:
@@ -229,6 +487,11 @@ def dataset_profile(
         selected_features = list(features)
     if not selected_features:
         raise ValueError("At least one feature column is required")
+    if group_by is not None:
+        if group_by not in selected_features:
+            raise ValueError("group_by must be included in the selected features")
+        if _profile_column_kind(frame[group_by]) != "categorical":
+            raise ValueError("group_by must be categorical")
 
     original_rows = len(frame)
     if original_rows > max_rows:
@@ -242,14 +505,18 @@ def dataset_profile(
     for column in selected_features:
         series = sample[column]
         kind = kinds[column]
+        unique_count = int(series.nunique(dropna=True))
+        missing_count = int(series.isna().sum())
         profile_columns.append(
             {
                 "column": column,
                 "dtype": str(frame[column].dtype),
                 "kind": kind,
-                "missing_count": int(series.isna().sum()),
+                "missing_count": missing_count,
                 "missing_rate": float(series.isna().mean()),
-                "unique_count": int(series.nunique(dropna=True)),
+                "unique_count": unique_count,
+                "constant": bool(unique_count == 1),
+                "all_missing": bool(missing_count == len(sample)),
                 "distribution": (
                     _numeric_summary(series)
                     if kind == "numeric"
@@ -260,6 +527,7 @@ def dataset_profile(
 
     target_profile = None
     target_associations = []
+    target_rank_associations = []
     if target is not None:
         target_series = sample[target]
         target_kind = _profile_column_kind(target_series)
@@ -287,6 +555,16 @@ def dataset_profile(
             target_associations.append(
                 {"feature": column, "method": method, "value": value}
             )
+            if kinds[column] == "numeric" and target_kind == "numeric":
+                target_rank_associations.extend(
+                    {
+                        "feature": column,
+                        **association,
+                    }
+                    for association in _numeric_rank_associations(
+                        sample[column], target_series
+                    )
+                )
         target_associations.sort(
             key=lambda item: (
                 item["value"] is None,
@@ -296,6 +574,7 @@ def dataset_profile(
         )
 
     feature_associations = []
+    feature_rank_associations = []
     for left_index, left in enumerate(selected_features):
         for right in selected_features[left_index + 1 :]:
             method, value = _profile_association(
@@ -310,8 +589,57 @@ def dataset_profile(
                         "value": value,
                     }
                 )
+            if kinds[left] == "numeric" and kinds[right] == "numeric":
+                feature_rank_associations.extend(
+                    {
+                        "feature_a": left,
+                        "feature_b": right,
+                        **association,
+                    }
+                    for association in _numeric_rank_associations(
+                        sample[left], sample[right]
+                    )
+                )
     feature_associations.sort(
         key=lambda item: (-abs(item["value"]), str(item["feature_a"]), str(item["feature_b"]))
+    )
+    duplicate_features = []
+    for index, column in enumerate(selected_features):
+        for earlier in selected_features[:index]:
+            if sample[column].equals(sample[earlier]):
+                duplicate_features.append(
+                    {"feature": column, "duplicate_of": earlier}
+                )
+                break
+    feature_frame = sample[selected_features]
+    duplicate_row_count = int(feature_frame.duplicated().sum())
+    missing_pattern_counts = Counter(
+        tuple(
+            column
+            for column, is_missing in zip(selected_features, missing_row)
+            if is_missing
+        )
+        for missing_row in sample[selected_features].isna().itertuples(
+            index=False, name=None
+        )
+    )
+    ordered_missing_patterns = sorted(
+        missing_pattern_counts.items(),
+        key=lambda item: (-item[1], tuple(str(column) for column in item[0])),
+    )
+    retained_missing_patterns = ordered_missing_patterns[:max_categories]
+    group_variables = list(selected_features)
+    if target is not None:
+        group_variables.append(target)
+    group_comparisons = (
+        _profile_group_comparisons(
+            sample, group_variables, group_by, max_categories
+        )
+        if group_by is not None
+        else None
+    )
+    multicollinearity = _profile_multicollinearity(
+        sample, selected_features, kinds
     )
     return {
         "rows": int(original_rows),
@@ -328,6 +656,48 @@ def dataset_profile(
         "columns": profile_columns,
         "target_associations": target_associations,
         "feature_associations": feature_associations,
+        "missingness_patterns": {
+            "method": "exact_feature_missingness_combinations",
+            "pattern_limit": int(max_categories),
+            "patterns": [
+                {
+                    "missing_features": list(pattern),
+                    "count": int(count),
+                    "proportion": float(count / len(sample)),
+                }
+                for pattern, count in retained_missing_patterns
+            ],
+            "other_count": int(
+                sum(count for _, count in ordered_missing_patterns[max_categories:])
+            ),
+            "scope": "sampled rows and selected features",
+        },
+        "rank_associations": {
+            "target": target_rank_associations,
+            "features": feature_rank_associations,
+            "interpretation": (
+                "Spearman and Kendall coefficients describe monotonic rank "
+                "association; they do not detect all nonlinear dependence "
+                "and are not hypothesis tests."
+            ),
+        },
+        "multicollinearity": multicollinearity,
+        "group_comparisons": group_comparisons,
+        "data_quality": {
+            "duplicate_rows": {
+                "count": duplicate_row_count,
+                "rate": float(duplicate_row_count / len(sample)),
+                "scope": "sampled rows and selected features",
+            },
+            "constant_features": [
+                column["column"] for column in profile_columns if column["constant"]
+            ],
+            "all_missing_features": [
+                column["column"] for column in profile_columns if column["all_missing"]
+            ],
+            "duplicate_features": duplicate_features,
+            "scope": "selected features; exact equality on sampled rows",
+        },
         "interpretation": (
             "Descriptive diagnostics and associations only; results do not "
             "establish causation, leakage, or scientific mechanisms."

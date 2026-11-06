@@ -21,6 +21,7 @@ export default function ExplainPage() {
   const { task } = useTask();
   const [version, setVersion] = useState("");
   const [alpha, setAlpha] = useState(0.1);
+  const [groupBy, setGroupBy] = useState("");
 
   const bundlesQ = useQuery({
     queryKey: ["bundles", task],
@@ -31,7 +32,9 @@ export default function ExplainPage() {
   const selected = version || bundles[0] || "";
 
   const explainMut = useMutation({ mutationFn: () => explainBundle(task, selected, { top_k: 3 }) });
-  const intervalMut = useMutation({ mutationFn: () => getIntervals(task, selected, { alpha }) });
+  const intervalMut = useMutation({
+    mutationFn: () => getIntervals(task, selected, { alpha, group_by: groupBy.trim() || undefined }),
+  });
 
   const importance = (explainMut.data?.importance ?? []).slice(0, 15);
   const intervals = intervalMut.data;
@@ -69,8 +72,8 @@ export default function ExplainPage() {
       {selected && (
         <>
           <Card
-            title="Feature importance"
-            sub="How much the score drops when a feature is shuffled (permutation importance), plus how predictions change across each top feature's range."
+            title="Model behavior diagnostics"
+            sub="Global model attribution (permutation score drop) and fitted-model response profiles (partial dependence); neither estimates causal effects or resampling stability."
             actions={
               <button className="btn primary" disabled={explainMut.isPending} onClick={() => explainMut.mutate()}>
                 {explainMut.isPending ? "Computing…" : "Explain model"}
@@ -80,7 +83,20 @@ export default function ExplainPage() {
             {explainMut.isError && <ErrorNote error={explainMut.error} />}
             {explainMut.data && (
               <>
-                <p className="muted">Computed on {explainMut.data.rows} rows of the “{explainMut.data.partition}” partition.</p>
+                <p className="muted">
+                  Reference: {explainMut.data.reference_sample.used_rows} of{" "}
+                  {explainMut.data.reference_sample.source_rows} rows from the “
+                  {explainMut.data.reference_sample.partition}” partition
+                  {explainMut.data.reference_sample.sampling === "random_without_replacement"
+                    ? ` (sampled without replacement; seed ${explainMut.data.settings.random_state})`
+                    : " (all rows)"}
+                  . Permutation repeats: {explainMut.data.settings.n_repeats}.
+                </p>
+                <ul className="muted">
+                  {explainMut.data.interpretation.limitations.map((limitation) => (
+                    <li key={limitation}>{limitation}</li>
+                  ))}
+                </ul>
                 <div style={{ height: Math.max(180, importance.length * 26) }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={importance} layout="vertical" margin={{ left: 24, right: 16 }}>
@@ -122,7 +138,7 @@ export default function ExplainPage() {
 
           <Card
             title="Prediction intervals"
-            sub="Regression models only. Split-conformal intervals: a range expected to contain the true value with the chosen coverage, checked on held-out rows."
+            sub="Regression models only. Split-conformal intervals are evaluated on held-out rows; observed coverage is descriptive and shown with a Wilson interval."
             actions={
               <button className="btn primary" disabled={intervalMut.isPending} onClick={() => intervalMut.mutate()}>
                 {intervalMut.isPending ? "Computing…" : "Compute intervals"}
@@ -138,17 +154,66 @@ export default function ExplainPage() {
                   <option value={0.05}>95%</option>
                 </select>
               </div>
+              <div className="field">
+                <label>Coverage subgroup (optional)</label>
+                <input
+                  value={groupBy}
+                  onChange={(e) => setGroupBy(e.target.value)}
+                  placeholder="Categorical feature column"
+                />
+              </div>
             </div>
             {intervalMut.isError && <ErrorNote error={intervalMut.error} />}
             {intervals && (
               <>
-                <div className="grid cols-4">
+                <div className="grid cols-3">
                   <Stat label="Target coverage" value={fmtPct(intervals.nominal_coverage)} />
-                  <Stat label="Observed on held-out rows" value={fmtPct(intervals.empirical_coverage)} sub={`${intervals.holdout_rows} rows`} />
+                  <Stat
+                    label="Observed coverage"
+                    value={fmtPct(intervals.empirical_coverage)}
+                    sub={`Wilson ${(intervals.coverage_interval.confidence_level * 100).toFixed(0)}%: ${fmtPct(intervals.coverage_interval.lower)}–${fmtPct(intervals.coverage_interval.upper)}; ${intervals.holdout_rows} rows`}
+                  />
                   <Stat label="Interval half-width" value={fmtNum(intervals.half_width)} sub="± around each prediction" />
+                  <Stat label="Mean interval width" value={fmtNum(intervals.mean_interval_width)} sub={`median ${fmtNum(intervals.median_interval_width)}`} />
+                  <Stat label="Mean interval score" value={fmtNum(intervals.mean_interval_score)} sub={intervals.interval_score_method} />
                   <Stat label="Calibration rows" value={fmtNum(intervals.calibration_size)} />
                 </div>
                 <p className="muted">{intervals.coverage_assumption}</p>
+                <p className="muted">
+                  Fit and calibration rows came from “{intervals.calibration_source_partition}”
+                  ({intervals.fit_rows} fit, {intervals.calibration_size} calibration); held-out
+                  rows came from “{intervals.holdout_partition}”. {intervals.diagnostic_assumption}
+                </p>
+                {intervals.subgroup_coverage && (
+                  <>
+                    <h3>Coverage by {intervals.group_by}</h3>
+                    <div className="table-wrap">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Group</th>
+                            <th>Rows</th>
+                            <th>Observed coverage</th>
+                            <th>Wilson interval</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {intervals.subgroup_coverage.groups.map((group) => (
+                            <tr key={group.group}>
+                              <td>{group.group}</td>
+                              <td>{fmtNum(group.row_count)}</td>
+                              <td>{fmtPct(group.empirical_coverage)}</td>
+                              <td>
+                                {fmtPct(group.coverage_interval.lower)}–{fmtPct(group.coverage_interval.upper)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <p className="muted">{intervals.subgroup_coverage.interpretation}</p>
+                  </>
+                )}
               </>
             )}
           </Card>

@@ -87,11 +87,60 @@ missingness, target associations, and highly associated feature pairs:
     )
 
 Numeric columns include finite-value summaries and a separate count of positive
-or negative infinity values. Other columns include bounded frequency summaries;
-categorical target frequencies can help reveal class balance. Target and
-feature-pair associations use Pearson correlation for numeric pairs, correlation
-ratio for mixed pairs, and Cramer's V for categorical pairs. Pairwise feature
-associations are sorted by strength to help prioritize redundancy checks.
+or negative infinity values, median absolute deviation, standardized skewness
+and excess kurtosis, and IQR-fence outlier counts, rates, and fences. These
+outlier flags are descriptive signals, not evidence that a row is erroneous.
+Other columns include bounded frequency summaries; categorical target
+frequencies can help reveal class balance. Target and feature-pair associations
+use Pearson correlation for numeric pairs, correlation ratio for mixed pairs,
+and Cramer's V for categorical pairs. Pairwise feature associations are sorted
+by strength to help prioritize redundancy checks.
+
+For numeric pairs, ``rank_associations`` additionally reports Spearman and
+Kendall rank coefficients on complete finite pairs, alongside pair counts.
+These describe monotonic rank association and complement (but do not replace)
+Pearson's linear correlation. They are descriptive coefficients, not
+hypothesis tests, and do not detect all forms of nonlinear dependence.
+
+The ``multicollinearity`` section reports per-feature variance inflation
+factors (VIF) and a standardized design-matrix condition number for selected
+numeric features. Both use complete finite rows from the profile sample.
+Constant features are not assigned a VIF, and rank-deficient designs report a
+null condition number with a reason rather than infinity. These are
+diagnostics—not causal evidence or automatic feature-removal recommendations.
+
+The ``data_quality`` section reports constant and all-missing selected
+features, exact duplicate selected features, and duplicate rows. Duplicate-row
+counts apply only to the sampled rows and selected features; duplicate-feature
+checks compare exact values over those same sampled rows. All profile
+statistics are descriptive and, when row sampling is used, apply to that
+deterministic sample rather than the complete dataset.
+
+The ``missingness_patterns`` section counts exact combinations of missing
+selected features, reports the most common patterns up to ``max_categories``,
+and aggregates the remaining rows into ``other_count``. It describes patterns
+in the sampled rows only; it does not test whether missingness is associated
+with observed values or outcomes.
+
+For descriptive numeric distributions across categories, include the
+categorical grouping feature in ``features`` and pass ``group_by``::
+
+    report = dataset_profile(
+        frame,
+        target="outcome",
+        features=["condition", "temperature"],
+        group_by="condition",
+        max_categories=10,
+    )
+
+The ``group_comparisons`` output contains per-group sample sizes, missing and
+non-finite counts, and numeric distribution summaries for the selected numeric
+features and numeric target. Missing group labels are excluded; categories
+beyond the top ``max_categories`` are combined into an ``Other (combined)``
+group. This is descriptive only: it does not run hypothesis tests, estimate
+causal effects, or correct for multiple comparisons. Group summaries share the
+profile's sampled-row scope. The registered-partition profile endpoint accepts
+the same ``group_by`` option.
 
 The helper samples without replacement when the row limit is exceeded. If a
 dataset has more features than ``max_features``, select the features explicitly
