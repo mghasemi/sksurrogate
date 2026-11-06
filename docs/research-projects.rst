@@ -47,10 +47,20 @@ Projects accept references to:
   registry directory. Use the existing run-configuration and Markdown-report
   endpoints to inspect its reproducibility record.
 * ``job`` — ``artifact_id`` is a background job ID belonging to the same task.
-  Use ``GET /api/jobs/{job_id}`` for its current status and result.
+  Use ``GET /api/jobs/{job_id}`` for its recorded request, current status, and
+  result. In the web UI, **Inspect job** opens its tracker and result on the
+  Jobs page. For example, nested-CV jobs retain the submitted evaluation settings
+  alongside result-level partition fingerprints and metrics.
+  Sensitivity-analysis jobs likewise retain their method request and result
+  protocol, including the registered input-partition fingerprint, row count,
+  and feature columns.
 
-References are validated on project creation and update. A snapshot is captured
-when a reference is first linked and preserved by later project edits.
+References are validated on project creation and update. To append one
+reference without replacing project fields or other artifact links, use
+``POST /api/projects/{project_id}/artifacts`` with one artifact reference as
+the request body. This append operation is idempotent for an already-linked
+artifact identity. A snapshot is captured when a reference is first linked
+and preserved by later project edits.
 Dataset snapshots include the registered partition fingerprint and schema
 metadata; bundle snapshots include run identity, lineage, configuration, and
 dependencies; job snapshots fingerprint their recorded configuration and
@@ -60,6 +70,17 @@ what was observed but do not freeze or copy the upstream artifact; a deleted
 artifact cannot be recovered from project metadata. References with
 unsupported path characters, duplicate references, or mismatched task/job
 pairs are rejected.
+
+The summary tracks the research progression: a project question, hypothesis,
+registered dataset, completed analysis, completed modeling run, available
+result, and recorded conclusion. Question and record stages reflect project
+metadata; data, analysis, modeling, and result stages reflect linked artifacts.
+The analysis stage is complete when a linked ``sensitivity`` or ``nested-cv``
+job has completed. The modeling stage is complete only when a linked
+``experiment``, ``optimize_pipeline``, or ``retraining`` job has completed;
+completed analysis jobs do not count as model-training progress. A result is
+available when a linked job completes with a non-null result or a model bundle
+is linked; a completed job without a recorded result does not satisfy this step.
 
 Questions and notes
 ===================
@@ -77,9 +98,17 @@ Append an observation with ``POST /api/projects/{project_id}/notes``::
 
 Each note receives its own ID and creation timestamp. The web UI's **Projects**
 page can create projects, show their progress, link available artifacts,
-append notes, and add research records. Projects do not yet support notebook
-execution, project deletion, or project-level report generation. Authorization
-is limited to the API's existing optional API-key middleware. Project records
+append notes, and add research records. **Run an analysis** carries the
+project context to Feature Analysis; a completed sensitivity job is
+automatically linked through the additive artifact endpoint, while failed or
+unfinished jobs are not. Other jobs can be linked from the Projects page after
+completion. Linked job
+evidence has an **Inspect job** link to open its tracker and result. Evidence
+in saved records also shows whether its linked artifact snapshot is current,
+changed, missing, or unverified. Projects do not yet support notebook
+execution, project deletion, or project-level report generation.
+Authorization is limited to the API's existing optional API-key middleware.
+Project records
 are stored as JSON under the configured API storage root; deployments should
 use a single API process for writes, as the file store is not a distributed
 multi-worker database. Deployment, registry, monitoring, and retraining remain
@@ -93,7 +122,14 @@ Append a hypothesis, analysis, finding, or conclusion with
 their own IDs and timestamps. Findings and conclusions require at least one
 evidence reference; hypotheses and analysis notes may be recorded before
 evidence is linked. Evidence must point to an artifact already linked to the
-project and is labeled as supporting or contradicting::
+project and is labeled as supporting or contradicting. Hypotheses start in
+``proposed`` status and may move among ``proposed``,
+``under_investigation``, ``supported``, ``contradicted``, and ``inconclusive``.
+Each transition is appended to ``status_history`` and does not rewrite the
+hypothesis text or its evidence. A hypothesis may optionally cite one of the
+project's research questions using the ``research_question`` field; the
+captured question text remains with the hypothesis. Change a hypothesis status with
+``POST /api/projects/{project_id}/records/{record_id}/status``::
 
     curl -X POST http://127.0.0.1:8013/api/projects/PROJECT_ID/records \
       -H 'Content-Type: application/json' \
@@ -121,9 +157,19 @@ project and is labeled as supporting or contradicting::
         ]
       }'
 
+    curl -X POST http://127.0.0.1:8013/api/projects/PROJECT_ID/records/RECORD_ID/status \
+      -H 'Content-Type: application/json' \
+      -d '{"status": "under_investigation"}'
+
+Existing hypotheses created before status tracking are presented as
+``proposed``; that default is anchored to the record's original creation time.
 Each record can include up to 20 evidence references, and a project can contain
 up to 1,000 records. The Projects page supports multiple evidence references
-and lets each be labeled independently.
+and lets each be labeled independently. Evidence may be added after a record
+is created with ``POST
+/api/projects/{project_id}/records/{record_id}/evidence``. Evidence is
+append-only; the referenced artifact must already be linked to the project,
+and duplicate relation/artifact pairs are rejected.
 
 The project metadata stores references and claims, not copies of dataset,
 job, or bundle contents. An artifact used as evidence cannot be removed from

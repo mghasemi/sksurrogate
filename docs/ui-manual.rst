@@ -183,6 +183,16 @@ Open **Feature Analysis** after registering a training partition.
 * **Consensus top features** summarizes how often each feature appears in the
   top-ranked sets stored for the task.
 
+These views complement **Explain**, which reports permutation importance and
+partial-dependence profiles for a selected fitted bundle. Pearson feature
+correlation describes observed pairwise association; target correlation is a
+marginal data association; input-sensitivity indices describe a fitted
+surrogate over generated ranges; permutation importance measures score change
+under feature shuffling. The methods have different targets, perturbations,
+reference data, and scales, so they need not agree and their raw values should
+not be treated as one combined ranking. Use the links between Feature Analysis
+and Explain to review their interpretations together.
+
 These correspond to ``SKSurrogate.sensapprx.SensAprx``,
 ``CorrelationThreshold``, and the feature-analysis methods on
 ``SKSurrogate.mltrace.mltrack`` (including ``heatmap`` and ``TopFeatures``).
@@ -290,9 +300,14 @@ Neither estimates causal effects. The explanation response reports its
 reference partition, source and used row counts, whether the rows were
 subsampled, and the row cap, permutation-repeat count, and seed. The seed
 controls both row subsampling (when needed) and permutation-repeat generation;
-this metadata aids repeatability but does not estimate stability across
-alternative reference samples. The Explain page shows the reference row counts,
-sampling status, seed when sampling occurs, and permutation-repeat count.
+this metadata aids repeatability. Optionally select 3 or 5 reference samples
+and a row cap to inspect descriptive variation in permutation importance
+across subsamples; the UI reports per-feature sample standard deviation and
+top-rank frequency. This is not a confidence interval or a guarantee of
+robustness, and it requires more source rows than the selected row cap. With
+the default of one sample, no cross-sample stability summary is estimated.
+The Explain page shows the reference row counts, sampling status, seed when
+sampling occurs, and permutation-repeat count.
 For regression bundles, **Compute intervals**
 produces split-conformal prediction intervals at 80/90/95% target coverage and
 reports observed coverage with a Wilson interval, mean and median width, and

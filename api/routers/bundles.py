@@ -16,6 +16,7 @@ import tempfile
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -400,6 +401,8 @@ def export_run_report(task_name: str, model_version: str):
     data = run.get("data", {})
     protocol = run.get("evaluation_protocol", {})
     evaluations = record["evaluations"]
+    task_path = quote(task_name, safe="")
+    version_path = quote(model_version, safe="")
 
     def inline(value):
         return json.dumps(value, sort_keys=True, default=str).replace("`", "\\`")
@@ -416,6 +419,13 @@ def export_run_report(task_name: str, model_version: str):
         "- Evaluation protocol: %s" % inline(protocol),
         "- Configuration: %s" % inline(run.get("configuration", {})),
         "- Transformations: %s" % inline(run.get("transformations", [])),
+        "",
+        "## Assumptions and scope",
+        "",
+        "- Target handling: %s" % inline(data.get("target", {}).get("construction", "not recorded")),
+        "- Observation exclusions: %s" % inline(data.get("excluded_observations", "not recorded")),
+        "- Metric scope: %s" % inline(protocol.get("metric_scope", "not recorded")),
+        "- Evaluation protocol details: %s" % inline(protocol or "not recorded"),
         "",
         "## Metrics",
         "",
@@ -474,6 +484,13 @@ def export_run_report(task_name: str, model_version: str):
             "- Model version: %s" % inline(record["model_version"]),
             "- Created at: %s" % inline(record["created_at"]),
             "- Runtime dependencies: %s" % inline(record["dependencies"]),
+            "",
+            "## Source artifacts",
+            "",
+            "- [Registered dataset metadata](/api/datasets/%s)" % task_path,
+            "- [Machine-readable run configuration](/api/bundles/%s/%s/run-config)"
+            % (task_path, version_path),
+            "- [Model bundle](/api/bundles/%s/%s/download)" % (task_path, version_path),
             "",
         ]
     )

@@ -3,9 +3,9 @@ Notebook workflows
 ==============================
 
 The repository includes two executable notebooks under
-``examples/notebooks/``. They use fixed random seeds, synthetic data, and
-bounded evaluation settings; no notebook server or widget service is part of
-the SKSurrogate runtime.
+``examples/notebooks/``. They use seeded synthetic data and bounded evaluation
+settings; exact search/model results can still vary across runs or environments.
+No notebook server or widget service is part of the SKSurrogate runtime.
 
 Offline scientific workflow
 ===========================
@@ -17,8 +17,18 @@ installed in the active environment::
 
 The notebook profiles a dataset, runs a small classification preset, compares
 using repeated nested cross-validation, and computes bounded permutation
-importance on an explicitly held-out validation partition. It does not make
-causal claims, and its small example confidence interval is illustrative.
+importance on an explicitly held-out validation partition. It exports
+``data-profile-columns.csv``, ``target-associations.csv``,
+``performance-summary.csv``, ``permutation-importance.csv``,
+``analysis-metadata.json``, and a 300-dpi ``workflow-summary.png`` under
+``scientific-workflow-report/`` (created in the current working directory).
+The tables and metadata record profile summaries, metric, model, seed, sample
+sizes, repeated outer scores, and importance reference partition. The figure
+keeps repeated-CV results separate from the held-out validation score;
+importance error bars show permutation-repeat standard deviations, not
+confidence intervals. The small example confidence interval is illustrative,
+seeds do not guarantee identical search results across environments, and the
+notebook does not make causal claims.
 
 Python API client workflow
 ==========================

@@ -5,6 +5,7 @@ import { CheckCircle2, Circle } from "lucide-react";
 
 import {
   addProjectNote,
+  addProjectRecordEvidence,
   addProjectRecord,
   createProject,
   getDatasetMetadata,
@@ -13,19 +14,29 @@ import {
   listJobs,
   listProjects,
   updateProject,
+  updateProjectHypothesisStatus,
 } from "../api/client";
-import type { Project, ProjectArtifact } from "../api/client";
+import type { Project, ProjectArtifact, ProjectResearchRecord } from "../api/client";
 import { LineageRail } from "../components/LineageRail";
 import { Badge, Card, EmptyState, ErrorNote, Loading, StatusBadge } from "../components/ui";
 import { useTask } from "../lib/task-context";
 
 const STAGE_LINKS: Record<string, { to: string; cta: string }> = {
   data: { to: "/datasets", cta: "Register data" },
+  analysis: { to: "/features", cta: "Run an analysis" },
   model: { to: "/experiments", cta: "Run an experiment" },
-  release: { to: "/bundles", cta: "Review models" },
+  result: { to: "/bundles", cta: "Review results" },
 };
+const HYPOTHESIS_STATUSES: NonNullable<ProjectResearchRecord["status"]>[] = [
+  "proposed",
+  "under_investigation",
+  "supported",
+  "contradicted",
+  "inconclusive",
+];
 
 const keyOf = (a: ProjectArtifact) => `${a.kind}:${a.task_name}:${a.artifact_id}`;
+const statusLabel = (status: string) => status.replaceAll("_", " ");
 
 function ProjectDetail({ project }: { project: Project }) {
   const { task } = useTask();
@@ -34,8 +45,12 @@ function ProjectDetail({ project }: { project: Project }) {
   const [recordKind, setRecordKind] = useState<"hypothesis" | "analysis" | "finding" | "conclusion">("hypothesis");
   const [recordTitle, setRecordTitle] = useState("");
   const [recordText, setRecordText] = useState("");
+  const [recordQuestion, setRecordQuestion] = useState("");
   const [evidenceKey, setEvidenceKey] = useState("");
   const [evidenceRelation, setEvidenceRelation] = useState<"supports" | "contradicts">("supports");
+  const [savedEvidenceRecordId, setSavedEvidenceRecordId] = useState("");
+  const [savedEvidenceKey, setSavedEvidenceKey] = useState("");
+  const [savedEvidenceRelation, setSavedEvidenceRelation] = useState<"supports" | "contradicts">("supports");
   const [recordEvidence, setRecordEvidence] = useState<
     Array<{ key: string; relation: "supports" | "contradicts" }>
   >([]);
@@ -49,6 +64,33 @@ function ProjectDetail({ project }: { project: Project }) {
     qc.invalidateQueries({ queryKey: ["projects"] });
     qc.invalidateQueries({ queryKey: ["project-summary", project.project_id] });
   };
+
+  const hypothesisStatusMut = useMutation({
+    mutationFn: ({ recordId, status }: {
+      recordId: string;
+      status: NonNullable<ProjectResearchRecord["status"]>;
+    }) => updateProjectHypothesisStatus(project.project_id, recordId, status),
+    onSuccess: refresh,
+  });
+
+  const savedEvidenceMut = useMutation({
+    mutationFn: () => {
+      const record = project.records.find((item) => item.record_id === savedEvidenceRecordId);
+      const artifact = project.artifacts.find((item) => keyOf(item) === savedEvidenceKey);
+      if (!record || !artifact) {
+        throw new Error("Select an existing research record and linked artifact.");
+      }
+      return addProjectRecordEvidence(project.project_id, record.record_id, {
+        relation: savedEvidenceRelation,
+        artifact,
+      });
+    },
+    onSuccess: () => {
+      setSavedEvidenceRecordId("");
+      setSavedEvidenceKey("");
+      refresh();
+    },
+  });
 
   const noteMut = useMutation({
     mutationFn: () => addProjectNote(project.project_id, note),
@@ -64,6 +106,9 @@ function ProjectDetail({ project }: { project: Project }) {
         kind: recordKind,
         title: recordTitle,
         text: recordText,
+        ...(recordKind === "hypothesis" && recordQuestion
+          ? { research_question: recordQuestion }
+          : {}),
         evidence: recordEvidence.flatMap(({ key, relation }) => {
           const artifact = project.artifacts.find((candidate) => keyOf(candidate) === key);
           return artifact ? [{ relation, artifact }] : [];
@@ -73,6 +118,7 @@ function ProjectDetail({ project }: { project: Project }) {
     onSuccess: () => {
       setRecordTitle("");
       setRecordText("");
+      setRecordQuestion("");
       setEvidenceKey("");
       setRecordEvidence([]);
       refresh();
@@ -140,7 +186,14 @@ function ProjectDetail({ project }: { project: Project }) {
               {s.done ? <CheckCircle2 size={16} color="#10b981" /> : <Circle size={16} />}
               <span>{s.label}</span>
               {!s.done && STAGE_LINKS[s.stage] && (
-                <Link className="btn" to={STAGE_LINKS[s.stage].to}>{STAGE_LINKS[s.stage].cta}</Link>
+                <Link
+                  className="btn"
+                  to={s.stage === "analysis"
+                    ? `${STAGE_LINKS[s.stage].to}?project_id=${encodeURIComponent(project.project_id)}`
+                    : STAGE_LINKS[s.stage].to}
+                >
+                  {STAGE_LINKS[s.stage].cta}
+                </Link>
               )}
             </div>
           ))}
@@ -182,6 +235,11 @@ function ProjectDetail({ project }: { project: Project }) {
                     {a.snapshot_status === "current" ? "snapshot current" : `snapshot ${a.snapshot_status}`}
                   </Badge>
                 )}
+                {a.kind === "job" && a.exists && (
+                  <Link className="btn" to={`/jobs?job_id=${encodeURIComponent(a.artifact_id)}`}>
+                    Inspect job
+                  </Link>
+                )}
                 {a.kind === "model_bundle" && a.exists && <LineageRail task={a.task_name} modelVersion={a.artifact_id} />}
               </li>
             ))}
@@ -212,6 +270,17 @@ function ProjectDetail({ project }: { project: Project }) {
           <label>Record</label>
           <textarea rows={2} value={recordText} onChange={(e) => setRecordText(e.target.value)} />
         </div>
+        {recordKind === "hypothesis" && project.research_questions.length > 0 && (
+          <div className="field">
+            <label>Related research question</label>
+            <select value={recordQuestion} onChange={(event) => setRecordQuestion(event.target.value)}>
+              <option value="">Not linked to a question</option>
+              {project.research_questions.map((question) => (
+                <option key={question} value={question}>{question}</option>
+              ))}
+            </select>
+          </div>
+        )}
         <div className="row">
           <div className="field">
             <label>Evidence artifact</label>
@@ -280,25 +349,152 @@ function ProjectDetail({ project }: { project: Project }) {
           </button>
         </div>
         {recordMut.isError && <ErrorNote error={recordMut.error} />}
+        {hypothesisStatusMut.isError && <ErrorNote error={hypothesisStatusMut.error} />}
         {project.records.length === 0 ? (
           <EmptyState title="No research records yet" />
         ) : (
-          <ul>
+          <>
+            <div className="row">
+              <div className="field">
+                <label>Research record</label>
+                <select
+                  value={savedEvidenceRecordId}
+                  onChange={(event) => setSavedEvidenceRecordId(event.target.value)}
+                >
+                  <option value="">Select a record</option>
+                  {project.records.map((record) => (
+                    <option key={record.record_id} value={record.record_id}>
+                      {record.kind} — {record.title}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label>Linked artifact</label>
+                <select value={savedEvidenceKey} onChange={(event) => setSavedEvidenceKey(event.target.value)}>
+                  <option value="">Select an artifact</option>
+                  {project.artifacts.map((artifact) => (
+                    <option key={keyOf(artifact)} value={keyOf(artifact)}>
+                      {artifact.kind.replace("_", " ")} — {artifact.task_name}/{artifact.artifact_id}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label>Relation</label>
+                <select
+                  value={savedEvidenceRelation}
+                  onChange={(event) =>
+                    setSavedEvidenceRelation(event.target.value as typeof savedEvidenceRelation)
+                  }
+                >
+                  <option value="supports">Supports</option>
+                  <option value="contradicts">Contradicts</option>
+                </select>
+              </div>
+              <button
+                className="btn"
+                disabled={!savedEvidenceRecordId || !savedEvidenceKey || savedEvidenceMut.isPending}
+                onClick={() => savedEvidenceMut.mutate()}
+              >
+                Add evidence to record
+              </button>
+            </div>
+            {savedEvidenceMut.isError && <ErrorNote error={savedEvidenceMut.error} />}
+            <ul>
             {[...project.records].reverse().map((record) => (
               <li key={record.record_id}>
                 <Badge tone="info">{record.kind}</Badge> <strong>{record.title}</strong>
+                {record.kind === "hypothesis" && record.status && (
+                  <div className="row">
+                    <Badge tone="info">{statusLabel(record.status)}</Badge>
+                    <label className="field">
+                      <span className="muted">Hypothesis status</span>
+                      <select
+                        value={record.status}
+                        disabled={hypothesisStatusMut.isPending}
+                        onChange={(event) => {
+                          const status = HYPOTHESIS_STATUSES.find(
+                            (candidate) => candidate === event.target.value,
+                          );
+                          if (status) {
+                            hypothesisStatusMut.mutate({
+                              recordId: record.record_id,
+                              status,
+                            });
+                          }
+                        }}
+                      >
+                        {HYPOTHESIS_STATUSES.map((status) => (
+                          <option key={status} value={status}>{statusLabel(status)}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                )}
                 <p>{record.text}</p>
+                {record.research_question && (
+                  <p className="muted">Research question: {record.research_question}</p>
+                )}
+                {record.kind === "hypothesis" && (record.status_history?.length ?? 0) > 1 && (
+                  <p className="muted">
+                    Status history: {record.status_history?.map((entry) =>
+                      `${statusLabel(entry.status)} (${new Date(entry.changed_at).toLocaleString()})`,
+                    ).join(" → ")}
+                  </p>
+                )}
                 {record.evidence.map((evidence) => (
                   <div key={`${record.record_id}:${keyOf(evidence.artifact)}:${evidence.relation}`} className="muted">
                     {evidence.relation} — {evidence.artifact.kind.replace("_", " ")}{" "}
                     <span className="mono">
                       {evidence.artifact.task_name}/{evidence.artifact.artifact_id}
                     </span>
+                    {(() => {
+                      const status = summaryQ.data?.artifacts.find(
+                        (artifact) => keyOf(artifact) === keyOf(evidence.artifact),
+                      );
+                      if (!status) return null;
+                      const tone =
+                        !status.exists || status.snapshot_status === "missing" || status.snapshot_status === "changed"
+                          ? "err"
+                          : status.snapshot_status === "unverified"
+                            ? "warn"
+                            : "ok";
+                      return (
+                        <>
+                          {" "}
+                          {!status.exists && <Badge tone="err">artifact missing</Badge>}
+                          {status.exists && status.snapshot_status && (
+                            <Badge tone={tone}>
+                              {status.snapshot_status === "current"
+                                ? "evidence snapshot current"
+                                : `evidence snapshot ${status.snapshot_status}`}
+                            </Badge>
+                          )}
+                        </>
+                      );
+                    })()}
+                    {evidence.artifact.kind === "job"
+                      && summaryQ.data?.artifacts.some(
+                        (artifact) =>
+                          keyOf(artifact) === keyOf(evidence.artifact) && artifact.exists,
+                      ) && (
+                        <>
+                          {" "}
+                          <Link
+                            className="btn"
+                            to={`/jobs?job_id=${encodeURIComponent(evidence.artifact.artifact_id)}`}
+                          >
+                            Inspect job
+                          </Link>
+                        </>
+                      )}
                   </div>
                 ))}
               </li>
             ))}
-          </ul>
+            </ul>
+          </>
         )}
       </Card>
 

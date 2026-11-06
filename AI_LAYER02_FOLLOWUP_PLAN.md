@@ -7,8 +7,8 @@ Track decisions and progress for incorporating the recommendations in
 and follow-up document; update the status and progress log as work is verified
 or completed.
 
-**Status:** Phases 0, 1, and 3 are complete. Phases 2, 4, and 5 are in progress;
-Phases 6–7 are not started. The broader inference, provenance, research
+**Status:** Phases 0, 1, 3, and 6 are complete. Phases 2, 4, and 5 are in
+progress; Phase 7 is not started. The broader inference, provenance, research
 workflow, and reporting work remains. This plan is based on a review of the
 documentation, not a fresh audit of every implementation claim.
 
@@ -182,12 +182,19 @@ mistaking empirical coverage on a small sample for a guarantee.
   evidence and keep authoritative datasets, jobs, and bundles in their
   existing stores. The API now has append-only hypothesis, analysis, finding,
   and conclusion records with evidence references to project-linked artifacts;
-  broader research-artifact ingestion remains open.
+  hypotheses have a bounded status lifecycle with append-only transition
+  history, while their statement and evidence remain immutable. Hypotheses can
+  also capture a linked project question, and records can accumulate linked
+  evidence after creation through an append-only endpoint. Broader
+  research-artifact ingestion remains open.
 - [~] Design a separate Research workspace in the UI for the progression
   `Question → Hypothesis → Dataset → Analysis → Experiment → Result →
   Conclusion`; keep the current operational ML lifecycle available. The
-  existing Projects page now captures and displays the research records, but
-  the end-to-end progression is not yet implemented.
+  Projects summary now tracks these stages from existing project questions,
+  hypothesis/conclusion records, dataset references, completed analysis/model
+  jobs, and linked results. The project UI presents the checklist and directs
+  actionable stages to the existing feature-analysis, experiment, dataset,
+  and bundle pages; broader workflow orchestration remains open.
 - [~] Strengthen references with immutable/versioned identities and snapshots
   of dataset fingerprints and relevant run configuration. Specify behavior
   for missing, changed, or deleted upstream artifacts. New links now capture
@@ -204,7 +211,27 @@ mistaking empirical coverage on a small sample for a guarantee.
   exact analysis inputs and outputs, and that unsupported capabilities are
   described accurately. Current tests validate links to exact registered
   partitions and bundle versions and verify changed/deleted snapshot behavior.
-  End-to-end project-driven analysis execution and result linkage remain open.
+  The project progress summary now distinguishes completed modeling jobs from
+  completed analysis jobs, with endpoint coverage. Nested-CV jobs now retain
+  their submitted request; an integration test links one as project evidence
+  and follows the exact request, partition fingerprint, result, and snapshot.
+  Sensitivity jobs now retain their method request plus partition fingerprint,
+  row count, and input columns; an API test links the result as project
+  evidence. The project checklist now carries project context into Feature
+  Analysis and automatically links a completed sensitivity job to that
+  project through an idempotent additive-link endpoint, avoiding replacement
+  of project metadata or loss of concurrently added artifact references;
+  unfinished and failed jobs are not linked. Other job kinds remain manually
+  linkable after completion. Project summaries report completed analysis
+  separately from model-training progress. Linked jobs now have a direct
+  Inspect job link into the Jobs page's tracker and result view; research-
+  record evidence repeats that link when its job still exists, so claims can
+  be followed directly to their supporting output. A broader research
+  workspace remains open.
+  Saved evidence now also displays the linked artifact snapshot's current,
+  changed, missing, or unverified state beside the claim. The result stage
+  requires a non-null completed-job result or a linked model bundle; a
+  completed job without a result no longer marks the stage complete.
 
 **Done when:** a scientist can organize an investigation and inspect its
 evidence and provenance without duplicating experiment or registry data.
@@ -223,22 +250,29 @@ evidence and provenance without duplicating experiment or registry data.
   explanations, error analysis, and resampling stability to supported models
   and bounded inputs. Documented ALE as a candidate that reduces reliance on
   off-support averaging but deferred implementation until categorical/empty-
-  bin and classifier-output behavior are specified. The endpoint now states
-  that it does not estimate cross-reference-sample stability.
+  bin and classifier-output behavior are specified. Added an opt-in bounded
+  permutation-importance sensitivity summary over 2–5 sampled reference sets;
+  it reports descriptive cross-sample SD and top-rank frequency, not confidence
+  intervals. PDP/ICE, conditional explanations, and ALE stability remain open.
 - [ ] Revisit SHAP as an optional integration only after supported estimators,
   local-explanation needs, runtime limits, and dependency policy are specified.
-- [ ] Enable comparison of analytical perspectives (for example, correlation,
+- [x] Enable comparison of analytical perspectives (for example, correlation,
   permutation importance, SHAP when available, and Sobol sensitivity) while
-  explaining that they answer different questions and need not agree.
+  explaining that they answer different questions and need not agree. Feature
+  Analysis and Explain now cross-link, and their copy distinguishes observed
+  association, generated-input model sensitivity, and permutation score
+  attribution without combining unlike values into one ranking. SHAP remains
+  a separately deferred integration.
 - [x] Add tests and examples that cover correlated inputs, out-of-support
   feature combinations, and explanation stability limits. A deterministic
   perfectly correlated example verifies that marginal PDP can leave observed
   support; API assertions verify repeatability for a fixed seed and that an
-  alternative seed can change the explanation on the same data. These tests
-  illustrate reference-sample sensitivity but do not estimate stability
-  distributions. The endpoint reports reference row counts/sampling and the
-  request settings needed to reproduce the bounded computation; the Explain
-  page surfaces those reference counts and sampling details to users.
+  alternative seed can change the explanation on the same data. An opt-in,
+  bounded diagnostic now summarizes per-feature permutation-importance mean,
+  sample SD, and top-rank frequency across distinct reference subsets. It is
+  descriptive sensitivity, not a confidence interval. The endpoint reports
+  reference row counts/sampling and settings; the Explain page surfaces these
+  details and the optional summary.
 
 **Done when:** supported explanations expose their reference data, limits,
 and interpretation category and do not imply causal conclusions.
@@ -247,12 +281,29 @@ and interpretation category and do not imply causal conclusions.
 
 **Priority:** Medium; reuse the existing report exports and notebooks.
 
-- [ ] Audit the current JSON/Markdown report and notebook templates against
+- [x] Audit the current JSON/Markdown report and notebook templates against
   the expanded EDA, inference, uncertainty, explanation, and provenance needs.
-- [ ] Add publication-oriented tables, figures, and notebook templates only
-  for workflows not already covered; keep examples executable and seeded.
-- [ ] Ensure reports include methodology, assumptions, data/run identity,
-  uncertainty, limitations, and links to source artifacts.
+  The API notebook demonstrates profiling, evaluation, and report exports; the
+  scientific notebook covers seeded profiling, nested CV, and permutation
+  importance. The run report covers methodology, metrics, uncertainty,
+  limitations, and fingerprints. Both notebooks executed end-to-end in the
+  current environment. The generic run report does not embed EDA or explanation
+  outputs; those are now exported alongside run results by the scientific
+  notebook rather than duplicating them in every run report.
+- [x] Add publication-oriented tables, figures, and notebook templates only
+  for workflows not already covered; keep examples executable and seeded. The
+  scientific notebook exports profile/association tables, performance and
+  permutation-importance CSVs, methodology/limitations metadata, and a 300-dpi
+  figure separating repeated-CV from held-out validation results. Seeded inputs
+  do not guarantee identical search/model results across repeated executions.
+- [x] Ensure reports include methodology, assumptions, data/run identity,
+  uncertainty, limitations, and links to source artifacts. The Markdown report
+  now links to dataset metadata, run configuration, and bundle download, and
+  already includes protocol/configuration, fingerprints, uncertainty, and
+  known gaps. It now also presents recorded target handling, observation
+  exclusion metadata, metric scope, and evaluation protocol details under an
+  assumptions/scope section. Unknown upstream exclusions remain explicitly
+  marked as not recorded.
 
 **Done when:** a user can take a reproducible analysis from the API or Python
 workflow into a clear, self-contained scientific report.
@@ -422,7 +473,95 @@ evaluation, clear limitations, and a decision to implement or defer.
   marginal PDP grid. The API also returns reference partition/row counts,
   whether sampling occurred, and the settings/seed used, with tests for both
   sampled and all-row paths. A separate seed produces changed explanation
-  output in the deterministic API fixture; this illustrates sample sensitivity
-  but is not a resampling-based stability estimate. The Explain UI now displays
+  output in the deterministic API fixture. The Explain UI displays
   source/used row counts, whether sampling occurred, the sampling seed when
-  applicable, and permutation-repeat count.
+  applicable, and permutation-repeat count. Optional permutation-importance
+  sample sensitivity is now available for 2–5 independently drawn subsets,
+  bounded by the row cap, and is explicitly not a confidence interval.
+- 2026-11-05: Started Phase 6 audit. Confirmed the two existing notebooks cover
+  the primary Python and API workflows, and the report already includes method,
+  metrics, uncertainty, limitations, and lineage. Added direct API links to
+  registered dataset metadata, machine-readable run configuration, and bundle
+  download; focused endpoint coverage verifies the emitted links.
+- 2026-11-05: Executed every code cell in both notebooks. The seeded offline
+  workflow completed profiling, bounded search, repeated nested CV, and
+  permutation importance. The API workflow completed data registration,
+  profiling, search/evaluation jobs, report export, and research-project
+  linkage against an isolated temporary API store. The audit found the current
+  report/templates did not produce EDA summaries, explanation summaries, or
+  publication figures at that point; the scientific notebook additions below
+  addressed those outputs without duplicating them in every run report.
+- 2026-11-05: Added publication outputs to the existing scientific notebook:
+  profile columns and target associations, a performance summary, permutation
+  importance, JSON metadata with sample/protocol/limitation details, and a
+  300-dpi two-panel figure. Executed every notebook code cell and verified all
+  six generated files in temporary storage. Repeated executions produced
+  different score outputs despite fixed seeds, so the notebook now explicitly
+  distinguishes seeded inputs from guaranteed result determinism.
+- 2026-11-05: Added opt-in API/UI reference-sample sensitivity for permutation
+  importance. The request is bounded to five samples and requires a source
+  partition larger than the per-sample row cap. It reports descriptive mean,
+  sample SD, and top-rank frequency per feature; tests verify seed repeatability
+  and explicit rejection when resampling cannot vary. This does not address
+  stability of PDP or establish generalization across datasets. Each sampled
+  subset is distinct; same-seed repeats return identical summaries.
+- 2026-11-05: Linked Feature Analysis and Explain as complementary perspectives.
+  Added UI and documentation guidance distinguishing Pearson association,
+  generated-input surrogate sensitivity, and permutation score attribution,
+  and explicitly warned that their scales/ranks are not directly comparable.
+- 2026-11-05: Nested-CV job records now retain the submitted request, and the
+  result protocol includes train/validation partition fingerprints. An
+  integration test links the completed job as project evidence and verifies
+  its request/result plus the matching training-partition snapshot.
+- 2026-11-05: Sensitivity jobs now retain their submitted method request and
+  report their source partition fingerprint, row count, and feature columns.
+  An API integration test links the completed job to a project analysis record
+  and verifies the request, result, and artifact snapshot remain addressable.
+- 2026-11-05: Added a distinct project analysis-progress stage for completed
+  sensitivity and nested-CV jobs, leaving the modeling stage limited to
+  experiment, optimization, and retraining jobs. The Projects UI links the
+  analysis step to Feature Analysis; endpoint coverage keeps the two stages
+  separate.
+- 2026-11-05: Added an Inspect job link to linked job artifacts. The Jobs page
+  reads a ``job_id`` query parameter so the existing tracker opens directly
+  with that job selected; project evidence can now be followed to its recorded
+  request and full result in the UI.
+- 2026-11-05: Added the same Inspect job navigation to job references shown
+  under saved research records, gated on the linked job still existing.
+  Updated the Projects UI documentation; the API remains authoritative for
+  missing/changed artifact state.
+- 2026-11-05: Research records now show each evidence artifact's current
+  snapshot state beside the claim, including changed, missing, and legacy
+  unverified states, so evidence validity is visible in context.
+- 2026-11-05: Added hypothesis statuses (proposed, under investigation,
+  supported, contradicted, inconclusive) and append-only status history.
+  Status changes preserve the original hypothesis text and evidence; the API,
+  Projects UI, tests, and research-project documentation expose this lifecycle.
+  Legacy hypotheses receive a read-time proposed status anchored to their
+  original creation time and can then enter the same transition history.
+- 2026-11-05: Connected hypotheses to project questions with an optional
+  question selector. The API only accepts question text already present on
+  the project and stores the captured text on the hypothesis record.
+- 2026-11-05: Project summaries now track the requested research progression
+  from question through hypothesis, dataset, analysis, model run, result, and
+  conclusion. Tests verify completion derives from project metadata and linked
+  artifact/job state without conflating analysis with model training.
+- 2026-11-05: Added append-only evidence attachment for existing project
+  records. This lets hypotheses begin without evidence and accumulate linked
+  support or contradiction as analyses finish; the API rejects unlinked and
+  duplicate references and enforces the 20-reference limit.
+- 2026-11-05: Added nested-CV and pipeline-optimization to the Jobs page kind
+  filter and updated job-page/tracker descriptions, so the complete set of
+  project-linked analysis and modeling job kinds can be browsed directly.
+- 2026-11-05: Tightened the research progression's result stage to require a
+  non-null result from a completed linked job or an existing linked bundle.
+  Regression coverage confirms a completed job record without a result does
+  not satisfy the stage.
+- 2026-11-06: The project checklist now opens Feature Analysis with project
+  context, and successful sensitivity jobs are automatically linked back to
+  the project. Failed or unfinished jobs are not linked; other jobs remain
+  manually linkable. The web UI production build passed.
+- 2026-11-06: Added an idempotent ``POST /api/projects/{project_id}/artifacts``
+  endpoint for adding a single reference while preserving all project fields
+  and existing snapshots. Project-launched sensitivity jobs now use this
+  operation instead of replacing the project's artifact list.

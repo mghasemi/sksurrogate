@@ -159,7 +159,11 @@ Export the machine-readable run configuration or a concise Markdown report:
 
 The JSON response is versioned and includes model/data lineage, stored metrics,
 dependencies, and any repeated-CV evaluations saved for that bundle. The Markdown
-report summarizes methodology, metrics, uncertainty, limitations, and lineage.
+report summarizes methodology, recorded target handling and observation
+exclusions, metric scope, evaluation protocol, metrics, uncertainty,
+limitations, and lineage. Unknown upstream exclusions remain marked as
+unrecorded. Its source-artifact section links back to registered dataset
+metadata, the run configuration, and the downloadable bundle.
 Run nested cross-validation through ``POST /api/evaluation/{task_name}/nested-cv``
 to attach its repeat-level confidence interval and protocol to the bundle. The
 interval is a normal approximation over repeat-level mean outer scores; a single

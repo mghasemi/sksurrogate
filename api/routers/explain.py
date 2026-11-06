@@ -32,6 +32,7 @@ class ExplainRequest(BaseModel):
     max_rows: int = Field(default=500, ge=20, le=_MAX_ROWS)
     n_repeats: int = Field(default=5, ge=1, le=20)
     top_k: int = Field(default=3, ge=0, le=6)
+    stability_samples: int = Field(default=1, ge=1, le=5)
     random_state: int = 0
 
 
@@ -62,9 +63,16 @@ def explain_bundle(task_name: str, model_version: str, body: ExplainRequest):
         raise unprocessable("Explanations need a scikit-learn estimator")
     X, y = _features_and_target(task_name, body.partition)
     source_rows = len(X)
+    if body.stability_samples > 1 and source_rows <= body.max_rows:
+        raise bad_request(
+            "Reference-sample stability needs more source rows than max_rows; "
+            "use a smaller max_rows or a partition with more rows."
+        )
+    X_source, y_source = X, y
     sampled = source_rows > body.max_rows
+    sample_rng = np.random.RandomState(body.random_state)
     if sampled:
-        keep = np.random.RandomState(body.random_state).choice(len(X), body.max_rows, replace=False)
+        keep = sample_rng.choice(len(X), body.max_rows, replace=False)
         X, y = X.iloc[keep], y[keep]
     names = list(X.columns)
     values = X.to_numpy()
@@ -74,6 +82,52 @@ def explain_bundle(task_name: str, model_version: str, body: ExplainRequest):
         )
     except Exception as exc:
         raise bad_request("Could not compute importance: %s: %s" % (type(exc).__name__, exc))
+    stability_results = [result]
+    sampled_sets = {tuple(sorted(keep))} if sampled else set()
+    for sample_index in range(1, body.stability_samples):
+        keep = sample_rng.choice(source_rows, body.max_rows, replace=False)
+        sample_key = tuple(sorted(keep))
+        while sample_key in sampled_sets:
+            keep = sample_rng.choice(source_rows, body.max_rows, replace=False)
+            sample_key = tuple(sorted(keep))
+        sampled_sets.add(sample_key)
+        try:
+            stability_results.append(
+                permutation_importance(
+                    bundle.model,
+                    X_source.iloc[keep].to_numpy(),
+                    y_source[keep],
+                    n_repeats=body.n_repeats,
+                    random_state=body.random_state,
+                )
+            )
+        except Exception as exc:
+            raise bad_request(
+                "Could not compute importance for reference sample %d: %s: %s"
+                % (sample_index + 1, type(exc).__name__, exc)
+            )
+    reference_sample_stability = None
+    if body.stability_samples > 1:
+        sample_means = np.vstack([item.importances_mean for item in stability_results])
+        top_counts = np.zeros(len(names), dtype=float)
+        for sample_mean in sample_means:
+            winners = np.flatnonzero(sample_mean == np.max(sample_mean))
+            top_counts[winners] += 1.0 / len(winners)
+        reference_sample_stability = {
+            "sample_count": len(stability_results),
+            "sample_size": body.max_rows,
+            "permutation_repeats_per_sample": body.n_repeats,
+            "sampling": "random_without_replacement",
+            "summary": [
+                {
+                    "feature": names[index],
+                    "mean_importance": finite_or_none(float(sample_means[:, index].mean())),
+                    "sample_std": finite_or_none(float(sample_means[:, index].std(ddof=1))),
+                    "top_rank_frequency": float(top_counts[index] / len(stability_results)),
+                }
+                for index in np.argsort(-sample_means.mean(axis=0))
+            ],
+        }
     order = np.argsort(-result.importances_mean)
     importance = [
         {
@@ -110,9 +164,11 @@ def explain_bundle(task_name: str, model_version: str, body: ExplainRequest):
             "max_rows": body.max_rows,
             "n_repeats": body.n_repeats,
             "top_k": body.top_k,
+            "stability_samples": body.stability_samples,
             "random_state": body.random_state,
         },
         "importance": importance,
+        "reference_sample_stability": reference_sample_stability,
         "partial_dependence": curves,
         "errors": errors,
         "interpretation": {
@@ -131,7 +187,7 @@ def explain_bundle(task_name: str, model_version: str, body: ExplainRequest):
                 "Permutation importance measures score sensitivity to shuffled columns, not causal influence; correlated features can share or mask importance.",
                 "Partial dependence averages model predictions over reference rows while varying selected features and can include implausible combinations when features are dependent.",
                 "Results describe this fitted model on the selected partition and are not estimates of causal effects.",
-                "The endpoint does not estimate stability across alternative reference samples.",
+                "Reference-sample stability is not estimated by default; when requested, its descriptive sample variation is not a confidence interval or a guarantee of generalization.",
             ],
         },
     }

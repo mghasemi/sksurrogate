@@ -3,7 +3,7 @@ import { useLiveJob } from "../lib/hooks";
 import { StatusBadge, JsonView, ErrorNote } from "./ui";
 
 /**
- * Live tracker for a background job (sensitivity / experiment / retraining).
+ * Live tracker for a background job (analysis / experiment / retraining).
  * Subscribes to the WebSocket stream and polls as fallback.
  *
  * ``onResult`` is invoked once per job, as soon as the job completes with a

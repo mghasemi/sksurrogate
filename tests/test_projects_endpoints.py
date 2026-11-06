@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,10 +18,12 @@ from api.routers import datasets as datasets_router
 from api.routers import jobs as jobs_router
 from api.routers import projects as projects_router
 from api.routers.projects import (
+    AddProjectEvidenceRequest,
     AddProjectRecordRequest,
     AddProjectNoteRequest,
     CreateProjectRequest,
     ProjectArtifactReference,
+    UpdateProjectHypothesisStatusRequest,
     UpdateProjectRequest,
 )
 
@@ -28,6 +31,7 @@ from api.routers.projects import (
 TASK = "research-project-tests"
 BUNDLE_VERSION = "bundle-v1"
 JOB_ID = "0123456789abcdef0123456789abcdef"
+EXPERIMENT_JOB_ID = "fedcba9876543210fedcba9876543210"
 
 
 class TestResearchProjectEndpoints(unittest.TestCase):
@@ -64,6 +68,17 @@ class TestResearchProjectEndpoints(unittest.TestCase):
                 "task_name": TASK,
                 "kind": "sensitivity",
                 "status": "completed",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:00+00:00",
+            }
+        )
+        job_manager._write(
+            {
+                "job_id": EXPERIMENT_JOB_ID,
+                "task_name": TASK,
+                "kind": "experiment",
+                "status": "completed",
+                "result": {"model_version": BUNDLE_VERSION},
                 "created_at": "2026-01-01T00:00:00+00:00",
                 "updated_at": "2026-01-01T00:00:00+00:00",
             }
@@ -233,6 +248,154 @@ class TestResearchProjectEndpoints(unittest.TestCase):
 
         self.assertEqual(updated["records"], recorded["records"])
 
+    def test_hypothesis_status_updates_append_history_without_rewriting_evidence(self):
+        project = projects_router.create_project(
+            CreateProjectRequest(
+                name="Hypothesis lifecycle",
+                research_questions=["Does temperature affect degradation?"],
+                artifacts=[self._artifact("dataset_partition", "train")],
+            )
+        )
+        created = projects_router.add_project_record(
+            project["project_id"],
+            AddProjectRecordRequest(
+                kind="hypothesis",
+                title="Temperature response",
+                text="Temperature may have a nonlinear relationship with degradation.",
+                research_question="Does temperature affect degradation?",
+            ),
+        )
+        original = created["records"][0]
+        self.assertEqual(original["status"], "proposed")
+        self.assertEqual(original["evidence"], [])
+        self.assertEqual(
+            original["research_question"],
+            "Does temperature affect degradation?",
+        )
+        self.assertEqual(len(original["status_history"]), 1)
+
+        with_evidence = projects_router.add_project_record_evidence(
+            project["project_id"],
+            original["record_id"],
+            AddProjectEvidenceRequest(
+                relation="supports",
+                artifact=self._artifact("dataset_partition", "train"),
+            ),
+        )
+        original = with_evidence["records"][0]
+        self.assertEqual(original["evidence"][0]["relation"], "supports")
+
+        updated = projects_router.update_project_hypothesis_status(
+            project["project_id"],
+            original["record_id"],
+            UpdateProjectHypothesisStatusRequest(status="under_investigation"),
+        )
+        revised = updated["records"][0]
+        self.assertEqual(revised["status"], "under_investigation")
+        self.assertEqual(
+            [entry["status"] for entry in revised["status_history"]],
+            ["proposed", "under_investigation"],
+        )
+        self.assertEqual(revised["evidence"], original["evidence"])
+        self.assertEqual(revised["text"], original["text"])
+
+        unchanged = projects_router.update_project_hypothesis_status(
+            project["project_id"],
+            original["record_id"],
+            UpdateProjectHypothesisStatusRequest(status="under_investigation"),
+        )
+        self.assertEqual(
+            len(unchanged["records"][0]["status_history"]),
+            2,
+        )
+
+        with self.assertRaises(HTTPException) as context:
+            projects_router.update_project_hypothesis_status(
+                project["project_id"],
+                "0" * 32,
+                UpdateProjectHypothesisStatusRequest(status="supported"),
+            )
+        self.assertEqual(context.exception.status_code, 404)
+
+        with self.assertRaises(ValidationError):
+            AddProjectRecordRequest(
+                kind="analysis",
+                title="Analysis",
+                text="A descriptive analysis.",
+                status="supported",
+            )
+
+        with self.assertRaises(HTTPException) as context:
+            projects_router.add_project_record_evidence(
+                project["project_id"],
+                original["record_id"],
+                AddProjectEvidenceRequest(
+                    relation="supports",
+                    artifact=self._artifact("dataset_partition", "train"),
+                ),
+            )
+        self.assertEqual(context.exception.status_code, 400)
+
+        with self.assertRaises(HTTPException) as context:
+            projects_router.add_project_record_evidence(
+                project["project_id"],
+                original["record_id"],
+                AddProjectEvidenceRequest(
+                    relation="supports",
+                    artifact=self._artifact("model_bundle", BUNDLE_VERSION),
+                ),
+            )
+        self.assertEqual(context.exception.status_code, 400)
+
+        with self.assertRaises(HTTPException) as context:
+            projects_router.add_project_record(
+                project["project_id"],
+                AddProjectRecordRequest(
+                    kind="hypothesis",
+                    title="Unlinked question",
+                    text="This question is not part of this project.",
+                    research_question="Does pressure affect degradation?",
+                ),
+            )
+        self.assertEqual(context.exception.status_code, 400)
+
+    def test_legacy_hypotheses_receive_proposed_status_and_can_be_updated(self):
+        project = projects_router.create_project(
+            CreateProjectRequest(name="Legacy hypothesis")
+        )
+        recorded = projects_router.add_project_record(
+            project["project_id"],
+            AddProjectRecordRequest(
+                kind="hypothesis",
+                title="Legacy hypothesis",
+                text="A previously recorded hypothesis.",
+            ),
+        )
+        record = recorded["records"][0]
+        path = projects_router._project_path(project["project_id"])
+        stored_project = json.loads(path.read_text(encoding="utf-8"))
+        stored_record = stored_project["records"][0]
+        stored_record.pop("status")
+        stored_record.pop("status_history")
+        path.write_text(json.dumps(stored_project), encoding="utf-8")
+
+        legacy = projects_router.get_project(project["project_id"])["records"][0]
+        self.assertEqual(legacy["status"], "proposed")
+        self.assertEqual(
+            legacy["status_history"],
+            [{"status": "proposed", "changed_at": record["created_at"]}],
+        )
+        updated = projects_router.update_project_hypothesis_status(
+            project["project_id"],
+            record["record_id"],
+            UpdateProjectHypothesisStatusRequest(status="supported"),
+        )
+        self.assertEqual(updated["records"][0]["status"], "supported")
+        self.assertEqual(
+            [entry["status"] for entry in updated["records"][0]["status_history"]],
+            ["proposed", "supported"],
+        )
+
     def test_artifact_snapshots_are_preserved_and_report_changed_or_missing_sources(self):
         project = projects_router.create_project(
             CreateProjectRequest(
@@ -318,11 +481,152 @@ class TestResearchProjectEndpoints(unittest.TestCase):
         )
         self.assertEqual(linked_job["job_id"], JOB_ID)
 
+    def test_add_project_artifact_appends_idempotently_and_preserves_snapshots(self):
+        project = projects_router.create_project(
+            CreateProjectRequest(
+                name="Append artifact",
+                artifacts=[self._artifact("dataset_partition", "train")],
+            )
+        )
+        original_snapshot = project["artifacts"][0]["snapshot"]
+
+        updated = projects_router.add_project_artifact(
+            project["project_id"],
+            self._artifact("job", JOB_ID, "sensitivity"),
+        )
+        repeated = projects_router.add_project_artifact(
+            project["project_id"],
+            self._artifact("job", JOB_ID, "sensitivity"),
+        )
+
+        self.assertEqual(len(updated["artifacts"]), 2)
+        self.assertEqual(updated["artifacts"][0]["snapshot"], original_snapshot)
+        self.assertEqual(updated["artifacts"][1]["artifact_id"], JOB_ID)
+        self.assertIsNone(updated["artifacts"][1]["snapshot"]["details"]["result_fingerprint"])
+        self.assertEqual(repeated, updated)
+
+    def test_project_modeling_stage_only_counts_completed_modeling_jobs(self):
+        for job_id, expected in (
+            (JOB_ID, False),
+            (EXPERIMENT_JOB_ID, True),
+        ):
+            with self.subTest(job_id=job_id):
+                project = projects_router.create_project(
+                    CreateProjectRequest(
+                        name="Modeling progress",
+                        artifacts=[self._artifact("job", job_id)],
+                    )
+                )
+                summary = projects_router.project_summary(project["project_id"])
+                modeling_stage = next(
+                    stage for stage in summary["stages"] if stage["stage"] == "model"
+                )
+                self.assertEqual(modeling_stage["done"], expected)
+
+    def test_project_analysis_stage_counts_completed_analysis_jobs(self):
+        project = projects_router.create_project(
+            CreateProjectRequest(
+                name="Analysis progress",
+                artifacts=[self._artifact("job", JOB_ID)],
+            )
+        )
+        summary = projects_router.project_summary(project["project_id"])
+        analysis_stage = next(
+            stage for stage in summary["stages"] if stage["stage"] == "analysis"
+        )
+        modeling_stage = next(
+            stage for stage in summary["stages"] if stage["stage"] == "model"
+        )
+        self.assertTrue(analysis_stage["done"])
+        self.assertFalse(modeling_stage["done"])
+
+    def test_project_result_stage_requires_a_job_result_or_linked_bundle(self):
+        project = projects_router.create_project(
+            CreateProjectRequest(
+                name="Result availability",
+                artifacts=[self._artifact("job", JOB_ID)],
+            )
+        )
+        summary = projects_router.project_summary(project["project_id"])
+        result_stage = next(
+            stage for stage in summary["stages"] if stage["stage"] == "result"
+        )
+        self.assertFalse(result_stage["done"])
+
+        updated = projects_router.update_project(
+            project["project_id"],
+            UpdateProjectRequest(
+                name="Result availability",
+                artifacts=[
+                    self._artifact("job", EXPERIMENT_JOB_ID),
+                ],
+            ),
+        )
+        result_stage = next(
+            stage
+            for stage in projects_router.project_summary(updated["project_id"])["stages"]
+            if stage["stage"] == "result"
+        )
+        self.assertTrue(result_stage["done"])
+
+        updated = projects_router.update_project(
+            updated["project_id"],
+            UpdateProjectRequest(
+                name="Result availability",
+                artifacts=[self._artifact("model_bundle", BUNDLE_VERSION)],
+            ),
+        )
+        result_stage = next(
+            stage
+            for stage in projects_router.project_summary(updated["project_id"])["stages"]
+            if stage["stage"] == "result"
+        )
+        self.assertTrue(result_stage["done"])
+
+    def test_project_summary_tracks_research_progression(self):
+        project = projects_router.create_project(
+            CreateProjectRequest(
+                name="Research progression",
+                research_questions=["Does temperature affect degradation?"],
+                artifacts=[
+                    self._artifact("dataset_partition", "train"),
+                    self._artifact("job", JOB_ID),
+                    self._artifact("model_bundle", BUNDLE_VERSION),
+                ],
+            )
+        )
+        projects_router.add_project_record(
+            project["project_id"],
+            AddProjectRecordRequest(
+                kind="hypothesis",
+                title="Temperature response",
+                text="The response may be nonlinear.",
+            ),
+        )
+        summary = projects_router.project_summary(project["project_id"])
+        stages = {stage["stage"]: stage["done"] for stage in summary["stages"]}
+        self.assertEqual(
+            list(stages),
+            ["question", "hypothesis", "data", "analysis", "model", "result", "conclusion"],
+        )
+        self.assertEqual(
+            stages,
+            {
+                "question": True,
+                "hypothesis": True,
+                "data": True,
+                "analysis": True,
+                "model": False,
+                "result": True,
+                "conclusion": False,
+            },
+        )
+
     def test_artifact_references_must_exist_and_match_the_task(self):
         invalid = (
             self._artifact("dataset_partition", "validation"),
             self._artifact("model_bundle", "missing-version"),
-            self._artifact("job", "fedcba9876543210fedcba9876543210"),
+            self._artifact("job", "abcdef0123456789abcdef0123456789"),
         )
         for artifact in invalid:
             with self.subTest(kind=artifact.kind, artifact_id=artifact.artifact_id):
@@ -379,8 +683,14 @@ class TestResearchProjectEndpoints(unittest.TestCase):
         paths = app.openapi()["paths"]
         self.assertIn("/api/projects", paths)
         self.assertIn("/api/projects/{project_id}", paths)
+        self.assertIn("/api/projects/{project_id}/artifacts", paths)
         self.assertIn("/api/projects/{project_id}/notes", paths)
         self.assertIn("/api/projects/{project_id}/records", paths)
+        self.assertIn(
+            "/api/projects/{project_id}/records/{record_id}/evidence",
+            paths,
+        )
+        self.assertIn("/api/projects/{project_id}/records/{record_id}/status", paths)
 
     def test_project_record_endpoint_roundtrips_multiple_evidence_refs(self):
         from api.main import app
@@ -406,6 +716,73 @@ class TestResearchProjectEndpoints(unittest.TestCase):
             )
             self.assertEqual(project_response.status_code, 200, project_response.text)
             project_id = project_response.json()["project_id"]
+
+            artifact_response = client.post(
+                "/api/projects/%s/artifacts" % project_id,
+                json={
+                    "kind": "job",
+                    "task_name": TASK,
+                    "artifact_id": JOB_ID,
+                    "label": "sensitivity",
+                },
+            )
+            self.assertEqual(artifact_response.status_code, 200, artifact_response.text)
+            self.assertEqual(
+                [item["kind"] for item in artifact_response.json()["artifacts"]],
+                ["dataset_partition", "model_bundle", "job"],
+            )
+            duplicate_response = client.post(
+                "/api/projects/%s/artifacts" % project_id,
+                json={
+                    "kind": "job",
+                    "task_name": TASK,
+                    "artifact_id": JOB_ID,
+                    "label": "sensitivity",
+                },
+            )
+            self.assertEqual(duplicate_response.status_code, 200, duplicate_response.text)
+            self.assertEqual(len(duplicate_response.json()["artifacts"]), 3)
+
+            hypothesis_response = client.post(
+                "/api/projects/%s/records" % project_id,
+                json={
+                    "kind": "hypothesis",
+                    "title": "Temperature response",
+                    "text": "Temperature may have a nonlinear relationship with degradation.",
+                },
+            )
+            self.assertEqual(hypothesis_response.status_code, 200, hypothesis_response.text)
+            hypothesis = hypothesis_response.json()["records"][0]
+            self.assertEqual(hypothesis["status"], "proposed")
+            status_response = client.post(
+                "/api/projects/%s/records/%s/status" % (project_id, hypothesis["record_id"]),
+                json={"status": "under_investigation"},
+            )
+            self.assertEqual(status_response.status_code, 200, status_response.text)
+            updated_hypothesis = status_response.json()["records"][0]
+            self.assertEqual(updated_hypothesis["text"], hypothesis["text"])
+            self.assertEqual(updated_hypothesis["status"], "under_investigation")
+            self.assertEqual(
+                [item["status"] for item in updated_hypothesis["status_history"]],
+                ["proposed", "under_investigation"],
+            )
+            evidence_response = client.post(
+                "/api/projects/%s/records/%s/evidence"
+                % (project_id, hypothesis["record_id"]),
+                json={
+                    "relation": "supports",
+                    "artifact": {
+                        "kind": "dataset_partition",
+                        "task_name": TASK,
+                        "artifact_id": "train",
+                    },
+                },
+            )
+            self.assertEqual(evidence_response.status_code, 200, evidence_response.text)
+            self.assertEqual(
+                evidence_response.json()["records"][0]["evidence"][0]["artifact"]["artifact_id"],
+                "train",
+            )
 
             record_response = client.post(
                 "/api/projects/%s/records" % project_id,
@@ -434,7 +811,11 @@ class TestResearchProjectEndpoints(unittest.TestCase):
                 },
             )
             self.assertEqual(record_response.status_code, 200, record_response.text)
-            record = record_response.json()["records"][0]
+            record = next(
+                item
+                for item in record_response.json()["records"]
+                if item["kind"] == "finding"
+            )
             self.assertEqual(len(record["evidence"]), 2)
 
             summary_response = client.get("/api/projects/%s/summary" % project_id)

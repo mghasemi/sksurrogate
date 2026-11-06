@@ -37,6 +37,7 @@ from api.jobs import job_manager
 from api.routers import datasets as datasets_router
 from api.routers import bundles as bundles_router
 from api.routers import evaluation as evaluation_router
+from api.routers import projects as projects_router
 from api.routers import sensitivity as sensitivity_router
 
 #: Small binary-classification dataset shipped with the repo (1600 rows, 21 columns).
@@ -91,6 +92,7 @@ class TestPhase1Endpoints(unittest.TestCase):
             tracker.RegisterData(train, TARGET, partition="train")
             tracker.RegisterData(validation, TARGET, partition="validation")
             self._train_fingerprint = tracker.dataset_splits()["train"]["fingerprint"]
+            self._validation_fingerprint = tracker.dataset_splits()["validation"]["fingerprint"]
 
         self._save_bundle(
             LogisticRegression(max_iter=300).fit(
@@ -337,6 +339,21 @@ class TestPhase1Endpoints(unittest.TestCase):
         record = _wait_for_job(submitted["job_id"])
         self.assertEqual(record["status"], "completed", record["error"])
         self.assertEqual(record["kind"], "nested-cv")
+        self.assertEqual(
+            record["request"],
+            {
+                "model_version": CLASSIFIER_VERSION,
+                "alias": None,
+                "inner_cv": 2,
+                "outer_cv": 2,
+                "train_partition": "train",
+                "validation_partition": "validation",
+                "scoring": None,
+                "pinball_alpha": None,
+                "repeats": 1,
+                "confidence_level": 0.95,
+            },
+        )
 
         result = record["result"]
         self.assertEqual(result["task_name"], TASK)
@@ -346,6 +363,77 @@ class TestPhase1Endpoints(unittest.TestCase):
         self.assertEqual(len(result["fold_metrics"]), 2)
         self.assertEqual(len(result["repeated_outer_scores"]), 1)
         self.assertIsNotNone(result["mean_outer_score"])
+        self.assertEqual(
+            result["evaluation_protocol"]["train_fingerprint"],
+            self._train_fingerprint,
+        )
+        self.assertEqual(
+            result["evaluation_protocol"]["validation_fingerprint"],
+            self._validation_fingerprint,
+        )
+
+        linked_job = projects_router.ProjectArtifactReference(
+            kind="job",
+            task_name=TASK,
+            artifact_id=submitted["job_id"],
+            label="Nested-CV analysis",
+        )
+        project = projects_router.create_project(
+            projects_router.CreateProjectRequest(
+                name="Nested-CV provenance",
+                artifacts=[
+                    projects_router.ProjectArtifactReference(
+                        kind="dataset_partition",
+                        task_name=TASK,
+                        artifact_id="train",
+                    ),
+                    linked_job,
+                    projects_router.ProjectArtifactReference(
+                        kind="model_bundle",
+                        task_name=TASK,
+                        artifact_id=CLASSIFIER_VERSION,
+                    ),
+                ],
+            )
+        )
+        saved_project = projects_router.add_project_record(
+            project["project_id"],
+            projects_router.AddProjectRecordRequest(
+                kind="analysis",
+                title="Nested-CV evaluation",
+                text="The linked job records the request, partition identity, and results.",
+                evidence=[
+                    projects_router.ProjectEvidenceReference(
+                        relation="supports",
+                        artifact=linked_job,
+                    )
+                ],
+            ),
+        )
+        project_job_ref = saved_project["records"][0]["evidence"][0]["artifact"]
+        self.assertEqual(project_job_ref["artifact_id"], submitted["job_id"])
+        linked_job_record = job_manager.get(project_job_ref["artifact_id"])
+        self.assertEqual(linked_job_record["request"], record["request"])
+        self.assertEqual(linked_job_record["result"], result)
+        project_summary = projects_router.project_summary(project["project_id"])
+        linked_job_snapshot = next(
+            artifact["snapshot"]
+            for artifact in project_summary["artifacts"]
+            if artifact["artifact_id"] == submitted["job_id"]
+        )
+        self.assertEqual(
+            linked_job_snapshot["details"]["result_fingerprint"],
+            projects_router._stable_fingerprint(result),
+        )
+        linked_dataset_snapshot = next(
+            artifact["snapshot"]
+            for artifact in project_summary["artifacts"]
+            if artifact["artifact_id"] == "train"
+        )
+        self.assertEqual(
+            linked_dataset_snapshot["details"]["fingerprint"],
+            result["evaluation_protocol"]["train_fingerprint"],
+        )
 
         interval = result["confidence_interval"]
         self.assertEqual(interval["confidence_level"], 0.95)

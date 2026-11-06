@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import {
   Bar,
   BarChart,
@@ -22,6 +23,8 @@ export default function ExplainPage() {
   const [version, setVersion] = useState("");
   const [alpha, setAlpha] = useState(0.1);
   const [groupBy, setGroupBy] = useState("");
+  const [maxRows, setMaxRows] = useState(500);
+  const [stabilitySamples, setStabilitySamples] = useState(1);
 
   const bundlesQ = useQuery({
     queryKey: ["bundles", task],
@@ -31,7 +34,14 @@ export default function ExplainPage() {
   const bundles = bundlesQ.data?.bundles ?? [];
   const selected = version || bundles[0] || "";
 
-  const explainMut = useMutation({ mutationFn: () => explainBundle(task, selected, { top_k: 3 }) });
+  const explainMut = useMutation({
+    mutationFn: () =>
+      explainBundle(task, selected, {
+        max_rows: maxRows,
+        top_k: 3,
+        stability_samples: stabilitySamples,
+      }),
+  });
   const intervalMut = useMutation({
     mutationFn: () => getIntervals(task, selected, { alpha, group_by: groupBy.trim() || undefined }),
   });
@@ -73,13 +83,49 @@ export default function ExplainPage() {
         <>
           <Card
             title="Model behavior diagnostics"
-            sub="Global model attribution (permutation score drop) and fitted-model response profiles (partial dependence); neither estimates causal effects or resampling stability."
+            sub="Global model attribution (permutation score drop) and fitted-model response profiles (partial dependence); neither estimates causal effects. Optional reference-sample variation is descriptive, not a confidence interval."
             actions={
               <button className="btn primary" disabled={explainMut.isPending} onClick={() => explainMut.mutate()}>
                 {explainMut.isPending ? "Computing…" : "Explain model"}
               </button>
             }
           >
+            <p className="muted">
+              Correlation summarizes observed associations; sensitivity indices
+              describe responses over generated ranges; permutation importance
+              measures model-score changes under feature shuffling. They need
+              not agree and are not interchangeable.
+              {" "}
+              <Link to="/features">Compare with correlation and input sensitivity</Link>
+            </p>
+            <div className="row">
+              <div className="field">
+                <label htmlFor="explanation-max-rows">Maximum reference rows</label>
+                <input
+                  id="explanation-max-rows"
+                  type="number"
+                  min={20}
+                  max={1000}
+                  value={maxRows}
+                  onChange={(event) => setMaxRows(Number(event.target.value))}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="explanation-stability-samples">Reference samples</label>
+                <select
+                  id="explanation-stability-samples"
+                  value={stabilitySamples}
+                  onChange={(event) => setStabilitySamples(Number(event.target.value))}
+                >
+                  <option value={1}>1 (no sample variation estimate)</option>
+                  <option value={3}>3 subsamples</option>
+                  <option value={5}>5 subsamples</option>
+                </select>
+              </div>
+            </div>
+            <p className="muted">
+              Comparing reference samples requires more source rows than the selected row cap.
+            </p>
             {explainMut.isError && <ErrorNote error={explainMut.error} />}
             {explainMut.data && (
               <>
@@ -92,6 +138,30 @@ export default function ExplainPage() {
                     : " (all rows)"}
                   . Permutation repeats: {explainMut.data.settings.n_repeats}.
                 </p>
+                {explainMut.data.reference_sample_stability && (
+                  <>
+                    <h3>Reference-sample variation</h3>
+                    <p className="muted">
+                      Descriptive variation across{" "}
+                      {explainMut.data.reference_sample_stability.sample_count} random
+                      distinct subsamples without replacement (each with{" "}
+                      {explainMut.data.reference_sample_stability.sample_size} rows and{" "}
+                      {explainMut.data.reference_sample_stability.permutation_repeats_per_sample} permutation
+                      repeats); sample SD is not a confidence interval. Showing
+                      the 10 features with the highest mean permutation importance.
+                    </p>
+                    <div className="grid cols-3">
+                      {explainMut.data.reference_sample_stability.summary.slice(0, 10).map((item) => (
+                        <Stat
+                          key={item.feature}
+                          label={item.feature}
+                          value={fmtNum(item.mean_importance)}
+                          sub={`sample SD ${fmtNum(item.sample_std)}; top-ranked in ${fmtPct(item.top_rank_frequency)} of samples`}
+                        />
+                      ))}
+                    </div>
+                  </>
+                )}
                 <ul className="muted">
                   {explainMut.data.interpretation.limitations.map((limitation) => (
                     <li key={limitation}>{limitation}</li>

@@ -43,6 +43,10 @@ class AddProjectRecordRequest(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     text: str = Field(min_length=1, max_length=10000)
     evidence: list[ProjectEvidenceReference] = Field(default_factory=list, max_length=20)
+    research_question: str | None = Field(default=None, max_length=1000)
+    status: Literal[
+        "proposed", "under_investigation", "supported", "contradicted", "inconclusive"
+    ] | None = None
 
     @field_validator("title", "text")
     @classmethod
@@ -51,11 +55,34 @@ class AddProjectRecordRequest(BaseModel):
             raise ValueError("record title and text must not be blank")
         return value.strip()
 
+    @field_validator("research_question")
+    @classmethod
+    def validate_research_question(cls, value):
+        if value is not None and not value.strip():
+            raise ValueError("research_question must not be blank")
+        return value.strip() if value is not None else None
+
     @model_validator(mode="after")
     def require_claim_evidence(self):
         if self.kind in ("finding", "conclusion") and not self.evidence:
             raise ValueError("findings and conclusions require at least one evidence reference")
+        if self.kind == "hypothesis":
+            if self.status is None:
+                self.status = "proposed"
+        elif self.status is not None or self.research_question is not None:
+            raise ValueError("status and research_question are only valid for hypothesis records")
         return self
+
+
+class AddProjectEvidenceRequest(BaseModel):
+    relation: Literal["supports", "contradicts"]
+    artifact: ProjectArtifactReference
+
+
+class UpdateProjectHypothesisStatusRequest(BaseModel):
+    status: Literal[
+        "proposed", "under_investigation", "supported", "contradicted", "inconclusive"
+    ]
 
 
 class ProjectFields(BaseModel):
@@ -112,7 +139,28 @@ def _read_project(project_id):
     path = _project_path(project_id)
     if not path.is_file():
         raise not_found("No research project %r found" % project_id)
-    return json.loads(path.read_text(encoding="utf-8"))
+    project = json.loads(path.read_text(encoding="utf-8"))
+    _normalize_hypothesis_statuses(project)
+    return project
+
+
+def _normalize_hypothesis_statuses(project):
+    for record in project.get("records", []):
+        if record.get("kind") != "hypothesis" or record.get("status") is not None:
+            continue
+        history = record.get("status_history")
+        if history:
+            status = history[-1]["status"]
+        else:
+            status = "proposed"
+            history = [
+                {
+                    "status": status,
+                    "changed_at": record.get("created_at", project.get("created_at")),
+                }
+            ]
+        record["status"] = status
+        record["status_history"] = history
 
 
 def _write_project(project):
@@ -286,6 +334,7 @@ def list_projects():
         ]
     for project in projects:
         project.setdefault("records", [])
+        _normalize_hypothesis_statuses(project)
     return {"projects": sorted(projects, key=lambda project: project["updated_at"], reverse=True)}
 
 
@@ -310,6 +359,9 @@ def project_summary(project_id: str):
     """Workflow progress for a project: which linked artifacts still exist, plus a stage checklist."""
     project = _read_project(project_id)
     artifacts = []
+    analysis_job_completed = False
+    modeling_job_completed = False
+    job_result_available = False
     for item in project["artifacts"]:
         exists, status = True, None
         try:
@@ -319,7 +371,18 @@ def project_summary(project_id: str):
                 raise
             exists = False
         if item["kind"] == "job" and exists:
-            status = (job_manager.get(item["artifact_id"]) or {}).get("status")
+            job = job_manager.get(item["artifact_id"]) or {}
+            status = job.get("status")
+            if status == "completed":
+                job_result_available = job_result_available or job.get("result") is not None
+                if job.get("kind") in ("sensitivity", "nested-cv"):
+                    analysis_job_completed = True
+                elif job.get("kind") in (
+                    "experiment",
+                    "optimize_pipeline",
+                    "retraining",
+                ):
+                    modeling_job_completed = True
         snapshot_status = "missing" if not exists else "unverified"
         if exists and item.get("snapshot"):
             current_snapshot = _artifact_snapshot(ProjectArtifactReference(**item))
@@ -337,16 +400,63 @@ def project_summary(project_id: str):
             }
         )
     present = lambda kind: any(a["kind"] == kind and a["exists"] for a in artifacts)
+    records = project.get("records", [])
     stages = [
+        {
+            "stage": "question",
+            "label": "Research question defined",
+            "done": bool(project.get("research_questions")),
+        },
+        {
+            "stage": "hypothesis",
+            "label": "Hypothesis recorded",
+            "done": any(record.get("kind") == "hypothesis" for record in records),
+        },
         {"stage": "data", "label": "Data registered", "done": present("dataset_partition")},
         {
-            "stage": "model",
-            "label": "Experiment finished",
-            "done": any(a["kind"] == "job" and a["status"] == "completed" for a in artifacts),
+            "stage": "analysis",
+            "label": "Analysis completed",
+            "done": analysis_job_completed,
         },
-        {"stage": "release", "label": "Model bundle linked", "done": present("model_bundle")},
+        {
+            "stage": "model",
+            "label": "Modeling run completed",
+            "done": modeling_job_completed,
+        },
+        {
+            "stage": "result",
+            "label": "Result available",
+            "done": job_result_available or present("model_bundle"),
+        },
+        {
+            "stage": "conclusion",
+            "label": "Conclusion recorded",
+            "done": any(record.get("kind") == "conclusion" for record in records),
+        },
     ]
     return {"project_id": project_id, "artifacts": artifacts, "stages": stages}
+
+
+@router.post("/{project_id}/artifacts")
+def add_project_artifact(project_id: str, body: ProjectArtifactReference):
+    """Append one artifact link without replacing other project metadata."""
+    with _PROJECT_LOCK:
+        project = _read_project(project_id)
+        artifact_key = (body.kind, body.task_name, body.artifact_id)
+        if any(
+            (item["kind"], item["task_name"], item["artifact_id"]) == artifact_key
+            for item in project["artifacts"]
+        ):
+            return project
+        if len(project["artifacts"]) >= 100:
+            raise bad_request("a project cannot contain more than 100 artifact references")
+        _validate_artifacts([body])
+        project["artifacts"].append(
+            {**body.model_dump(), "snapshot": _artifact_snapshot(body)}
+        )
+        project["updated_at"] = _now()
+        _write_project(project)
+    return project
 
 
 @router.put("/{project_id}")
@@ -384,6 +494,11 @@ def update_project(project_id: str, body: UpdateProjectRequest):
 def add_project_record(project_id: str, body: AddProjectRecordRequest):
     with _PROJECT_LOCK:
         project = _read_project(project_id)
+        if (
+            body.research_question is not None
+            and body.research_question not in project.get("research_questions", [])
+        ):
+            raise bad_request("hypothesis research_question must match a question in this project")
         artifact_keys = {
             (item["kind"], item["task_name"], item["artifact_id"])
             for item in project.get("artifacts", [])
@@ -399,6 +514,7 @@ def add_project_record(project_id: str, body: AddProjectRecordRequest):
                 raise bad_request("research evidence references must be unique within a record")
             evidence_keys.add(evidence_key)
 
+        created_at = _now()
         record = {
             "record_id": uuid.uuid4().hex,
             "kind": body.kind,
@@ -407,13 +523,99 @@ def add_project_record(project_id: str, body: AddProjectRecordRequest):
             "evidence": [
                 item.model_dump() for item in body.evidence
             ],
-            "created_at": _now(),
+            "created_at": created_at,
         }
+        if body.research_question is not None:
+            record["research_question"] = body.research_question
+        if body.kind == "hypothesis":
+            record["status"] = body.status
+            record["status_history"] = [
+                {"status": body.status, "changed_at": created_at}
+            ]
         records = project.setdefault("records", [])
         if len(records) >= 1000:
             raise bad_request("a project cannot contain more than 1000 research records")
         records.append(record)
         project["updated_at"] = _now()
+        _write_project(project)
+    return project
+
+
+@router.post("/{project_id}/records/{record_id}/evidence")
+def add_project_record_evidence(
+    project_id: str,
+    record_id: str,
+    body: AddProjectEvidenceRequest,
+):
+    with _PROJECT_LOCK:
+        project = _read_project(project_id)
+        record = next(
+            (
+                item
+                for item in project.get("records", [])
+                if item.get("record_id") == record_id
+            ),
+            None,
+        )
+        if record is None:
+            raise not_found("No research record %r found in project %r" % (record_id, project_id))
+        artifact = body.artifact
+        artifact_key = (artifact.kind, artifact.task_name, artifact.artifact_id)
+        linked_artifact_keys = {
+            (item["kind"], item["task_name"], item["artifact_id"])
+            for item in project.get("artifacts", [])
+        }
+        if artifact_key not in linked_artifact_keys:
+            raise bad_request("research evidence must reference an artifact linked to this project")
+        evidence = record.setdefault("evidence", [])
+        evidence_key = (body.relation, *artifact_key)
+        if any(
+            (
+                item["relation"],
+                item["artifact"]["kind"],
+                item["artifact"]["task_name"],
+                item["artifact"]["artifact_id"],
+            )
+            == evidence_key
+            for item in evidence
+        ):
+            raise bad_request("research evidence references must be unique within a record")
+        if len(evidence) >= 20:
+            raise bad_request("a research record cannot contain more than 20 evidence references")
+        evidence.append(body.model_dump())
+        project["updated_at"] = _now()
+        _write_project(project)
+    return project
+
+
+@router.post("/{project_id}/records/{record_id}/status")
+def update_project_hypothesis_status(
+    project_id: str,
+    record_id: str,
+    body: UpdateProjectHypothesisStatusRequest,
+):
+    with _PROJECT_LOCK:
+        project = _read_project(project_id)
+        record = next(
+            (
+                item
+                for item in project.get("records", [])
+                if item.get("record_id") == record_id
+            ),
+            None,
+        )
+        if record is None:
+            raise not_found("No research record %r found in project %r" % (record_id, project_id))
+        if record.get("kind") != "hypothesis":
+            raise bad_request("only hypothesis records have a status")
+        if record.get("status") == body.status:
+            return project
+        changed_at = _now()
+        record["status"] = body.status
+        record.setdefault("status_history", []).append(
+            {"status": body.status, "changed_at": changed_at}
+        )
+        project["updated_at"] = changed_at
         _write_project(project)
     return project
 

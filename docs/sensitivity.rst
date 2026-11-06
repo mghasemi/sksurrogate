@@ -149,3 +149,12 @@ and accept ``train_partition`` and ``max_features`` (default ``60``) query
 parameters. Requests for wider datasets are rejected with HTTP ``400`` so that
 an oversized matrix is never shipped to the client; prune the feature set first
 or raise the limit.
+
+These analyses complement Explain's permutation importance and partial
+dependence. Pearson feature correlation describes observed pairwise association;
+target correlation is a marginal data association; Sobol, Morris, and delta
+indices describe surrogate responses over generated inputs; permutation
+importance measures a score drop on a selected reference partition. Their
+quantities and input contracts differ, so numerical disagreement is expected
+and raw values are not a common ranking or causal evidence. The UI links these
+pages to encourage interpretation side by side without conflating the measures.

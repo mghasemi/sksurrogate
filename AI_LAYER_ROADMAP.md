@@ -27,8 +27,13 @@ projects link existing dataset partitions, model bundles, and jobs, and the
 API notebook verifies linked lineage without duplicating artifact storage.
 Projects now also support append-only hypothesis/analysis/finding/conclusion
 records with supporting or contradicting links to project artifacts, plus
-immutable metadata fingerprints/configuration snapshots; full data/run artifact
-snapshots and research orchestration remain future work. The
+immutable metadata fingerprints/configuration snapshots. Hypotheses also have
+a bounded status lifecycle whose transitions are retained as history and can
+capture a linked project question. Evidence can be appended to records as new
+results are generated. Project summaries track question, hypothesis, dataset,
+analysis, model-run, result, and conclusion stages; the result stage requires
+a linked bundle or a completed job with a non-null result. Full data/run
+artifact snapshots and research orchestration remain future work. The
 broader recommendation audit is complete. P3 adds a Python split-conformalized
 quantile-interval helper; UI/API integration and unrelated research bets remain
 deferred.
@@ -568,6 +573,18 @@ snapshots. The API can persist project metadata and validate references to
 existing dataset partitions, bundles, and jobs. Project-level retrieval
 returns those references and records; clients follow the existing endpoints
 for the authoritative artifacts.
+The project progress summary counts only completed experiment, pipeline
+optimization, or retraining jobs as modeling progress; completed analysis jobs
+do not satisfy that stage. Nested-CV job records also retain the submitted
+request, allowing project evidence to resolve the evaluation settings and
+result while the result records the source-partition fingerprint. Sensitivity
+jobs now preserve their method request and result-level input partition
+fingerprint, row count, and feature list. Project summaries now report a
+separate analysis stage for completed sensitivity and nested-CV jobs. Linked
+job artifacts have an Inspect job link to the Jobs page's tracker and result.
+Research-record job evidence also links directly to the tracker while the job
+still exists; evidence rows display their linked artifact snapshot state in
+context, including changed and missing sources.
 The executable API
 notebook creates a bounded analysis, links its dataset, search/evaluation jobs,
 and bundle in a project, then follows the links and verifies the training
@@ -620,6 +637,14 @@ or blocker to the log below. Do not mark an item complete until its stated
 acceptance criteria are met.
 
 ### Progress log
+
+- **2026-11-06 — P2.5 project-launched analysis:** the Projects checklist now
+  passes project context into Feature Analysis, and a completed sensitivity
+  job is automatically linked to the originating project. Failed and
+  unfinished jobs are not linked; other job types remain manually linkable.
+  Added an idempotent single-artifact append endpoint so automatic linking does
+  not replace other project metadata or overwrite a concurrent artifact link.
+  The web UI production build and TypeScript check passed.
 
 - **2026-11-05 — P1.2 profiling follow-up:** reran the component profiler on
   the fixed Galaxy3 split at 21 evaluations (RF(10), five-fold CV). The default
@@ -1076,3 +1101,81 @@ acceptance criteria are met.
   changes explanation output on the same dataset. This demonstrates sensitivity
   to the sampled reference rows; it does not estimate a stability distribution
   or generalize across datasets.
+- **2026-11-05 — P2.6 report provenance links:** the Markdown run report now
+  links to registered dataset metadata, its machine-readable run configuration,
+  and the downloadable model bundle. Existing notebook workflows were audited
+  and cover profiling/evaluation/report export; broader templates remain
+  subject to execution and coverage review.
+- **2026-11-05 — P2.6 report scope metadata:** added an Assumptions and scope
+  section to the Markdown report showing recorded target handling, row
+  exclusions, metric scope, and evaluation protocol details. Unrecorded
+  upstream exclusions remain explicit rather than being presented as absent.
+- **2026-11-05 — P2.6 notebook/report audit:** executed both existing notebooks
+  end-to-end. The offline workflow completed seeded profile, search, repeated
+  nested CV, and importance; the API workflow completed registration through
+  project-link verification using isolated storage. The report content/links
+  are covered. The scientific notebook now exports profile/association tables,
+  performance and importance CSVs, methodology/limitations metadata, and a
+  300-dpi evaluation/importance figure. Repeated executions varied in scores
+  despite fixed seeds, so this is documented as seeded rather than guaranteed
+  bitwise-deterministic output.
+- **2026-11-05 — P1.5 bounded reference-sample sensitivity:** added an optional
+  2–5-subsample permutation-importance summary to the API and Explain UI.
+  Responses include per-feature mean importance, sample SD, and top-rank
+  frequency across distinct subsets; tests cover deterministic repeated
+  requests and the insufficient-source-rows error. These are descriptive
+  diagnostics, not confidence intervals; PDP stability and ALE/conditional
+  methods remain open.
+- **2026-11-05 — P1.5 analytical perspective comparison:** Feature Analysis and
+  Explain now cross-link and explain the distinct questions answered by
+  observed Pearson association, generated-input sensitivity indices, and
+  permutation importance. They are intentionally not collapsed into a common
+  numeric rank; SHAP remains deferred.
+- **2026-11-05 — P2.5 nested-CV evidence provenance:** nested-CV jobs now retain
+  their submitted request, and the evaluation result protocol records the
+  registered train/validation fingerprints. An integration test follows a
+  project evidence link to the job request/result and confirms its training
+  fingerprint matches the linked dataset snapshot. All 18 Phase 1 endpoint
+  tests pass.
+- **2026-11-05 — P2.5 sensitivity evidence provenance:** sensitivity jobs now
+  retain their request and record the analyzed partition fingerprint, row
+  count, and feature columns. The API experiment test follows a project
+  evidence link to the completed job and verifies its recorded request/result
+  and snapshot.
+- **2026-11-05 — P2.5 research progress stages:** project summaries now report
+  analysis completion separately from model-training completion; the Projects
+  UI links the analysis step to Feature Analysis. Focused project coverage
+  verifies that a completed sensitivity job satisfies only the analysis step.
+- **2026-11-05 — P2.5 job evidence navigation:** linked job artifacts now open
+  the Jobs page with the selected job tracker and full result. The research-
+  project docs describe the UI path alongside the existing API endpoint.
+- **2026-11-05 — P2.5 claim evidence navigation:** saved research-record
+  evidence now provides the same Inspect job link for existing job references,
+  making the recorded claim-to-result path direct in the Projects UI.
+- **2026-11-05 — P2.5 evidence validity display:** saved research records now
+  display each cited artifact's current, changed, missing, or unverified
+  snapshot state alongside the claim.
+- **2026-11-05 — P2.5 hypothesis status history:** hypotheses now begin in a
+  proposed state and can transition among under-investigation, supported,
+  contradicted, and inconclusive states. Transitions append history without
+  mutating hypothesis text or evidence; API/UI/docs and endpoint tests cover it.
+  Legacy hypotheses are normalized at read time to proposed, anchored to their
+  original creation timestamp.
+- **2026-11-05 — P2.5 question-to-hypothesis linkage:** the Projects UI can
+  attach a project research question to a new hypothesis. The API validates
+  the captured text against the project's question list and preserves it on
+  the hypothesis record.
+- **2026-11-05 — P2.5 research progression summary:** project progress now
+  covers question, hypothesis, dataset, analysis, model run, result, and
+  conclusion using existing metadata and linked artifact state. Focused API
+  tests verify that completed analysis is distinct from model training.
+- **2026-11-05 — P2.5 append-only evidence:** added an endpoint and Projects UI
+  flow for attaching evidence to an existing research record. Hypotheses can
+  now begin without evidence and accumulate supporting/contradicting artifact
+  references as work proceeds; unlinked and duplicate references are rejected.
+- **2026-11-05 — P2.5 job browsing:** the Jobs page kind filter now includes
+  nested-CV and pipeline-optimization jobs, matching the job kinds surfaced by
+  project analysis/modeling progress and evidence links.
+- **2026-11-05 — P2.5 result-stage validity:** project progression no longer
+  treats a completed but resultless job as an available result. A linked
+  model bundle or a completed job with a non-null result is required.

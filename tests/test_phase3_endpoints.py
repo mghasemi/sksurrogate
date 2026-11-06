@@ -226,9 +226,27 @@ class TestPhase3Endpoints(unittest.TestCase):
         self.assertTrue(config["metrics"])
         self.assertEqual(report.media_type, "text/markdown")
         self.assertIn("## Methodology", report.body.decode("utf-8"))
+        self.assertIn("## Assumptions and scope", report.body.decode("utf-8"))
+        self.assertIn("Target handling:", report.body.decode("utf-8"))
+        self.assertIn("Observation exclusions:", report.body.decode("utf-8"))
+        self.assertIn("Metric scope:", report.body.decode("utf-8"))
         self.assertIn("## Uncertainty", report.body.decode("utf-8"))
         self.assertIn("point estimates", report.body.decode("utf-8"))
         self.assertIn("## Lineage", report.body.decode("utf-8"))
+        self.assertIn("## Source artifacts", report.body.decode("utf-8"))
+        self.assertIn(
+            "[Registered dataset metadata](/api/datasets/%s)" % TASK,
+            report.body.decode("utf-8"),
+        )
+        self.assertIn(
+            "[Machine-readable run configuration](/api/bundles/%s/%s/run-config)"
+            % (TASK, response["model_version"]),
+            report.body.decode("utf-8"),
+        )
+        self.assertIn(
+            "[Model bundle](/api/bundles/%s/%s/download)" % (TASK, response["model_version"]),
+            report.body.decode("utf-8"),
+        )
         json.dumps(config)
 
     # ------------------------------------------------------------ 3.1 preserve

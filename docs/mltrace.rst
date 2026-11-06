@@ -449,8 +449,14 @@ attributes changes in the chosen model score to shuffling a feature; it is not
 predictive association measured directly from the data. Partial dependence is
 a fitted-model response profile, not an estimate of an intervention or causal
 effect. Feature dependence, the selected reference population, and sampling
-can all change the apparent attribution or profile. These APIs do not promise
-stability across resamples.
+can all change the apparent attribution or profile. The API explanation
+endpoint can optionally repeat permutation importance over two to five
+independently sampled reference subsets (without replacement) when the source
+partition has more rows than the per-sample cap. It reports per-feature mean
+importance, sample standard deviation, and top-rank frequency across those
+subsets. These summaries are descriptive sensitivity diagnostics, not
+confidence intervals or guarantees of robustness; the default single-sample
+request does not estimate cross-sample stability.
 
 Accumulated local effects (ALE) are a possible alternative to partial
 dependence when correlated features make its marginal grid unrealistic: ALE

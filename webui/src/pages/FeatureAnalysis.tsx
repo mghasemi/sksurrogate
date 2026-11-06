@@ -1,9 +1,12 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useSearchParams } from "react-router-dom";
 
 import {
+  addProjectArtifact,
   asSensitivityResult,
   getCorrelationMatrix,
+  getProject,
   getTopFeatures,
   getWeightsHeatmap,
   runCorrelationThreshold,
@@ -22,6 +25,17 @@ type TabId = (typeof TABS)[number];
 export default function FeatureAnalysisPage() {
   const { task } = useTask();
   const qc = useQueryClient();
+  const [searchParams] = useSearchParams();
+  const projectId = searchParams.get("project_id");
+
+  const projectQ = useQuery({
+    queryKey: ["project", projectId],
+    queryFn: () => {
+      if (!projectId) throw new Error("Project id is required.");
+      return getProject(projectId);
+    },
+    enabled: Boolean(projectId),
+  });
 
   const [method, setMethod] = useState<(typeof METHODS)[number]>("sobol");
   const [nFeatures, setNFeatures] = useState(5);
@@ -33,6 +47,23 @@ export default function FeatureAnalysisPage() {
 
   // Result of the most recent sensitivity job, captured for the ranking heatmap.
   const [sensResult, setSensResult] = useState<SensitivityJobResult | null>(null);
+
+  const linkProjectJobMut = useMutation({
+    mutationFn: async ({ jobId: completedJobId, taskName }: { jobId: string; taskName: string }) => {
+      if (!projectId) throw new Error("Project context is missing.");
+      return addProjectArtifact(projectId, {
+        kind: "job",
+        task_name: taskName,
+        artifact_id: completedJobId,
+        label: "sensitivity",
+      });
+    },
+    onSuccess: (project) => {
+      qc.setQueryData(["project", project.project_id], project);
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["project-summary", project.project_id] });
+    },
+  });
 
   const sensMut = useMutation({
     mutationFn: () => runSensitivity(task, { method, n_features_to_select: nFeatures, train_partition: trainPartition }),
@@ -72,7 +103,28 @@ export default function FeatureAnalysisPage() {
         <span className="desc">Input sensitivity and descriptive feature association for task “{task || "…"}”</span>
       </div>
 
+      {projectId && (
+        <Card title="Research project">
+          {projectQ.isLoading && <Loading label="Loading project…" />}
+          {projectQ.isError && <ErrorNote error={projectQ.error} />}
+          {projectQ.data && <p className="muted">Completed sensitivity jobs will be linked to “{projectQ.data.name}”.</p>}
+          {linkProjectJobMut.isError && <ErrorNote error={linkProjectJobMut.error} />}
+        </Card>
+      )}
+
       {!task && <div className="error-note">Pick a task name in the top bar first.</div>}
+
+      <Card
+        title="Compare analytical perspectives"
+        sub="These methods answer different questions and use different scales; compare their assumptions and evidence, not their raw values as if they were one ranking."
+      >
+        <ul className="muted">
+          <li>Pearson correlation describes linear association between observed feature values (or between one feature and the target in the weights view).</li>
+          <li>Sobol, Morris, and delta indices describe how the fitted surrogate responds over method-generated input ranges, which can include unrealistic combinations.</li>
+          <li>Permutation importance measures a fitted model's score change when a feature is shuffled on a selected reference partition.</li>
+        </ul>
+        <Link to="/explain">Open Explain for model attribution and response profiles</Link>
+      </Card>
 
       <div className="grid cols-2">
         <Card title="Input sensitivity" sub="How the fitted surrogate responds over independent, generated feature ranges; this is not feature–target correlation or a causal effect.">
@@ -107,6 +159,9 @@ export default function FeatureAnalysisPage() {
               <JobTracker
                 jobId={jobId}
                 onResult={(result) => {
+                  if (projectId && task) {
+                    linkProjectJobMut.mutate({ jobId, taskName: task });
+                  }
                   const decoded = asSensitivityResult(result);
                   if (!decoded) return;
                   setSensResult(decoded);

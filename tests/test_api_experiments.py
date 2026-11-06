@@ -137,8 +137,10 @@ def test_explain_intervals_and_project_summary(client):
         "max_rows": 100,
         "n_repeats": 2,
         "top_k": 3,
+        "stability_samples": 1,
         "random_state": 0,
     }
+    assert data["reference_sample_stability"] is None
     assert data["interpretation"]["importance"]["category"] == "model_attribution"
     assert data["interpretation"]["partial_dependence"]["category"] == "fitted_model_response_profile"
     assert data["interpretation"]["importance"]["causal_effect"] is False
@@ -161,6 +163,33 @@ def test_explain_intervals_and_project_summary(client):
         alternative_reference["importance"] != data["importance"]
         or alternative_reference["partial_dependence"] != data["partial_dependence"]
     )
+    stability_request = {
+        "max_rows": 100,
+        "n_repeats": 2,
+        "stability_samples": 3,
+        "random_state": 0,
+    }
+    stability_response = client.post(
+        "/api/evaluation/reg/%s/explain" % version,
+        json=stability_request,
+    )
+    assert stability_response.status_code == 200, stability_response.text
+    stability_result = stability_response.json()["reference_sample_stability"]
+    assert stability_result["sample_count"] == 3
+    assert stability_result["sample_size"] == 100
+    assert stability_result["permutation_repeats_per_sample"] == 2
+    assert stability_result["sampling"] == "random_without_replacement"
+    assert {item["feature"] for item in stability_result["summary"]} == {"a", "b", "c"}
+    assert all(item["sample_std"] >= 0.0 for item in stability_result["summary"])
+    assert np.isclose(
+        sum(item["top_rank_frequency"] for item in stability_result["summary"]),
+        1.0,
+    )
+    repeated_stability = client.post(
+        "/api/evaluation/reg/%s/explain" % version,
+        json=stability_request,
+    ).json()["reference_sample_stability"]
+    assert repeated_stability == stability_result
     all_rows_explanation = client.post(
         "/api/evaluation/reg/%s/explain" % version,
         json={"max_rows": 500, "n_repeats": 2},
@@ -171,18 +200,39 @@ def test_explain_intervals_and_project_summary(client):
         "used_rows": 120,
         "sampling": "all_rows",
     }
-    assert any("stability across alternative reference samples" in limitation for limitation in data["interpretation"]["limitations"])
+    insufficient_reference_rows = client.post(
+        "/api/evaluation/reg/%s/explain" % version,
+        json={"max_rows": 500, "n_repeats": 2, "stability_samples": 2},
+    )
+    assert insufficient_reference_rows.status_code == 400
+    assert "smaller max_rows" in insufficient_reference_rows.json()["detail"]
+    assert any(
+        "not estimated by default" in limitation
+        for limitation in data["interpretation"]["limitations"]
+    )
 
     sensitivity_response = client.post(
         "/api/sensitivity/reg/run",
         json={"method": "sobol", "n_features_to_select": 2, "train_partition": "train"},
     )
     assert sensitivity_response.status_code == 200, sensitivity_response.text
-    sensitivity_job = _wait(client, sensitivity_response.json()["job_id"])
+    sensitivity_job_id = sensitivity_response.json()["job_id"]
+    sensitivity_job = _wait(client, sensitivity_job_id)
     assert sensitivity_job["status"] == "completed", sensitivity_job
+    assert sensitivity_job["request"] == {
+        "method": "sobol",
+        "n_features_to_select": 2,
+        "train_partition": "train",
+    }
     sensitivity_result = sensitivity_job["result"]
     assert sensitivity_result["interpretation"]["category"] == "input_sensitivity"
     assert sensitivity_result["interpretation"]["causal_effect"] is False
+    assert sensitivity_result["evaluation_protocol"] == {
+        "train_partition": "train",
+        "train_fingerprint": client.get("/api/datasets/reg").json()["partitions"]["train"]["fingerprint"],
+        "row_count": 120,
+        "feature_columns": ["a", "b", "c"],
+    }
 
     correlation = client.get("/api/sensitivity/reg/correlation-matrix").json()
     assert correlation["interpretation"]["category"] == "descriptive_association"
@@ -211,13 +261,73 @@ def test_explain_intervals_and_project_summary(client):
         "/api/projects",
         json={
             "name": "p",
+            "research_questions": ["Which features influence the response?"],
             "artifacts": [
                 {"kind": "dataset_partition", "task_name": "reg", "artifact_id": "train"},
                 {"kind": "job", "task_name": "reg", "artifact_id": job_id},
+                {"kind": "job", "task_name": "reg", "artifact_id": sensitivity_job_id, "label": "Sensitivity analysis"},
                 {"kind": "model_bundle", "task_name": "reg", "artifact_id": version},
             ],
         },
     ).json()
+    hypothesis_record = client.post(
+        "/api/projects/%s/records" % project["project_id"],
+        json={
+            "kind": "hypothesis",
+            "title": "Feature response hypothesis",
+            "text": "The input features have unequal influence on the response.",
+            "research_question": "Which features influence the response?",
+        },
+    )
+    assert hypothesis_record.status_code == 200, hypothesis_record.text
+    sensitivity_record = client.post(
+        "/api/projects/%s/records" % project["project_id"],
+        json={
+            "kind": "analysis",
+            "title": "Sensitivity analysis",
+            "text": "The linked job records the exact input partition and method.",
+            "evidence": [
+                {
+                    "relation": "supports",
+                    "artifact": {
+                        "kind": "job",
+                        "task_name": "reg",
+                        "artifact_id": sensitivity_job_id,
+                    },
+                }
+            ],
+        },
+    )
+    assert sensitivity_record.status_code == 200, sensitivity_record.text
+    linked_sensitivity = client.get("/api/jobs/" + sensitivity_job_id).json()
+    assert linked_sensitivity["request"] == sensitivity_job["request"]
+    assert linked_sensitivity["result"] == sensitivity_result
+    summary = client.get("/api/projects/%s/summary" % project["project_id"]).json()
+    sensitivity_snapshot = next(
+        artifact["snapshot"]
+        for artifact in summary["artifacts"]
+        if artifact["artifact_id"] == sensitivity_job_id
+    )
+    assert sensitivity_snapshot["details"]["result_fingerprint"]
+    conclusion = client.post(
+        "/api/projects/%s/records" % project["project_id"],
+        json={
+            "kind": "conclusion",
+            "title": "Sensitivity result recorded",
+            "text": "The completed sensitivity run is retained as project evidence.",
+            "evidence": [
+                {
+                    "relation": "supports",
+                    "artifact": {
+                        "kind": "job",
+                        "task_name": "reg",
+                        "artifact_id": sensitivity_job_id,
+                    },
+                }
+            ],
+        },
+    )
+    assert conclusion.status_code == 200, conclusion.text
     summary = client.get("/api/projects/%s/summary" % project["project_id"]).json()
     assert all(stage["done"] for stage in summary["stages"])
 

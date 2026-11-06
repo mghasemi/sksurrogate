@@ -255,6 +255,8 @@ def run_nested_cv(task_name: str, body: NestedCVRequest):
             )
             tracker_metadata = tracker.GetMetadata()
 
+        partition_history = tracker_metadata.get("dataset_partition_history", {})
+
         def _clean(value):
             if isinstance(value, dict):
                 return {key: _clean(item) for key, item in value.items()}
@@ -267,9 +269,18 @@ def run_nested_cv(task_name: str, body: NestedCVRequest):
         result["task_name"] = task_name
         result["scoring"] = body.scoring
         result["pinball_alpha"] = body.pinball_alpha
+        evaluation_protocol = result.get("evaluation_protocol")
+        if isinstance(evaluation_protocol, dict):
+            evaluation_protocol["train_fingerprint"] = partition_history.get(
+                body.train_partition, {}
+            ).get("fingerprint")
+            evaluation_protocol["validation_fingerprint"] = (
+                partition_history.get(body.validation_partition, {}).get("fingerprint")
+                if evaluation_protocol.get("validation_used")
+                else None
+            )
         bundle.metadata = dict(bundle.metadata or {})
         evaluations = list(bundle.metadata.get("evaluations", []))
-        partition_history = tracker_metadata.get("dataset_partition_history", {})
         evaluations.append(
             {
                 "type": "nested_cv",
@@ -325,7 +336,12 @@ def run_nested_cv(task_name: str, body: NestedCVRequest):
         save_bundle(bundle, bundle_path)
         return result
 
-    job_id = job_manager.submit(task_name, "nested-cv", lambda job_id: _task)
+    job_id = job_manager.submit(
+        task_name,
+        "nested-cv",
+        lambda job_id: _task,
+        metadata_factory=lambda job_id: {"request": body.model_dump(mode="json")},
+    )
     return {"job_id": job_id, "status": "queued"}
 
 

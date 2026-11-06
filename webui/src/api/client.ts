@@ -1477,9 +1477,22 @@ export interface ExplainResult {
     max_rows: number;
     n_repeats: number;
     top_k: number;
+    stability_samples: number;
     random_state: number;
   };
   importance: Array<{ feature: string; mean: number | null; std: number | null }>;
+  reference_sample_stability: {
+    sample_count: number;
+    sample_size: number;
+    permutation_repeats_per_sample: number;
+    sampling: "random_without_replacement";
+    summary: Array<{
+      feature: string;
+      mean_importance: number | null;
+      sample_std: number | null;
+      top_rank_frequency: number;
+    }>;
+  } | null;
   partial_dependence: Array<{ feature: string; grid: Array<number | null>; average: Array<number | null> }>;
   errors: Array<{ feature: string; detail: string }>;
   interpretation: {
@@ -1501,7 +1514,13 @@ export interface ExplainResult {
 export const explainBundle = (
   task: string,
   version: string,
-  body: { partition?: string; max_rows?: number; n_repeats?: number; top_k?: number } = {},
+  body: {
+    partition?: string;
+    max_rows?: number;
+    n_repeats?: number;
+    top_k?: number;
+    stability_samples?: number;
+  } = {},
 ) =>
   post<ExplainResult>(
     `/api/evaluation/${encodeURIComponent(task)}/${encodeURIComponent(version)}/explain`,
@@ -1614,6 +1633,12 @@ export interface ProjectResearchRecord {
   kind: "hypothesis" | "analysis" | "finding" | "conclusion";
   title: string;
   text: string;
+  research_question?: string;
+  status?: "proposed" | "under_investigation" | "supported" | "contradicted" | "inconclusive";
+  status_history?: Array<{
+    status: "proposed" | "under_investigation" | "supported" | "contradicted" | "inconclusive";
+    changed_at: string;
+  }>;
   evidence: Array<{
     relation: "supports" | "contradicts";
     artifact: ProjectArtifact;
@@ -1646,7 +1671,10 @@ export interface ProjectSummary {
 }
 
 export const listProjects = () => get<{ projects: Project[] }>("/api/projects");
+export const getProject = (id: string) => get<Project>(`/api/projects/${encodeURIComponent(id)}`);
 export const getProjectSummary = (id: string) => get<ProjectSummary>(`/api/projects/${encodeURIComponent(id)}/summary`);
+export const addProjectArtifact = (id: string, artifact: ProjectArtifact) =>
+  post<Project>(`/api/projects/${encodeURIComponent(id)}/artifacts`, artifact);
 export const createProject = (body: {
   name: string;
   description?: string;
@@ -1666,3 +1694,23 @@ export const addProjectRecord = (
   id: string,
   body: Omit<ProjectResearchRecord, "record_id" | "created_at">,
 ) => post<Project>(`/api/projects/${encodeURIComponent(id)}/records`, body);
+
+export const addProjectRecordEvidence = (
+  projectId: string,
+  recordId: string,
+  evidence: ProjectResearchRecord["evidence"][number],
+) =>
+  post<Project>(
+    `/api/projects/${encodeURIComponent(projectId)}/records/${encodeURIComponent(recordId)}/evidence`,
+    evidence,
+  );
+
+export const updateProjectHypothesisStatus = (
+  projectId: string,
+  recordId: string,
+  status: NonNullable<ProjectResearchRecord["status"]>,
+) =>
+  post<Project>(
+    `/api/projects/${encodeURIComponent(projectId)}/records/${encodeURIComponent(recordId)}/status`,
+    { status },
+  );

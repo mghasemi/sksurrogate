@@ -44,6 +44,7 @@ def _heatmap_payload(frame: pd.DataFrame, index_col: str | None, max_features: i
 def _load_train_xy(task_name, train_partition):
     with open_tracker(task_name) as tracker:
         metadata = tracker.GetMetadata()
+        partition_history = tracker.dataset_splits()
     target = metadata.get("target_name")
     if target is None:
         raise not_found("No dataset registered for task %r" % task_name)
@@ -52,7 +53,13 @@ def _load_train_xy(task_name, train_partition):
         raise not_found("No dataset partition %r stored for task %r" % (train_partition, task_name))
     frame = pd.read_csv(csv_path)
     feature_columns = [column for column in frame.columns if column != target]
-    return feature_columns, frame[feature_columns].values, frame[target].values
+    partition_metadata = partition_history.get(train_partition, {})
+    return (
+        feature_columns,
+        frame[feature_columns].values,
+        frame[target].values,
+        partition_metadata.get("fingerprint"),
+    )
 
 
 @router.post("/{task_name}/run")
@@ -60,7 +67,9 @@ def run_sensitivity(task_name: str, body: SensitivityRequest):
     """Submit a sensitivity-analysis job and return its job id immediately (202-style)."""
     if body.method not in {"sobol", "morris", "delta-mmnt"}:
         raise bad_request("method must be one of sobol, morris, delta-mmnt")
-    feature_columns, X, y = _load_train_xy(task_name, body.train_partition)
+    feature_columns, X, y, train_fingerprint = _load_train_xy(
+        task_name, body.train_partition
+    )
 
     def _task():
         analyzer = SensAprx(n_features_to_select=body.n_features_to_select, method=body.method)
@@ -76,6 +85,12 @@ def run_sensitivity(task_name: str, body: SensitivityRequest):
             "top_feature_indices": top_indices,
             "top_feature_names": [feature_columns[index] for index in top_indices],
             "weights": weights,
+            "evaluation_protocol": {
+                "train_partition": body.train_partition,
+                "train_fingerprint": train_fingerprint,
+                "row_count": len(X),
+                "feature_columns": feature_columns,
+            },
             "interpretation": {
                 "category": "input_sensitivity",
                 "measure": body.method,
@@ -88,14 +103,19 @@ def run_sensitivity(task_name: str, body: SensitivityRequest):
             },
         }
 
-    job_id = job_manager.submit(task_name, "sensitivity", lambda job_id: _task)
+    job_id = job_manager.submit(
+        task_name,
+        "sensitivity",
+        lambda job_id: _task,
+        metadata_factory=lambda job_id: {"request": body.model_dump(mode="json")},
+    )
     return {"job_id": job_id, "status": "queued"}
 
 
 @router.post("/{task_name}/correlation-threshold")
 def run_correlation_threshold(task_name: str, threshold: float = 0.7, train_partition: str = "train"):
     """Fast, synchronous correlation-based feature pruning (no job needed)."""
-    feature_columns, X, _ = _load_train_xy(task_name, train_partition)
+    feature_columns, X, _, _ = _load_train_xy(task_name, train_partition)
     selector = CorrelationThreshold(threshold=threshold)
     selector.fit(X)
     dropped_indices = sorted(set(range(len(feature_columns))) - set(selector.indices))
@@ -109,7 +129,7 @@ def run_correlation_threshold(task_name: str, threshold: float = 0.7, train_part
 @router.get("/{task_name}/correlation-matrix")
 def get_correlation_matrix(task_name: str, train_partition: str = "train", max_features: int = 60):
     """Pearson correlation matrix of the features — the data behind ``mltrack.heatmap``."""
-    feature_columns, X, _ = _load_train_xy(task_name, train_partition)
+    feature_columns, X, _, _ = _load_train_xy(task_name, train_partition)
     frame = pd.DataFrame(X, columns=feature_columns).corr()
     return {
         "task_name": task_name,
@@ -144,7 +164,7 @@ def get_weights_heatmap(task_name: str, train_partition: str = "train", max_feat
         payload = _heatmap_payload(weights_df, "feature", max_features)
         return {"task_name": task_name, "kind": "weights", "available": True, "source": "stored", **payload}
 
-    feature_columns, X, y = _load_train_xy(task_name, train_partition)
+    feature_columns, X, y, _ = _load_train_xy(task_name, train_partition)
     frame = pd.DataFrame(X, columns=feature_columns)
     frame["__target__"] = y
     weights_df = pd.DataFrame(
