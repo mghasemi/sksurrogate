@@ -327,10 +327,12 @@ Open **Registry & Deployment**.
 
 1. **Register** the bundle: it enters the registry as a *candidate*.
 2. **Promote** it along ``validated → staging → production``. Each step reruns
-   the default bundle check (not the custom metric thresholds from the
-   Quality Gates page) and needs *N* unique approver names
-   (comma-separated, e.g. ``alice, bob`` with *Required approvals* = 2).
-   Approvers are free text in this version; there is no authentication.
+   the default bundle check, which verifies that it can be loaded but does not
+   apply the custom metric thresholds or bundle-size limit from the Quality
+   Gates page. Enforce any required custom policy separately before promoting.
+   Each step also needs *N* unique approver names (comma-separated, e.g.
+   ``alice, bob`` with *Required approvals* = 2). Approvers are free text in
+   this version; there is no authentication.
 3. The lifecycle strip shows which version holds each alias, with a **Use in
    Inference** shortcut. **Rollback** re-points an alias at an earlier version.
 

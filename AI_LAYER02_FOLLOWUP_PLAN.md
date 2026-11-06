@@ -7,10 +7,10 @@ Track decisions and progress for incorporating the recommendations in
 and follow-up document; update the status and progress log as work is verified
 or completed.
 
-**Status:** Phases 0, 1, 3, and 6 are complete. Phases 2, 4, and 5 are in
-progress; Phase 7 is not started. The broader inference, provenance, research
-workflow, and reporting work remains. This plan is based on a review of the
-documentation, not a fresh audit of every implementation claim.
+**Status:** Phases 0–3 and 6 are complete. Phases 4 and 5 are in progress;
+Phase 7 is not started. Broader inferential methods, provenance, and research
+workflow work remain. This plan is based on a review of the documentation,
+not a fresh audit of every implementation claim.
 
 The existing [`AI_LAYER_ROADMAP.md`](./AI_LAYER_ROADMAP.md) remains the
 canonical implementation plan and status record for overlapping work. Its
@@ -88,9 +88,10 @@ promotion behavior, Projects UI, configured port, and canonical API names.
   degree-5 basis with four support points raises the documented rank-deficiency
   `ValueError`; `surrogate_info_` records the failed fit and no fallback masks
   the error.
-- [>] Do not add an automatic fallback yet. Define a policy for switching
-  regressors and accounting for retries and budgets before revisiting it; the
-  current explicit error and fit diagnostics preserve failure visibility.
+- [x] Decision complete: do not add an automatic fallback yet. A switching
+  policy must specify retry accounting, evaluation budget, and surfaced
+  diagnostics first; current explicit errors and fit diagnostics preserve
+  failure visibility.
 
 **Done when:** preset guarantees and surrogate failure behavior are evidenced
 by focused tests, and each review item has a recorded disposition.
@@ -128,13 +129,16 @@ bounded profile and repeated-CV comparison APIs.
   reproducibility parameters for the extended profile. Outlier and association
   results remain diagnostic, not conclusions; group comparisons are
   descriptive only and perform no hypothesis tests.
-- [~] Specify a separate inference/model-comparison surface for uncertainty,
-  paired comparisons, practical effect sizes, multiplicity, and stability.
-  Evaluate candidates such as bootstrap/BCa intervals, paired permutation or
-  other evaluation-design-appropriate comparisons, standardized effects or
-  Cliff's delta, and Holm or Benjamini–Hochberg correction. Audit the existing
-  paired repeated-CV bootstrap and avoid treating folds as independent
-  samples.
+- [x] Specify the inference/model-comparison contract and evaluate candidate
+  methods. The existing paired repeat-level bootstrap and Cohen's ``d_z`` are
+  descriptive summaries only: repeated-CV observations overlap, so the
+  interval is not a nominal-coverage inferential interval and excluding zero
+  is not a significance claim. BCa does not repair dependence; paired
+  permutation needs a defensible exchangeability/randomization design;
+  Cliff's delta answers a different ordinal-effect question; multiplicity
+  correction needs a pre-specified comparison family. Defer these methods
+  until an appropriate independent-unit evaluation design and calibrated
+  inferential contract exist.
 - [x] Make comparisons auditable: expose whether partitions, scoring,
   preprocessing, tuning boundaries, and test-set use are aligned; reject or
   clearly flag incomparable results. The nested-CV evaluator records partition
@@ -142,11 +146,13 @@ bounded profile and repeated-CV comparison APIs.
   policy, group identity, fixed-estimator scope, and validation use. Paired
   comparisons reject known protocol mismatches and label legacy results,
   missing fingerprints, or opaque scoring as unverified.
-- [~] Add targeted simulation tests for statistical behavior and edge cases
-  before offering additional tests or inferential claims. A seeded simulation
-  now checks the paired percentile bootstrap under independent paired score
-  draws and a constant-difference edge case; repeated-CV dependence and
-  inferential validity remain unverified, so no significance claim is made.
+- [x] Add targeted simulation tests for supported statistical behavior and
+  edge cases before offering further claims. Seeded simulation checks paired
+  percentile-bootstrap coverage for independent paired score draws (96/100
+  coverage for a true 0.08 shift) and verifies constant-difference behavior;
+  tests also cover invalid/unpaired inputs and protocol mismatch. Repeated-CV
+  dependence is not validated as inference: no significance claim is made
+  and dependence-sensitive inference is deferred.
 
 **Done when:** EDA and comparisons return reproducible computational results
 with explicit assumptions and prevent common invalid interpretations.
@@ -217,13 +223,18 @@ mistaking empirical coverage on a small sample for a guarantee.
   and follows the exact request, partition fingerprint, result, and snapshot.
   Sensitivity jobs now retain their method request plus partition fingerprint,
   row count, and input columns; an API test links the result as project
-  evidence. The project checklist now carries project context into Feature
-  Analysis and automatically links a completed sensitivity job to that
-  project through an idempotent additive-link endpoint, avoiding replacement
-  of project metadata or loss of concurrently added artifact references;
-  unfinished and failed jobs are not linked. Other job kinds remain manually
-  linkable after completion. Project summaries report completed analysis
-  separately from model-training progress. Linked jobs now have a direct
+  evidence. The project checklist now carries project context into data
+  registration, Feature Analysis, and Experiments. A successfully registered
+  partition is automatically linked; completed sensitivity, experiment, and
+  pipeline-optimization jobs are linked through an idempotent additive-link
+  endpoint, avoiding replacement of project metadata or loss of concurrently
+  added artifact references; unfinished and failed jobs are not linked.
+  Experiment and pipeline-optimization results also link the produced bundle
+  when the result provides a model version. Launching analysis or experiments
+  retains the submitted task identity, so changing the active task while a
+  job runs does not misdirect its project link. Project summaries report
+  completed analysis separately from model-training progress. Linked
+  jobs now have a direct
   Inspect job link into the Jobs page's tracker and result view; research-
   record evidence repeats that link when its job still exists, so claims can
   be followed directly to their supporting output. A broader research
@@ -557,6 +568,15 @@ evaluation, clear limitations, and a decision to implement or defer.
   non-null result from a completed linked job or an existing linked bundle.
   Regression coverage confirms a completed job record without a result does
   not satisfy the stage.
+- 2026-11-05: Closed the remaining Phase 2 comparison items. Documented that
+  repeat-level bootstrap intervals and paired ``d_z`` are descriptive, not
+  nominal-coverage inference under repeated-CV dependence; BCa, paired
+  permutation, Cliff's delta, and multiplicity correction are deferred with
+  method-specific rationale. Tightened the seeded IID bootstrap simulation
+  acceptance threshold to 90%; the fixed simulation yielded 96/100 coverage
+  for a true 0.08 shift. Five focused paired-comparison tests passed. All
+  Phase 0–2 checklist items are now marked done, including the explicit Phase 1
+  decision to defer automatic surrogate fallback.
 - 2026-11-06: The project checklist now opens Feature Analysis with project
   context, and successful sensitivity jobs are automatically linked back to
   the project. Failed or unfinished jobs are not linked; other jobs remain
@@ -565,3 +585,23 @@ evaluation, clear limitations, and a decision to implement or defer.
   endpoint for adding a single reference while preserving all project fields
   and existing snapshots. Project-launched sensitivity jobs now use this
   operation instead of replacing the project's artifact list.
+- 2026-11-05: Extended project context to Experiments. Completed experiment
+  and pipeline-optimization jobs launched there are automatically attached to
+  the project; failed and unfinished jobs are not. The project evidence API's
+  atomic append operation avoids overwriting concurrent artifact links.
+- 2026-11-05: Project-launched analysis and experiment jobs now retain the
+  task name used at submission for completion-time artifact linking. Switching
+  the active task while a background job runs no longer changes the task
+  identity used for the project reference. The web UI type-check/build passed.
+- 2026-11-05: Completed experiment and pipeline-optimization jobs now also
+  link their produced model bundle when the result contains ``model_version``.
+  Link failures are surfaced in the Research Project card rather than silently
+  ignored; bundle snapshots preserve the existing run configuration and
+  lineage evidence.
+- 2026-11-05: The project checklist now carries context into data registration.
+  A successful partition upload links its returned task/partition identity
+  through the additive endpoint; upload or linking failures remain visible in
+  the Datasets page. Added regression coverage that the appended partition
+  snapshot captures its registered fingerprint and reports current status.
+  Validation passed: 20 project endpoint tests, the web UI production build,
+  and ``git diff --check``.

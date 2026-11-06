@@ -505,6 +505,46 @@ class TestResearchProjectEndpoints(unittest.TestCase):
         self.assertIsNone(updated["artifacts"][1]["snapshot"]["details"]["result_fingerprint"])
         self.assertEqual(repeated, updated)
 
+    def test_add_project_artifact_captures_model_bundle_snapshot(self):
+        project = projects_router.create_project(
+            CreateProjectRequest(name="Produced bundle")
+        )
+
+        updated = projects_router.add_project_artifact(
+            project["project_id"],
+            self._artifact("model_bundle", BUNDLE_VERSION),
+        )
+
+        bundle_reference = updated["artifacts"][0]
+        self.assertEqual(bundle_reference["kind"], "model_bundle")
+        self.assertEqual(bundle_reference["snapshot"]["details"]["run_id"], "baseline-run")
+        self.assertEqual(
+            bundle_reference["snapshot"]["identity"]["artifact_id"],
+            BUNDLE_VERSION,
+        )
+
+    def test_add_project_artifact_captures_registered_partition_fingerprint(self):
+        project = projects_router.create_project(
+            CreateProjectRequest(name="Registered partition")
+        )
+
+        updated = projects_router.add_project_artifact(
+            project["project_id"],
+            self._artifact("dataset_partition", "train"),
+        )
+
+        with open_tracker(TASK) as tracker:
+            fingerprint = tracker.dataset_splits()["train"]["fingerprint"]
+        artifact = updated["artifacts"][0]
+        self.assertEqual(artifact["artifact_id"], "train")
+        self.assertEqual(artifact["snapshot"]["details"]["fingerprint"], fingerprint)
+        self.assertEqual(
+            projects_router.project_summary(project["project_id"])["artifacts"][0][
+                "snapshot_status"
+            ],
+            "current",
+        )
+
     def test_project_modeling_stage_only_counts_completed_modeling_jobs(self):
         for job_id, expected in (
             (JOB_ID, False),

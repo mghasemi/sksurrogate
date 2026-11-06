@@ -98,11 +98,14 @@ Append an observation with ``POST /api/projects/{project_id}/notes``::
 
 Each note receives its own ID and creation timestamp. The web UI's **Projects**
 page can create projects, show their progress, link available artifacts,
-append notes, and add research records. **Run an analysis** carries the
-project context to Feature Analysis; a completed sensitivity job is
-automatically linked through the additive artifact endpoint, while failed or
-unfinished jobs are not. Other jobs can be linked from the Projects page after
-completion. Linked job
+append notes, and add research records. **Register data**, **Run an analysis**,
+and **Run an experiment** carry the project context to their respective pages.
+A successfully registered partition is automatically linked to the project.
+Completed sensitivity, experiment, and pipeline-optimization jobs launched
+in that context are automatically linked through the additive artifact
+endpoint; failed or unfinished jobs are not. When a completed modeling job
+returns a ``model_version``, its produced bundle is linked as well. Other jobs
+can be linked from the Projects page after completion. Linked job
 evidence has an **Inspect job** link to open its tracker and result. Evidence
 in saved records also shows whether its linked artifact snapshot is current,
 changed, missing, or unverified. Projects do not yet support notebook

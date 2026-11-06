@@ -178,7 +178,7 @@ Open **Feature Analysis** after registering a training partition.
   correlation between features. It reports which features would be kept or
   dropped; it does not silently rewrite the registered CSV.
 * **Heatmaps** show sensitivity ranking, Pearson correlation, or feature
-  weights. Weight values can come from stored ``mltrack.FeatureWeights`` data
+  weights. Weight values can come from stored ``mltrack.feature_weights`` data
   or be computed from target correlation and feature variance when appropriate.
 * **Consensus top features** summarizes how often each feature appears in the
   top-ranked sets stored for the task.
@@ -195,7 +195,7 @@ and Explain to review their interpretations together.
 
 These correspond to ``SKSurrogate.sensapprx.SensAprx``,
 ``CorrelationThreshold``, and the feature-analysis methods on
-``SKSurrogate.mltrace.mltrack`` (including ``heatmap`` and ``TopFeatures``).
+``SKSurrogate.mltrace.mltrack`` (including ``heatmap`` and ``top_features``).
 Use these analyses to guide a smaller experiment search space or domain
 review. Correlations describe observed feature association; sensitivity
 indices describe surrogate responses to generated inputs. Neither is causal
@@ -375,12 +375,13 @@ does not establish that a model is suitable for deployment.
 
 .. important::
 
-   The **Promote** form reruns the default bundle check, but it does not carry
-   forward the custom metric thresholds from this page. The default check
-   verifies that the registered bundle can be loaded; it does not enforce
-   metric thresholds. Run this gate and enforce any required metric policy in
-   your release process. The normal promotion endpoint does not provide a
-   verified way to configure metric thresholds.
+   The **Promote** form independently reruns the default bundle check, which
+   verifies that the registered bundle can be loaded. It does not carry
+   forward the custom metric thresholds or bundle-size limit from this page.
+   The promotion endpoint recomputes its default report; a report submitted
+   with the request is not used to enforce those custom thresholds. Enforce
+   any required metric or size policy separately in your release process
+   before promotion.
 
 8. Register, approve, and promote a model
 -----------------------------------------

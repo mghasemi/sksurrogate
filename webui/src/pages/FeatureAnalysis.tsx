@@ -41,6 +41,7 @@ export default function FeatureAnalysisPage() {
   const [nFeatures, setNFeatures] = useState(5);
   const [trainPartition, setTrainPartition] = useState("train");
   const [jobId, setJobId] = useState<string | null>(null);
+  const [jobTask, setJobTask] = useState<string | null>(null);
 
   const [threshold, setThreshold] = useState(0.7);
   const [corrResult, setCorrResult] = useState<CorrelationThresholdResult | null>(null);
@@ -49,7 +50,7 @@ export default function FeatureAnalysisPage() {
   const [sensResult, setSensResult] = useState<SensitivityJobResult | null>(null);
 
   const linkProjectJobMut = useMutation({
-    mutationFn: async ({ jobId: completedJobId, taskName }: { jobId: string; taskName: string }) => {
+    mutationFn: ({ jobId: completedJobId, taskName }: { jobId: string; taskName: string }) => {
       if (!projectId) throw new Error("Project context is missing.");
       return addProjectArtifact(projectId, {
         kind: "job",
@@ -66,9 +67,17 @@ export default function FeatureAnalysisPage() {
   });
 
   const sensMut = useMutation({
-    mutationFn: () => runSensitivity(task, { method, n_features_to_select: nFeatures, train_partition: trainPartition }),
+    mutationFn: async () => ({
+      ...(await runSensitivity(task, {
+        method,
+        n_features_to_select: nFeatures,
+        train_partition: trainPartition,
+      })),
+      taskName: task,
+    }),
     onSuccess: (res) => {
       setJobId(res.job_id);
+      setJobTask(res.taskName);
       setSensResult(null);
       qc.invalidateQueries({ queryKey: ["jobs"] });
     },
@@ -159,8 +168,8 @@ export default function FeatureAnalysisPage() {
               <JobTracker
                 jobId={jobId}
                 onResult={(result) => {
-                  if (projectId && task) {
-                    linkProjectJobMut.mutate({ jobId, taskName: task });
+                  if (projectId && jobTask) {
+                    linkProjectJobMut.mutate({ jobId, taskName: jobTask });
                   }
                   const decoded = asSensitivityResult(result);
                   if (!decoded) return;

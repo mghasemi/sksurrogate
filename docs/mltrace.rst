@@ -326,6 +326,25 @@ explicitly unverified; the caller must verify those cases. Since repeated CV
 repeats reuse observations and training sets, the interval summarizes variation
 across repeats; it is not an independent-sample significance test.
 
+The current comparison contract is deliberately descriptive: the resampling
+unit is a paired, complete repeat-level score difference, not an individual
+fold. The paired Cohen's :math:`d_z` and percentile interval summarize the
+observed repeat differences; the interval must not be interpreted as a
+nominal-coverage confidence interval for the population performance
+difference, and excluding zero is not a significance claim. A seeded
+simulation checks percentile-bootstrap coverage for independent paired score
+draws only; it does not establish coverage under repeated-CV dependence.
+
+BCa intervals do not resolve dependence between CV repeats, and a paired
+permutation test would need a defensible exchangeability or randomized
+assignment design. Cliff's delta targets an ordinal probability effect rather
+than the mean score difference. Multiplicity correction also requires an
+explicit family of pre-specified comparisons. These methods are not currently
+reported. For confirmatory comparisons, define the independent unit and
+comparison family in advance and use an evaluation design that supports the
+intended inferential claim; do not treat folds or repeated-CV runs as
+independent subjects.
+
 For uncertainty-aware single-target regression, use split conformal prediction
 with disjoint training and calibration partitions::
 

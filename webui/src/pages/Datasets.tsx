@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { UploadCloud } from "lucide-react";
 
 import {
+  addProjectArtifact,
   downloadSynthetic,
   generateSynthetic,
   getDatasetCV,
   getDatasetMetadata,
+  getProject,
   getTargetStats,
   inspectDataset,
   listSynthetic,
@@ -52,6 +55,16 @@ function describeCv(spec: CVSpec): string {
 export default function DatasetsPage() {
   const { task } = useTask();
   const qc = useQueryClient();
+  const [searchParams] = useSearchParams();
+  const projectId = searchParams.get("project_id");
+  const projectQ = useQuery({
+    queryKey: ["project", projectId],
+    queryFn: () => {
+      if (!projectId) throw new Error("Project id is required.");
+      return getProject(projectId);
+    },
+    enabled: Boolean(projectId),
+  });
 
   const [target, setTarget] = useState("");
   const [partition, setPartition] = useState("train");
@@ -90,6 +103,21 @@ export default function DatasetsPage() {
   const validateStoredMut = useMutation({
     mutationFn: (storedPartition: string) => validateDataset(task, { partition: storedPartition }),
   });
+  const linkProjectPartitionMut = useMutation({
+    mutationFn: ({ taskName, partitionName }: { taskName: string; partitionName: string }) => {
+      if (!projectId) throw new Error("Project context is missing.");
+      return addProjectArtifact(projectId, {
+        kind: "dataset_partition",
+        task_name: taskName,
+        artifact_id: partitionName,
+      });
+    },
+    onSuccess: (project) => {
+      qc.setQueryData(["project", project.project_id], project);
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["project-summary", project.project_id] });
+    },
+  });
 
   const registerMut = useMutation({
     mutationFn: (vars: { target: string; partition: string; file: File }) =>
@@ -97,9 +125,15 @@ export default function DatasetsPage() {
         type_overrides: typeOverrides,
         binarize_label: binarizeLabel,
       }),
-    onSuccess: () => {
+    onSuccess: (registered) => {
       qc.invalidateQueries({ queryKey: ["dataset-meta", task] });
       qc.invalidateQueries({ queryKey: ["target-stats", task] });
+      if (projectId) {
+        linkProjectPartitionMut.mutate({
+          taskName: registered.task_name,
+          partitionName: registered.partition,
+        });
+      }
       setFile(null);
       setTypeOverrides({});
       setBinarizeLabel(false);
@@ -194,6 +228,19 @@ export default function DatasetsPage() {
         <h1>Datasets</h1>
         <span className="desc">Register CSV partitions, inspect schema and fingerprint for task “{task || "…"}”</span>
       </div>
+
+      {projectId && (
+        <Card title="Research project">
+          {projectQ.isLoading && <Loading label="Loading project…" />}
+          {projectQ.isError && <ErrorNote error={projectQ.error} />}
+          {projectQ.data && (
+            <p className="muted">
+              A successfully registered partition will be linked to “{projectQ.data.name}”.
+            </p>
+          )}
+          {linkProjectPartitionMut.isError && <ErrorNote error={linkProjectPartitionMut.error} />}
+        </Card>
+      )}
 
       {!task && (
         <div className="error-note">Pick a task name in the top bar to work with datasets.</div>

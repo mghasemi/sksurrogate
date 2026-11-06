@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import {
   CartesianGrid,
   ResponsiveContainer,
@@ -11,8 +12,10 @@ import {
 } from "recharts";
 
 import {
+  addProjectArtifact,
   DEFAULT_EXPERIMENT_CONFIG,
   STACKING_COMPONENT,
+  getProject,
   getPresets,
   getScoringOptions,
   optimizePipeline,
@@ -117,11 +120,22 @@ function spaceWarnings(space: ParsedSpace, forbidden: Array<[string, unknown]> |
 interface PipelineJob {
   jobId: string;
   seq: string[];
+  taskName: string;
 }
 
 export default function ExperimentsPage() {
   const { task } = useTask();
   const qc = useQueryClient();
+  const [searchParams] = useSearchParams();
+  const projectId = searchParams.get("project_id");
+  const projectQ = useQuery({
+    queryKey: ["project", projectId],
+    queryFn: () => {
+      if (!projectId) throw new Error("Project id is required.");
+      return getProject(projectId);
+    },
+    enabled: Boolean(projectId),
+  });
 
   const [mode, setMode] = useState<"quick" | "advanced">("quick");
   const [preset, setPreset] = useState<"classification" | "regression">("classification");
@@ -138,10 +152,55 @@ export default function ExperimentsPage() {
   const [strategy, setStrategy] = useState<"eoa" | "surrogate">("eoa");
   const [surrogateItrs, setSurrogateItrs] = useState(20);
   const [jobId, setJobId] = useState<string | null>(null);
+  const [jobTask, setJobTask] = useState<string | null>(null);
   const [result, setResult] = useState<ExperimentResult | null>(null);
   const [pipelineJobs, setPipelineJobs] = useState<PipelineJob[]>([]);
 
   const [configError, setConfigError] = useState<string | null>(null);
+  const linkProjectJobMut = useMutation({
+    mutationFn: ({
+      completedJobId,
+      label,
+      taskName,
+    }: {
+      completedJobId: string;
+      label: string;
+      taskName: string;
+    }) => {
+      if (!projectId) throw new Error("Project context is missing.");
+      return addProjectArtifact(projectId, {
+        kind: "job",
+        task_name: taskName,
+        artifact_id: completedJobId,
+        label,
+      });
+    },
+    onSuccess: (project) => {
+      qc.setQueryData(["project", project.project_id], project);
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["project-summary", project.project_id] });
+    },
+  });
+  const linkProjectBundleMut = useMutation({
+    mutationFn: ({ taskName, modelVersion }: { taskName: string; modelVersion: string }) => {
+      if (!projectId) throw new Error("Project context is missing.");
+      return addProjectArtifact(projectId, {
+        kind: "model_bundle",
+        task_name: taskName,
+        artifact_id: modelVersion,
+      });
+    },
+    onSuccess: (project) => {
+      qc.setQueryData(["project", project.project_id], project);
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["project-summary", project.project_id] });
+    },
+  });
+  const linkResultBundle = (taskName: string, result: Record<string, unknown>) => {
+    if (typeof result.model_version !== "string" || !result.model_version) return;
+    linkProjectBundleMut.mutate({ taskName, modelVersion: result.model_version });
+  };
+
   const backendOptionsQ = useQuery({
     queryKey: ["scoring-options"],
     queryFn: getScoringOptions,
@@ -157,7 +216,7 @@ export default function ExperimentsPage() {
   );
 
   const runMut = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       if ("error" in parsed) throw new Error(parsed.error);
       const body: RunExperimentRequest = {
         config: parsed.config,
@@ -172,35 +231,45 @@ export default function ExperimentsPage() {
         backend,
         strategy: engine,
       };
-      return runExperiment(task, body);
+      return { ...(await runExperiment(task, body)), taskName: task };
     },
     onSuccess: (res) => {
       setJobId(res.job_id);
+      setJobTask(res.taskName);
       setResult(null);
       qc.invalidateQueries({ queryKey: ["jobs"] });
     },
   });
 
   const quickMut = useMutation({
-    mutationFn: () =>
-      runExperiment(task, {
+    mutationFn: async () => ({
+      ...(await runExperiment(task, {
         preset,
         strategy: "surrogate",
         length: budget,
         scoring: quickScoring || presetInfo?.default_scoring,
         random_state: 0,
-      }),
+      })),
+      taskName: task,
+    }),
     onSuccess: (res) => {
       setJobId(res.job_id);
+      setJobTask(res.taskName);
       setResult(null);
       qc.invalidateQueries({ queryKey: ["jobs"] });
     },
   });
 
   const optimizeMut = useMutation({
-    mutationFn: ({ seq }: { seq: string[] }) => optimizePipeline(task, { seq }),
+    mutationFn: async ({ seq }: { seq: string[] }) => ({
+      ...(await optimizePipeline(task, { seq })),
+      taskName: task,
+    }),
     onSuccess: (res, vars) => {
-      setPipelineJobs((prev) => [...prev, { jobId: res.job_id, seq: vars.seq }]);
+      setPipelineJobs((prev) => [
+        ...prev,
+        { jobId: res.job_id, seq: vars.seq, taskName: res.taskName },
+      ]);
       qc.invalidateQueries({ queryKey: ["jobs"] });
     },
   });
@@ -250,6 +319,20 @@ export default function ExperimentsPage() {
         <h1>Experiments</h1>
         <span className="desc">Find the best model for task “{task || "…"}” — runs as a background job</span>
       </div>
+
+      {projectId && (
+        <Card title="Research project">
+          {projectQ.isLoading && <p className="muted">Loading project…</p>}
+          {projectQ.isError && <ErrorNote error={projectQ.error} />}
+          {projectQ.data && (
+            <p className="muted">
+              Completed jobs and produced model bundles will be linked to “{projectQ.data.name}”.
+            </p>
+          )}
+          {linkProjectJobMut.isError && <ErrorNote error={linkProjectJobMut.error} />}
+          {linkProjectBundleMut.isError && <ErrorNote error={linkProjectBundleMut.error} />}
+        </Card>
+      )}
 
       {!task && <div className="error-note">Pick a task name in the top bar first.</div>}
 
@@ -415,7 +498,20 @@ export default function ExperimentsPage() {
 
       {jobId && (
         <>
-          <JobTracker jobId={jobId} onResult={(r) => setResult(r as unknown as ExperimentResult)} />
+          <JobTracker
+            jobId={jobId}
+            onResult={(r) => {
+              setResult(r as unknown as ExperimentResult);
+              if (projectId && jobTask) {
+                linkProjectJobMut.mutate({
+                  completedJobId: jobId,
+                  taskName: jobTask,
+                  label: "experiment",
+                });
+                linkResultBundle(jobTask, r);
+              }
+            }}
+          />
           <p className="muted">
             On completion the job result contains <code>model_version</code>, <code>train_score</code>,{" "}
             <code>top_pipelines</code>, <code>pareto</code> and the full <code>evaluation_history</code>. The new
@@ -451,7 +547,20 @@ export default function ExperimentsPage() {
           </Card>
 
           {pipelineJobs.map((pj) => (
-            <JobTracker key={pj.jobId} jobId={pj.jobId} />
+            <JobTracker
+              key={pj.jobId}
+              jobId={pj.jobId}
+              onResult={(pipelineResult) => {
+                if (projectId) {
+                  linkProjectJobMut.mutate({
+                    completedJobId: pj.jobId,
+                    taskName: pj.taskName,
+                    label: "optimize_pipeline",
+                  });
+                  linkResultBundle(pj.taskName, pipelineResult);
+                }
+              }}
+            />
           ))}
 
           {historyPoints.length > 0 && (

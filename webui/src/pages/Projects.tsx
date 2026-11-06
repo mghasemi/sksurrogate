@@ -190,7 +190,11 @@ function ProjectDetail({ project }: { project: Project }) {
                   className="btn"
                   to={s.stage === "analysis"
                     ? `${STAGE_LINKS[s.stage].to}?project_id=${encodeURIComponent(project.project_id)}`
-                    : STAGE_LINKS[s.stage].to}
+                    : s.stage === "model"
+                      ? `${STAGE_LINKS[s.stage].to}?project_id=${encodeURIComponent(project.project_id)}`
+                      : s.stage === "data"
+                        ? `${STAGE_LINKS[s.stage].to}?project_id=${encodeURIComponent(project.project_id)}`
+                        : STAGE_LINKS[s.stage].to}
                 >
                   {STAGE_LINKS[s.stage].cta}
                 </Link>

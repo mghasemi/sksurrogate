@@ -1646,7 +1646,7 @@ class TestOptimizedPaths(unittest.TestCase):
             covered += interval["lower"] <= true_shift <= interval["upper"]
             observed_differences.append(result["mean_difference"])
 
-        self.assertGreaterEqual(covered / 100, 0.80)
+        self.assertGreaterEqual(covered / 100, 0.90)
         self.assertLess(covered / 100, 1.0)
         self.assertAlmostEqual(float(np.mean(observed_differences)), true_shift, delta=0.02)
 

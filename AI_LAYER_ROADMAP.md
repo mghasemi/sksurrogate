@@ -101,7 +101,7 @@ scope or status. Review-specific recommendations and follow-up decisions from
 | Search cost and surrogate robustness | Partial | Hilbert numerical guards and surrogate diagnostics are implemented (P0.3). The previous real-workload probe mislabeled the library's default GP arm as Hilbert; the benchmark now injects and records Hilbert explicitly, and corrected real-workload comparisons are documented. Component profiling is complete; optimization remains P1.2. |
 | Ensembling, TabPFN, and pruning integrations | Deferred | A bounded holdout-selected ensemble probe (P1.8) showed only a small, inconsistent gain; do not ship a production ensemble API without representative evidence. Do not add heavyweight dependencies by default. |
 | EDA and data intelligence | Partial | P2.1 adds bounded mixed-type dataset profiles and registered-partition API access, with exploratory/non-causal caveats. Unit inference and document extraction remain deferred. |
-| Evaluation uncertainty and statistical comparison | Partial | Nested/repeated evaluation and interval summaries already exist. P1.4 adds paired repeat-score bootstrap intervals/effect sizes and split-conformal regression; broader inferential tests remain future work. |
+| Evaluation uncertainty and statistical comparison | Partial | Nested/repeated evaluation and interval summaries already exist. P1.4 adds paired repeat-score bootstrap intervals/effect sizes and split-conformal regression. The repeated-CV comparison contract is explicitly descriptive (not nominal-coverage inference under dependent repeats); independent-unit inferential methods remain future work. |
 | Explanations and diagnostic plots | Partial | Sensitivity analysis and P1.4 diagnostics exist; P1.5 adds bounded permutation importance and partial-dependence/ICE plots. SHAP remains a separately evaluated, deferred optional integration. |
 | Additional scientific problem classes | Partial | P3 adds chronological splitter-level nested evaluation, quantile regression scoring/learning curves, and a Python split-conformalized quantile interval helper; full forecasting protocols, survival analysis, and UI/API interval integration remain deferred. |
 | Data provenance and lineage | Partial | P2.2 snapshots training settings, partition identity, environment, and evaluation protocol on newly trained API bundles, with JSON/Markdown exports and persisted nested-CV uncertainty. Target construction and upstream exclusions remain user-supplied provenance gaps. |
@@ -645,6 +645,23 @@ acceptance criteria are met.
   Added an idempotent single-artifact append endpoint so automatic linking does
   not replace other project metadata or overwrite a concurrent artifact link.
   The web UI production build and TypeScript check passed.
+
+- **2026-11-05 — P2.5 project-launched experiments:** the project checklist
+  now passes project context into Experiments. Completed experiment and
+  pipeline-optimization jobs are automatically linked to the project using
+  the additive artifact endpoint; failed and unfinished jobs are not linked.
+  Analysis and experiment launch flows retain the submitted task name for
+  completion-time linking, even if the active task later changes. The UI
+  production build and TypeScript check passed.
+  Completed experiment and pipeline-optimization results also add the produced
+  bundle reference to the project when ``model_version`` is present; link
+  errors are shown in the project context.
+
+- **2026-11-05 — P2.5 project data registration:** the checklist now carries
+  project context to Datasets; a successful registration links the partition
+  using the server-returned task and partition identity. Link failures remain
+  visible in the UI. Added snapshot fingerprint coverage; 20 project endpoint
+  tests and the web UI production build passed.
 
 - **2026-11-05 — P1.2 profiling follow-up:** reran the component profiler on
   the fixed Galaxy3 split at 21 evaluations (RF(10), five-fold CV). The default
