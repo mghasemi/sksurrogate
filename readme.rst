@@ -42,6 +42,23 @@ the previous cubic Hilbert polynomial on the evidence of the equal-budget benchm
 custom regressor based on Hilbert Space techniques is still available (``HilbertRegressor``),
 and all ``scikit-learn`` regressors are accepted for optimization.
 
+Understand what you tuned
+-------------------------
+Once a run has finished, ``SKSurrogate`` explains *what* the fitted model depends on — not just
+*where* the search stopped:
+
+- **Model explanations**: permutation importance and partial-dependence plots for a stored
+  model bundle show which features drive its predictions. Available through the control plane
+  (explain endpoint) and in the web UI; see the
+  `control-plane guide <https://sksurrogate.readthedocs.io/en/latest/controlplane.html>`_ and the
+  `scientific workflow guide <https://sksurrogate.readthedocs.io/en/latest/mltrace.html>`_.
+- **Sensitivity analysis**: Sobol, Morris, and moment-independent δ indices quantify which
+  inputs dominate output variance — useful for pruning expensive models or diagnosing a tuned
+  pipeline. See the `sensitivity analysis guide <https://sksurrogate.readthedocs.io/en/latest/sensitivity.html>`_.
+
+Both are descriptive, model-attributive analyses: they quantify how the learned response depends
+on its inputs, not causal effects.
+
 Quick start
 -----------
 ``SurrogateRandomCV`` is a drop-in for ``RandomizedSearchCV``; ranges can be written as plain

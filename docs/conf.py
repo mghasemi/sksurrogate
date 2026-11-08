@@ -40,6 +40,22 @@ extensions = ['sphinx.ext.autodoc',
 
 autosummary_generate = False
 
+# scikit-learn injects metadata-routing boilerplate (``get_metadata_routing``,
+# ``set_*_request``) into every BaseEstimator subclass; its docstrings reference
+# labels that only exist in sklearn's own documentation and would otherwise emit
+# unresolved-reference warnings. Keep the API reference free of this noise.
+
+
+def _skip_sklearn_boilerplate(app, what, name, obj, allownb, options):
+    if name == "get_metadata_routing" or (
+        name.startswith("set_") and name.endswith("_request")
+    ):
+        return True
+
+
+def setup(app):
+    app.connect("autodoc-skip-member", _skip_sklearn_boilerplate)
+
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
 

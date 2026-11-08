@@ -1,3 +1,7 @@
+---
+orphan: true  # working implementation plan, intentionally not in the public toctree
+---
+
 # SKSurrogate → UI Gap Implementation Plan
 
 Step-by-step plan for implementing every library feature that is currently absent from the
@@ -64,7 +68,7 @@ only** (gain/lift raise otherwise).
 
 1. **API** — one endpoint returning all four curve datasets for a bundle:
    - `GET /api/evaluation/{task}/{model_version}/curves?bins=10` →
-     ```json
+     ```text
      {
        "roc": {"fpr": [...], "tpr": [...], "auc": 0.93},
        "calibration": {"mean_predicted_value": [...], "fraction_of_positives": [...],

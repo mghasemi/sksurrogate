@@ -45,6 +45,7 @@ automatically:
   + Label
   + Text
   + Objects
+
 We note that the Object type could include various types which may have a
 known structure but are not implemented in the module yet.
 

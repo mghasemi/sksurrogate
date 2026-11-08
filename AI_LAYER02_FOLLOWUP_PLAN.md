@@ -605,3 +605,48 @@ evaluation, clear limitations, and a decision to implement or defer.
   snapshot captures its registered fingerprint and reports current status.
   Validation passed: 20 project endpoint tests, the web UI production build,
   and ``git diff --check``.
+- 2026-11-07: Completed the explainability visibility pass per
+  ``HANDOFF-explainability-visibility.md`` (T1–T4; docs/assets only, no package
+  source changes). T1: ``readme.rst`` gained an "Understand what you tuned"
+  section between the hybrid loop and Quick start covering exactly the two
+  shipped capabilities — model explanations (permutation importance + partial
+  dependence via the control-plane explain endpoint and web UI) and sensitivity
+  analysis (Sobol/Morris/δ, built slug ``sensitivity.html``) — with
+  descriptive-not-causal wording per the §3 guardrails. T2: ``LAUNCH_PLAN.md``
+  now leads differentiator #1 in §3.2 point 3 with robustness/stability citing
+  ``docs/images/stability_contour.png`` as artifact (statistical evaluation and
+  research workspace kept verbatim at positions 2–3; surrogate hybrid search
+  retained as item 4), and the §2.5 media kit gained the stability figure plus
+  explain-page screenshots extracted from existing manual/walkthrough shots with
+  source pointers. T3: new asset script ``docs/images/make_stability_contour.py``
+  (public API only — ``SurrogateRandomCV`` evaluation history over the suite's
+  shared 2-D slice, DESIGN.md §4; stock un-tuned RBF GP; matplotlib) ships
+  credit-g budget 48 seed 7 as ``docs/images/stability_contour.png`` (1200×750);
+  an optdigits budget 36 variant is retained in scratch. Deviation: published
+  runs under ``benchmarks/results/`` store per-evaluation scores without
+  hyperparameter values, so the figure regenerates seeded points at
+  suite-equivalent budgets instead of re-plotting archived runs. T4: media-kit
+  inventory updated accordingly.
+- 2026-11-07: Verification for the visibility pass: docutils parse of
+  ``readme.rst`` clean; every new RTD link resolves to an existing ``docs/``
+  file on this branch (controlplane, mltrace, sensitivity); the T3 script ran
+  to completion in the project venv and again inside the Docker py3.12 dev
+  image (handoff §5.2; requires an ephemeral `openml` install — see open
+  questions), producing a byte-identical credit-g PNG in both environments
+  (sha256 match). Peak-vs-
+  plateau contrast quantified by a seeded re-run of the identical fits: credit-g
+  shows a sharp peak (~1% of grid within 95% of surface range; ~0.13 acc points
+  leaf-axis spread at fixed depth) while optdigits shows a broad plateau (~54%
+  of grid within 75%). Test subset as sanity check (no source changes):
+  ``test_benchmark_methods.py`` + ``test_surrogate_diagnostics.py`` = 8 passed.
+  All changes left in the working tree for maintainer review; nothing committed.
+  Open items / flags: (i) published runs under ``benchmarks/results/`` store no
+  per-evaluation hyperparameters, so the figure regenerates seeded points at
+  suite-equivalent budgets instead of re-plotting archived runs; (ii)
+  ``benchmarks/datasets.py::_download_openml`` imports ``openml`` before its
+  cache check, so any OpenML dataset load fails without the ``[benchmark]``
+  extra even when a warm cache exists — the Docker verification therefore
+  installed it ephemerally inside the container; (iii) §3.2 point 3 now lists
+  four differentiators: robustness/stability was added as #1 per the handoff,
+  and surrogate hybrid search (previously first) is retained at position 4 —
+  maintainer may prefer it re-promoted or dropped.

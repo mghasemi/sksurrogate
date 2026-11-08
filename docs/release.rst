@@ -22,21 +22,21 @@ Before publishing a release:
 Compatibility matrix
 --------------------
 
-+----------------------+----------------------+------------------------------+
-| Area                 | Validated baseline  | Release expectation          |
-+======================+======================+==============================+
-| Python               | 3.11, 3.13          | 3.11 and 3.13 supported     |
-+----------------------+----------------------+------------------------------+
-| Python 3.12          | Not currently run   | Expected compatible; verify  |
-+----------------------+----------------------+------------------------------+
-| NumPy/pandas/sklearn | Current test env    | Record exact versions        |
-+----------------------+----------------------+------------------------------+
-| SQLite tracking DB   | Existing schema     | Reopen and smoke-test        |
-+----------------------+----------------------+------------------------------+
-| EOA checkpoints      | ``checkpoint_version=1`` | Resume or document upgrade |
-+----------------------+----------------------+------------------------------+
-| Model bundles        | ``format_version=1`` | Strict dependency validation |
-+----------------------+----------------------+------------------------------+
++---------------------+-------------------------+-----------------------------+
+| Area                | Validated baseline      | Release expectation         |
++=====================+=========================+=============================+
+| Python              | 3.11, 3.13              | 3.11 and 3.13 supported     |
++---------------------+-------------------------+-----------------------------+
+| Python 3.12         | Not currently run       | Expected compatible; verify |
++---------------------+-------------------------+-----------------------------+
+| NumPy/pandas/sklearn| Current test env        | Record exact versions       |
++---------------------+-------------------------+-----------------------------+
+| SQLite tracking DB  | Existing schema         | Reopen and smoke-test       |
++---------------------+-------------------------+-----------------------------+
+| EOA checkpoints     | ``checkpoint_version=1``| Resume or document upgrade  |
++---------------------+-------------------------+-----------------------------+
+| Model bundles       | ``format_version=1``    | Strict dependency validation|
++---------------------+-------------------------+-----------------------------+
 
 The exact resolved dependency versions used for a release must be recorded in
 release artifacts. Applications should lock their own dependency environment;

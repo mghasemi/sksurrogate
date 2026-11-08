@@ -1,3 +1,7 @@
+---
+orphan: true  # working study doc, intentionally not in the public toctree
+---
+
 # D-track: Hilbert-space surrogate study
 
 _Generated 2026-10-25 04:50 UTC from `benchmarks/results/dtrack/` (raw dirs git-ignored)._

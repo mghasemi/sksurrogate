@@ -4,6 +4,61 @@ Changelog
 Unreleased
 ----------
 
+Rule-rejection fixes for forbidden/conditional experiment rules
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Fixed a silent name mismatch that disabled ``forbidden`` and ``conditional``
+  experiment rules in ``AML`` pipeline search: rules written with bare API-level
+  parameter names (e.g. ``l1_ratio``) never matched the step-prefixed keys of a
+  candidate pipeline's search space (e.g. ``stp_0__l1_ratio``), so banned
+  candidates reached scikit-learn and failed there instead of being rejected by
+  rule. Rules are now expanded per candidate pipeline to every declaring step,
+  list values match "any of these values", callables pass through unchanged, and
+  rules naming a parameter the pipeline does not declare keep the legacy skip
+  behaviour.
+* ``SurrogateRandomCV`` compares forbidden and conditional rule values with one
+  scalar-or-list contract (a list/tuple/set of expected values matches when the
+  candidate's value is any of them), and the final refit now mirrors trial-level
+  conditioning so conditionally inactive parameters are not decoded back into a
+  model the reported score never saw.
+* When every candidate of an ``AML`` run is rejected by rule, both search paths
+  fail with an explicit error naming the cause ("every candidate was rejected")
+  instead of surfacing the underlying fit failure; per-candidate history records
+  carry a ``rule_rejected`` flag, and each surrogate stage's trial history is
+  profiled to tell rule rejections apart from ordinary failures.
+
+pandas 3.x compatibility in fold-local preprocessing
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* ``FoldLocalDataPreprocessor`` no longer routes plain string columns through
+  TF-IDF under pandas >= 3, where they are inferred as a first-class
+  ``StringDtype``: only explicitly declared text columns (``astype("string")`` /
+  ``pandas.StringDtype()``) receive TF-IDF vectorisation; inferred strings fall
+  back to one-hot encoding like object columns. The flatten step also passes
+  ``feature_names_out="one-to-one"`` for current scikit-learn versions.
+
+Launch visibility (docs and assets only)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Readme: new "Understand what you tuned" section covering model explanations
+  (permutation importance + partial-dependence plots, control plane and web UI)
+  and sensitivity analysis (Sobol/Morris/δ indices), linking to the existing
+  documentation guides; wording is scoped to descriptive claims per the launch
+  plan guardrails.
+* New figure ``docs/images/stability_contour.png`` — surrogate posterior mean of
+  cross-validated accuracy over a two-dimensional hyperparameter slice on
+  credit-g, showing local curvature in hyperparameter space (sharp peak vs
+  plateau contrast) — plus its reproducible generator script
+  ``docs/images/make_stability_contour.py`` (package public API only, no new
+  dependencies).
+
+Dependencies and packaging
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Added ``lightgbm>=4.6`` and ``xgboost>=2.1`` to the package requirements: both
+  are part of the default AML candidate pool; lightgbm was previously listed in
+  ``requirements.txt`` only, xgboost is newly declared.
+
 Docker and web UI upgrade
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
