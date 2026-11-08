@@ -131,6 +131,29 @@ LLM-assisted project synthesis (opt-in, Stage D2)
   note provenance.
 
 
+Acquisition readiness assessment (Stage D4, analysis only)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Added ``benchmarks/design_readiness.py``, a reproducible equal-budget harness
+  comparing the shipped GP-LCB design policy with expected improvement (EI),
+  probability of improvement (PI), and a noise-aware (Matern + WhiteKernel)
+  variant on three synthetic 2-D objectives, with paired seeds, identical
+  candidate pools, optional Gaussian observation noise, per-evaluation records,
+  and a versioned report (``sksurrogate.design-readiness.v1``). CLI:
+  ``python -m benchmarks.design_readiness --out DIR``.
+* Result recorded in ``AI_LAYER02_D4_READINESS_ASSESSMENT.md`` and
+  ``benchmarks/DESIGN.md`` §15: at 20 equal evaluations the shipped LCB and the
+  alternatives all beat random by roughly an order of magnitude; EI/PI were
+  neutral without noise; EI showed a weak (6 wins / 4 losses / 5 ties), not
+  significant edge under synthetic noise; PI was worse under noise; and the
+  fixed-length-scale noise-aware model regressed on the oscillatory objective.
+  No production acquisition code, endpoint, or UI change ships, and D4 remains
+  gated on a real expensive-experiment user.
+* Tests: ``tests/test_benchmark_design_readiness.py`` (9 tests) pin equal-budget
+  record shape, strategy validation, seeded determinism, observation-noise
+  recording, noise-aware metadata, and the CLI report contract.
+
+
 Benchmarks: slim-environment dataset loading and per-evaluation records (schema v2)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

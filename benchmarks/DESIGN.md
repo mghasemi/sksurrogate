@@ -1,6 +1,6 @@
 # SKSurrogate Benchmark Suite — Design (B1)
 
-Status: **v1.17** (2026-11-08; §14 gains the Stage D1 PDP/stability ground-truth probe — closes the D1 exit hook for landed Stage C methods; fixed-dataset contract unchanged). Datasets and baselines are pinned below; this doc is the
+Status: **v1.18** (2026-11-08; §15 adds the Stage D4 acquisition-readiness harness — analysis-only, no production design code; fixed-dataset contract unchanged). Datasets and baselines are pinned below; this doc is the
 contract for B2 (runner), B3 (ablation), B4 (publication). Changes after B2 starts require a
 version bump here.
 
@@ -248,6 +248,9 @@ v1.16 additions (2026-11-08):
 
 v1.17 additions (2026-11-08):
 - §14 gains a PDP ground-truth probe (`_pdp_truth_checks`): average partial dependence on the exact noise-free response of the `correlated` and `shift` DGPs equals the analytic curve `h_j(g) + C_j` (C_j read from the same function at `x_j = 0`), and every reference subset's curve may differ only by its offset — the probe pins both at floating-point noise. The descriptive subset standard deviation is reported (`pdp_subset_stability_max_std`), not asserted to zero, because subset reference means legitimately shift an additive curve. This closes the D1 exit hook for the landed Stage C methods (ALE + PDP/stability).
+
+v1.18 additions (2026-11-08):
+- §15 added: Stage D4 acquisition-readiness harness (`benchmarks/design_readiness.py`, report schema `sksurrogate.design-readiness.v1`). It is an **analysis-only** comparison of the shipped GP-LCB policy against EI, PI, and a fixed-length-scale noise-aware GP on the existing synthetic DOE objectives; it ships no production acquisition code, makes no significance claim, and does not satisfy D4's real-user exit criterion.
 
 ## 1. Goal
 
@@ -642,3 +645,44 @@ reference-subset summary (`pdp_true_response_max_abs_error`,
 `pdp_subset_shape_max_deviation`), all at floating-point precision on `correlated`
 and `shift`. The D1 exit criterion is therefore closed for the landed Stage C
 methods; any future explanation or evaluation method is validated here first.
+
+## 15. Acquisition-readiness assessment harness (Stage D4)
+
+`benchmarks/design_readiness.py` is the analysis-only Stage D4 deliverable. It
+compares the **shipped** Gaussian-process LCB policy
+(`SKSurrogate.design.suggest_next_point`, Matern 5/2 with fixed unit length
+scale, `beta=2`) against expected improvement (EI), probability of improvement
+(PI), and a noise-aware variant (`Matern` + `WhiteKernel`, noise level optimized,
+length scale still fixed) on the synthetic 2-D objectives from
+`benchmarks/dtrack/objectives.py` (`trig`, `mixed`, `rational` on `[-1,1]^2`).
+
+**Protocol:** paired seeds; identical seeded Latin-hypercube initial design and
+candidate pool (256 per step) across policies; equal evaluation budgets
+(default: 6 initial + 14 sequential = 20); optional Gaussian observation noise
+(default levels 0 and 0.05); regret measured as best *true* objective value
+evaluated minus the dense-grid optimum. `lcb` exercises the shipped function
+directly, so a regression in that path changes this report.
+
+**Report:** `design_readiness.json`, schema
+`sksurrogate.design-readiness.v1` — protocol, per-evaluation records (`x`,
+`y_true`, `y_observed`, acquisition metadata), per-run summaries (final regret,
+regret AUC), grouped summaries, paired wins/losses/ties versus LCB, wall time,
+and an explicit synthetic-only caveat. CLI:
+`python -m benchmarks.design_readiness --out DIR`.
+
+**Why it is not D4's exit benchmark:** it uses synthetic objectives, synthetic
+Gaussian noise, unit-cost evaluations, a fixed surrogate family, and five default
+seeds. D4's exit criterion — a reproducible equal-budget benchmark in a real
+expensive-experiment regime with an honest read — still requires a real user and
+a representative cost/feasibility model. The harness is the reusable protocol and
+reporting shape for that future run; it deliberately ships no production
+acquisition code.
+
+**Status:** built 2026-11-08; 9 tests in
+`tests/test_benchmark_design_readiness.py`. Decision record and results:
+`AI_LAYER02_D4_READINESS_ASSESSMENT.md` (mean final regret at 20 evaluations:
+LCB 0.0044 clean / 0.0154 noisy; EI 0.0039 / 0.0084; PI 0.0036 / 0.0205;
+noise-aware 0.0537 / 0.0567; random 0.1106). The read: acquisitions are
+second-order on this evidence; EI is the only plausible direction under noise
+and remains unproven at five seeds; the fixed-length-scale noise-aware model is a
+regression. No extension is recommended for shipping yet.

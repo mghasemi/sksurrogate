@@ -108,6 +108,14 @@ fixed unit length scale described above:
      - 0.0592
      - 10 / 10
 
+An additional analysis-only comparison of acquisition rules — shipped LCB
+against expected improvement, probability of improvement, and a
+fixed-length-scale noise-aware GP under equal budgets — is reproducible with
+``python -m benchmarks.design_readiness --out DIR`` and recorded in
+``AI_LAYER02_D4_READINESS_ASSESSMENT.md``. It ships no production acquisition
+code and does not establish a general advantage; it exists to decide whether
+such extensions are worth building.
+
 The fixed-scale LCB policy had lower final regret on all runs in this small,
 fixed benchmark. The unit scale was selected after earlier exploratory
 comparisons on these function families, so this is not an independent estimate

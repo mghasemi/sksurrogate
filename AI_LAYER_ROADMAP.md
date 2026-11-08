@@ -556,7 +556,12 @@ testing on the synthetic and diabetes tasks; the breast-cancer task is a
 separate check. This limited evidence does not establish a general advantage
 or validate physical experiments. Categorical/discrete variables, constraints,
 noise models, adaptive kernel fitting, and broader scientific validation
-remain out of scope.
+remain out of scope. A 2026-11-08 acquisition-readiness assessment
+(`benchmarks/design_readiness.py`, `AI_LAYER02_D4_READINESS_ASSESSMENT.md`)
+compared LCB with EI, PI, and a fixed-length-scale noise-aware GP at equal
+budgets: acquisition changes were neutral without noise, EI had a weak untested
+edge under synthetic observation noise, PI was worse, and the noise-aware model
+regressed; no acquisition extension is recommended for shipping yet.
 
 **Done when:** a bounded prototype produces valid candidate designs and
 demonstrates value on reproducible synthetic and representative real-data
