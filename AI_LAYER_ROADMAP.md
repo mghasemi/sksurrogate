@@ -110,7 +110,7 @@ scope or status. Review-specific recommendations and follow-up decisions from
 | Monitoring persistence and retention | Partial | Inference measurements persist as JSONL and can be reloaded; automatic expiration is unresolved (P0.5). Avoid imposing a retention duration without a deployment requirement. |
 | Automated retraining | Partial | Scheduled/on-data trigger entry points and retraining logic exist, but no automatic scheduler/webhook evaluates and submits due work (P1.7). |
 | Sensitive-feature scanning | Complete for scoped patterns | P1.6 scans bounded local rows for email, formatted US SSN, and formatted US phone patterns, returning aggregate counts only; broader formats and locale-specific detection are not claimed. |
-| Notebook-native UI and conversational assistant | Deferred | Preserve the existing operational UI; notebook interoperability is P2.3. A research assistant is a later product direction, not a prerequisite for deterministic scientific tools. |
+| Notebook-native UI and conversational assistant | Deferred | Preserve the existing operational UI; notebook interoperability is P2.3. A bounded, opt-in cited-note synthesis exists (D2: user-supplied endpoint, aggregate facts only, enforced citations); a conversational/free-form research assistant remains a later product direction, not a prerequisite for deterministic scientific tools. |
 
 - [x] Audit the concrete claims in `ailayer.md` against implementation, tests,
   and current documentation.
@@ -623,9 +623,13 @@ directly from project metadata are deferred.
   bounded conformalized-quantile-regression protocol.
 - [ ] Investigate domain-specific scientific formats and semantic/unit-aware
   data understanding only with clear user needs and a bounded first format.
-- [ ] Treat document extraction, full LLM research assistance, symbolic
-  regression, physics-informed/shape-constrained models, and multi-fidelity
-  optimization as separate research spikes with explicit success criteria.
+- [x] Bounded LLM spike (D2): an opt-in cited-note synthesis layer over a
+  user-supplied OpenAI-compatible endpoint, with aggregate-only facts, enforced
+  citations, and explicit note provenance. No default dependency.
+- [ ] Treat document extraction, broad/free-form LLM research assistance,
+  symbolic regression, physics-informed/shape-constrained models, and
+  multi-fidelity optimization as separate research spikes with explicit
+  success criteria.
 - [ ] Add a model class or integration only after proving API compatibility,
   evaluation correctness, resource requirements, and maintenance cost.
 
@@ -1213,3 +1217,14 @@ acceptance criteria are met.
   C1 decision record. D1's validation harness now checks the ALE kernel and
   average PDP/subset summaries against exact synthetic ground truth at
   floating-point precision.
+
+- **2026-11-08 — Stage D2 cited synthesis (opt-in):** projects can draft one
+  cited note from computed artifacts through a user-supplied
+  OpenAI-compatible endpoint (stdlib HTTP, disabled by default, no core
+  dependency). Facts are aggregates only (profile, optional run, bundle,
+  optional explanations, optional stored alerts); drafts must cite supplied
+  ids or the job fails by name; persistence is an explicit note action that
+  records the model id, citations, and computed facts. The Projects UI gained a
+  Draft synthesis card with generated-interpretation labelling and a
+  computed-facts table. Contract and data-handling review:
+  `AI_LAYER02_D2_LLM_SYNTHESIS_SCOPE.md`. D4/D5 remain gated.

@@ -1824,6 +1824,28 @@ export interface ProjectResearchRecord {
   created_at: string;
 }
 
+export interface SynthesisSource {
+  id: string;
+  kind: string;
+  label: string;
+}
+
+export interface SynthesisFact extends SynthesisSource {
+  data: Record<string, unknown>;
+}
+
+export interface ProjectNote {
+  note_id: string;
+  text: string;
+  created_at: string;
+  source?: "human" | "generated";
+  model?: string | null;
+  citations?: string[];
+  sources?: SynthesisSource[];
+  computed_facts?: SynthesisFact[];
+  synthesis_job_id?: string | null;
+}
+
 export interface Project {
   project_id: string;
   name: string;
@@ -1831,7 +1853,7 @@ export interface Project {
   research_questions: string[];
   artifacts: ProjectArtifact[];
   records: ProjectResearchRecord[];
-  notes: Array<{ note_id: string; text: string; created_at: string }>;
+  notes: ProjectNote[];
   created_at: string;
   updated_at: string;
 }
@@ -1847,6 +1869,71 @@ export interface ProjectSummary {
   >;
   stages: Array<{ stage: string; label: string; done: boolean }>;
 }
+
+export interface SynthesisStatus {
+  enabled: boolean;
+  provider: {
+    configured: boolean;
+    model: string | null;
+    host: string | null;
+    timeout_seconds: number;
+    max_tokens: number;
+    protocol: string;
+  };
+  instructions: Record<string, string>;
+}
+
+export interface SynthesisResult {
+  project_id: string;
+  task_name: string;
+  model_version: string | null;
+  source_job_id: string | null;
+  draft: { text: string; citations: string[]; word_count: number };
+  sources: SynthesisSource[];
+  computed_facts: SynthesisFact[];
+  provider: SynthesisStatus["provider"];
+  interpretation: {
+    category: "generated_interpretation";
+    generated_by: string;
+    causal_effect: false;
+    limitations: string[];
+  };
+}
+
+export const getSynthesisStatus = () => get<SynthesisStatus>("/api/synthesis/status");
+
+export const submitSynthesis = (
+  projectId: string,
+  body: {
+    task_name: string;
+    model_version?: string | null;
+    job_id?: string | null;
+    partition?: string;
+    include_explanations?: boolean;
+    include_drift?: boolean;
+    instruction?: string | null;
+  },
+) =>
+  post<{ job_id: string; status: string; provider: SynthesisStatus["provider"] }>(
+    `/api/synthesis/projects/${encodeURIComponent(projectId)}`,
+    body,
+  );
+
+export const addGeneratedProjectNote = (
+  projectId: string,
+  body: {
+    text: string;
+    model: string;
+    citations: string[];
+    sources: SynthesisSource[];
+    computed_facts: SynthesisFact[];
+    synthesis_job_id?: string | null;
+  },
+) =>
+  post<Project>(`/api/projects/${encodeURIComponent(projectId)}/notes`, {
+    ...body,
+    source: "generated",
+  });
 
 export const listProjects = () => get<{ projects: Project[] }>("/api/projects");
 export const getProject = (id: string) => get<Project>(`/api/projects/${encodeURIComponent(id)}`);

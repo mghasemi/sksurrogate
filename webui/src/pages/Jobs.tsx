@@ -7,7 +7,7 @@ import type { JobRecord } from "../api/client";
 import { Card, ErrorNote, Loading, StatusBadge, Table } from "../components/ui";
 import { JobTracker } from "../components/JobTracker";
 
-const KINDS = ["sensitivity", "nested-cv", "experiment", "optimize_pipeline", "retraining"] as const;
+const KINDS = ["sensitivity", "nested-cv", "experiment", "optimize_pipeline", "retraining", "project-synthesis"] as const;
 const STATUSES = ["queued", "running", "completed", "failed"] as const;
 
 export default function JobsPage() {

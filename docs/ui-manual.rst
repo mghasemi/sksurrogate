@@ -576,6 +576,38 @@ are browser-local; registry audit history is task data stored by the API.
 
    Configure this browser's API connection and inspect registry audit events.
 
+13. Work in research projects
+=============================
+
+Open **Projects** to group one investigation: create a project with a name, a
+short description, and optional research questions, then link existing dataset
+partitions, model bundles, and jobs. The project page shows a checklist from
+question to conclusion, research records with append-only evidence, and a Notes
+list. Project records and notes reference existing artifacts; they do not copy
+datasets, bundles, or job payloads. See :doc:`research-projects` for the API
+contract, including evidence-snapshot statuses (``current``, ``changed``,
+``missing``, ``unverified``).
+
+Projects also offer an optional **Draft synthesis** card. It is enabled only
+when the API process has an OpenAI-compatible model endpoint configured
+(``SKSURROGATE_LLM_BASE_URL`` and ``SKSURROGATE_LLM_MODEL``; see
+:doc:`controlplane`). The card sends only aggregated computed facts — dataset
+profile summaries, job configuration and scalar metrics, bundle metadata,
+explanation summaries, and optional stored monitoring alerts — never raw dataset
+rows or credentials. The generated draft is labelled **Generated
+interpretation**, must cite its sources (``[S1]``…), and is shown next to the
+exact computed facts that were sent. Nothing is saved until you click **Add as
+note**; generated notes then carry a ``generated`` badge, their citations, the
+provider model id, and collapsible computed facts. Treat the prose as
+model-generated interpretation that can be wrong, and verify it against the
+computed facts.
+
+.. figure:: images/ui-project-synthesis.png
+   :alt: Projects page showing a generated cited note and the Draft synthesis card
+
+   A cited generated note with its provenance (top) and the Draft synthesis
+   card with the computed-facts table (bottom).
+
 Feature-to-library reference
 ============================
 
@@ -605,6 +637,8 @@ additional Python examples, see :doc:`code`, :doc:`mltrace`,
 | Monitoring           | Drift, fairness, subgroup, delayed-label reports     |
 +----------------------+------------------------------------------------------+
 | Retraining           | ``RetrainingJob``, execution backends                |
++----------------------+------------------------------------------------------+
+| Projects             | Research metadata, evidence snapshots, cited notes   |
 +----------------------+------------------------------------------------------+
 
 API users can browse the live request and response schemas at

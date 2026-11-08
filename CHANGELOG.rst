@@ -65,6 +65,48 @@ Explanations: accumulated local effects and reference-subset stability
   ``correlated`` and ``shift`` processes); DESIGN.md v1.17.
 
 
+LLM-assisted project synthesis (opt-in, Stage D2)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* New optional workflow that drafts a short, **cited** project note from
+  already computed facts. A user-supplied, OpenAI-compatible chat-completions
+  endpoint is configured through ``SKSURROGATE_LLM_BASE_URL`` /
+  ``SKSURROGATE_LLM_MODEL`` (plus optional key, timeout, and token budget);
+  without configuration the feature returns a ``503`` and sends nothing. It is
+  implemented over the standard library — no new dependency — and the core
+  package remains untouched.
+* ``POST /api/synthesis/projects/{project_id}`` queues a ``project-synthesis``
+  job whose result carries the draft, its citations, the exact aggregated
+  ``computed_facts`` payload, provider metadata, and a
+  ``generated_interpretation`` label with ``causal_effect: false``.
+  ``GET /api/synthesis/status`` reports configuration without exposing
+  credentials.
+* Sources are aggregates only: dataset profile summaries (``S1``), an optional
+  job's whitelisted configuration and scalar metrics (``S2``), bundle metadata
+  (``S3``), explanation summaries (``S4``), and stored monitoring alerts
+  (``S5``). Raw rows, file paths, model objects, and credentials never leave the
+  process. Drafts must cite supplied ids; unknown citations, uncited drafts,
+  empty drafts, and over-length drafts fail the job with a named reason.
+* Project notes gained optional generated provenance: ``source``
+  (``human``/``generated``), ``model``, ``citations``, ``sources``,
+  ``computed_facts``, and ``synthesis_job_id``. Generated notes are rejected
+  without a model id, without citations, with citations that do not match a
+  supplied fact, or with facts above 30,000 characters. Drafts are never saved
+  automatically.
+* Projects UI: new **Draft synthesis** card (provider status, task/bundle/job
+  selectors from linked artifacts, explanation toggle, optional instruction)
+  that renders the draft as *Generated interpretation* with citation chips and a
+  computed-facts table; generated notes in the Notes list carry a badge,
+  citations, model id, and collapsible facts. The Jobs kind filter includes
+  ``project-synthesis``. Contract and data-handling review in
+  ``AI_LAYER02_D2_LLM_SYNTHESIS_SCOPE.md``; docs updated in
+  ``research-projects.rst``, ``ui-manual.rst``, and ``controlplane.rst``.
+* Tests (``tests/test_api_synthesis.py``) use a local stub provider: disabled
+  configuration, cited happy path with aggregate-only prompt assertions,
+  unknown/uncited citation rejection, provider HTTP error mapping, and generated
+  note provenance.
+
+
 Benchmarks: slim-environment dataset loading and per-evaluation records (schema v2)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

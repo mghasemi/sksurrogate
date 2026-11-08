@@ -116,6 +116,12 @@ class UpdateProjectRequest(ProjectFields):
 
 class AddProjectNoteRequest(BaseModel):
     text: str = Field(min_length=1, max_length=10000)
+    source: Literal["human", "generated"] = "human"
+    model: str | None = Field(default=None, max_length=200)
+    citations: list[str] = Field(default_factory=list, max_length=40)
+    sources: list[dict] = Field(default_factory=list, max_length=20)
+    computed_facts: list[dict] = Field(default_factory=list, max_length=12)
+    synthesis_job_id: str | None = Field(default=None, max_length=64)
 
     @field_validator("text")
     @classmethod
@@ -123,6 +129,24 @@ class AddProjectNoteRequest(BaseModel):
         if not value.strip():
             raise ValueError("note text must not be blank")
         return value.strip()
+
+    @model_validator(mode="after")
+    def validate_provenance(self):
+        if self.source != "generated":
+            return self
+        if not self.citations:
+            raise ValueError("generated notes must carry at least one source citation")
+        if not self.model:
+            raise ValueError("generated notes must record the provider model")
+        known = {str(fact.get("id")) for fact in self.computed_facts if fact.get("id")}
+        unknown = [citation for citation in self.citations if citation not in known]
+        if unknown:
+            raise ValueError(
+                "citations %s have no matching computed fact" % ", ".join(unknown)
+            )
+        if len(json.dumps(self.computed_facts, default=str)) > 30000:
+            raise ValueError("computed facts exceed the 30000-character storage budget")
+        return self
 
 
 def _now():
@@ -624,13 +648,23 @@ def update_project_hypothesis_status(
 def add_project_note(project_id: str, body: AddProjectNoteRequest):
     with _PROJECT_LOCK:
         project = _read_project(project_id)
-        project.setdefault("notes", []).append(
-            {
-                "note_id": uuid.uuid4().hex,
-                "text": body.text,
-                "created_at": _now(),
-            }
-        )
+        note: dict = {
+            "note_id": uuid.uuid4().hex,
+            "text": body.text,
+            "created_at": _now(),
+            "source": body.source,
+        }
+        if body.source == "generated":
+            note.update(
+                {
+                    "model": body.model,
+                    "citations": list(body.citations),
+                    "sources": list(body.sources),
+                    "computed_facts": list(body.computed_facts),
+                    "synthesis_job_id": body.synthesis_job_id,
+                }
+            )
+        project.setdefault("notes", []).append(note)
         project["updated_at"] = _now()
         _write_project(project)
     return project

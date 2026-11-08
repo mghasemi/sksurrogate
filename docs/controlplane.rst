@@ -81,13 +81,39 @@ cross-origin browser clients, set ``SKSURROGATE_API_CORS_ORIGINS`` to a
 comma-separated list of explicit origins. Localhost and ``127.0.0.1`` origins
 are allowed for development by default.
 
+Optional LLM-assisted project synthesis
+=======================================
+
+Projects can draft a cited note from computed artifacts through a
+**user-supplied, OpenAI-compatible** chat-completions endpoint. The feature is
+off unless configured, adds no package dependency, and is implemented over the
+standard library. Set these on the API process and restart it:
+
+.. code-block:: console
+
+   export SKSURROGATE_LLM_BASE_URL='https://api.openai.com/v1'
+   export SKSURROGATE_LLM_MODEL='your-model-name'
+   export SKSURROGATE_LLM_API_KEY='your-key'          # optional
+   export SKSURROGATE_LLM_TIMEOUT='60'                # optional seconds
+   export SKSURROGATE_LLM_MAX_TOKENS='700'            # optional output budget
+
+``GET /api/synthesis/status`` reports whether a provider is configured without
+echoing credentials. Synthesis sends only aggregated computed facts (dataset
+profiles, scalar run metrics, bundle metadata, explanation summaries, stored
+alerts) — never raw dataset rows. Drafts must cite the supplied sources and are
+not saved automatically; persisting one is an explicit note action that records
+the model id, citations, and computed facts. The prompt is not stored, while the
+job result and any saved note follow the normal jobs/notes storage rules; the
+operator is responsible for the chosen provider's retention behaviour. See
+:doc:`research-projects` for the full contract and limitations.
+
 API and UI coverage
 ===================
 
 The API groups endpoints by workflow: dataset management, synthetic data,
 experiments and evaluation, sensitivity analysis, bundles and registry,
-inference, quality gates, monitoring, retraining, lineage, and background
-jobs. See the interactive OpenAPI reference at ``/docs`` for request and
+inference, quality gates, monitoring, retraining, lineage, research projects,
+optional LLM-assisted project synthesis, and background jobs. See the interactive OpenAPI reference at ``/docs`` for request and
 response schemas. The web UI provides corresponding workflow pages, including
 dashboard, datasets, experiments, evaluation, model bundles, registry and
 deployment, inference, monitoring, retraining, and settings.

@@ -208,3 +208,59 @@ versioned record-management API before changing that relationship. The Projects
 UI is a bounded record workspace rather than a full workflow orchestrator;
 record editing/deletion and rerunning analyses from project records are not
 provided.
+
+LLM-assisted synthesis (opt-in)
+===============================
+
+Projects can draft a short, **cited** note from already computed artifacts. The
+feature is disabled unless the API process is configured with a user-supplied,
+OpenAI-compatible chat-completions endpoint; it adds no package dependency and
+never receives raw dataset rows. See :doc:`controlplane` for the environment
+variables.
+
+Submit a synthesis job with ``POST /api/synthesis/projects/{project_id}``::
+
+    curl -X POST http://127.0.0.1:8013/api/synthesis/projects/PROJECT_ID \
+      -H 'Content-Type: application/json' \
+      -d '{"task_name":"diabetes","model_version":"VERSION",
+           "job_id":"JOB_ID", "include_explanations":true,
+           "include_drift":false}'
+
+The job returns ``draft`` (text, citations, word count), ``sources``
+(id/kind/label), ``computed_facts`` (the exact aggregate payload sent to the
+provider), ``provider`` metadata, and an ``interpretation`` block labelled
+``generated_interpretation`` with ``causal_effect: false``. ``GET
+/api/synthesis/status`` reports whether a provider is configured without
+echoing credentials.
+
+**Sources and data handling.** Facts are aggregated from stored artifacts:
+``S1`` dataset profile (counts, column kinds/missingness, top target
+associations, quality flags), ``S2`` an optional job's whitelisted
+configuration and scalar metrics, ``S3`` bundle metadata, ``S4`` explanation
+summaries (importance means and ALE ranges), and ``S5`` recent stored monitoring
+alerts. Raw rows, file paths, model objects, and credentials are never sent.
+The prompt is not stored; the job result and any saved note follow the normal
+jobs/notes retention rules, and the operator owns the provider's retention
+behaviour.
+
+**Citation contract.** The system prompt requires a ``[S1]``-style citation for
+every factual sentence. A draft that is empty, longer than 6,000 characters,
+cites nothing, or cites an id that was not supplied fails the job with a named
+reason; it is never accepted silently.
+
+**Saving a draft.** Synthesis does not modify the project. Persisting is an
+explicit note action with provenance::
+
+    curl -X POST http://127.0.0.1:8013/api/projects/PROJECT_ID/notes \
+      -H 'Content-Type: application/json' \
+      -d '{"text":"... [S1] ...", "source":"generated",
+           "model":"MODEL", "citations":["S1"],
+           "computed_facts":[{"id":"S1","kind":"dataset_profile","data":{...}}],
+           "synthesis_job_id":"JOB_ID"}'
+
+Generated notes are rejected without a model id or citations, with citations
+that do not match a supplied fact, or with computed facts above 30,000
+characters. Human notes remain unchanged apart from a ``source: "human"``
+field, and all notes stay append-only. The generated prose is model
+interpretation, not a computed result: verify it against the stored computed
+facts, and do not read citations as evidence of causality.

@@ -25,6 +25,7 @@ from .routers import (
     bundles,
     datasets,
     design,
+    synthesis,
     evaluation,
     experiments,
     explain,
@@ -146,6 +147,7 @@ app.include_router(lineage.router)
 app.include_router(evaluation.router)
 app.include_router(explain.router)
 app.include_router(design.router)
+app.include_router(synthesis.router)
 
 
 @app.get("/api/health", tags=["health"])

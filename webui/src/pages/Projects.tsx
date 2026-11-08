@@ -18,6 +18,7 @@ import {
 } from "../api/client";
 import type { Project, ProjectArtifact, ProjectResearchRecord } from "../api/client";
 import { LineageRail } from "../components/LineageRail";
+import { SynthesisCard } from "../components/SynthesisCard";
 import { Badge, Card, EmptyState, ErrorNote, Loading, StatusBadge } from "../components/ui";
 import { useTask } from "../lib/task-context";
 
@@ -515,11 +516,28 @@ function ProjectDetail({ project }: { project: Project }) {
         <ul>
           {[...project.notes].reverse().map((n) => (
             <li key={n.note_id}>
-              <span className="muted">{new Date(n.created_at).toLocaleString()}</span> — {n.text}
+              <span className="muted">{new Date(n.created_at).toLocaleString()}</span>{" "}
+              {n.source === "generated" && <Badge tone="info">generated</Badge>} — {n.text}
+              {n.source === "generated" && (n.citations?.length ?? 0) > 0 && (
+                <div className="hint">
+                  Sources: {n.citations?.join(", ")}
+                  {n.model ? ` · model ${n.model}` : ""}
+                </div>
+              )}
+              {(n.computed_facts?.length ?? 0) > 0 && (
+                <details>
+                  <summary className="muted">Computed facts</summary>
+                  <pre style={{ whiteSpace: "pre-wrap", fontSize: 12 }}>
+                    {JSON.stringify(n.computed_facts, null, 2)}
+                  </pre>
+                </details>
+              )}
             </li>
           ))}
         </ul>
       </Card>
+
+      <SynthesisCard key={project.project_id} project={project} />
     </div>
   );
 }
