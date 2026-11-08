@@ -47,9 +47,11 @@ Understand what you tuned
 Once a run has finished, ``SKSurrogate`` explains *what* the fitted model depends on — not just
 *where* the search stopped:
 
-- **Model explanations**: permutation importance and partial-dependence plots for a stored
-  model bundle show which features drive its predictions. Available through the control plane
-  (explain endpoint) and in the web UI; see the
+- **Model explanations**: permutation importance, partial dependence, and accumulated local
+  effects for a stored model bundle show which features drive its predictions globally, while
+  an exact row-level explanation reconstructs one prediction from its baseline as ordered
+  feature contributions. Available through the control plane (``explain``, ``ale`` and
+  ``explain/row`` endpoints) and in the web UI; see the
   `control-plane guide <https://sksurrogate.readthedocs.io/en/latest/controlplane.html>`_ and the
   `scientific workflow guide <https://sksurrogate.readthedocs.io/en/latest/mltrace.html>`_.
 - **Sensitivity analysis**: Sobol, Morris, and moment-independent δ indices quantify which

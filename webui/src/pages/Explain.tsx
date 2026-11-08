@@ -15,7 +15,7 @@ import {
 
 import { computeAle, explainBundle, explainRow, getIntervals, listBundles } from "../api/client";
 import { LineageRail } from "../components/LineageRail";
-import { Card, EmptyState, ErrorNote, Loading, Stat, fmtNum, fmtPct } from "../components/ui";
+import { Card, EmptyState, ErrorNote, Loading, Stat, fmtNum, fmtPct, fmtSci } from "../components/ui";
 import { useTask } from "../lib/task-context";
 
 export default function ExplainPage() {
@@ -462,8 +462,8 @@ export default function ExplainPage() {
                   <Stat label="Sum of contributions" value={fmtNum(rowMut.data.reconstruction.sum_contributions)} />
                   <Stat
                     label="Reconstruction residual"
-                    value={fmtNum(rowMut.data.reconstruction.max_abs_residual)}
-                    sub={`tolerance ${fmtNum(rowMut.data.reconstruction.tolerance)}; exact by construction`}
+                    value={fmtSci(rowMut.data.reconstruction.max_abs_residual)}
+                    sub={`tolerance ${fmtSci(rowMut.data.reconstruction.tolerance)}; exact by construction`}
                   />
                 </div>
                 {rowMut.data.explanation_scope === "subset_hybrid" && (

@@ -55,7 +55,9 @@ Explanations: accumulated local effects and reference-subset stability
 * Explain UI: new **Row-level explanation** card with row index, 1/5/10 feature
   orders, a contribution bar chart, a mean/SD/min/max table, baseline and row
   predictions, and the reconstruction residual. Docs cover the card in the UI
-  manual and walkthrough.
+  manual and walkthrough, including a new Explain-page figure
+  (``docs/images/ui-explain-explanations.png``). Reconstruction residuals and
+  tolerances are rendered in scientific notation instead of rounding to ``0``.
 * D1 exit hook closed for the landed Stage C methods: ``benchmarks/dgps.py``
   now also checks average partial dependence and its reference-subset summary
   against the exact known response curves (``pdp_true_response_max_abs_error``

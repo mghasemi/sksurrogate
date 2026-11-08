@@ -183,8 +183,9 @@ Open **Feature Analysis** after registering a training partition.
 * **Consensus top features** summarizes how often each feature appears in the
   top-ranked sets stored for the task.
 
-These views complement **Explain**, which reports permutation importance and
-partial-dependence profiles for a selected fitted bundle. Pearson feature
+These views complement **Explain**, which reports permutation importance,
+partial-dependence profiles, accumulated local effects, and exact row-level
+explanations for a selected fitted bundle. Pearson feature
 correlation describes observed pairwise association; target correlation is a
 marginal data association; input-sensitivity indices describe a fitted
 surrogate over generated ranges; permutation importance measures score change
@@ -334,6 +335,13 @@ the explained prediction exactly; the residual and its tolerance are shown. The
 per-feature spread across orders is displayed as sample standard deviation and
 is order-dependence, not a confidence interval. A single row's contributions
 are a model attribution, not feature importance or a causal effect.
+
+.. figure:: images/ui-explain-explanations.png
+   :alt: Accumulated local effects and row-level explanation cards on the Explain page
+
+   ALE curves report bin boundaries and reference rows per bin; the row-level
+   card reconstructs one prediction exactly from its ordered contributions and
+   shows the spread across feature orders.
 
 For regression bundles, **Compute intervals**
 produces split-conformal prediction intervals at 80/90/95% target coverage and
