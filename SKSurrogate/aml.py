@@ -3,10 +3,15 @@ Optimized Pipeline Detector
 ===============================
 
 """
+import logging
 import math
 
 from sklearn.base import BaseEstimator, TransformerMixin
 from typing import Any
+
+from ._logutil import emit, get_logger
+
+logger = get_logger(__name__)
 
 
 class _DefaultScoring:
@@ -798,8 +803,8 @@ class AML(BaseEstimator):
             )
             self.evaluation_history_.append(result)
             if self.verbose > 0:
-                print("score:%f" % best_scr)
-                print(best_mdl)
+                emit(logging.INFO, "score:%f" % best_scr)
+                emit(logging.INFO, best_mdl)
 
     def fit(self, X: Any, y: Any, strategy="surrogate", **kwargs):
         """
@@ -985,8 +990,8 @@ class AML(BaseEstimator):
                     )
                     self.evaluation_history_.append(result)
                 if self.verbose > 0:
-                    print("score:%f" % best_scr)
-                    print(best_mdl)
+                    emit(logging.INFO, "score:%f" % best_scr)
+                    emit(logging.INFO, best_mdl)
                 fitted[seq] = -best_scr
             return fitted
 
@@ -1388,9 +1393,9 @@ class AML(BaseEstimator):
                 config[pre + "__" + step_param_prefix + kw] = self.config[est][kw]
         ppln = Pipeline(steps)
         if self.verbose > 0:
-            print("=" * 90)
-            print(seq)
-            print("-" * 90)
+            emit(logging.INFO, "=" * 90)
+            emit(logging.INFO, seq)
+            emit(logging.INFO, "-" * 90)
         from time import perf_counter
 
         started = perf_counter()

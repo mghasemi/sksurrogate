@@ -33,6 +33,12 @@ There are various ways for sampling a random point in feasible space which affec
 volume of the box or sphere that the sample is selected from too.
 """
 
+import logging
+
+from ._logutil import emit, get_logger
+
+logger = get_logger(__name__)
+
 
 class BaseSample(object):
     """
@@ -439,9 +445,10 @@ class SurrogateSearch(object):
 
         if n_close_points >= self.MinEvals:
             if self.verbose > 1:
-                print(
+                emit(
+                    logging.DEBUG,
                     "Found enough number of points (%d) for approximation."
-                    % n_close_points
+                    % n_close_points,
                 )
             fit_record = {
                 "iteration": int(self.iteration),
@@ -507,15 +514,16 @@ class SurrogateSearch(object):
                     val = self.objective(x_0)
                     self.evaluated.append([x_0, val])
                     if self.verbose > 1:
-                        print(
-                            """Minimum point of the approximation: %s;\nThe objective's value: %f;\nThe surrogate\\
+                        emit(
+                            logging.DEBUG,
+                            """Minimum point of the approximation: %s;\nThe objective's value: %f;\nThe surrogate\
                              value %f"""
-                            % (str(x_0), val, min_res.fun)
+                            % (str(x_0), val, min_res.fun),
                         )
                     if val < self.current_val:
                         self.NumIterNoProg = 0
                         if self.verbose > 0:
-                            print("NEW CANDIDATE")
+                            emit(logging.INFO, "NEW CANDIDATE")
                         self.current = x_0
                         self.current_val = val
                     else:
@@ -524,7 +532,7 @@ class SurrogateSearch(object):
                     self.NumIterNoProg += 1
                     self.NumFailedLocOptim += 1
                     if self.verbose > 1:
-                        print("""Error in function evaluation.""")
+                        emit(logging.DEBUG, """Error in function evaluation.""")
                     return
             else:
                 fit_record["optimization_status"] = "failed"
@@ -532,25 +540,26 @@ class SurrogateSearch(object):
                 self.surrogate_info_["local_optimization_failures"] += 1
                 self.NumFailedLocOptim += 1
                 if self.verbose > 1:
-                    print("The local optimization was not successful.")
+                    emit(logging.DEBUG, "The local optimization was not successful.")
         else:
             val = self.objective(x0)
             self.evaluated.append([x0, val])
             if self.verbose > 1:
-                print(
+                emit(
+                    logging.DEBUG,
                     """New point sampled: %s;\nThe objective's value: %f"""
-                    % (str(x0), val)
+                    % (str(x0), val),
                 )
             if val < self.current_val:
                 self.NumIterNoProg = 0
                 if self.verbose > 0:
-                    print("NEW CANDIDATE")
+                    emit(logging.INFO, "NEW CANDIDATE")
                 self.current = x0
                 self.current_val = val
             else:
                 self.NumIterNoProg += 1
         if self.verbose > 1:
-            print("==========" * 8)
+            emit(logging.DEBUG, "==========" * 8)
         self.iteration += 1
 
     def __call__(self, *args, **kwargs):
@@ -573,7 +582,9 @@ class SurrogateSearch(object):
         if self.verbose > 0:
             # pbar = tqdm(total=self.MaxIter)
             # pbar.update(self.iteration)
-            print("Iteration {m} / {n}".format(m=self.iteration, n=self.MaxIter))
+            emit(
+                logging.INFO, "Iteration {m} / {n}".format(m=self.iteration, n=self.MaxIter)
+            )
         self.__optim_param()
         while self.iteration <= self.MaxIter:
             if self.time_limit is not None and monotonic() - started >= self.time_limit:
@@ -583,8 +594,8 @@ class SurrogateSearch(object):
                 self.termination_reason = "max_evals"
                 break
             if self.verbose > 1:
-                print("Iteration # %d" % self.iteration)
-                print("----------" * 8)
+                emit(logging.DEBUG, "Iteration # %d" % self.iteration)
+                emit(logging.DEBUG, "----------" * 8)
             new_point = self.Sampling.sample(
                 self.current,
                 cntrctn=self.contraction
@@ -593,12 +604,12 @@ class SurrogateSearch(object):
             self.__iterate(new_point)
             if self.NumIterNoProg > self.MaxIterNoProg:
                 if self.verbose > 1:
-                    print("No progress in %d iterations." % self.NumIterNoProg)
+                    emit(logging.DEBUG, "No progress in %d iterations." % self.NumIterNoProg)
                 self.termination_reason = "max_iter_no_progress"
                 break
             # if tqdm is not None:
             if self.verbose > 0:
-                print("End of iteration.")
+                emit(logging.INFO, "End of iteration.")
                 # pbar.update(1)  # update the progressbar
             self.__save()  # save the progress
         if self.termination_reason is None:
@@ -1332,7 +1343,7 @@ class SurrogateRandomCV(BaseSearchCV):
                     import traceback
 
                     if self.verbose > 1:
-                        print("Model evaluation error")
+                        emit(logging.DEBUG, "Model evaluation error")
                     return {
                         "score": None,
                         "error": repr(exc),
