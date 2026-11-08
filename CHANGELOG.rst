@@ -349,6 +349,38 @@ API
   to ``DataPreprocess`` (e.g. ``bin_threshold``, ``cat_threshold``,
   ``force_impute``) when encoding is enabled; defaults are unchanged.
 
+Logging and per-trial telemetry
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Core modules ``structsearch.py``, ``eoa.py``, and ``aml.py`` now emit progress
+  through the standard library ``logging`` (module loggers in the
+  ``SKSurrogate`` namespace) instead of bare ``print()`` calls. Default console
+  output is unchanged byte-for-byte: when no handler is configured anywhere in
+  the logger's propagation chain, ``SKSurrogate._logutil.emit`` still writes the
+  message to stdout; once a handler exists that stdout copy stops, so integrating
+  pipelines see exactly one copy. ``verbose`` semantics are untouched
+  (``>0`` → INFO, ``>1`` → DEBUG; EOA's per-generation line stays ungated INFO).
+* ``SurrogateSearch.surrogate_fit_history_`` records gain a new ``fit_score``
+  key: the fitted surrogate's own in-sample ``score`` on the data it was fitted
+  to (``None`` when the regressor has no callable ``score`` or returns a
+  non-finite value). Existing keys are unchanged.
+* New ``SurrogateSearch.sampling_sources_`` parallel list tags every evaluation
+  as ``init``, ``explore``, or ``surrogate_exploit``, appended in lockstep with
+  ``evaluated`` and stored in the pickle checkpoint; checkpoints written before
+  this key existed still load, with an empty tag list rather than invented
+  provenance.
+* New ``callbacks=None`` parameter on ``SurrogateRandomCV``: a callable or
+  iterable of callables, each receiving one event dict per evaluated candidate
+  (the trial record plus a zero-based ``trial`` index and its ``phase``),
+  delivered at every record site — forbidden, zero-feature, pruned, and
+  completed/failed. A callback that raises is logged and skipped; it cannot
+  abort a search. ``get_params``/``clone`` compatibility is preserved.
+* New ``SurrogateRandomCV.to_audit_dict()``: a JSON-safe audit bundle
+  (``schema_version: 1``) carrying the estimator class and parameters, the
+  encoded search space, scoring/CV summaries, budget and termination state, all
+  trial records with trial indices, surrogate diagnostics, and sampling
+  provenance; ``json.dumps()`` succeeds without a custom encoder.
+
 [0.2.0] - 2026-10-24
 --------------------
 
