@@ -602,6 +602,11 @@ provider model id, and collapsible computed facts. Treat the prose as
 model-generated interpretation that can be wrong, and verify it against the
 computed facts.
 
+The **Linked artifacts** card also accepts external citations: enter an
+``http(s)`` URL plus optional title, DOI, and label in **Add external reference**.
+The API never fetches the URL, so the reference's snapshot status is always
+``unverified``; it can then be attached as evidence to a finding or conclusion.
+
 .. figure:: images/ui-project-synthesis.png
    :alt: Projects page showing a generated cited note and the Draft synthesis card
 

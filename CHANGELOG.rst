@@ -65,6 +65,30 @@ Explanations: accumulated local effects and reference-subset stability
   ``correlated`` and ``shift`` processes); DESIGN.md v1.17.
 
 
+External references for research projects (Stage B1 tier 1)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Projects can now link an external citation as a fourth artifact kind,
+  ``reference``: ``{kind, url, title?, doi?, label?}``. The URL must be an
+  absolute ``http(s)`` URL of at most 2,048 characters, the API never fetches
+  it, and references dedupe by URL. Non-reference kinds reject ``url``/``doi``
+  fields, and reference entries reject ``task_name``/``artifact_id``; bad shapes
+  are a 422.
+* Reference snapshots use ``sksurrogate.project-artifact-snapshot.v2`` and store
+  the URL/title/DOI fields only (``content_embedded: false``). The project
+  summary reports them as ``exists: true`` with ``snapshot_status:
+  "unverified"`` because reachability is never checked. References do not
+  advance the workflow checklist, but they can satisfy the evidence requirement
+  of a finding or conclusion and cannot be removed via ``PUT`` while referenced.
+* Projects UI: the **Linked artifacts** card gained an **Add external reference**
+  form (URL, title, DOI, label); linked references render as external links with
+  their DOI and ``snapshot unverified`` badge and appear in the evidence picker.
+* Docs: ``research-projects.rst`` documents the kind, validation, snapshot, and
+  evidence semantics; ``ui-manual.rst`` covers the form. Tests:
+  ``tests/test_projects_endpoints.py`` adds reference roundtrip/validation,
+  evidence/removal-protection, backward-compatible shapes, and an HTTP-surface
+  test.
+
 LLM-assisted project synthesis (opt-in, Stage D2)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

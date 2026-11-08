@@ -7,7 +7,7 @@ import {
   getSynthesisStatus,
   submitSynthesis,
 } from "../api/client";
-import type { Project, SynthesisResult } from "../api/client";
+import type { Project, ProjectArtifact, SynthesisResult } from "../api/client";
 import { Card, ErrorNote } from "./ui";
 
 /**
@@ -20,15 +20,26 @@ import { Card, ErrorNote } from "./ui";
 export function SynthesisCard({ project }: { project: Project }) {
   const qc = useQueryClient();
   const bundles = useMemo(
-    () => project.artifacts.filter((artifact) => artifact.kind === "model_bundle"),
+    () =>
+      project.artifacts.filter(
+        (artifact): artifact is ProjectArtifact & { artifact_id: string } =>
+          artifact.kind === "model_bundle" && !!artifact.artifact_id,
+      ),
     [project.artifacts],
   );
   const jobs = useMemo(
-    () => project.artifacts.filter((artifact) => artifact.kind === "job"),
+    () =>
+      project.artifacts.filter(
+        (artifact): artifact is ProjectArtifact & { artifact_id: string } =>
+          artifact.kind === "job" && !!artifact.artifact_id,
+      ),
     [project.artifacts],
   );
   const tasks = useMemo(
-    () => [...new Set(project.artifacts.map((artifact) => artifact.task_name))],
+    () =>
+      [...new Set(project.artifacts.map((artifact) => artifact.task_name))].filter(
+        (name): name is string => !!name,
+      ),
     [project.artifacts],
   );
 
@@ -146,8 +157,8 @@ export function SynthesisCard({ project }: { project: Project }) {
               >
                 <option value="">None (dataset profile only)</option>
                 {bundles.map((artifact) => (
-                  <option key={artifact.artifact_id} value={artifact.artifact_id}>
-                    {artifact.artifact_id.slice(0, 12)} · {artifact.task_name}
+                  <option key={artifact.artifact_id ?? ""} value={artifact.artifact_id ?? ""}>
+                    {(artifact.artifact_id ?? "").slice(0, 12)} · {artifact.task_name}
                   </option>
                 ))}
               </select>
@@ -157,8 +168,8 @@ export function SynthesisCard({ project }: { project: Project }) {
               <select id="synthesis-job" value={jobId} onChange={(event) => setJobId(event.target.value)}>
                 <option value="">None</option>
                 {jobs.map((artifact) => (
-                  <option key={artifact.artifact_id} value={artifact.artifact_id}>
-                    {artifact.artifact_id.slice(0, 12)} · {artifact.task_name}
+                  <option key={artifact.artifact_id ?? ""} value={artifact.artifact_id ?? ""}>
+                    {(artifact.artifact_id ?? "").slice(0, 12)} · {artifact.task_name}
                   </option>
                 ))}
               </select>

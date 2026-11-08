@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import threading
+import urllib.parse
 import uuid
 from datetime import datetime, timezone
 from typing import Literal
@@ -25,12 +26,38 @@ _JOB_ID_PATTERN = re.compile(r"^[a-f0-9]{32}$")
 
 
 class ProjectArtifactReference(BaseModel):
-    """Reference an existing dataset partition, model bundle, or background job."""
+    """Reference a stored artifact or an external citation.
 
-    kind: Literal["dataset_partition", "model_bundle", "job"]
-    task_name: str = Field(min_length=1, max_length=128)
-    artifact_id: str = Field(min_length=1, max_length=128)
+    ``dataset_partition``/``model_bundle``/``job`` keep the original task-scoped
+    shape. ``reference`` (Stage B1 tier 1) is an external http(s) source that is
+    never fetched: it carries a required ``url`` and optional ``title``/``doi``
+    metadata, and its summary status is always ``unverified``.
+    """
+
+    kind: Literal["dataset_partition", "model_bundle", "job", "reference"]
+    task_name: str | None = Field(default=None, max_length=128)
+    artifact_id: str | None = Field(default=None, max_length=128)
+    url: str | None = Field(default=None, max_length=2048)
+    title: str | None = Field(default=None, max_length=300)
+    doi: str | None = Field(default=None, max_length=200)
     label: str | None = Field(default=None, max_length=200)
+
+    @model_validator(mode="after")
+    def validate_identity(self):
+        if self.kind == "reference":
+            if self.task_name or self.artifact_id:
+                raise ValueError("reference artifacts must not set task_name or artifact_id")
+            if not self.url:
+                raise ValueError("reference artifacts require an absolute http(s) url")
+            parsed = urllib.parse.urlsplit(self.url)
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                raise ValueError("reference url must be an absolute http(s) URL")
+            return self
+        if self.url or self.doi:
+            raise ValueError("only reference artifacts may set url or doi")
+        if not self.task_name or not self.artifact_id:
+            raise ValueError("%s artifacts require task_name and artifact_id" % self.kind)
+        return self
 
 
 class ProjectEvidenceReference(BaseModel):
@@ -199,14 +226,40 @@ def _write_project(project):
         temporary_path.replace(path)
 
 
+def _artifact_key(item):
+    """Canonical artifact identity: references dedupe on url, others on task/id.
+
+    ``item`` may be a stored project artifact dict or a
+    :class:`ProjectArtifactReference` instance. The three-tuple shape is kept so
+    evidence and update bookkeeping stay uniform.
+    """
+    if isinstance(item, dict):
+        kind = item.get("kind")
+        task_name = item.get("task_name")
+        artifact_id = item.get("artifact_id")
+        url = item.get("url")
+    else:
+        kind, task_name, artifact_id, url = (
+            item.kind,
+            item.task_name,
+            item.artifact_id,
+            item.url,
+        )
+    if kind == "reference":
+        return (kind, None, url)
+    return (kind, task_name, artifact_id)
+
+
 def _validate_artifacts(artifacts):
     seen = set()
     for artifact in artifacts:
-        key = (artifact.kind, artifact.task_name, artifact.artifact_id)
+        key = _artifact_key(artifact)
         if key in seen:
             raise bad_request("artifact references must be unique within a project")
         seen.add(key)
-        if not _TASK_NAME_PATTERN.fullmatch(artifact.task_name):
+        if artifact.kind == "reference":
+            continue
+        if not _TASK_NAME_PATTERN.fullmatch(artifact.task_name or ""):
             raise bad_request("artifact task_name contains unsupported path characters")
 
         if artifact.kind == "dataset_partition":
@@ -247,6 +300,21 @@ def _stable_fingerprint(value):
 
 
 def _artifact_snapshot(artifact):
+    if artifact.kind == "reference":
+        fields = {
+            "url": artifact.url,
+            "title": artifact.title,
+            "doi": artifact.doi,
+        }
+        identity = {"kind": "reference", "url": artifact.url}
+        details = {"fields": fields, "content_embedded": False}
+        return {
+            "schema": "sksurrogate.project-artifact-snapshot.v2",
+            "captured_at": _now(),
+            "identity": identity,
+            "fingerprint": _stable_fingerprint({"identity": identity, "details": details}),
+            "details": details,
+        }
     if artifact.kind == "dataset_partition":
         with open_tracker(artifact.task_name) as tracker:
             partition = tracker.dataset_splits().get(artifact.artifact_id)
@@ -309,14 +377,11 @@ def _artifact_snapshot(artifact):
 
 
 def _serialize_artifacts(artifacts, existing_artifacts=()):
-    prior = {
-        (item["kind"], item["task_name"], item["artifact_id"]): item
-        for item in existing_artifacts
-    }
+    prior = {_artifact_key(item): item for item in existing_artifacts}
     serialized = []
     for artifact in artifacts:
-        item = artifact.model_dump()
-        key = (artifact.kind, artifact.task_name, artifact.artifact_id)
+        item = artifact.model_dump(exclude_none=True)
+        key = _artifact_key(artifact)
         previous = prior.get(key, {})
         item["snapshot"] = previous.get("snapshot") or _artifact_snapshot(artifact)
         serialized.append(item)
@@ -387,6 +452,18 @@ def project_summary(project_id: str):
     modeling_job_completed = False
     job_result_available = False
     for item in project["artifacts"]:
+        if item.get("kind") == "reference":
+            # External references are never fetched, so reachability cannot be
+            # checked: the honest status is always "unverified".
+            artifacts.append(
+                {
+                    **item,
+                    "exists": True,
+                    "status": None,
+                    "snapshot_status": "unverified",
+                }
+            )
+            continue
         exists, status = True, None
         try:
             _validate_artifacts([ProjectArtifactReference(**item)])
@@ -466,17 +543,14 @@ def add_project_artifact(project_id: str, body: ProjectArtifactReference):
     """Append one artifact link without replacing other project metadata."""
     with _PROJECT_LOCK:
         project = _read_project(project_id)
-        artifact_key = (body.kind, body.task_name, body.artifact_id)
-        if any(
-            (item["kind"], item["task_name"], item["artifact_id"]) == artifact_key
-            for item in project["artifacts"]
-        ):
+        artifact_key = _artifact_key(body)
+        if any(_artifact_key(item) == artifact_key for item in project["artifacts"]):
             return project
         if len(project["artifacts"]) >= 100:
             raise bad_request("a project cannot contain more than 100 artifact references")
         _validate_artifacts([body])
         project["artifacts"].append(
-            {**body.model_dump(), "snapshot": _artifact_snapshot(body)}
+            {**body.model_dump(exclude_none=True), "snapshot": _artifact_snapshot(body)}
         )
         project["updated_at"] = _now()
         _write_project(project)
@@ -488,15 +562,9 @@ def update_project(project_id: str, body: UpdateProjectRequest):
     _validate_artifacts(body.artifacts)
     with _PROJECT_LOCK:
         existing = _read_project(project_id)
-        linked_artifacts = {
-            (item.kind, item.task_name, item.artifact_id) for item in body.artifacts
-        }
+        linked_artifacts = {_artifact_key(item) for item in body.artifacts}
         required_artifacts = {
-            (
-                evidence["artifact"]["kind"],
-                evidence["artifact"]["task_name"],
-                evidence["artifact"]["artifact_id"],
-            )
+            _artifact_key(evidence["artifact"])
             for record in existing.get("records", [])
             for evidence in record.get("evidence", [])
         }
@@ -523,14 +591,11 @@ def add_project_record(project_id: str, body: AddProjectRecordRequest):
             and body.research_question not in project.get("research_questions", [])
         ):
             raise bad_request("hypothesis research_question must match a question in this project")
-        artifact_keys = {
-            (item["kind"], item["task_name"], item["artifact_id"])
-            for item in project.get("artifacts", [])
-        }
+        artifact_keys = {_artifact_key(item) for item in project.get("artifacts", [])}
         evidence_keys = set()
         for evidence in body.evidence:
             artifact = evidence.artifact
-            key = (artifact.kind, artifact.task_name, artifact.artifact_id)
+            key = _artifact_key(artifact)
             if key not in artifact_keys:
                 raise bad_request("research evidence must reference an artifact linked to this project")
             evidence_key = (evidence.relation, *key)
@@ -584,23 +649,14 @@ def add_project_record_evidence(
         if record is None:
             raise not_found("No research record %r found in project %r" % (record_id, project_id))
         artifact = body.artifact
-        artifact_key = (artifact.kind, artifact.task_name, artifact.artifact_id)
-        linked_artifact_keys = {
-            (item["kind"], item["task_name"], item["artifact_id"])
-            for item in project.get("artifacts", [])
-        }
+        artifact_key = _artifact_key(artifact)
+        linked_artifact_keys = {_artifact_key(item) for item in project.get("artifacts", [])}
         if artifact_key not in linked_artifact_keys:
             raise bad_request("research evidence must reference an artifact linked to this project")
         evidence = record.setdefault("evidence", [])
         evidence_key = (body.relation, *artifact_key)
         if any(
-            (
-                item["relation"],
-                item["artifact"]["kind"],
-                item["artifact"]["task_name"],
-                item["artifact"]["artifact_id"],
-            )
-            == evidence_key
+            (item["relation"], *_artifact_key(item["artifact"])) == evidence_key
             for item in evidence
         ):
             raise bad_request("research evidence references must be unique within a record")

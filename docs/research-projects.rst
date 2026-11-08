@@ -54,6 +54,11 @@ Projects accept references to:
   Sensitivity-analysis jobs likewise retain their method request and result
   protocol, including the registered input-partition fingerprint, row count,
   and feature columns.
+* ``reference`` — an external citation. The shape is ``{"kind": "reference",
+  "url": "https://…", "title": "…", "doi": "…", "label": "…"}``; only ``url``
+  is required, it must be an absolute ``http(s)`` URL of at most 2,048
+  characters, and the API **never fetches it**. References are deduplicated by
+  URL and do not carry ``task_name``/``artifact_id``.
 
 References are validated on project creation and update. To append one
 reference without replacing project fields or other artifact links, use
@@ -84,6 +89,21 @@ a result is present at link time, its content. ``GET
   deleted.
 * ``unverified`` — the artifact exists but the project record carries no
   stored snapshot (a legacy record created before snapshots were captured).
+
+External references are project metadata, not stored artifacts. Their snapshot
+uses schema ``sksurrogate.project-artifact-snapshot.v2`` and records the stored
+fields only (``url``, ``title``, ``doi``) with ``content_embedded: false``; it
+never contains fetched page content. Because reachability is never checked, the
+summary status of a reference is always ``unverified`` — that is the honest
+state, not a transient one. Linking a reference does not advance any workflow
+stage (the checklist still follows partitions, bundles, and jobs), but a
+reference linked to the project may satisfy the evidence requirement of a
+finding or conclusion. For example, appending one reference::
+
+    curl -X POST http://127.0.0.1:8013/api/projects/PROJECT_ID/artifacts \
+      -H 'Content-Type: application/json' \
+      -d '{"kind":"reference","url":"https://doi.org/10.1000/xyz",
+           "title":"Controlled yield study","doi":"10.1000/xyz"}'
 
 Snapshots identify what was observed but do not freeze or copy the upstream
 artifact; a deleted artifact cannot be recovered from project metadata, and

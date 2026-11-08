@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { CheckCircle2, Circle } from "lucide-react";
 
 import {
+  addProjectArtifact,
   addProjectNote,
   addProjectRecordEvidence,
   addProjectRecord,
@@ -36,7 +37,10 @@ const HYPOTHESIS_STATUSES: NonNullable<ProjectResearchRecord["status"]>[] = [
   "inconclusive",
 ];
 
-const keyOf = (a: ProjectArtifact) => `${a.kind}:${a.task_name}:${a.artifact_id}`;
+const keyOf = (a: ProjectArtifact) =>
+  a.kind === "reference" ? `reference:${a.url ?? ""}` : `${a.kind}:${a.task_name}:${a.artifact_id}`;
+const artifactLabel = (a: ProjectArtifact) =>
+  a.kind === "reference" ? a.title || a.url || "external reference" : `${a.task_name}/${a.artifact_id}`;
 const statusLabel = (status: string) => status.replaceAll("_", " ");
 
 function ProjectDetail({ project }: { project: Project }) {
@@ -55,6 +59,10 @@ function ProjectDetail({ project }: { project: Project }) {
   const [recordEvidence, setRecordEvidence] = useState<
     Array<{ key: string; relation: "supports" | "contradicts" }>
   >([]);
+  const [referenceUrl, setReferenceUrl] = useState("");
+  const [referenceTitle, setReferenceTitle] = useState("");
+  const [referenceDoi, setReferenceDoi] = useState("");
+  const [referenceLabel, setReferenceLabel] = useState("");
 
   const summaryQ = useQuery({
     queryKey: ["project-summary", project.project_id, project.updated_at],
@@ -173,6 +181,24 @@ function ProjectDetail({ project }: { project: Project }) {
     onSuccess: refresh,
   });
 
+  const referenceMut = useMutation({
+    mutationFn: () =>
+      addProjectArtifact(project.project_id, {
+        kind: "reference",
+        url: referenceUrl.trim(),
+        title: referenceTitle.trim() || undefined,
+        doi: referenceDoi.trim() || undefined,
+        label: referenceLabel.trim() || undefined,
+      }),
+    onSuccess: () => {
+      setReferenceUrl("");
+      setReferenceTitle("");
+      setReferenceDoi("");
+      setReferenceLabel("");
+      refresh();
+    },
+  });
+
   const stages = summaryQ.data?.stages ?? [];
   const next = stages.find((s) => !s.done);
 
@@ -217,6 +243,7 @@ function ProjectDetail({ project }: { project: Project }) {
         }
       >
         {linkMut.isError && <ErrorNote error={linkMut.error} />}
+        {referenceMut.isError && <ErrorNote error={referenceMut.error} />}
         {!task && <p className="muted">Pick a task in the top bar to link its datasets, models and jobs.</p>}
         {(summaryQ.data?.artifacts ?? []).length === 0 ? (
           <EmptyState title="Nothing linked yet" />
@@ -224,7 +251,15 @@ function ProjectDetail({ project }: { project: Project }) {
           <ul>
             {summaryQ.data?.artifacts.map((a) => (
               <li key={keyOf(a)}>
-                <Badge tone="info">{a.kind.replace("_", " ")}</Badge> <span className="mono">{a.task_name}/{a.artifact_id}</span>{" "}
+                <Badge tone="info">{a.kind.replace("_", " ")}</Badge>{" "}
+                {a.kind === "reference" ? (
+                  <a href={a.url ?? "#"} target="_blank" rel="noreferrer">
+                    {a.title || a.url}
+                  </a>
+                ) : (
+                  <span className="mono">{a.task_name}/{a.artifact_id}</span>
+                )}{" "}
+                {a.kind === "reference" && a.doi && <span className="mono">· DOI {a.doi}</span>}{" "}
                 {a.status && <StatusBadge status={a.status} />}
                 {!a.exists && <Badge tone="err">missing</Badge>}
                 {a.snapshot_status && (
@@ -241,15 +276,53 @@ function ProjectDetail({ project }: { project: Project }) {
                   </Badge>
                 )}
                 {a.kind === "job" && a.exists && (
-                  <Link className="btn" to={`/jobs?job_id=${encodeURIComponent(a.artifact_id)}`}>
+                  <Link className="btn" to={`/jobs?job_id=${encodeURIComponent(a.artifact_id ?? "")}`}>
                     Inspect job
                   </Link>
                 )}
-                {a.kind === "model_bundle" && a.exists && <LineageRail task={a.task_name} modelVersion={a.artifact_id} />}
+                {a.kind === "model_bundle" && a.exists && a.task_name && a.artifact_id && (
+                  <LineageRail task={a.task_name} modelVersion={a.artifact_id} />
+                )}
               </li>
             ))}
           </ul>
         )}
+        <h3>Add external reference</h3>
+        <p className="muted">
+          Link a citation as project evidence. The API never fetches the URL; its snapshot stores
+          the URL, title, and DOI fields only, and its status stays “unverified”.
+        </p>
+        <div className="row">
+          <div className="field">
+            <label>URL</label>
+            <input
+              value={referenceUrl}
+              onChange={(event) => setReferenceUrl(event.target.value)}
+              placeholder="https://doi.org/10.1000/xyz"
+            />
+          </div>
+          <div className="field">
+            <label>Title (optional)</label>
+            <input value={referenceTitle} onChange={(event) => setReferenceTitle(event.target.value)} />
+          </div>
+        </div>
+        <div className="row">
+          <div className="field">
+            <label>DOI (optional)</label>
+            <input value={referenceDoi} onChange={(event) => setReferenceDoi(event.target.value)} />
+          </div>
+          <div className="field">
+            <label>Label (optional)</label>
+            <input value={referenceLabel} onChange={(event) => setReferenceLabel(event.target.value)} />
+          </div>
+          <button
+            className="btn"
+            disabled={!referenceUrl.trim() || referenceMut.isPending}
+            onClick={() => referenceMut.mutate()}
+          >
+            {referenceMut.isPending ? "Adding…" : "Add reference"}
+          </button>
+        </div>
       </Card>
 
       <Card
@@ -297,7 +370,7 @@ function ProjectDetail({ project }: { project: Project }) {
                   value={keyOf(artifact)}
                   disabled={recordEvidence.some((item) => item.key === keyOf(artifact))}
                 >
-                  {artifact.kind.replace("_", " ")} — {artifact.task_name}/{artifact.artifact_id}
+                  {artifact.kind.replace("_", " ")} — {artifactLabel(artifact)}
                 </option>
               ))}
             </select>
@@ -329,7 +402,7 @@ function ProjectDetail({ project }: { project: Project }) {
                   <button
                     className="btn"
                     type="button"
-                    aria-label={`Remove evidence ${artifact.task_name}/${artifact.artifact_id}`}
+                    aria-label={`Remove evidence ${artifactLabel(artifact)}`}
                     onClick={() => setRecordEvidence((current) => current.filter((item) => item.key !== key))}
                   >
                     Remove
@@ -380,7 +453,7 @@ function ProjectDetail({ project }: { project: Project }) {
                   <option value="">Select an artifact</option>
                   {project.artifacts.map((artifact) => (
                     <option key={keyOf(artifact)} value={keyOf(artifact)}>
-                      {artifact.kind.replace("_", " ")} — {artifact.task_name}/{artifact.artifact_id}
+                      {artifact.kind.replace("_", " ")} — {artifactLabel(artifact)}
                     </option>
                   ))}
                 </select>
@@ -452,7 +525,7 @@ function ProjectDetail({ project }: { project: Project }) {
                   <div key={`${record.record_id}:${keyOf(evidence.artifact)}:${evidence.relation}`} className="muted">
                     {evidence.relation} — {evidence.artifact.kind.replace("_", " ")}{" "}
                     <span className="mono">
-                      {evidence.artifact.task_name}/{evidence.artifact.artifact_id}
+                      {artifactLabel(evidence.artifact)}
                     </span>
                     {(() => {
                       const status = summaryQ.data?.artifacts.find(
@@ -488,7 +561,7 @@ function ProjectDetail({ project }: { project: Project }) {
                           {" "}
                           <Link
                             className="btn"
-                            to={`/jobs?job_id=${encodeURIComponent(evidence.artifact.artifact_id)}`}
+                            to={`/jobs?job_id=${encodeURIComponent(evidence.artifact.artifact_id ?? "")}`}
                           >
                             Inspect job
                           </Link>

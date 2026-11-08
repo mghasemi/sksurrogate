@@ -23,6 +23,7 @@ from api.routers.projects import (
     AddProjectNoteRequest,
     CreateProjectRequest,
     ProjectArtifactReference,
+    ProjectEvidenceReference,
     UpdateProjectHypothesisStatusRequest,
     UpdateProjectRequest,
 )
@@ -933,6 +934,192 @@ class TestResearchProjectEndpoints(unittest.TestCase):
                 )
             )
 
+    # ------------------------------------------------- B1 tier-1: references
+
+    def _reference(self, url="https://example.org/paper", **kwargs):
+        return ProjectArtifactReference(kind="reference", url=url, **kwargs)
+
+    def test_reference_artifact_roundtrip_snapshot_and_summary(self):
+        project = projects_router.create_project(
+            CreateProjectRequest(
+                name="Literature-backed project",
+                artifacts=[
+                    self._reference(
+                        title="A measured paper",
+                        doi="10.1000/xyz",
+                        label="literature",
+                    )
+                ],
+            )
+        )
+        artifact = project["artifacts"][0]
+        self.assertEqual(artifact["kind"], "reference")
+        self.assertEqual(artifact["url"], "https://example.org/paper")
+        self.assertNotIn("task_name", artifact)
+        self.assertNotIn("artifact_id", artifact)
+        snapshot = artifact["snapshot"]
+        self.assertEqual(snapshot["schema"], "sksurrogate.project-artifact-snapshot.v2")
+        self.assertEqual(
+            snapshot["identity"],
+            {"kind": "reference", "url": "https://example.org/paper"},
+        )
+        self.assertFalse(snapshot["details"]["content_embedded"])
+        self.assertEqual(snapshot["details"]["fields"]["doi"], "10.1000/xyz")
+
+        summary = projects_router.project_summary(project["project_id"])
+        linked = summary["artifacts"][0]
+        self.assertTrue(linked["exists"])
+        self.assertEqual(linked["snapshot_status"], "unverified")
+        stages = {stage["stage"]: stage["done"] for stage in summary["stages"]}
+        self.assertFalse(stages["data"] or stages["model"] or stages["result"])
+
+        # Idempotent for the same URL, additive for a different one.
+        same = projects_router.add_project_artifact(
+            project["project_id"], self._reference()
+        )
+        self.assertEqual(len(same["artifacts"]), 1)
+        other = projects_router.add_project_artifact(
+            project["project_id"], self._reference(url="https://example.org/other")
+        )
+        self.assertEqual(len(other["artifacts"]), 2)
+
+    def test_reference_validation_rejects_non_urls_and_mixed_shapes(self):
+        for bad in (
+            "ftp://example.org/x",
+            "example.org/x",
+            "https:///x",
+            "http://",
+            "",
+            "https://example.org/" + "a" * 2048,
+        ):
+            with self.assertRaises(ValidationError):
+                ProjectArtifactReference(kind="reference", url=bad)
+        with self.assertRaises(ValidationError):
+            ProjectArtifactReference(
+                kind="reference", url="https://example.org/x", task_name=TASK
+            )
+        with self.assertRaises(ValidationError):
+            ProjectArtifactReference(
+                kind="dataset_partition",
+                task_name=TASK,
+                artifact_id="train",
+                url="https://example.org/x",
+            )
+        with self.assertRaises(ValidationError):
+            ProjectArtifactReference(kind="job", task_name=TASK)
+        with self.assertRaises(HTTPException):
+            projects_router.create_project(
+                CreateProjectRequest(
+                    name="Duplicate references",
+                    artifacts=[self._reference(), self._reference(label="again")],
+                )
+            )
+
+    def test_reference_can_back_evidence_and_cannot_be_removed(self):
+        project = projects_router.create_project(
+            CreateProjectRequest(
+                name="Cited finding",
+                artifacts=[self._reference(doi="10.1000/xyz")],
+            )
+        )
+        original_snapshot = project["artifacts"][0]["snapshot"]
+        updated = projects_router.add_project_record(
+            project["project_id"],
+            AddProjectRecordRequest(
+                kind="finding",
+                title="Corroborated result",
+                text="The independent study agrees [S1].",
+                evidence=[
+                    ProjectEvidenceReference(
+                        relation="supports",
+                        artifact=self._reference(doi="10.1000/xyz"),
+                    )
+                ],
+            ),
+        )
+        record = updated["records"][0]
+        self.assertEqual(record["evidence"][0]["artifact"]["kind"], "reference")
+        self.assertEqual(record["evidence"][0]["artifact"]["url"], "https://example.org/paper")
+
+        # Re-PUT keeps the stored snapshot and allows label edits.
+        renamed = projects_router.update_project(
+            project["project_id"],
+            UpdateProjectRequest(
+                name="Cited finding",
+                artifacts=[self._reference(doi="10.1000/xyz", label="renamed")],
+            ),
+        )
+        self.assertEqual(renamed["artifacts"][0]["snapshot"], original_snapshot)
+        self.assertEqual(renamed["artifacts"][0]["label"], "renamed")
+
+        # A reference used as evidence cannot be removed via PUT.
+        with self.assertRaises(HTTPException):
+            projects_router.update_project(
+                project["project_id"],
+                UpdateProjectRequest(name="Cited finding", artifacts=[]),
+            )
+
+    def test_artifact_shapes_stay_backward_compatible(self):
+        project = projects_router.create_project(
+            CreateProjectRequest(
+                name="Legacy shape",
+                artifacts=[self._artifact("dataset_partition", "train")],
+            )
+        )
+        artifact = project["artifacts"][0]
+        self.assertEqual(artifact["kind"], "dataset_partition")
+        self.assertNotIn("url", artifact)
+        self.assertNotIn("doi", artifact)
+        self.assertNotIn("title", artifact)
+        self.assertEqual(
+            artifact["snapshot"]["schema"],
+            "sksurrogate.project-artifact-snapshot.v1",
+        )
+
+    def test_reference_http_surface(self):
+        from api.main import app
+
+        with TestClient(app) as client:
+            created = client.post(
+                "/api/projects",
+                json={
+                    "name": "HTTP references",
+                    "artifacts": [
+                        {
+                            "kind": "reference",
+                            "url": "https://example.org/paper",
+                            "title": "Paper",
+                        }
+                    ],
+                },
+            )
+            self.assertEqual(created.status_code, 200, created.text)
+            project = created.json()
+            self.assertEqual(project["artifacts"][0]["kind"], "reference")
+
+            bad = client.post(
+                "/api/projects",
+                json={
+                    "name": "Bad scheme",
+                    "artifacts": [{"kind": "reference", "url": "ftp://example.org/x"}],
+                },
+            )
+            self.assertEqual(bad.status_code, 422)
+
+            appended = client.post(
+                "/api/projects/%s/artifacts" % project["project_id"],
+                json={"kind": "reference", "url": "https://example.org/second"},
+            )
+            self.assertEqual(appended.status_code, 200, appended.text)
+            self.assertEqual(len(appended.json()["artifacts"]), 2)
+
+            summary = client.get(
+                "/api/projects/%s/summary" % project["project_id"]
+            ).json()
+            self.assertEqual(
+                [item["snapshot_status"] for item in summary["artifacts"]],
+                ["unverified", "unverified"],
+            )
 
 if __name__ == "__main__":
     unittest.main()

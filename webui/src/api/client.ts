@@ -1793,15 +1793,18 @@ export const suggestNextPoint = (body: {
 /* ------------------------------------------------------------------ */
 
 export interface ProjectArtifact {
-  kind: "dataset_partition" | "model_bundle" | "job";
-  task_name: string;
-  artifact_id: string;
+  kind: "dataset_partition" | "model_bundle" | "job" | "reference";
+  task_name?: string | null;
+  artifact_id?: string | null;
+  url?: string | null;
+  title?: string | null;
+  doi?: string | null;
   label?: string | null;
   snapshot?: {
     schema: string;
     captured_at: string;
     fingerprint: string;
-    identity: { kind: string; task_name: string; artifact_id: string };
+    identity: { kind: string; task_name?: string; artifact_id?: string; url?: string };
     details: Record<string, unknown>;
   };
 }
