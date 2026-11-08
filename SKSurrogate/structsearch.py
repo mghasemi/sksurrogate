@@ -1032,12 +1032,27 @@ class SurrogateRandomCV(BaseSearchCV):
             return exp(value)
         return value
 
+    @staticmethod
+    def _rule_value_matches(actual, expected):
+        """Compare a candidate's parameter value against a rule's expected value.
+
+        A scalar is compared with equality; a list/tuple/set of values matches
+        when the actual value is any one of them (the ``depends_on`` contract:
+        "allowed values").
+        """
+        if isinstance(expected, (list, tuple, set)):
+            return any(actual == item for item in expected)
+        return actual == expected
+
     def _forbidden_reason(self, parameters):
         for rule in self.forbidden:
             if callable(rule):
                 matched = rule(parameters)
             elif isinstance(rule, dict):
-                matched = all(parameters.get(name) == value for name, value in rule.items())
+                matched = all(
+                    self._rule_value_matches(parameters.get(name), value)
+                    for name, value in rule.items()
+                )
             else:
                 raise ValueError("Forbidden rules must be callables or parameter mappings")
             if matched:
@@ -1049,7 +1064,10 @@ class SurrogateRandomCV(BaseSearchCV):
         if callable(rule):
             return bool(rule(parameters))
         if isinstance(rule, dict):
-            return all(parameters.get(name) == value for name, value in rule.items())
+            return all(
+                SurrogateRandomCV._rule_value_matches(parameters.get(name), value)
+                for name, value in rule.items()
+            )
         raise ValueError("Conditional rules must be callables or parameter mappings")
 
     def _apply_conditional_parameters(self, parameters):
@@ -1453,6 +1471,11 @@ class SurrogateRandomCV(BaseSearchCV):
                     cls_dict[target_classes[i]] = x[idx]
                     idx += 1
                 best_params_[param] = cls_dict
+        # Mirror the trial-level conditioning so set_params/refit use exactly the
+        # parameters CV actually scored; conditionally-inactive parameters were
+        # dropped from every trial, so decoding them back would refit a model the
+        # reported score never saw.
+        best_params_ = self._apply_conditional_parameters(best_params_)
         # The optimizer's solution can land inside a region every trial rejected
         # (a forbidden combination, or a candidate whose folds all failed).
         # Refitting those settings either raises (e.g. an invalid

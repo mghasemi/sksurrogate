@@ -442,8 +442,14 @@ class AML(BaseEstimator):
     :param max_evals: Optional maximum objective evaluations for each surrogate search.
     :param forbidden: Iterable of forbidden parameter rules forwarded to every
         ``SurrogateRandomCV`` (dicts mapping param name -> disallowed value, or callables).
+        Parameter names may be bare API-level names (e.g. ``l1_ratio``); each rule is
+        applied against every pipeline step that declares the named parameter, and a
+        candidate is rejected when any of its steps matches. A list value means "any of
+        these values".
     :param conditional: Mapping of param name -> rule describing when the parameter is active;
-        inactive parameters are dropped from each candidate before evaluation.
+        inactive parameters are dropped from each candidate before evaluation. Rules follow
+        the same bare-name convention as ``forbidden`` (a list value means "any of these
+        values").
     """
 
     def __init__(
@@ -787,6 +793,9 @@ class AML(BaseEstimator):
             result = {"pipeline": seq, "estimator": best_mdl, "score": best_scr}
             if self.last_candidate_errors_:
                 result["errors"] = list(self.last_candidate_errors_)
+            result["rule_rejected"] = getattr(
+                self, "_last_candidate_rule_rejected_", False
+            )
             self.evaluation_history_.append(result)
             if self.verbose > 0:
                 print("score:%f" % best_scr)
@@ -827,6 +836,16 @@ class AML(BaseEstimator):
             raise ValueError("AML generated no candidate pipelines")
         best_sequence, (best_estimator, best_score) = next(iter(best.items()))
         if not math.isfinite(best_score):
+            failed_items = [
+                item for item in self.evaluation_history_
+                if not math.isfinite(item.get("score", float("inf")))
+            ]
+            if failed_items and all(bool(item.get("rule_rejected")) for item in failed_items):
+                raise ValueError(
+                    "No search candidate could be fitted: every candidate was rejected. "
+                    "Check that the forbidden rules (and any conditional parameters) leave "
+                    "at least one viable configuration."
+                )
             errors = next(
                 (
                     item.get("errors", [])
@@ -961,6 +980,9 @@ class AML(BaseEstimator):
                     }
                     if self.last_candidate_errors_:
                         result["errors"] = list(self.last_candidate_errors_)
+                    result["rule_rejected"] = getattr(
+                        self, "_last_candidate_rule_rejected_", False
+                    )
                     self.evaluation_history_.append(result)
                 if self.verbose > 0:
                     print("score:%f" % best_scr)
@@ -1140,6 +1162,112 @@ class AML(BaseEstimator):
         self.summary_ = {}
         return self
 
+    @staticmethod
+    def _surrogate_rejection_profile(history):
+        """Classify one surrogate stage's trial history for rule rejection.
+
+        Returns ``"forbidden"`` when at least one trial was evaluated and every
+        trial was invalidated by a forbidden-parameter rule, and ``None``
+        otherwise (no trials, or completed / fit-failed evaluations present),
+        so callers can tell "blocked by rules" apart from ordinary failures.
+        """
+        if not history:
+            return None
+        invalid_only = all(item.get("status") == "invalid" for item in history)
+        rule_blocked = any(
+            record.get("type") == "ForbiddenParameterCombination"
+            for item in history
+            for record in (item.get("failure_records") or [])
+        )
+        return "forbidden" if invalid_only and rule_blocked else None
+
+    @staticmethod
+    def _prefixed_param_variants(name, param_names):
+        """Search-space keys of a pipeline that refer to a parameter name.
+
+        Pipeline search spaces key parameters by step prefix (``stp_0__C``) while
+        rules written for the API use bare names (``C``); an already-prefixed name
+        is used as-is when it exists in the space, otherwise every key whose base
+        name matches is returned.
+        """
+        if name in param_names:
+            return [name]
+        base = name.rsplit("__", 1)[-1]
+        return sorted(k for k in param_names if k.rsplit("__", 1)[-1] == base)
+
+    def _expand_forbidden_rules(self, rules, param_names):
+        """Expand forbidden rules to one pipeline's step-prefixed parameter names.
+
+        Each dict rule becomes one rule per declaring step (a candidate is rejected
+        when any of its steps matches); a rule naming no declared parameter can never
+        match and is dropped, mirroring the legacy silent-skip behavior. Callables
+        pass through untouched: they inspect the full candidate mapping themselves.
+        """
+        from itertools import product
+
+        expanded = []
+        for rule in tuple(rules or ()):
+            if callable(rule):
+                expanded.append(rule)
+                continue
+            if not isinstance(rule, dict) or not rule:
+                raise ValueError("Forbidden rules must be callables or parameter mappings")
+            keys = list(rule)
+            variants = [self._prefixed_param_variants(key, param_names) for key in keys]
+            if any(not options for options in variants):
+                continue
+            values = tuple(rule[key] for key in keys)
+            expanded.extend(dict(zip(combo, values)) for combo in product(*variants))
+        return tuple(expanded)
+
+    def _expand_conditional_map(self, conditional, param_names):
+        """Expand a conditional map to one pipeline's step-prefixed parameter names.
+
+        Both the conditioned parameter and its dependency keys may be bare API names;
+        each is rewritten to every variant declared by the pipeline. When several steps
+        declare the same name the entry becomes a callable so that any matching step
+        keeps the parameter active. A condition referencing an undeclared parameter can
+        never match, which leaves the conditioned parameter inactive.
+        """
+        from itertools import product
+
+        from .structsearch import SurrogateRandomCV
+
+        expanded = {}
+        for name, rule in dict(conditional or {}).items():
+            variants = self._prefixed_param_variants(name, param_names)
+            if not variants:
+                continue  # this pipeline does not declare the parameter; nothing to condition on
+            if callable(rule):
+                for key in variants:
+                    expanded[key] = rule
+                continue
+            if not isinstance(rule, dict) or not rule:
+                raise ValueError("Conditional rules must be callables or parameter mappings")
+            deps = list(rule)
+            dep_variants = [self._prefixed_param_variants(dep, param_names) for dep in deps]
+            values = tuple(rule[dep] for dep in deps)
+            if any(not options for options in dep_variants):
+                # The condition names a parameter this pipeline does not declare; it can
+                # never match, so the conditioned parameter stays inactive.
+                for key in variants:
+                    expanded.setdefault(key, rule)
+                continue
+            combos = list(product(*dep_variants))
+            if len(variants) == 1 and len(combos) == 1:
+                expanded[variants[0]] = dict(zip(combos[0], values))
+            else:
+
+                def _matches(params, combos=combos, values=values):
+                    return any(
+                        SurrogateRandomCV._condition_matches(dict(zip(combo, values)), params)
+                        for combo in combos
+                    )
+
+                for key in variants:
+                    expanded[key] = _matches
+        return expanded
+
     def optimize_pipeline(self, seq, X, y):
         """
         Constructs and optimizes a pipeline according to the steps passed through `seq` which is a tuple of
@@ -1296,8 +1424,15 @@ class AML(BaseEstimator):
             }
             self.last_candidate_duration_ = perf_counter() - started
             return ppln, score
+        # Rewrite API-level rules (bare parameter names) into this pipeline's
+        # step-prefixed search-space keys so forbidden/conditional matching can
+        # actually see the candidates it is meant to constrain.
+        param_names = set(config)
+        pipeline_forbidden = self._expand_forbidden_rules(self.forbidden, param_names)
+        pipeline_conditional = self._expand_conditional_map(self.conditional, param_names)
         best_stage = None
         failed_trial_errors = []
+        stage_profiles = []
         for srgt in surrogates:
             OPTIM = SurrogateRandomCV(
                 ppln,
@@ -1317,10 +1452,13 @@ class AML(BaseEstimator):
                 time_limit=self.time_limit,
                 max_evals=self.max_evals,
                 random_state=self.random_state,
-                forbidden=self.forbidden,
-                conditional=self.conditional,
+                forbidden=pipeline_forbidden,
+                conditional=pipeline_conditional,
             )
             OPTIM.fit(X, y)
+            stage_profiles.append(
+                self._surrogate_rejection_profile(OPTIM.evaluation_history_)
+            )
             if not math.isfinite(OPTIM.best_estimator_score):
                 failed_trial_errors.extend(
                     item["error"]
@@ -1335,6 +1473,9 @@ class AML(BaseEstimator):
                     OPTIM, "termination_reason", self.termination_reason
                 )
                 self.summary_ = dict(OPTIM.summary_)
+        self._last_candidate_rule_rejected_ = any(
+            profile == "forbidden" for profile in stage_profiles
+        ) and all(profile in ("forbidden", None) for profile in stage_profiles)
         if OPTIM is None:
             raise RuntimeError("No surrogate search was executed")
         self.last_candidate_errors_ = (
