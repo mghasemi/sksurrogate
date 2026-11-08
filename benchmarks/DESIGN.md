@@ -1,6 +1,6 @@
 # SKSurrogate Benchmark Suite — Design (B1)
 
-Status: **v1.14** (2026-11-08; per-evaluation candidate configs, record schema v2). Datasets and baselines are pinned below; this doc is the
+Status: **v1.15** (2026-11-08; §14 Stage D1 synthetic-DGP validation harness added; fixed-dataset contract unchanged). Datasets and baselines are pinned below; this doc is the
 contract for B2 (runner), B3 (ablation), B4 (publication). Changes after B2 starts require a
 version bump here.
 
@@ -239,6 +239,9 @@ v1.14 (2026-11-08; per-evaluation candidate configs and record schema v2 — Sta
   optional `openml` package, so cached datasets load in slim environments without the `[benchmark]` extra; only a
   genuine download still requires it (actionable install-hint error unchanged). Regression-tested in
   `tests/test_benchmark_datasets.py`.
+
+v1.15 additions (2026-11-08):
+- §14 added: Stage D1 controlled synthetic-DGP validation harness (`benchmarks/dgps.py`, report schema `sksurrogate.dgp-validation.v1`). It is a separate capability from the fixed-dataset suite — its "datasets" are process-defined, so §§3–7 pinning does not apply; it inherits only the cross-cutting rules (seeded reproducibility, descriptive-only summaries, versioned JSON records).
 
 ## 1. Goal
 
@@ -585,3 +588,45 @@ the mean gain is small with four paired losses. **Decision:** do not add a
 production ensemble API or change the default single-best model in this
 iteration. Revisit only with representative scientific workloads, repeated
 outer evaluation, and bundle provenance requirements established.
+
+## 14. Controlled synthetic DGP validation harness (Stage D1)
+
+`benchmarks/dgps.py` provides a seeded set of parametric data-generating processes
+with exactly known ground truth, for validating methods against known values — the
+D1 foundation from `AI_LAYER02_REMAINING_PLAN.md` (R6). This is *not* part of the
+fixed-dataset comparison suite: its "datasets" are process-defined, so §§3–7 pinning
+does not apply; it inherits only the cross-cutting rules — seeded reproducibility,
+descriptive-only summaries (no significance claims), and versioned JSON records
+(report schema `sksurrogate.dgp-validation.v1`).
+
+**DGPs** (default p = 6; additive noise σ = 0.5 unless noted):
+
+| DGP | Target / structure | What it probes |
+| --- | --- | --- |
+| `interactions` | $0.5 + 2x_0 - 1.5x_1 + x_2 + 1.5\,x_0 x_1 + \varepsilon$, features $\sim N(0,I)$; 3 of p active | Nonlinearity a linear method cannot represent (plain vs expanded-design RMSE gap) |
+| `correlated` | linear, all named coefficients nonzero; corr(x0,x1) = corr(x3,x4) = 0.9 | Per-coefficient recovery under ill-conditioning while prediction stays easy |
+| `heteroscedastic` | linear + ε with σ(x) = 0.5(1 + 2\|x₂\|) | Squared residuals of a homoscedastic fit track the true variance structure |
+| `shift` | $0.5 + \beta^\top x + x_2^2 + \varepsilon$; train at N(0,I), test shifted by mean +2 on every feature | Model degradation under covariate shift (an iid reference split is always provided for the ratio) |
+
+**Method panel (default):** `ridge` (α = 1), `random-forest` (100 trees, min leaf
+size 2, seeded per fit seed), `kernel-ridge` — instantiated fresh via
+`_make_method(name, seed)` so every draw and fit is reproducible from one seed.
+
+**Harness:** `sample_dgp(name, n_train, n_test, p, seed)` returns a frozen
+train/test/iid sample with the exact truth dict (for `shift`, test rows come from
+the shifted distribution; all splits use fixed per-seed RNG offsets).
+`validate(dgps, methods, n_train, n_test, p, seeds, out_dir)` scores each method on
+each DGP × seed — rmse / r² on the test and iid splits plus
+`degradation_ratio = rmse_test / rmse_iid` — together with per-DGP ground-truth
+probes (interaction-coefficient recovery; coefficient deviations under
+correlation; corr(resid², σ(x)²)), assembles cross-seed means, and writes
+`dgp_validation.json`. CLI: `python -m benchmarks.dgps --dgps ... --seeds 0 1`.
+
+**Relationship to `SKSurrogate/synthdat.py`:** `synthdat.SynthData` resamples the
+structure of an *existing* dataset (no ground-truth function, unseeded) — it is the
+"dataset-like" half of the synthetic-data family; `dgps.py` is the "known-process"
+half. They coexist and are deliberately not merged.
+
+**Status:** foundation built 2026-11-08 (`tests/test_benchmark_dgps.py`, 14 tests).
+The D1 exit criterion — Stages B/C methods validated against known values — remains
+open until those methods exist; when C2/C3 land they are validated here first.
