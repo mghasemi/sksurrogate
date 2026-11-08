@@ -361,9 +361,13 @@ report uncertainty without treating a small score difference as definitive.
 
 #### P1.5 Add practical model explanations
 
-- **Status:** Complete for the scoped tracker APIs. SHAP is not added as a
-  dependency or required path; reconsider it as an optional extra if users need
-  estimator-specific local attributions beyond permutation importance and ICE.
+- **Status:** Complete for the scoped tracker APIs. SHAP remains deliberately
+  absent as a dependency or required path: Stage C1's decision record
+  (`AI_LAYER02_C1_SHAP_DECISION.md`) formally defers it for the v0.3 cycle and
+  gates re-opening on the row-level explanation contract (D3/R9a) plus a named
+  adopter need and a bounded request shape. ALE (`POST .../ale`) and
+  reference-subset PDP/ALE stability summaries landed as the Stage C
+  supplements to partial dependence.
 - [x] Start with permutation importance and supported scikit-learn
   partial-dependence/ICE capabilities; make the chosen reference dataset and
   sampling behavior explicit.

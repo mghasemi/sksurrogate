@@ -13,7 +13,7 @@ import {
   YAxis,
 } from "recharts";
 
-import { explainBundle, getIntervals, listBundles } from "../api/client";
+import { computeAle, explainBundle, getIntervals, listBundles } from "../api/client";
 import { LineageRail } from "../components/LineageRail";
 import { Card, EmptyState, ErrorNote, Loading, Stat, fmtNum, fmtPct } from "../components/ui";
 import { useTask } from "../lib/task-context";
@@ -25,6 +25,7 @@ export default function ExplainPage() {
   const [groupBy, setGroupBy] = useState("");
   const [maxRows, setMaxRows] = useState(500);
   const [stabilitySamples, setStabilitySamples] = useState(1);
+  const [aleBins, setAleBins] = useState(20);
 
   const bundlesQ = useQuery({
     queryKey: ["bundles", task],
@@ -45,9 +46,21 @@ export default function ExplainPage() {
   const intervalMut = useMutation({
     mutationFn: () => getIntervals(task, selected, { alpha, group_by: groupBy.trim() || undefined }),
   });
+  const aleMut = useMutation({
+    mutationFn: () =>
+      computeAle(task, selected, {
+        max_rows: maxRows,
+        top_k: 3,
+        n_bins: aleBins,
+        stability_samples: stabilitySamples,
+      }),
+  });
 
   const importance = (explainMut.data?.importance ?? []).slice(0, 15);
   const intervals = intervalMut.data;
+  const pdpStability = explainMut.data?.partial_dependence_stability;
+  const pdpStabilityFor = (feature: string) =>
+    pdpStability?.curves?.find((curve) => curve.feature === feature);
 
   return (
     <div className="stack">
@@ -180,7 +193,17 @@ export default function ExplainPage() {
                 </div>
                 <div className="grid cols-3">
                   {explainMut.data.partial_dependence.map((curve) => {
-                    const data = curve.grid.map((g, i) => ({ x: g, y: curve.average[i] }));
+                    const stability = pdpStabilityFor(curve.feature);
+                    const data = curve.grid.map((g, i) => {
+                      const mean = stability?.mean?.[i] ?? null;
+                      const sd = stability?.sample_std?.[i] ?? null;
+                      return {
+                        x: g,
+                        y: curve.average[i],
+                        bandLow: mean !== null && sd !== null ? mean - sd : null,
+                        bandHigh: mean !== null && sd !== null ? mean + sd : null,
+                      };
+                    });
                     return (
                       <div key={curve.feature}>
                         <strong>{curve.feature}</strong>
@@ -192,6 +215,24 @@ export default function ExplainPage() {
                               <YAxis width={48} domain={["auto", "auto"]} />
                               <Tooltip formatter={(v) => Number(v).toFixed(4)} />
                               <Line type="monotone" dataKey="y" stroke="#10b981" dot={false} />
+                              {stability && (
+                                <>
+                                  <Line
+                                    type="monotone"
+                                    dataKey="bandLow"
+                                    stroke="#94a3b8"
+                                    strokeDasharray="4 4"
+                                    dot={false}
+                                  />
+                                  <Line
+                                    type="monotone"
+                                    dataKey="bandHigh"
+                                    stroke="#94a3b8"
+                                    strokeDasharray="4 4"
+                                    dot={false}
+                                  />
+                                </>
+                              )}
                             </LineChart>
                           </ResponsiveContainer>
                         </div>
@@ -199,12 +240,155 @@ export default function ExplainPage() {
                     );
                   })}
                 </div>
+                {pdpStability?.curves && (
+                  <p className="muted">
+                    Dashed curves mark the mean ± one sample SD across{" "}
+                    {pdpStability.sample_count} distinct reference subsets, each re-evaluated on
+                    the same grid with direct model calls. The spread is descriptive — it is not a
+                    confidence band and does not guarantee generalization.
+                  </p>
+                )}
+                {pdpStability?.skipped_reason && (
+                  <p className="hint">
+                    Reference-subset PDP stability not computed: {pdpStability.skipped_reason}
+                  </p>
+                )}
                 {explainMut.data.errors.map((e) => (
                   <div key={e.feature} className="hint">⚠ {e.feature}: {e.detail}</div>
                 ))}
               </>
             )}
           </Card>
+
+    {selected && (
+        <Card
+          title="Accumulated local effects (ALE)"
+          sub="Local response differences accumulated over observed feature bins. A supplement to partial dependence when features are dependent — still a fitted-model response profile, not a causal effect."
+          actions={
+            <button className="btn primary" disabled={aleMut.isPending} onClick={() => aleMut.mutate()}>
+              {aleMut.isPending ? "Computing…" : "Compute ALE"}
+            </button>
+          }
+        >
+          <p className="muted">
+            ALE varies each feature only within its observed intervals and accumulates the local
+            model-response change, so it averages over fewer implausible feature combinations than
+            marginal partial dependence. It does not isolate variable importance, and nominal
+            categorical features are skipped because they have no canonical ordering.
+          </p>
+          <div className="row">
+            <div className="field">
+              <label htmlFor="ale-bins">Quantile bins</label>
+              <select
+                id="ale-bins"
+                value={aleBins}
+                onChange={(event) => setAleBins(Number(event.target.value))}
+              >
+                <option value={10}>10 bins</option>
+                <option value={20}>20 bins</option>
+                <option value={30}>30 bins</option>
+              </select>
+            </div>
+          </div>
+          {aleMut.isError && <ErrorNote error={aleMut.error} />}
+          {aleMut.data && (
+            <>
+              <p className="muted">
+                Reference: {aleMut.data.reference_sample.used_rows} of{" "}
+                {aleMut.data.reference_sample.source_rows} rows from the “
+                {aleMut.data.reference_sample.partition}” partition
+                {aleMut.data.reference_sample.sampling === "random_without_replacement"
+                  ? ` (sampled without replacement; seed ${aleMut.data.settings.random_state})`
+                  : " (all rows)"}
+                . Response: <code>{aleMut.data.response.output}</code>. Features:{" "}
+                {aleMut.data.feature_selection === "explicit"
+                  ? "explicit selection"
+                  : `top ${aleMut.data.settings.top_k} by permutation importance`}
+                . {" "}
+                <Link to="/features">Compare with correlation and input sensitivity</Link>
+              </p>
+              {aleMut.data.skipped.map((item) => (
+                <div key={item.feature} className="hint">
+                  ⚠ {item.feature}: {item.detail}
+                </div>
+              ))}
+              {aleMut.data.errors.map((item) => (
+                <div key={item.feature} className="hint">
+                  ⚠ {item.feature}: {item.detail}
+                </div>
+              ))}
+              <div className="grid cols-3">
+                {aleMut.data.curves.map((curve) => {
+                  const stability = curve.stability;
+                  const data = curve.grid.map((g, i) => {
+                    const mean = stability?.mean?.[i] ?? null;
+                    const sd = stability?.sample_std?.[i] ?? null;
+                    return {
+                      x: g,
+                      y: curve.accumulated[i],
+                      bandLow: mean !== null && sd !== null ? mean - sd : null,
+                      bandHigh: mean !== null && sd !== null ? mean + sd : null,
+                    };
+                  });
+                  const total = curve.counts.reduce((sum, count) => sum + count, 0);
+                  return (
+                    <div key={curve.feature}>
+                      <strong>{curve.feature}</strong>
+                      <p className="hint">
+                        {curve.counts.length} bins ({curve.counts.join(" / ")} rows
+                        {curve.excluded_rows ? `; ${curve.excluded_rows} non-finite rows excluded` : ""}
+                        {total ? "" : "; no reference rows"})
+                      </p>
+                      <div style={{ height: 160 }}>
+                        <ResponsiveContainer width="100%" height="100%">
+                          <LineChart data={data}>
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="x" tickFormatter={(v: number) => Number(v).toPrecision(3)} />
+                            <YAxis width={48} domain={["auto", "auto"]} />
+                            <Tooltip formatter={(v) => Number(v).toFixed(4)} />
+                            <Line type="monotone" dataKey="y" stroke="#6366f1" dot={false} />
+                            {stability && (
+                              <>
+                                <Line
+                                  type="monotone"
+                                  dataKey="bandLow"
+                                  stroke="#94a3b8"
+                                  strokeDasharray="4 4"
+                                  dot={false}
+                                />
+                                <Line
+                                  type="monotone"
+                                  dataKey="bandHigh"
+                                  stroke="#94a3b8"
+                                  strokeDasharray="4 4"
+                                  dot={false}
+                                />
+                              </>
+                            )}
+                          </LineChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {aleMut.data.curves.some((curve) => curve.stability) && (
+                <p className="muted">
+                  Dashed curves mark the mean ± one sample SD across the requested reference
+                  subsets, accumulated on the primary sample's bin edges. They are descriptive,
+                  not confidence bands.
+                </p>
+              )}
+              <ul className="muted">
+                {aleMut.data.interpretation.limitations.map((limitation) => (
+                  <li key={limitation}>{limitation}</li>
+                ))}
+              </ul>
+            </>
+          )}
+        </Card>
+      )}
+
 
           <Card
             title="Prediction intervals"

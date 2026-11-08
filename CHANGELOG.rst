@@ -4,6 +4,59 @@ Changelog
 Unreleased
 ----------
 
+Explanations: accumulated local effects and reference-subset stability
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* New control-plane endpoint ``POST /api/evaluation/{task}/{version}/ale``
+  computes accumulated local effects (ALE) for up to six numeric features —
+  a supplement to partial dependence when features are dependent. The
+  contract is documented in ``docs/mltrace.rst``: equal-frequency quantile bins
+  with duplicate-edge collapse, deterministic left-merging of sparse bins
+  (``min_bin_fraction`` default 0.01, reported in the response), non-finite
+  rows excluded per curve, nominal categorical and (near-)constant features
+  reported under ``skipped`` with a reason, one scalar response per curve
+  (``predict`` for regression, labelled positive-class probability or decision
+  value for binary classifiers, multiclass rejected), and non-causal
+  interpretation labels. Feature selection defaults to the top-k permutation
+  importance on the same reference sample and can be overridden explicitly.
+* The Explain UI gained an **Accumulated local effects (ALE)** card with
+  10/20/30-bin controls, per-bin row counts, skipped-feature reasons, and the
+  non-causal limitation list. ALE is implemented as pure NumPy in
+  ``api/explanations.py`` — no new dependency and no change to the
+  ``SKSurrogate`` core.
+* Explain responses now carry an optional ``partial_dependence_stability``
+  block when 3–5 reference samples are requested: each primary PDP grid is
+  re-evaluated on every distinct subset with direct model calls, and the block
+  reports per-grid mean, sample SD, min, and max plus per-subset means. ALE
+  curves report the same descriptive per-bin summary. These are
+  sample-sensitivity diagnostics, not confidence bands; ICE stability is
+  explicitly out of the API contract (individual ICE curves remain a plotting
+  feature). PDP charts in the UI render the spread as dashed mean ± SD lines.
+* Documentation: the ALE contract replaces the earlier "not exposed" note in
+  ``docs/mltrace.rst``; the Explain section of ``docs/ui-manual.rst`` and the
+  walkthrough describe the new card and the stability bands; the walkthrough's
+  interval example payload now matches the endpoint (``alpha``, not
+  ``coverage``).
+* Controlled-DGP validation (Stage D1) gained an ALE ground-truth probe:
+  ``benchmarks/dgps.py`` compares the accumulated curve against the exact
+  noise-free response of the ``correlated`` and ``shift`` processes
+  (including the known quadratic term), matching to floating-point precision.
+
+Benchmarks: slim-environment dataset loading and per-evaluation records (schema v2)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Benchmark datasets now load from the local CSV cache without requiring the optional
+  ``openml`` dependency: ``benchmarks/datasets.py`` checks the warm cache first and only imports
+  ``openml`` on a genuine download, so cached datasets work in slim environments (e.g. CI-mirror
+  containers) that do not install the ``[benchmark]`` extra; the actionable install-hint error on a
+  cache miss is unchanged.
+* Benchmark run records are now schema v2: every per-evaluation entry carries the full candidate
+  configuration (``params``, all keys of the shared search space), each run JSON is stamped with
+  ``schema_version``, and the directory manifest records ``record_schema_version``. Archive readers
+  (``benchmarks/plot.py``, ``benchmarks/analyze_surrogates.py``) stay tolerant of legacy v1 runs that
+  lack both fields, so archived runs remain re-plottable — and usable for acquisition-function
+  comparisons — without re-running them. See ``benchmarks/DESIGN.md`` (v1.14).
+
 Rule-rejection fixes for forbidden/conditional experiment rules
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -265,7 +265,14 @@ Open **Explain**, choose the model version and click **Explain model**.
   feature is shuffled. ``bmi``, ``s5`` and ``bp`` dominate.
 * The small curves are *partial dependence* for the top features: how the
   prediction moves across each feature's range (here it rises with ``bmi``,
-  ``s5`` and ``bp``).
+  ``s5`` and ``bp``). Choose 3 or 5 reference samples to add dashed mean ±
+  sample-SD lines across distinct subsets; they describe reference-sample
+  sensitivity, not a confidence band.
+* The **Accumulated local effects** card computes ALE instead of marginal
+  averages: each feature moves between adjacent observed quantile bins and the
+  local response differences are accumulated, which avoids averaging over
+  feature combinations that never co-occur. Categorical features are skipped,
+  and ALE is still a model description rather than a causal effect.
 
 .. figure:: images/wt-12-explain-importance.png
    :alt: Permutation importance and partial dependence
@@ -287,9 +294,13 @@ coverage claim. Intervals are available for regression bundles only.
 REST::
 
     curl -X POST $API/evaluation/diabetes/<version>/explain \
-         -H 'content-type: application/json' -d '{"partition":"train"}'
+         -H 'content-type: application/json' \
+         -d '{"partition":"train","stability_samples":3}'
+    curl -X POST $API/evaluation/diabetes/<version>/ale \
+         -H 'content-type: application/json' \
+         -d '{"partition":"train","features":["bmi","bp"],"n_bins":20}'
     curl -X POST $API/evaluation/diabetes/<version>/intervals \
-         -H 'content-type: application/json' -d '{"coverage":0.9}'
+         -H 'content-type: application/json' -d '{"alpha":0.1}'
 
 Python: ``sklearn.inspection.permutation_importance`` and
 ``partial_dependence``, and

@@ -307,7 +307,24 @@ top-rank frequency. This is not a confidence interval or a guarantee of
 robustness, and it requires more source rows than the selected row cap. With
 the default of one sample, no cross-sample stability summary is estimated.
 The Explain page shows the reference row counts, sampling status, seed when
-sampling occurs, and permutation-repeat count.
+sampling occurs, and permutation-repeat count. With 3 or 5 reference samples
+selected, the partial-dependence charts also gain dashed mean ± sample-standard-
+deviation lines computed over the same grid for each distinct subset; like the
+importance summary, this describes reference-sample sensitivity and is not a
+confidence band.
+
+The **Accumulated local effects (ALE)** card supplements partial dependence
+when features are dependent: choose 10, 20 or 30 quantile bins and click
+**Compute ALE**. ALE accumulates model-response differences between adjacent
+observed bins, so each curve reports its bin boundaries, the reference rows per
+bin, and any excluded non-finite rows instead of averaging over feature
+combinations that never occur. The response label names the scalar being
+explained — ``predict`` for regression, the positive-class probability for
+binary classifiers — and nominal categorical features are listed as skipped
+because they have no canonical ordering. ALE still describes the fitted model,
+not a causal effect, and correlated features can make one feature's local
+differences reflect another's distribution.
+
 For regression bundles, **Compute intervals**
 produces split-conformal prediction intervals at 80/90/95% target coverage and
 reports observed coverage with a Wilson interval, mean and median width, and

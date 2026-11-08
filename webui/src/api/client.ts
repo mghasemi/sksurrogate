@@ -1463,6 +1463,27 @@ export const getPresets = () => get<{ presets: ExperimentPreset[] }>("/api/exper
 /* Explanations and prediction intervals                               */
 /* ------------------------------------------------------------------ */
 
+export interface CurveStability {
+  feature: string;
+  grid: Array<number | null>;
+  mean: Array<number | null>;
+  sample_std: Array<number | null>;
+  min: Array<number | null>;
+  max: Array<number | null>;
+  sample_means: Array<number | null>;
+}
+
+export interface PdpStability {
+  sample_count?: number;
+  sample_size?: number;
+  sampling?: "random_without_replacement";
+  grid_source?: "primary_curve_grid";
+  response?: { family: string; output: string; causal_effect: false };
+  curves?: CurveStability[];
+  skipped_reason?: string;
+  note?: string;
+}
+
 export interface ExplainResult {
   model_version: string;
   partition: string;
@@ -1494,6 +1515,7 @@ export interface ExplainResult {
     }>;
   } | null;
   partial_dependence: Array<{ feature: string; grid: Array<number | null>; average: Array<number | null> }>;
+  partial_dependence_stability: PdpStability | null;
   errors: Array<{ feature: string; detail: string }>;
   interpretation: {
     importance: {
@@ -1524,6 +1546,84 @@ export const explainBundle = (
 ) =>
   post<ExplainResult>(
     `/api/evaluation/${encodeURIComponent(task)}/${encodeURIComponent(version)}/explain`,
+    body,
+  );
+
+export interface AleCurve {
+  feature: string;
+  kind: "numeric";
+  grid: Array<number | null>;
+  accumulated: Array<number | null>;
+  counts: number[];
+  excluded_rows: number;
+  min_bin_fraction: number;
+  stability?: {
+    sample_count: number;
+    sample_size: number;
+    sampling: "random_without_replacement";
+    mean: Array<number | null>;
+    sample_std: Array<number | null>;
+    min: Array<number | null>;
+    max: Array<number | null>;
+    note: string;
+  };
+}
+
+export interface AleResult {
+  model_version: string;
+  partition: string;
+  response: {
+    family: "Regression" | "Classification";
+    output: string;
+    positive_class?: number | string;
+    causal_effect: false;
+  };
+  reference_sample: {
+    partition: string;
+    source_rows: number;
+    used_rows: number;
+    sampling: "all_rows" | "random_without_replacement";
+  };
+  feature_selection: "explicit" | "permutation_importance_top_k";
+  settings: {
+    max_rows: number;
+    n_bins: number;
+    top_k: number;
+    features: string[] | null;
+    stability_samples: number;
+    random_state: number;
+    min_bin_fraction: number;
+  };
+  curves: AleCurve[];
+  skipped: Array<{ feature: string; reason: string; detail: string }>;
+  errors: Array<{ feature: string; detail: string }>;
+  interpretation: {
+    accumulated_local_effects: {
+      category: "fitted_model_response_profile";
+      method: string;
+      reference_partition: string;
+      response_output: string;
+      causal_effect: false;
+    };
+    limitations: string[];
+  };
+}
+
+export const computeAle = (
+  task: string,
+  version: string,
+  body: {
+    partition?: string;
+    max_rows?: number;
+    n_bins?: number;
+    top_k?: number;
+    features?: string[];
+    stability_samples?: number;
+    random_state?: number;
+  } = {},
+) =>
+  post<AleResult>(
+    `/api/evaluation/${encodeURIComponent(task)}/${encodeURIComponent(version)}/ale`,
     body,
   );
 

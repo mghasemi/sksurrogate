@@ -1,7 +1,11 @@
 """Model explanation and prediction-interval endpoints for one stored bundle.
 
 - ``/{version}/explain``   → permutation importance plus partial dependence for
-                             the most important features (bounded, synchronous)
+                             the most important features (bounded, synchronous),
+                             with optional descriptive reference-subset
+                             stability summaries for both
+- ``/{version}/ale``       → accumulated local effects (ALE) for selected
+                             numeric features (bounded, synchronous)
 - ``/{version}/intervals`` → split-conformal prediction intervals (regression)
 
 Both work on the task's stored dataset partitions and never refit the stored
@@ -9,6 +13,7 @@ bundle: the interval endpoint refits a *clone* on a train slice.
 """
 
 import numpy as np
+import pandas as pd
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
@@ -18,6 +23,15 @@ from SKSurrogate.mltrace import (
 )
 
 from ..deps import bad_request, finite_or_none, unprocessable
+from ..explanations import (
+    DEFAULT_MIN_BIN_FRACTION,
+    accumulated_local_effects,
+    average_pdp_on_grid,
+    descriptive_summary,
+    numeric_bin_edges,
+    reference_subsets,
+    response_callable,
+)
 from ..training import get_registered_target, load_partition, problem_family
 from .evaluation import _load_bundle
 
@@ -32,6 +46,16 @@ class ExplainRequest(BaseModel):
     max_rows: int = Field(default=500, ge=20, le=_MAX_ROWS)
     n_repeats: int = Field(default=5, ge=1, le=20)
     top_k: int = Field(default=3, ge=0, le=6)
+    stability_samples: int = Field(default=1, ge=1, le=5)
+    random_state: int = 0
+
+
+class AleRequest(BaseModel):
+    partition: str = "train"
+    max_rows: int = Field(default=500, ge=20, le=_MAX_ROWS)
+    n_bins: int = Field(default=20, ge=5, le=50)
+    top_k: int = Field(default=3, ge=0, le=6)
+    features: list[str] | None = None
     stability_samples: int = Field(default=1, ge=1, le=5)
     random_state: int = 0
 
@@ -71,6 +95,7 @@ def explain_bundle(task_name: str, model_version: str, body: ExplainRequest):
     X_source, y_source = X, y
     sampled = source_rows > body.max_rows
     sample_rng = np.random.RandomState(body.random_state)
+    keep = None
     if sampled:
         keep = sample_rng.choice(len(X), body.max_rows, replace=False)
         X, y = X.iloc[keep], y[keep]
@@ -83,20 +108,22 @@ def explain_bundle(task_name: str, model_version: str, body: ExplainRequest):
     except Exception as exc:
         raise bad_request("Could not compute importance: %s: %s" % (type(exc).__name__, exc))
     stability_results = [result]
-    sampled_sets = {tuple(sorted(keep))} if sampled else set()
-    for sample_index in range(1, body.stability_samples):
-        keep = sample_rng.choice(source_rows, body.max_rows, replace=False)
-        sample_key = tuple(sorted(keep))
-        while sample_key in sampled_sets:
-            keep = sample_rng.choice(source_rows, body.max_rows, replace=False)
-            sample_key = tuple(sorted(keep))
-        sampled_sets.add(sample_key)
+    extra_subsets = []
+    if body.stability_samples > 1:
+        extra_subsets = reference_subsets(
+            sample_rng,
+            source_rows,
+            body.max_rows,
+            body.stability_samples - 1,
+            excluded={tuple(sorted(int(index) for index in keep))} if keep is not None else set(),
+        )
+    for sample_index, subset in enumerate(extra_subsets):
         try:
             stability_results.append(
                 permutation_importance(
                     bundle.model,
-                    X_source.iloc[keep].to_numpy(),
-                    y_source[keep],
+                    X_source.iloc[subset].to_numpy(),
+                    y_source[subset],
                     n_repeats=body.n_repeats,
                     random_state=body.random_state,
                 )
@@ -104,7 +131,7 @@ def explain_bundle(task_name: str, model_version: str, body: ExplainRequest):
         except Exception as exc:
             raise bad_request(
                 "Could not compute importance for reference sample %d: %s: %s"
-                % (sample_index + 1, type(exc).__name__, exc)
+                % (sample_index + 2, type(exc).__name__, exc)
             )
     reference_sample_stability = None
     if body.stability_samples > 1:
@@ -150,6 +177,55 @@ def explain_bundle(task_name: str, model_version: str, body: ExplainRequest):
             )
         except Exception as exc:
             errors.append({"feature": names[i], "detail": "%s: %s" % (type(exc).__name__, exc)})
+    partial_dependence_stability = None
+    if body.stability_samples > 1 and curves:
+        try:
+            response, response_meta = response_callable(bundle.model, problem_family(bundle.model))
+        except ValueError as exc:
+            partial_dependence_stability = {"skipped_reason": str(exc)}
+        else:
+            subsets = [keep if sampled else np.arange(source_rows)]
+            subsets = [np.asarray(subset) for subset in subsets] + list(extra_subsets)
+            base_values = X_source.to_numpy()
+            stability_curves = []
+            for curve in curves:
+                if any(value is None for value in curve["grid"]):
+                    stability_curves.append(
+                        {"feature": curve["feature"], "skipped_reason": "non_finite_primary_grid"}
+                    )
+                    continue
+                index = names.index(curve["feature"])
+                sample_curves = np.vstack(
+                    [
+                        average_pdp_on_grid(response, base_values[subset], index, curve["grid"])
+                        for subset in subsets
+                    ]
+                )
+                summary = descriptive_summary(sample_curves)
+                stability_curves.append(
+                    {
+                        "feature": curve["feature"],
+                        "grid": curve["grid"],
+                        "mean": [finite_or_none(v) for v in summary["mean"]],
+                        "sample_std": [finite_or_none(v) for v in summary["sample_std"]],
+                        "min": [finite_or_none(v) for v in summary["min"]],
+                        "max": [finite_or_none(v) for v in summary["max"]],
+                        "sample_means": [finite_or_none(float(row.mean())) for row in sample_curves],
+                    }
+                )
+            partial_dependence_stability = {
+                "sample_count": len(subsets),
+                "sample_size": int(len(X)),
+                "sampling": "random_without_replacement",
+                "grid_source": "primary_curve_grid",
+                "response": response_meta,
+                "curves": stability_curves,
+                "note": (
+                    "Each curve is the average partial dependence recomputed with direct model "
+                    "calls on one distinct reference subset, evaluated on the primary curve's grid. "
+                    "The spread across subsets is descriptive; it is not a confidence interval."
+                ),
+            }
     return {
         "model_version": model_version,
         "partition": body.partition,
@@ -170,6 +246,7 @@ def explain_bundle(task_name: str, model_version: str, body: ExplainRequest):
         "importance": importance,
         "reference_sample_stability": reference_sample_stability,
         "partial_dependence": curves,
+        "partial_dependence_stability": partial_dependence_stability,
         "errors": errors,
         "interpretation": {
             "importance": {
@@ -188,6 +265,185 @@ def explain_bundle(task_name: str, model_version: str, body: ExplainRequest):
                 "Partial dependence averages model predictions over reference rows while varying selected features and can include implausible combinations when features are dependent.",
                 "Results describe this fitted model on the selected partition and are not estimates of causal effects.",
                 "Reference-sample stability is not estimated by default; when requested, its descriptive sample variation is not a confidence interval or a guarantee of generalization.",
+                "Partial-dependence stability curves re-evaluate the same grid on distinct reference subsets; their spread describes reference-sample sensitivity only and is not a confidence band.",
+            ],
+        },
+    }
+
+
+@router.post("/{task_name}/{model_version}/ale")
+def accumulated_local_effects_bundle(task_name: str, model_version: str, body: AleRequest):
+    """Accumulated local effects for selected numeric features of one stored bundle.
+
+    See ``docs/mltrace.rst`` (Accumulated local effects) for the contract: numeric
+    features only, equal-frequency bins with sparse-bin merging, one scalar model
+    response, and descriptive-only reference-subset stability.
+    """
+    from sklearn.inspection import permutation_importance
+
+    bundle = _load_bundle(task_name, model_version)
+    family = problem_family(bundle.model)
+    if family is None:
+        raise unprocessable("Explanations need a scikit-learn estimator")
+    try:
+        response, response_meta = response_callable(bundle.model, family)
+    except ValueError as exc:
+        raise unprocessable(str(exc))
+
+    X, y = _features_and_target(task_name, body.partition)
+    source_rows = len(X)
+    if body.stability_samples > 1 and source_rows <= body.max_rows:
+        raise bad_request(
+            "Reference-sample stability needs more source rows than max_rows; "
+            "use a smaller max_rows or a partition with more rows."
+        )
+    names = list(X.columns)
+    if body.features is not None:
+        unknown = [feature for feature in body.features if feature not in names]
+        if unknown:
+            raise bad_request(
+                "Unknown feature(s) %s; available features are %s"
+                % (", ".join(repr(name) for name in unknown), ", ".join(repr(name) for name in names))
+            )
+        if len(body.features) > 6:
+            raise bad_request("At most six features per ALE request")
+        selected = list(body.features)
+    elif body.top_k == 0:
+        selected = []
+    else:
+        sampled_for_ranking = source_rows > body.max_rows
+        if sampled_for_ranking:
+            ranking_keep = np.random.RandomState(body.random_state).choice(
+                source_rows, body.max_rows, replace=False
+            )
+            ranking_values, ranking_y = X.iloc[ranking_keep].to_numpy(), y[ranking_keep]
+        else:
+            ranking_values, ranking_y = X.to_numpy(), y
+        try:
+            ranking = permutation_importance(
+                bundle.model, ranking_values, ranking_y, n_repeats=3, random_state=body.random_state
+            )
+        except Exception as exc:
+            raise bad_request(
+                "Could not rank features for ALE selection: %s: %s; pass explicit "
+                "`features` instead" % (type(exc).__name__, exc)
+            )
+        importances = np.asarray(ranking.importances_mean)
+        selected = [names[i] for i in np.argsort(-importances)[: body.top_k]]
+
+    values_source = X.to_numpy()
+    sampled = source_rows > body.max_rows
+    sample_rng = np.random.RandomState(body.random_state)
+    keep = None
+    if sampled:
+        keep = sample_rng.choice(source_rows, body.max_rows, replace=False)
+        values = values_source[keep]
+    else:
+        values = values_source
+    subsets = []
+    if body.stability_samples > 1:
+        subsets = reference_subsets(
+            sample_rng,
+            source_rows,
+            body.max_rows,
+            body.stability_samples - 1,
+            excluded={tuple(sorted(int(index) for index in keep))} if keep is not None else set(),
+        )
+
+    curves, skipped, errors = [], [], []
+    for feature in selected:
+        index = names.index(feature)
+        if not pd.api.types.is_numeric_dtype(X[feature]):
+            skipped.append(
+                {
+                    "feature": feature,
+                    "reason": "nominal_categorical_ale_undefined",
+                    "detail": (
+                        "Accumulated local effects need an ordering of the feature's values; "
+                        "a nominal categorical feature has none, so no ALE curve is drawn. "
+                        "Partial dependence is still available for this feature."
+                    ),
+                }
+            )
+            continue
+        try:
+            edges, _ = numeric_bin_edges(values[:, index].astype(float), n_bins=body.n_bins)
+        except ValueError as exc:
+            skipped.append({"feature": feature, "reason": "undefined_bins", "detail": str(exc)})
+            continue
+        try:
+            curve, bin_counts, excluded_rows = accumulated_local_effects(response, values, index, edges)
+            entry = {
+                "feature": feature,
+                "kind": "numeric",
+                "grid": [finite_or_none(value) for value in edges],
+                "accumulated": [finite_or_none(value) for value in curve],
+                "counts": [int(count) for count in bin_counts],
+                "excluded_rows": int(excluded_rows),
+                "min_bin_fraction": DEFAULT_MIN_BIN_FRACTION,
+            }
+            if subsets:
+                subset_curves = [
+                    accumulated_local_effects(response, values_source[subset], index, edges)[0]
+                    for subset in subsets
+                ]
+                summary = descriptive_summary(np.vstack([curve] + subset_curves))
+                entry["stability"] = {
+                    "sample_count": summary["sample_count"],
+                    "sample_size": int(len(values)),
+                    "sampling": "random_without_replacement",
+                    "mean": [finite_or_none(value) for value in summary["mean"]],
+                    "sample_std": [finite_or_none(value) for value in summary["sample_std"]],
+                    "min": [finite_or_none(value) for value in summary["min"]],
+                    "max": [finite_or_none(value) for value in summary["max"]],
+                    "note": (
+                        "Each subset is accumulated on the primary reference sample's bin edges "
+                        "and centered with its own bin weights, so the spread includes centering "
+                        "variation. Descriptive only; not a confidence band."
+                    ),
+                }
+        except Exception as exc:
+            errors.append({"feature": feature, "detail": "%s: %s" % (type(exc).__name__, exc)})
+            continue
+        curves.append(entry)
+
+    return {
+        "model_version": model_version,
+        "partition": body.partition,
+        "response": response_meta,
+        "reference_sample": {
+            "partition": body.partition,
+            "source_rows": int(source_rows),
+            "used_rows": int(len(values)),
+            "sampling": "random_without_replacement" if sampled else "all_rows",
+        },
+        "feature_selection": "explicit" if body.features is not None else "permutation_importance_top_k",
+        "settings": {
+            "max_rows": body.max_rows,
+            "n_bins": body.n_bins,
+            "top_k": body.top_k,
+            "features": list(body.features) if body.features is not None else None,
+            "stability_samples": body.stability_samples,
+            "random_state": body.random_state,
+            "min_bin_fraction": DEFAULT_MIN_BIN_FRACTION,
+        },
+        "curves": curves,
+        "skipped": skipped,
+        "errors": errors,
+        "interpretation": {
+            "accumulated_local_effects": {
+                "category": "fitted_model_response_profile",
+                "method": "accumulated_local_effects",
+                "reference_partition": body.partition,
+                "response_output": response_meta["output"],
+                "causal_effect": False,
+            },
+            "limitations": [
+                "Accumulated local effects accumulate local model-response differences over observed feature bins; they reduce reliance on off-support predictions relative to partial dependence but still describe a fitted model, not a causal effect.",
+                "Correlated features can still make the local differences in one feature reflect another feature's distribution; ALE does not isolate variable importance and does not solve sparse support or conditional-explanation problems.",
+                "Nominal categorical features are skipped because ALE requires a feature ordering; the response lists them under `skipped`.",
+                "Binary classifier curves are drawn on the labelled scalar response (positive-class probability or decision value); the scale is not comparable across different response outputs or models.",
+                "Reference-subset summaries describe sample-to-sample variation only; they are not confidence bands and do not guarantee generalization.",
             ],
         },
     }

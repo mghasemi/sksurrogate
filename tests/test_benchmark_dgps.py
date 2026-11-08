@@ -93,6 +93,25 @@ class TestGroundTruthStructure:
         assert 0.0 < checks["coef_mean_abs_deviation"] < 0.5
         assert checks["coef_max_abs_deviation"] >= checks["coef_mean_abs_deviation"]
 
+    def test_ale_kernel_matches_known_response_curves(self):
+        """Stage C/D1 hook: ALE on the noise-free truth function is exact.
+
+        For the correlated (additive) and shift (quadratic in x2) processes the
+        accumulated curve has a closed form from the known coefficients, so the
+        kernel must reproduce it to floating-point precision.
+        """
+        for name in ("correlated", "shift"):
+            sample = dgps.sample_dgp(name, n_train=400, seed=1)
+            checks = dgps._ground_truth_checks(sample)
+            assert checks["ale_true_response_max_abs_error"] < 1e-9, (name, checks)
+            assert len(checks["ale_true_response_error_by_feature"]) == 6
+            assert max(checks["ale_true_response_error_by_feature"].values()) < 1e-9
+
+    def test_ale_probe_absent_for_non_additive_dgps(self):
+        sample = dgps.sample_dgp("interactions", n_train=200, seed=2)
+        checks = dgps._ground_truth_checks(sample)
+        assert "ale_true_response_max_abs_error" not in checks
+
 
 class TestValidate:
     def test_shift_degradation_for_linear_model(self):

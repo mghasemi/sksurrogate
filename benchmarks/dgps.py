@@ -307,6 +307,54 @@ def _r2(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
 
 
+def _ale_truth_checks(sample: DGPSample) -> dict[str, Any]:
+    """Compare the ALE kernel against each DGP's exact response function.
+
+    For the ``correlated`` and ``shift`` processes the conditional mean is
+    additive in the features except for the documented ``shift`` quadratic in
+    ``x2``. The accumulated curve for feature ``j`` is then analytically
+    ``h_j(g) - sum_k w_k h_j(g_k)`` for the known ``h_j`` (bin-edge values and
+    reference-bin weights), evaluated on the *noise-free* truth function — so
+    any deviation is implementation error, not sampling variation. This is the
+    Stage C validation hook of the D1 exit criterion.
+
+    Kept as a separate helper because it imports the control-plane ALE kernel
+    (:mod:`api.explanations`) rather than the module-level benchmark stack.
+    """
+    from api.explanations import accumulated_local_effects, numeric_bin_edges
+
+    beta = sample.truth["linear_coefs"]
+    intercept = float(sample.truth["intercept"])
+    columns = list(sample.X_train.columns)
+    quadratic = sample.truth.get("quadratic") or {}
+    quad_term = quadratic.get("term")
+    quad_coef = float(quadratic.get("coef", 0.0))
+
+    def response(values):
+        matrix = np.asarray(values, dtype=float)
+        out = intercept + matrix @ np.asarray([beta[name] for name in columns])
+        if quad_term in columns:
+            out = out + quad_coef * matrix[:, columns.index(quad_term)] ** 2
+        return out
+
+    design = sample.X_train.to_numpy(dtype=float)
+    errors: dict[str, float] = {}
+    for position, name in enumerate(columns):
+        edges, counts = numeric_bin_edges(design[:, position], n_bins=20)
+        curve, _, _ = accumulated_local_effects(response, design, position, edges)
+        weights = counts / counts.sum()
+        if name == quad_term:
+            expected = beta[name] * edges + quad_coef * edges**2
+        else:
+            expected = beta[name] * edges
+        centered = expected - float(weights @ expected[1:])
+        errors[name] = float(np.max(np.abs(curve - centered)))
+    return {
+        "ale_true_response_max_abs_error": max(errors.values()),
+        "ale_true_response_error_by_feature": errors,
+    }
+
+
 def _ground_truth_checks(sample: DGPSample) -> dict[str, Any]:
     """Descriptive ground-truth probes specific to each DGP's kind.
 
@@ -334,6 +382,7 @@ def _ground_truth_checks(sample: DGPSample) -> dict[str, Any]:
         devs = [abs(coefs[nm] - c) for nm, c in sample.truth["linear_coefs"].items() if nm in coefs]
         checks["coef_mean_abs_deviation"] = float(np.mean(devs))
         checks["coef_max_abs_deviation"] = float(max(devs))
+        checks.update(_ale_truth_checks(sample))
 
     elif sample.name == "heteroscedastic":
         fit = Ridge(alpha=1.0).fit(Xtr, sample.y_train)
@@ -346,8 +395,9 @@ def _ground_truth_checks(sample: DGPSample) -> dict[str, Any]:
         checks["corr_squared_residuals_vs_predicted_variance"] = float(np.corrcoef(resid2_iid, sigma2)[0, 1])
 
     elif sample.name == "shift":
-        # Per-method degradation ratios are reported by the harness itself.
-        pass
+        # Per-method degradation ratios are reported by the harness itself; the
+        # ALE probe checks the accumulated quadratic against the known curve.
+        checks.update(_ale_truth_checks(sample))
 
     return checks
 

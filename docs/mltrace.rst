@@ -477,16 +477,81 @@ subsets. These summaries are descriptive sensitivity diagnostics, not
 confidence intervals or guarantees of robustness; the default single-sample
 request does not estimate cross-sample stability.
 
-Accumulated local effects (ALE) are a possible alternative to partial
-dependence when correlated features make its marginal grid unrealistic: ALE
-accumulates local prediction differences over observed feature intervals,
-reducing reliance on predictions far outside the joint reference distribution.
-It still describes model behavior rather than causality and does not solve
-sparse-support or conditional-explanation problems automatically. The current
-explanation API does not expose ALE. A supported implementation needs an
-explicit contract for numeric versus categorical features, empty or sparse
-bins, classifier output scale, and stability under the bounded reference-set
-sampling policy before replacing or supplementing the existing profiles.
+The same bounded reference-set policy extends to the average
+partial-dependence curves exposed by the control-plane explanation endpoint.
+When two to five distinct subsamples are requested, the response carries a
+``partial_dependence_stability`` block: each primary curve's grid is
+re-evaluated on every subset with direct model calls, and the block reports the
+per-grid descriptive mean, sample standard deviation, minimum, and maximum of
+those curves plus each subset's mean curve value. The spread describes
+reference-sample sensitivity only; it is not a confidence band, it does not
+generalize across datasets, and the primary curve itself may differ marginally
+from the subset curves when the estimator supports scikit-learn's recursion
+shortcut. Individual ICE curves remain a plotting feature of
+``plot_partial_dependence`` rather than part of the explanation API contract,
+so no ICE stability summary is estimated there.
+
+Accumulated local effects (ALE) are a *supplement* to partial dependence, not a
+replacement. Where marginal partial dependence average predictions over
+feature values far outside the joint reference distribution, ALE varies each
+feature only between adjacent observed intervals and accumulates the resulting
+local model-response differences; its accumulated curve then depends on the
+reference bins rather than on grid points that may never co-occur. ALE still
+describes the fitted model rather than causality, and it does not solve
+sparse-support or conditional-explanation problems automatically.
+
+The control-plane endpoint
+``POST /api/evaluation/{task}/{version}/ale`` implements the following
+contract. Read it before comparing ALE curves with anything else:
+
+* **Numeric features only.** Accumulation requires an ordering of the feature's
+  values; a nominal categorical feature has no canonical order, so its ALE
+  curve would depend on an arbitrary level ordering. Such features — and
+  features with fewer than two distinct quantile edges, such as constants —
+  are reported under ``skipped`` with a machine-readable ``reason`` and a
+  human-readable ``detail`` instead of being drawn. Partial dependence remains
+  available for them.
+* **Quantile bins with duplicate-edge collapse.** Bin edges are equal-frequency
+  quantiles of the reference rows. Repeated quantiles caused by heavy ties
+  collapse to one edge, so no empty bin can occur; rows whose feature value is
+  non-finite are excluded from that curve and counted in ``excluded_rows``.
+* **Sparse bins merged deterministically.** Bins holding fewer than
+  ``min_bin_fraction`` (default 0.01, reported in the response) of the
+  reference rows are merged with the smaller adjacent bin — the left bin on a
+  tie — until every bin clears the floor or only two bins remain. Each curve
+  reports its final ``counts`` per bin and its ``grid`` (bin boundaries), so
+  the binning is visible rather than implied.
+* **One scalar response, labelled.** Regression curves use ``predict``. Binary
+  classification curves use the positive-class probability
+  (``predict_proba[:, 1]``), falling back to ``decision_function`` when the
+  estimator has no probabilities; the response field in each payload names the
+  scalar used. Multiclass bundles are rejected with an explicit error because a
+  single curve would have to choose a class arbitrarily. Curves on different
+  scalar outputs (probability versus decision value) are not comparable.
+* **Stability under the bounded reference-set policy.** When
+  ``stability_samples`` is 2–5, the same distinct-subsample policy used for
+  permutation importance is applied, and every subset is accumulated on the
+  *primary* reference sample's bin edges. Each curve reports the descriptive
+  per-bin mean, sample standard deviation, minimum and maximum across subsets.
+  Subsets are centered with their own bin weights, so the spread includes
+  centering variation; it is a sample-sensitivity summary, not a confidence
+  band, and it is not estimated for the default single-sample request.
+* **Non-causal labels.** The response carries
+  ``interpretation.accumulated_local_effects.category =
+  "fitted_model_response_profile"`` and ``causal_effect: false``, and lists the
+  limitations next to the curves. ALE does not isolate variable importance:
+  correlated features can still make one feature's local differences reflect
+  another feature's distribution.
+
+For example, comparing ALE with partial dependence on the same bundle::
+
+    POST /api/evaluation/diabetes/<version>/ale
+    {"partition": "train", "features": ["bmi", "bp"], "n_bins": 20,
+     "max_rows": 500, "stability_samples": 3, "random_state": 0}
+
+Omitting ``features`` selects the ``top_k`` features by permutation importance
+computed on the same reference sample; ``features`` overrides that selection
+and accepts at most six numeric names.
 
 ``plot_roc_curve`` supports multiclass classifiers with one-vs-rest curves for
 each class and a micro-average curve. ``plot_calibration_curve`` similarly
