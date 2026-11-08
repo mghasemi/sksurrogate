@@ -455,6 +455,72 @@ class TestResearchProjectEndpoints(unittest.TestCase):
         self.assertFalse(missing_bundle["exists"])
         self.assertEqual(missing_bundle["snapshot_status"], "missing")
 
+    def test_legacy_records_without_stored_snapshots_report_unverified(self):
+        project = projects_router.create_project(
+            CreateProjectRequest(
+                name="Legacy snapshot records",
+                artifacts=[
+                    self._artifact("dataset_partition", "train"),
+                    self._artifact("model_bundle", BUNDLE_VERSION),
+                ],
+            )
+        )
+        path = projects_router._project_path(project["project_id"])
+        stored_project = json.loads(path.read_text(encoding="utf-8"))
+        for artifact in stored_project["artifacts"]:
+            del artifact["snapshot"]
+        path.write_text(json.dumps(stored_project), encoding="utf-8")
+
+        summary = projects_router.project_summary(project["project_id"])
+        by_artifact = {artifact["artifact_id"]: artifact for artifact in summary["artifacts"]}
+        self.assertTrue(by_artifact["train"]["exists"])
+        self.assertEqual(by_artifact["train"]["snapshot_status"], "unverified")
+        self.assertTrue(by_artifact[BUNDLE_VERSION]["exists"])
+        self.assertEqual(by_artifact[BUNDLE_VERSION]["snapshot_status"], "unverified")
+
+    def test_project_edits_never_rebaseline_stored_snapshots(self):
+        project = projects_router.create_project(
+            CreateProjectRequest(
+                name="No rebaseline",
+                artifacts=[
+                    self._artifact("dataset_partition", "train"),
+                    self._artifact("model_bundle", BUNDLE_VERSION),
+                ],
+            )
+        )
+        original_snapshots = {
+            artifact["artifact_id"]: artifact["snapshot"] for artifact in project["artifacts"]
+        }
+
+        changed_frame = pd.DataFrame(
+            {"feature": [0.0, 1.0, 2.0], "target": [10.0, 11.0, 12.0]}
+        )
+        with open_tracker(TASK) as tracker:
+            tracker.RegisterData(changed_frame, "target", partition="train")
+
+        updated = projects_router.update_project(
+            project["project_id"],
+            UpdateProjectRequest(
+                name="No rebaseline",
+                artifacts=[
+                    self._artifact("dataset_partition", "train"),
+                    self._artifact("model_bundle", BUNDLE_VERSION),
+                ],
+            ),
+        )
+        stored_snapshots = {
+            artifact["artifact_id"]: artifact["snapshot"] for artifact in updated["artifacts"]
+        }
+        self.assertEqual(stored_snapshots, original_snapshots)
+
+        summary = projects_router.project_summary(project["project_id"])
+        snapshot_status = {
+            artifact["artifact_id"]: artifact["snapshot_status"]
+            for artifact in summary["artifacts"]
+        }
+        self.assertEqual(snapshot_status["train"], "changed")
+        self.assertEqual(snapshot_status[BUNDLE_VERSION], "current")
+
     def test_project_can_reference_existing_dataset_bundle_and_analysis_job(self):
         links = [
             self._artifact("dataset_partition", "train"),

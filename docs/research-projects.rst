@@ -60,16 +60,43 @@ reference without replacing project fields or other artifact links, use
 ``POST /api/projects/{project_id}/artifacts`` with one artifact reference as
 the request body. This append operation is idempotent for an already-linked
 artifact identity. A snapshot is captured when a reference is first linked
-and preserved by later project edits.
+and preserved by later project edits; it is never re-baselined, so the stored
+snapshot always describes what was observed at link time rather than the
+current upstream state.
 Dataset snapshots include the registered partition fingerprint and schema
-metadata; bundle snapshots include run identity, lineage, configuration, and
-dependencies; job snapshots fingerprint their recorded configuration and
-result. ``GET /api/projects/{project_id}/summary`` reports each snapshot as
-``current``, ``changed``, ``missing``, or ``unverified``. Snapshots identify
-what was observed but do not freeze or copy the upstream artifact; a deleted
-artifact cannot be recovered from project metadata. References with
-unsupported path characters, duplicate references, or mismatched task/job
-pairs are rejected.
+metadata (ingestion timestamp, row count, columns, target, feature count);
+bundle snapshots include run identity, lineage, configuration, and
+dependencies; job snapshots fingerprint their recorded configuration and, when
+a result is present at link time, its content. ``GET
+/api/projects/{project_id}/summary`` reports each linked artifact with a
+``snapshot_status``:
+
+* ``current`` — the artifact still exists and recomputes to exactly the
+  fingerprint captured at link time.
+* ``changed`` — the artifact exists but no longer matches its snapshot: the
+  partition was re-registered under the same name, the bundle's run
+  configuration changed, or a job result appeared after the reference was
+  linked (job status transitions do not alter the fingerprint; only recorded
+  configuration and result content do).
+* ``missing`` — the upstream artifact no longer exists: the task's mltrace
+  database file or the named partition is gone, the bundle file is absent from
+  both the task's bundle directory and the registry, or the job record was
+  deleted.
+* ``unverified`` — the artifact exists but the project record carries no
+  stored snapshot (a legacy record created before snapshots were captured).
+
+Snapshots identify what was observed but do not freeze or copy the upstream
+artifact; a deleted artifact cannot be recovered from project metadata, and
+there is no supported way to reset drift on an existing reference. In
+particular, an artifact cited as evidence in a research record cannot be
+removed through ``PUT`` (see Research records and evidence below). Durability
+is a property of the upstream stores rather than of project metadata:
+partition rows live in the task's mltrace database (``mltrace/<task>.db``),
+bundles under ``bundles/`` and ``registry/``, and job records as JSON files
+under ``jobs/`` in the configured API storage root. Back up those directories
+to keep linked artifacts recoverable; project files alone do not suffice.
+References with unsupported path characters, duplicate references, or
+mismatched task/job pairs are rejected.
 
 The summary tracks the research progression: a project question, hypothesis,
 registered dataset, completed analysis, completed modeling run, available
