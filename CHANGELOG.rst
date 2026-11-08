@@ -41,6 +41,27 @@ Explanations: accumulated local effects and reference-subset stability
   ``benchmarks/dgps.py`` compares the accumulated curve against the exact
   noise-free response of the ``correlated`` and ``shift`` processes
   (including the known quadratic term), matching to floating-point precision.
+* New row-level explanation endpoint
+  ``POST /api/evaluation/{task}/{version}/explain/row`` (Stage D3, R9a):
+  ordered-occlusion chain decomposition for one stored row against a reference
+  mean or an explicit baseline row. Contributions telescope exactly to the
+  model-response change (residual and tolerance reported), ``orders`` in 1–10
+  draws distinct seeded feature orders and reports per-feature mean, sample SD,
+  min, and max as disclosed order-dependence (not a confidence interval).
+  Binary classifiers use the labelled scalar response; multiclass is rejected.
+  A subset of features explains the hybrid row and is marked
+  ``subset_hybrid``. Pure NumPy in ``api/explanations.py``; contract in
+  ``AI_LAYER02_D3_ROW_LEVEL_CONTRACT.md`` and ``docs/mltrace.rst``.
+* Explain UI: new **Row-level explanation** card with row index, 1/5/10 feature
+  orders, a contribution bar chart, a mean/SD/min/max table, baseline and row
+  predictions, and the reconstruction residual. Docs cover the card in the UI
+  manual and walkthrough.
+* D1 exit hook closed for the landed Stage C methods: ``benchmarks/dgps.py``
+  now also checks average partial dependence and its reference-subset summary
+  against the exact known response curves (``pdp_true_response_max_abs_error``
+  and ``pdp_subset_shape_max_deviation`` at floating-point precision on the
+  ``correlated`` and ``shift`` processes); DESIGN.md v1.17.
+
 
 Benchmarks: slim-environment dataset loading and per-evaluation records (schema v2)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

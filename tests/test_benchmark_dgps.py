@@ -107,10 +107,22 @@ class TestGroundTruthStructure:
             assert len(checks["ale_true_response_error_by_feature"]) == 6
             assert max(checks["ale_true_response_error_by_feature"].values()) < 1e-9
 
+    def test_pdp_kernel_matches_known_response_curves(self):
+        """Stage D1 hook: average PDP and its subset summary against exact truth."""
+        for name in ("correlated", "shift"):
+            sample = dgps.sample_dgp(name, n_train=400, seed=1)
+            checks = dgps._ground_truth_checks(sample)
+            assert checks["pdp_true_response_max_abs_error"] < 1e-9, (name, checks)
+            assert checks["pdp_subset_shape_max_deviation"] < 1e-9, (name, checks)
+            # Subsets may shift an additive curve by their reference-mean offset,
+            # but that descriptive spread must stay bounded (not asserted to zero).
+            assert 0.0 <= checks["pdp_subset_stability_max_std"] < 1.0
+
     def test_ale_probe_absent_for_non_additive_dgps(self):
         sample = dgps.sample_dgp("interactions", n_train=200, seed=2)
         checks = dgps._ground_truth_checks(sample)
         assert "ale_true_response_max_abs_error" not in checks
+        assert "pdp_true_response_max_abs_error" not in checks
 
 
 class TestValidate:

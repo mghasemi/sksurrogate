@@ -265,3 +265,91 @@ def descriptive_summary(samples):
         "max": stack.max(axis=0),
         "sample_count": int(stack.shape[0]),
     }
+
+
+# ---------------------------------------------------------------------------
+# Row-level explanations: ordered-occlusion chain decomposition (Stage D3)
+# ---------------------------------------------------------------------------
+
+def distinct_permutations(rng, n_items, count):
+    """Draw ``count`` distinct random permutations of ``range(n_items)``.
+
+    Used for the symmetric (multi-order) row explanation: every order produces an
+    exact telescoping decomposition, and the spread across orders is the
+    disclosed order-dependence. Raises :class:`ValueError` when more orders are
+    requested than there are distinct permutations.
+    """
+    if n_items < 1:
+        raise ValueError("at least one feature is required for a permutation")
+    # n! grows fast; only the small-n regime can bind, but avoid huge factorials.
+    limit = 1
+    for value in range(2, n_items + 1):
+        limit *= value
+        if limit >= count:
+            break
+    if count > limit:
+        raise ValueError(
+            "at most %d distinct orders exist for %d features" % (limit, n_items)
+        )
+    seen = set()
+    permutations = []
+    while len(permutations) < count:
+        order = tuple(int(index) for index in rng.permutation(n_items))
+        if order in seen:
+            continue
+        seen.add(order)
+        permutations.append(np.asarray(order, dtype=int))
+    return permutations
+
+
+def chain_contributions(response, row_values, baseline_values, order):
+    """Ordered-occlusion contributions for one row along one feature order.
+
+    Starting from the baseline vector, each feature named by ``order`` is
+    replaced by its observed row value in turn, and the model-response change at
+    that step is credited to the feature. The chain telescopes exactly, so
+    ``sum(contributions) == f(hybrid_row) - f(baseline)`` for any estimator
+    (up to floating-point error). Features not named in ``order`` stay at their
+    baseline values, which is what makes a subset request a hybrid-row
+    explanation rather than a partial attribution of the full row.
+
+    Returns ``(contributions, hybrid_prediction)`` with ``contributions`` in the
+    order the features were visited. This is a model attribution: correlated
+    features share credit according to the chosen order, and the decomposition
+    is not an intervention or a causal effect.
+    """
+    row = np.asarray(row_values)
+    current = np.asarray(baseline_values).copy()
+    previous = float(np.ravel(response(current[None, :]))[0])
+    contributions = np.empty(len(order), dtype=float)
+    for position, index in enumerate(order):
+        following = current.copy()
+        following[index] = row[index]
+        prediction = float(np.ravel(response(following[None, :]))[0])
+        contributions[position] = prediction - previous
+        previous = prediction
+        current = following
+    return contributions, previous
+
+
+def row_contribution_summary(response, row_values, baseline_values, orders, feature_count):
+    """Aggregate ordered-occlusion contributions across multiple feature orders.
+
+    Every order yields an exact decomposition of the same hybrid-row difference;
+    their disagreement is the order-dependence, reported as a descriptive sample
+    SD / min / max per feature. A single order makes the decomposition exact but
+    arbitrary: it does not estimate an order-independent attribution, and this
+    helper never claims to.
+    """
+    matrix = np.zeros((len(orders), feature_count), dtype=float)
+    order_totals = np.empty(len(orders), dtype=float)
+    for position, order in enumerate(orders):
+        contributions, _ = chain_contributions(response, row_values, baseline_values, order)
+        matrix[position, order] = contributions
+        order_totals[position] = float(contributions.sum())
+    summary = descriptive_summary(matrix)
+    return {
+        "contributions": summary,
+        "order_totals": order_totals,
+        "matrix": matrix,
+    }

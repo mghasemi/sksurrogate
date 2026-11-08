@@ -13,7 +13,7 @@ import {
   YAxis,
 } from "recharts";
 
-import { computeAle, explainBundle, getIntervals, listBundles } from "../api/client";
+import { computeAle, explainBundle, explainRow, getIntervals, listBundles } from "../api/client";
 import { LineageRail } from "../components/LineageRail";
 import { Card, EmptyState, ErrorNote, Loading, Stat, fmtNum, fmtPct } from "../components/ui";
 import { useTask } from "../lib/task-context";
@@ -26,6 +26,8 @@ export default function ExplainPage() {
   const [maxRows, setMaxRows] = useState(500);
   const [stabilitySamples, setStabilitySamples] = useState(1);
   const [aleBins, setAleBins] = useState(20);
+  const [rowIndex, setRowIndex] = useState(0);
+  const [rowOrders, setRowOrders] = useState(5);
 
   const bundlesQ = useQuery({
     queryKey: ["bundles", task],
@@ -53,6 +55,15 @@ export default function ExplainPage() {
         top_k: 3,
         n_bins: aleBins,
         stability_samples: stabilitySamples,
+      }),
+  });
+
+  const rowMut = useMutation({
+    mutationFn: () =>
+      explainRow(task, selected, {
+        row_index: rowIndex,
+        orders: rowOrders,
+        random_state: 0,
       }),
   });
 
@@ -389,6 +400,125 @@ export default function ExplainPage() {
         </Card>
       )}
 
+
+          <Card
+            title="Row-level explanation"
+            sub="Ordered-occlusion attribution for one stored row: each feature is credited with the model-response change when it is restored from a baseline row in a given order. The decomposition reconstructs the prediction exactly; the spread across orders discloses order-dependence and is not a confidence interval. This is a model attribution, not a causal effect."
+            actions={
+              <button className="btn primary" disabled={rowMut.isPending} onClick={() => rowMut.mutate()}>
+                {rowMut.isPending ? "Computing…" : "Explain row"}
+              </button>
+            }
+          >
+            <p className="muted">
+              Contributions telescope exactly, so the sum plus the baseline prediction equals the
+              explained prediction for any estimator. Correlated features and interactions are split
+              according to feature order; increase the number of orders to see how much each
+              attribution depends on that order.
+            </p>
+            <div className="row">
+              <div className="field">
+                <label htmlFor="row-explain-index">Row index (0-based)</label>
+                <input
+                  id="row-explain-index"
+                  type="number"
+                  min={0}
+                  value={rowIndex}
+                  onChange={(event) => setRowIndex(Number(event.target.value))}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="row-explain-orders">Feature orders</label>
+                <select
+                  id="row-explain-orders"
+                  value={rowOrders}
+                  onChange={(event) => setRowOrders(Number(event.target.value))}
+                >
+                  <option value={1}>1 (single order, exact but arbitrary)</option>
+                  <option value={5}>5 orders</option>
+                  <option value={10}>10 orders</option>
+                </select>
+              </div>
+            </div>
+            {rowMut.isError && <ErrorNote error={rowMut.error} />}
+            {rowMut.data && (
+              <>
+                <p className="muted">
+                  Row {rowMut.data.row_index} of {rowMut.data.row_count} in “
+                  {rowMut.data.partition}”; baseline {rowMut.data.baseline.mode === "row"
+                    ? `is row ${rowMut.data.baseline.row_index} of “${rowMut.data.baseline.partition}”`
+                    : `is the ${rowMut.data.reference_sample.used_rows}-row reference mean from “${rowMut.data.reference_sample.partition}”`}
+                  . Response: <code>{rowMut.data.response.output}</code>;{" "}
+                  {rowMut.data.orders.count} distinct feature order
+                  {rowMut.data.orders.count === 1 ? "" : "s"}.
+                </p>
+                <div className="grid cols-3">
+                  <Stat label="Baseline prediction" value={fmtNum(rowMut.data.baseline.prediction)} />
+                  <Stat label="Row prediction" value={fmtNum(rowMut.data.prediction)} />
+                  <Stat
+                    label={rowMut.data.explanation_scope === "full_row" ? "Explained prediction" : "Hybrid-row prediction"}
+                    value={fmtNum(rowMut.data.explained_prediction)}
+                  />
+                  <Stat label="Sum of contributions" value={fmtNum(rowMut.data.reconstruction.sum_contributions)} />
+                  <Stat
+                    label="Reconstruction residual"
+                    value={fmtNum(rowMut.data.reconstruction.max_abs_residual)}
+                    sub={`tolerance ${fmtNum(rowMut.data.reconstruction.tolerance)}; exact by construction`}
+                  />
+                </div>
+                {rowMut.data.explanation_scope === "subset_hybrid" && (
+                  <p className="hint">
+                    Only the explained features move off the baseline; the reconstruction describes
+                    the hybrid row, not the full prediction.
+                  </p>
+                )}
+                <div style={{ height: Math.max(180, rowMut.data.contributions.length * 26) }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                      data={rowMut.data.contributions}
+                      layout="vertical"
+                      margin={{ left: 24, right: 16 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis type="number" />
+                      <YAxis type="category" dataKey="feature" width={110} interval={0} />
+                      <Tooltip formatter={(v) => Number(v).toFixed(4)} />
+                      <Bar dataKey="mean" fill="#0ea5e9" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Feature</th>
+                        <th>Mean contribution</th>
+                        <th>Sample SD across orders</th>
+                        <th>Min</th>
+                        <th>Max</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rowMut.data.contributions.map((item) => (
+                        <tr key={item.feature}>
+                          <td>{item.feature}</td>
+                          <td>{fmtNum(item.mean)}</td>
+                          <td>{fmtNum(item.sample_std)}</td>
+                          <td>{fmtNum(item.min)}</td>
+                          <td>{fmtNum(item.max)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <ul className="muted">
+                  {rowMut.data.interpretation.limitations.map((limitation) => (
+                    <li key={limitation}>{limitation}</li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </Card>
 
           <Card
             title="Prediction intervals"

@@ -12,6 +12,8 @@ Both work on the task's stored dataset partitions and never refit the stored
 bundle: the interval endpoint refits a *clone* on a train slice.
 """
 
+from typing import Literal
+
 import numpy as np
 import pandas as pd
 from fastapi import APIRouter
@@ -28,9 +30,11 @@ from ..explanations import (
     accumulated_local_effects,
     average_pdp_on_grid,
     descriptive_summary,
+    distinct_permutations,
     numeric_bin_edges,
     reference_subsets,
     response_callable,
+    row_contribution_summary,
 )
 from ..training import get_registered_target, load_partition, problem_family
 from .evaluation import _load_bundle
@@ -60,6 +64,18 @@ class AleRequest(BaseModel):
     random_state: int = 0
 
 
+class RowExplainRequest(BaseModel):
+    partition: str = "train"
+    row_index: int = Field(default=0, ge=0)
+    features: list[str] | None = None
+    baseline: Literal["reference_mean", "row"] = "reference_mean"
+    baseline_partition: str | None = None
+    baseline_row_index: int | None = Field(default=None, ge=0)
+    orders: int = Field(default=1, ge=1, le=10)
+    reference_max_rows: int = Field(default=500, ge=20, le=_MAX_ROWS)
+    random_state: int = 0
+
+
 class IntervalRequest(BaseModel):
     train_partition: str = "train"
     holdout_partition: str | None = None  # defaults to a slice of the train partition
@@ -70,11 +86,64 @@ class IntervalRequest(BaseModel):
     random_state: int = 0
 
 
-def _features_and_target(task_name, partition):
+def _features_and_target(task_name, partition) -> tuple[pd.DataFrame, np.ndarray]:
     target, _ = get_registered_target(task_name)
     frame = load_partition(task_name, partition)
     columns = [column for column in frame.columns if column != target]
     return frame[columns], frame[target].to_numpy()
+
+
+def _json_scalar(value):
+    """JSON-safe rendering of one stored feature value (NaN/inf become null)."""
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    if isinstance(value, (float, np.floating)):
+        return finite_or_none(float(value))
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return str(value)
+
+
+def _aligned_features(frame: pd.DataFrame, names, context) -> pd.DataFrame:
+    """Return ``frame[names]`` or a 400 naming the features the partition lacks."""
+    missing = [name for name in names if name not in frame.columns]
+    if missing:
+        raise bad_request(
+            "%s partition is missing feature(s) %s"
+            % (context, ", ".join(repr(name) for name in missing))
+        )
+    return frame[names]
+
+
+def _baseline_vector(frame: pd.DataFrame, names) -> tuple[np.ndarray, dict[str, str]]:
+    """Reference baseline row: finite mean for numeric columns, mode otherwise."""
+    values, sources = [], {}
+    for name in names:
+        column = frame[name]
+        if pd.api.types.is_numeric_dtype(column):
+            numeric = column.to_numpy(dtype=float)
+            finite = numeric[np.isfinite(numeric)]
+            if finite.size == 0:
+                raise bad_request(
+                    "Feature %r has no finite reference values to build a mean baseline" % name
+                )
+            values.append(float(finite.mean()))
+            sources[name] = "finite_mean"
+        else:
+            modes = column.astype(str).mode()
+            if modes.empty:
+                raise bad_request(
+                    "Feature %r has no reference values to build a mode baseline" % name
+                )
+            values.append(modes.iloc[0])
+            sources[name] = "most_frequent"
+    return np.asarray(values, dtype=object), sources
+
 
 
 @router.post("/{task_name}/{model_version}/explain")
@@ -444,6 +513,179 @@ def accumulated_local_effects_bundle(task_name: str, model_version: str, body: A
                 "Nominal categorical features are skipped because ALE requires a feature ordering; the response lists them under `skipped`.",
                 "Binary classifier curves are drawn on the labelled scalar response (positive-class probability or decision value); the scale is not comparable across different response outputs or models.",
                 "Reference-subset summaries describe sample-to-sample variation only; they are not confidence bands and do not guarantee generalization.",
+            ],
+        },
+    }
+
+
+@router.post("/{task_name}/{model_version}/explain/row")
+def explain_row(task_name: str, model_version: str, body: RowExplainRequest):
+    """Ordered-occlusion attribution for one stored row of one bundle.
+
+    Implements the Stage D3 contract in ``docs/mltrace.rst``: each feature is
+    credited with the model-response change observed when it is restored from a
+    baseline row in a specified order, so the contributions telescope exactly to
+    ``f(explained_row) - f(baseline)`` for any estimator. Multiple seeded orders
+    describe order-dependence; they are not confidence intervals, and this is a
+    model attribution rather than a causal effect.
+    """
+    bundle = _load_bundle(task_name, model_version)
+    family = problem_family(bundle.model)
+    if family is None:
+        raise unprocessable("Explanations need a scikit-learn estimator")
+    try:
+        response, response_meta = response_callable(bundle.model, family)
+    except ValueError as exc:
+        raise unprocessable(str(exc))
+
+    X, _ = _features_and_target(task_name, body.partition)
+    if body.row_index >= len(X):
+        raise bad_request(
+            "row_index %d is outside the %d stored rows of partition %r"
+            % (body.row_index, len(X), body.partition)
+        )
+    names = list(X.columns)
+    selected = names if body.features is None else list(body.features)
+    unknown = [feature for feature in selected if feature not in names]
+    if unknown:
+        raise bad_request(
+            "Unknown feature(s) %s; available features are %s"
+            % (
+                ", ".join(repr(name) for name in unknown),
+                ", ".join(repr(name) for name in names),
+            )
+        )
+    if not selected:
+        raise bad_request("At least one feature is required for a row explanation")
+    if len(selected) > 24:
+        raise bad_request(
+            "At most 24 features per row explanation; pass `features` to select a subset"
+        )
+
+    row_values = X.iloc[body.row_index].to_numpy()
+    baseline_partition = body.baseline_partition or body.partition
+    base_frame, _ = _features_and_target(task_name, baseline_partition)
+    base_frame = _aligned_features(base_frame, names, "baseline")
+    source_rows = len(base_frame)
+    if body.baseline == "row":
+        if body.baseline_row_index is None:
+            raise bad_request("baseline='row' requires baseline_row_index")
+        if body.baseline_row_index >= source_rows:
+            raise bad_request(
+                "baseline_row_index %d is outside the %d stored rows of baseline partition %r"
+                % (body.baseline_row_index, source_rows, baseline_partition)
+            )
+        baseline_values = np.asarray(base_frame.iloc[body.baseline_row_index].to_numpy())
+        baseline_sources = {name: "row" for name in names}
+        used_rows = 1
+        sampling = "explicit_row"
+    else:
+        rng = np.random.RandomState(body.random_state)
+        sampled = source_rows > body.reference_max_rows
+        if sampled:
+            keep = rng.choice(source_rows, body.reference_max_rows, replace=False)
+            base_frame = base_frame.iloc[keep]
+        baseline_values, baseline_sources = _baseline_vector(base_frame, names)
+        used_rows = len(base_frame)
+        sampling = "random_without_replacement" if sampled else "all_rows"
+
+    positions = [names.index(feature) for feature in selected]
+    hybrid = np.asarray(baseline_values).copy()
+    for position in positions:
+        hybrid[position] = row_values[position]
+    baseline_prediction = float(np.ravel(response(np.asarray(baseline_values)[None, :]))[0])
+    row_prediction = float(np.ravel(response(np.asarray(row_values)[None, :]))[0])
+    hybrid_prediction = float(np.ravel(response(hybrid[None, :]))[0])
+
+    try:
+        local_orders = distinct_permutations(
+            np.random.RandomState(body.random_state), len(selected), body.orders
+        )
+    except ValueError as exc:
+        raise bad_request(str(exc))
+    column_orders = [
+        np.asarray([positions[index] for index in order], dtype=int) for order in local_orders
+    ]
+    summary = row_contribution_summary(
+        response, row_values, baseline_values, column_orders, len(names)
+    )
+    stats = summary["contributions"]
+    target_change = hybrid_prediction - baseline_prediction
+    max_abs_residual = float(np.max(np.abs(summary["order_totals"] - target_change)))
+    tolerance = 1e-6 * max(1.0, abs(target_change), abs(hybrid_prediction))
+
+    contributions = [
+        {
+            "feature": feature,
+            "mean": finite_or_none(float(stats["mean"][position])),
+            "sample_std": finite_or_none(float(stats["sample_std"][position])),
+            "min": finite_or_none(float(stats["min"][position])),
+            "max": finite_or_none(float(stats["max"][position])),
+        }
+        for feature, position in zip(selected, positions)
+    ]
+    contributions.sort(key=lambda item: -abs(item["mean"] or 0.0))
+
+    return {
+        "model_version": model_version,
+        "partition": body.partition,
+        "row_index": body.row_index,
+        "row_count": int(len(X)),
+        "response": response_meta,
+        "reference_sample": {
+            "partition": baseline_partition,
+            "source_rows": int(source_rows),
+            "used_rows": int(used_rows),
+            "sampling": sampling,
+        },
+        "baseline": {
+            "mode": body.baseline,
+            "partition": baseline_partition,
+            "row_index": body.baseline_row_index if body.baseline == "row" else None,
+            "prediction": finite_or_none(baseline_prediction),
+            "values": {
+                name: _json_scalar(baseline_values[names.index(name)]) for name in names
+            },
+            "value_sources": baseline_sources,
+        },
+        "prediction": finite_or_none(row_prediction),
+        "explained_prediction": finite_or_none(hybrid_prediction),
+        "explanation_scope": "full_row" if len(selected) == len(names) else "subset_hybrid",
+        "explained_features": selected,
+        "settings": {
+            "orders": body.orders,
+            "reference_max_rows": body.reference_max_rows,
+            "random_state": body.random_state,
+        },
+        "orders": {
+            "count": len(column_orders),
+            "distinct": True,
+            "note": (
+                "Each order yields an exact telescoping decomposition; the per-feature "
+                "sample SD across orders is disclosed order-dependence, not a confidence interval."
+            ),
+        },
+        "contributions": contributions,
+        "reconstruction": {
+            "baseline_prediction": finite_or_none(baseline_prediction),
+            "explained_prediction": finite_or_none(hybrid_prediction),
+            "sum_contributions": finite_or_none(float(np.mean(summary["order_totals"]))),
+            "target_change": finite_or_none(target_change),
+            "max_abs_residual": finite_or_none(max_abs_residual),
+            "tolerance": finite_or_none(tolerance),
+            "exact_by_construction": True,
+        },
+        "interpretation": {
+            "category": "model_attribution",
+            "method": "ordered_occlusion_chain",
+            "causal_effect": False,
+            "baseline_mode": body.baseline,
+            "limitations": [
+                "Contributions describe how this fitted model's response changes when each feature is restored from the baseline row; they are not interventions or causal effects.",
+                "Restoring features one at a time makes the attribution order-dependent, especially with correlated features or interactions; the per-feature spread across orders measures that dependence and is not a confidence interval.",
+                "The baseline defines the reference point: a different baseline partition or row changes every contribution, even though the reconstruction stays exact.",
+                "Binary classifier contributions are on the labelled scalar response (positive-class probability or decision value); they are not comparable across response outputs or models.",
+                "With a `features` subset the reconstruction explains the hybrid row (listed features at their observed values, the rest at baseline), not the full prediction.",
             ],
         },
     }

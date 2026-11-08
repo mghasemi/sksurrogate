@@ -332,3 +332,218 @@ def test_explain_pdp_stability_block(client, regression_bundle):
     ).json()
     assert default["partial_dependence_stability"] is None
     assert any("not a confidence band" in item for item in data["interpretation"]["limitations"])
+
+
+# ---------------------------------------------------------------------------
+# Stage D3 — row-level explanations (ordered-occlusion chain decomposition)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def linear_bundle(client):
+    """A plain linear bundle (no scaler) so contributions have an exact form."""
+    from sklearn.linear_model import LinearRegression
+
+    from SKSurrogate import ModelBundle, save_bundle
+
+    from api.deps import open_tracker
+
+    task = "row-linear"
+    rng = np.random.RandomState(21)
+    n = 90
+    values = rng.normal(size=(n, 3))
+    frame = pd.DataFrame(values, columns=["a", "b", "c"])
+    frame["y"] = 3.0 * values[:, 0] - 2.0 * values[:, 1] + 0.5 * values[:, 2]
+    dataset_dir = settings.task_dataset_dir(task)
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    frame.to_csv(dataset_dir / "train.csv", index=False)
+    with open_tracker(task) as tracker:
+        tracker.RegisterData(frame, "y", partition="train")
+        fingerprint = tracker.GetMetadata()["dataset_fingerprint"]
+
+    features = frame[["a", "b", "c"]]
+    model = LinearRegression().fit(features, frame["y"])
+    bundle = ModelBundle(
+        model,
+        task_name=task,
+        model_version="row-linear-v1",
+        metrics={"score": 1.0},
+        dataset_fingerprint=fingerprint,
+        schema={column: {"dtype": str(features[column].dtype)} for column in features.columns},
+        dependencies={},
+    )
+    save_bundle(bundle, settings.task_bundles_dir(task) / "row-linear-v1.bundle")
+    return {"task": task, "version": "row-linear-v1", "frame": frame, "coef": model.coef_}
+
+
+def test_chain_contributions_are_exact_and_order_dependent():
+    """The kernel telescopes exactly; order-dependence is visible and symmetric."""
+    from sklearn.base import BaseEstimator, RegressorMixin
+
+    from api.explanations import chain_contributions, distinct_permutations
+
+    class DifferenceRegressor(RegressorMixin, BaseEstimator):
+        def fit(self, X, y):
+            self.n_features_in_ = np.asarray(X).shape[1]
+            return self
+
+        def predict(self, X):
+            values = np.asarray(X, dtype=float)
+            return np.square(values[:, 0] - values[:, 1])
+
+    model = DifferenceRegressor().fit(np.zeros((2, 2)), np.zeros(2))
+    response, _ = response_callable(model, "Regression")
+    row = np.array([1.0, -1.0])
+    baseline = np.array([0.0, 0.0])
+
+    forward, forward_prediction = chain_contributions(response, row, baseline, np.array([0, 1]))
+    reverse, reverse_prediction = chain_contributions(response, row, baseline, np.array([1, 0]))
+
+    # f(row) = 4; each order reproduces the same hybrid prediction.
+    assert forward_prediction == reverse_prediction == 4.0
+    # Contributions come back in visitation order; map them onto feature positions.
+    forward_by_feature = np.empty(2)
+    forward_by_feature[[0, 1]] = forward
+    reverse_by_feature = np.empty(2)
+    reverse_by_feature[[1, 0]] = reverse
+    assert np.allclose(forward_by_feature + reverse_by_feature, [4.0, 4.0])
+    assert np.allclose(forward_by_feature.sum(), 4.0)
+    # The interaction is split differently by order: one feature absorbs it first.
+    assert forward_by_feature.tolist() == [1.0, 3.0]
+    assert reverse_by_feature.tolist() == [3.0, 1.0]
+
+    rng = np.random.RandomState(0)
+    orders = distinct_permutations(rng, 2, 2)
+    assert [tuple(order) for order in orders] == [(0, 1), (1, 0)] or [
+        tuple(order) for order in orders
+    ] == [(1, 0), (0, 1)]
+    with pytest.raises(ValueError, match="at most 2 distinct orders"):
+        distinct_permutations(np.random.RandomState(0), 2, 3)
+
+
+def test_row_explanation_recovers_linear_contributions(client, linear_bundle):
+    frame = linear_bundle["frame"]
+    row_index = 7
+    body = {"row_index": row_index, "orders": 1, "random_state": 0}
+    response = client.post(
+        "/api/evaluation/%s/%s/explain/row" % (linear_bundle["task"], linear_bundle["version"]),
+        json=body,
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    assert data["explanation_scope"] == "full_row"
+    assert data["response"] == {"family": "Regression", "output": "predict", "causal_effect": False}
+    assert data["baseline"]["mode"] == "reference_mean"
+    assert data["baseline"]["value_sources"] == {"a": "finite_mean", "b": "finite_mean", "c": "finite_mean"}
+    assert data["orders"]["count"] == 1
+    assert data["interpretation"]["category"] == "model_attribution"
+    assert data["interpretation"]["method"] == "ordered_occlusion_chain"
+    assert data["interpretation"]["causal_effect"] is False
+
+    row = frame.iloc[row_index]
+    expected = {
+        name: float(coefficient * (row[name] - frame[name].mean()))
+        for name, coefficient in zip(["a", "b", "c"], linear_bundle["coef"])
+    }
+    got = {item["feature"]: item["mean"] for item in data["contributions"]}
+    for name, value in expected.items():
+        assert abs(got[name] - value) < 1e-8, (name, got[name], value)
+    # The decomposition is ordered by absolute contribution, and it reconstructs exactly.
+    assert [abs(item["mean"]) for item in data["contributions"]] == sorted(
+        (abs(item["mean"]) for item in data["contributions"]), reverse=True
+    )
+    reconstruction = data["reconstruction"]
+    assert abs(reconstruction["max_abs_residual"]) < 1e-9
+    assert abs(reconstruction["sum_contributions"] - reconstruction["target_change"]) < 1e-9
+    assert abs(
+        reconstruction["baseline_prediction"] + reconstruction["sum_contributions"]
+        - reconstruction["explained_prediction"]
+    ) < 1e-9
+    assert reconstruction["exact_by_construction"] is True
+
+    # Same seed, same answer; a different seed changes only the feature order.
+    repeated = client.post(
+        "/api/evaluation/%s/%s/explain/row" % (linear_bundle["task"], linear_bundle["version"]),
+        json=body,
+    ).json()
+    assert repeated["contributions"] == data["contributions"]
+
+
+def test_row_explanation_multiple_orders_on_nonlinear_bundle(client, regression_bundle):
+    body = {"row_index": 3, "orders": 5, "random_state": 4}
+    response = client.post(
+        "/api/evaluation/ale-reg/%s/explain/row" % regression_bundle, json=body
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["orders"]["count"] == 5
+    assert len(data["contributions"]) == 3
+    assert any(item["sample_std"] > 0.0 for item in data["contributions"])
+    for item in data["contributions"]:
+        assert item["min"] <= item["mean"] <= item["max"]
+    assert abs(data["reconstruction"]["max_abs_residual"]) < 1e-9
+    repeated = client.post(
+        "/api/evaluation/ale-reg/%s/explain/row" % regression_bundle, json=body
+    ).json()
+    assert repeated["contributions"] == data["contributions"]
+
+
+def test_row_explanation_subset_reconstructs_the_hybrid_row(client, linear_bundle):
+    response = client.post(
+        "/api/evaluation/%s/%s/explain/row"
+        % (linear_bundle["task"], linear_bundle["version"]),
+        json={"row_index": 4, "features": ["a"], "orders": 1, "random_state": 0},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["explanation_scope"] == "subset_hybrid"
+    assert [item["feature"] for item in data["contributions"]] == ["a"]
+    assert data["explained_features"] == ["a"]
+    # Only feature "a" moves off the baseline, so the explained prediction differs from the row.
+    assert data["explained_prediction"] != data["prediction"]
+    assert abs(
+        data["baseline"]["prediction"]
+        + data["reconstruction"]["sum_contributions"]
+        - data["explained_prediction"]
+    ) < 1e-9
+
+
+def test_row_explanation_baseline_row_and_classifier_scale(client, classification_bundle):
+    response = client.post(
+        "/api/evaluation/ale-clf/%s/explain/row" % classification_bundle,
+        json={"row_index": 2, "baseline": "row", "baseline_row_index": 5, "orders": 2},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["response"]["output"].startswith("predict_proba[class=")
+    assert data["baseline"]["mode"] == "row"
+    assert data["baseline"]["row_index"] == 5
+    assert data["reference_sample"]["sampling"] == "explicit_row"
+    assert data["reference_sample"]["used_rows"] == 1
+    assert data["baseline"]["value_sources"] == {"a": "row", "b": "row", "c": "row"}
+    assert abs(data["reconstruction"]["max_abs_residual"]) < 1e-9
+
+
+def test_row_explanation_rejects_out_of_contract_requests(client, linear_bundle):
+    base = "/api/evaluation/%s/%s/explain/row" % (linear_bundle["task"], linear_bundle["version"])
+
+    out_of_range = client.post(base, json={"row_index": 10_000})
+    assert out_of_range.status_code == 400
+    assert "outside the" in out_of_range.json()["detail"]
+
+    unknown = client.post(base, json={"features": ["nope"]})
+    assert unknown.status_code == 400
+    assert "Unknown feature" in unknown.json()["detail"]
+
+    too_many_orders = client.post(base, json={"features": ["a", "b"], "orders": 3})
+    assert too_many_orders.status_code == 400
+    assert "at most 2 distinct orders" in too_many_orders.json()["detail"]
+
+    missing_baseline_row = client.post(base, json={"baseline": "row"})
+    assert missing_baseline_row.status_code == 400
+    assert "baseline_row_index" in missing_baseline_row.json()["detail"]
+
+    bad_baseline_row = client.post(base, json={"baseline": "row", "baseline_row_index": 10_000})
+    assert bad_baseline_row.status_code == 400
+    assert "outside the" in bad_baseline_row.json()["detail"]

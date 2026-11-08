@@ -307,6 +307,31 @@ def _r2(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     return 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
 
 
+def _truth_response(sample: DGPSample):
+    """Build the noise-free conditional-mean function of a DGP.
+
+    Returns ``(response, beta, columns, quad_term, quad_coef)``. The response is
+    the exact target mean used by :func:`_ale_truth_checks` and
+    :func:`_pdp_truth_checks`, so their comparisons are implementation checks
+    rather than sampling estimates.
+    """
+    beta = sample.truth["linear_coefs"]
+    intercept = float(sample.truth["intercept"])
+    columns = list(sample.X_train.columns)
+    quadratic = sample.truth.get("quadratic") or {}
+    quad_term = quadratic.get("term")
+    quad_coef = float(quadratic.get("coef", 0.0))
+
+    def response(values):
+        matrix = np.asarray(values, dtype=float)
+        out = intercept + matrix @ np.asarray([beta[name] for name in columns])
+        if quad_term in columns:
+            out = out + quad_coef * matrix[:, columns.index(quad_term)] ** 2
+        return out
+
+    return response, beta, columns, quad_term, quad_coef
+
+
 def _ale_truth_checks(sample: DGPSample) -> dict[str, Any]:
     """Compare the ALE kernel against each DGP's exact response function.
 
@@ -323,20 +348,7 @@ def _ale_truth_checks(sample: DGPSample) -> dict[str, Any]:
     """
     from api.explanations import accumulated_local_effects, numeric_bin_edges
 
-    beta = sample.truth["linear_coefs"]
-    intercept = float(sample.truth["intercept"])
-    columns = list(sample.X_train.columns)
-    quadratic = sample.truth.get("quadratic") or {}
-    quad_term = quadratic.get("term")
-    quad_coef = float(quadratic.get("coef", 0.0))
-
-    def response(values):
-        matrix = np.asarray(values, dtype=float)
-        out = intercept + matrix @ np.asarray([beta[name] for name in columns])
-        if quad_term in columns:
-            out = out + quad_coef * matrix[:, columns.index(quad_term)] ** 2
-        return out
-
+    response, beta, columns, quad_term, quad_coef = _truth_response(sample)
     design = sample.X_train.to_numpy(dtype=float)
     errors: dict[str, float] = {}
     for position, name in enumerate(columns):
@@ -352,6 +364,57 @@ def _ale_truth_checks(sample: DGPSample) -> dict[str, Any]:
     return {
         "ale_true_response_max_abs_error": max(errors.values()),
         "ale_true_response_error_by_feature": errors,
+    }
+
+
+def _pdp_truth_checks(sample: DGPSample) -> dict[str, Any]:
+    """Check average partial dependence and its subset spread against exact truth.
+
+    For the additive/quadratic processes the marginal PDP curve equals the known
+    ``h_j`` plus the mean contribution of the other features, so the exact curve
+    is ``h_j(g) + C_j`` with ``C_j`` read off the same function at ``x_j = 0``; a
+    nonzero error is implementation error. Because the truth is additive,
+    reference subsets can only shift the curve by a constant (their estimate of
+    ``C_j``) and cannot change its shape: the probe pins the shape deviation at
+    floating-point noise and reports the descriptive subset spread alongside.
+    """
+    from api.explanations import average_pdp_on_grid, descriptive_summary, reference_subsets
+
+    response, beta, columns, quad_term, quad_coef = _truth_response(sample)
+    design = sample.X_train.to_numpy(dtype=float)
+    subsets = reference_subsets(
+        np.random.RandomState(0), len(design), max(20, len(design) // 2), 3
+    )
+
+    errors: dict[str, float] = {}
+    shape_deviations: dict[str, float] = {}
+    max_std = 0.0
+    for position, name in enumerate(columns):
+        column = design[:, position]
+        grid = np.linspace(float(column.min()), float(column.max()), 15)
+        curve = average_pdp_on_grid(response, design, position, grid)
+        zeroed = design.copy()
+        zeroed[:, position] = 0.0
+        offset = float(np.mean(response(zeroed)))
+        expected = (
+            beta[name] * grid + quad_coef * grid**2
+            if name == quad_term
+            else beta[name] * grid
+        )
+        errors[name] = float(np.max(np.abs(curve - (expected + offset))))
+        subset_curves = np.vstack(
+            [average_pdp_on_grid(response, design[subset], position, grid) for subset in subsets]
+        )
+        summary = descriptive_summary(subset_curves)
+        max_std = max(max_std, float(np.max(summary["sample_std"])))
+        offsets = subset_curves - subset_curves[0]
+        offsets = offsets - offsets.mean(axis=1, keepdims=True)
+        shape_deviations[name] = float(np.max(np.abs(offsets)))
+    return {
+        "pdp_true_response_max_abs_error": max(errors.values()),
+        "pdp_true_response_error_by_feature": errors,
+        "pdp_subset_shape_max_deviation": max(shape_deviations.values()),
+        "pdp_subset_stability_max_std": max_std,
     }
 
 
@@ -383,6 +446,7 @@ def _ground_truth_checks(sample: DGPSample) -> dict[str, Any]:
         checks["coef_mean_abs_deviation"] = float(np.mean(devs))
         checks["coef_max_abs_deviation"] = float(max(devs))
         checks.update(_ale_truth_checks(sample))
+        checks.update(_pdp_truth_checks(sample))
 
     elif sample.name == "heteroscedastic":
         fit = Ridge(alpha=1.0).fit(Xtr, sample.y_train)
@@ -396,8 +460,9 @@ def _ground_truth_checks(sample: DGPSample) -> dict[str, Any]:
 
     elif sample.name == "shift":
         # Per-method degradation ratios are reported by the harness itself; the
-        # ALE probe checks the accumulated quadratic against the known curve.
+        # ALE/PDP probes check the known curve, including the quadratic term.
         checks.update(_ale_truth_checks(sample))
+        checks.update(_pdp_truth_checks(sample))
 
     return checks
 

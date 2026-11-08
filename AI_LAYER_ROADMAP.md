@@ -102,7 +102,7 @@ scope or status. Review-specific recommendations and follow-up decisions from
 | Ensembling, TabPFN, and pruning integrations | Deferred | A bounded holdout-selected ensemble probe (P1.8) showed only a small, inconsistent gain; do not ship a production ensemble API without representative evidence. Do not add heavyweight dependencies by default. |
 | EDA and data intelligence | Partial | P2.1 adds bounded mixed-type dataset profiles and registered-partition API access, with exploratory/non-causal caveats. Unit inference and document extraction remain deferred. |
 | Evaluation uncertainty and statistical comparison | Partial | Nested/repeated evaluation and interval summaries already exist. P1.4 adds paired repeat-score bootstrap intervals/effect sizes and split-conformal regression. The repeated-CV comparison contract is explicitly descriptive (not nominal-coverage inference under dependent repeats); independent-unit inferential methods remain future work. |
-| Explanations and diagnostic plots | Partial | Sensitivity analysis and P1.4 diagnostics exist; P1.5 adds bounded permutation importance and partial-dependence/ICE plots. SHAP remains a separately evaluated, deferred optional integration. |
+| Explanations and diagnostic plots | Partial | Sensitivity analysis and P1.4 diagnostics exist; P1.5 adds bounded permutation importance, partial-dependence/ICE plots, accumulated local effects, reference-subset stability summaries, and exact ordered-occlusion row explanations. SHAP remains a separately evaluated, deferred optional integration; ICE stability and inline serving-row explanations are not part of the API contract. |
 | Additional scientific problem classes | Partial | P3 adds chronological splitter-level nested evaluation, quantile regression scoring/learning curves, and a Python split-conformalized quantile interval helper; full forecasting protocols, survival analysis, and UI/API interval integration remain deferred. |
 | Data provenance and lineage | Partial | P2.2 snapshots training settings, partition identity, environment, and evaluation protocol on newly trained API bundles, with JSON/Markdown exports and persisted nested-CV uncertainty. Target construction and upstream exclusions remain user-supplied provenance gaps. |
 | Research projects, notebooks, and reports | Partial | P2.2 adds reproducibility exports; P2.3 adds executable offline scientific and standard-library Python API client notebooks. Research-project/hypothesis management remains P2.5. |
@@ -1200,3 +1200,16 @@ acceptance criteria are met.
 - **2026-11-05 — P2.5 result-stage validity:** project progression no longer
   treats a completed but resultless job as an available result. A linked
   model bundle or a completed job with a non-null result is required.
+
+- **2026-11-08 — Stage C/D explanations: ALE, stability summaries, row-level
+  attribution:** the control plane now exposes accumulated local effects
+  (`POST .../ale`) with a documented numeric-bin contract, plus optional
+  reference-subset stability blocks for PDP and ALE, and an exact
+  ordered-occlusion row explanation endpoint (`POST .../explain/row`). All three
+  are pure-NumPy in `api/explanations.py`, keep the core dependency-free, and
+  label results as fitted-model descriptions with `causal_effect: false`. The
+  row-level method is chosen for exactness and explicit order-dependence; ICE
+  differences are never labelled attributions. SHAP remains deferred per the
+  C1 decision record. D1's validation harness now checks the ALE kernel and
+  average PDP/subset summaries against exact synthetic ground truth at
+  floating-point precision.

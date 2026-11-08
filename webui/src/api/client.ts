@@ -1627,6 +1627,84 @@ export const computeAle = (
     body,
   );
 
+export interface RowContribution {
+  feature: string;
+  mean: number | null;
+  sample_std: number | null;
+  min: number | null;
+  max: number | null;
+}
+
+export interface RowExplainResult {
+  model_version: string;
+  partition: string;
+  row_index: number;
+  row_count: number;
+  response: {
+    family: "Regression" | "Classification";
+    output: string;
+    positive_class?: number | string;
+    causal_effect: false;
+  };
+  reference_sample: {
+    partition: string;
+    source_rows: number;
+    used_rows: number;
+    sampling: "all_rows" | "random_without_replacement" | "explicit_row";
+  };
+  baseline: {
+    mode: "reference_mean" | "row";
+    partition: string;
+    row_index: number | null;
+    prediction: number | null;
+    values: Record<string, number | string | null>;
+    value_sources: Record<string, string>;
+  };
+  prediction: number | null;
+  explained_prediction: number | null;
+  explanation_scope: "full_row" | "subset_hybrid";
+  explained_features: string[];
+  settings: { orders: number; reference_max_rows: number; random_state: number };
+  orders: { count: number; distinct: boolean; note: string };
+  contributions: RowContribution[];
+  reconstruction: {
+    baseline_prediction: number | null;
+    explained_prediction: number | null;
+    sum_contributions: number | null;
+    target_change: number | null;
+    max_abs_residual: number | null;
+    tolerance: number | null;
+    exact_by_construction: true;
+  };
+  interpretation: {
+    category: "model_attribution";
+    method: "ordered_occlusion_chain";
+    causal_effect: false;
+    baseline_mode: string;
+    limitations: string[];
+  };
+}
+
+export const explainRow = (
+  task: string,
+  version: string,
+  body: {
+    partition?: string;
+    row_index?: number;
+    features?: string[];
+    baseline?: "reference_mean" | "row";
+    baseline_partition?: string;
+    baseline_row_index?: number;
+    orders?: number;
+    reference_max_rows?: number;
+    random_state?: number;
+  } = {},
+) =>
+  post<RowExplainResult>(
+    `/api/evaluation/${encodeURIComponent(task)}/${encodeURIComponent(version)}/explain/row`,
+    body,
+  );
+
 export interface IntervalResult {
   model_version: string;
   method: string;

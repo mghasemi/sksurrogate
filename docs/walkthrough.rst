@@ -273,6 +273,10 @@ Open **Explain**, choose the model version and click **Explain model**.
   local response differences are accumulated, which avoids averaging over
   feature combinations that never co-occur. Categorical features are skipped,
   and ALE is still a model description rather than a causal effect.
+* The **Row-level explanation** card explains a single stored row against a
+  baseline (reference mean or an explicit row). Contributions telescope exactly
+  to the prediction change; the spread across 5 or 10 feature orders shows how
+  much the split depends on order (interactions and correlated features).
 
 .. figure:: images/wt-12-explain-importance.png
    :alt: Permutation importance and partial dependence
@@ -299,6 +303,9 @@ REST::
     curl -X POST $API/evaluation/diabetes/<version>/ale \
          -H 'content-type: application/json' \
          -d '{"partition":"train","features":["bmi","bp"],"n_bins":20}'
+    curl -X POST $API/evaluation/diabetes/<version>/explain/row \
+         -H 'content-type: application/json' \
+         -d '{"row_index":12,"orders":5,"baseline":"reference_mean"}'
     curl -X POST $API/evaluation/diabetes/<version>/intervals \
          -H 'content-type: application/json' -d '{"alpha":0.1}'
 

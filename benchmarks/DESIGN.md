@@ -1,6 +1,6 @@
 # SKSurrogate Benchmark Suite — Design (B1)
 
-Status: **v1.16** (2026-11-08; §14 gains the Stage C ALE ground-truth probe — completion of the D1 exit hook; fixed-dataset contract unchanged). Datasets and baselines are pinned below; this doc is the
+Status: **v1.17** (2026-11-08; §14 gains the Stage D1 PDP/stability ground-truth probe — closes the D1 exit hook for landed Stage C methods; fixed-dataset contract unchanged). Datasets and baselines are pinned below; this doc is the
 contract for B2 (runner), B3 (ablation), B4 (publication). Changes after B2 starts require a
 version bump here.
 
@@ -245,6 +245,9 @@ v1.15 additions (2026-11-08):
 
 v1.16 additions (2026-11-08):
 - §14 gains an ALE ground-truth probe (`_ale_truth_checks`): the Stage C accumulated-local-effects kernel (`api/explanations.py`) is compared against the exact noise-free response of the `correlated` (additive) and `shift` (known `x2**2` term) processes. Because the conditional mean is additive apart from that documented quadratic, the accumulated curve has a closed form from the known coefficients, so the probe is exact (`ale_true_response_max_abs_error` ≈ 1e-15) rather than sampling-noisy. This closes the D1 exit hook for Stage C methods; D1 itself stays open for future Stage B/C methods.
+
+v1.17 additions (2026-11-08):
+- §14 gains a PDP ground-truth probe (`_pdp_truth_checks`): average partial dependence on the exact noise-free response of the `correlated` and `shift` DGPs equals the analytic curve `h_j(g) + C_j` (C_j read from the same function at `x_j = 0`), and every reference subset's curve may differ only by its offset — the probe pins both at floating-point noise. The descriptive subset standard deviation is reported (`pdp_subset_stability_max_std`), not asserted to zero, because subset reference means legitimately shift an additive curve. This closes the D1 exit hook for the landed Stage C methods (ALE + PDP/stability).
 
 ## 1. Goal
 
@@ -623,17 +626,19 @@ each DGP × seed — rmse / r² on the test and iid splits plus
 `degradation_ratio = rmse_test / rmse_iid` — together with per-DGP ground-truth
 probes (interaction-coefficient recovery; coefficient deviations under
 correlation; corr(resid², σ(x)²); and, for the additive/quadratic processes, the
-Stage C ALE probe `ale_true_response_max_abs_error`), assembles cross-seed means,
-and writes `dgp_validation.json`. CLI: `python -m benchmarks.dgps --dgps ... --seeds 0 1`.
+Stage C ALE probe `ale_true_response_max_abs_error` plus the Stage D1 PDP probe
+`pdp_true_response_max_abs_error` / `pdp_subset_shape_max_deviation`), assembles
+cross-seed means, and writes `dgp_validation.json`. CLI: `python -m benchmarks.dgps --dgps ... --seeds 0 1`.
 
 **Relationship to `SKSurrogate/synthdat.py`:** `synthdat.SynthData` resamples the
 structure of an *existing* dataset (no ground-truth function, unseeded) — it is the
 "dataset-like" half of the synthetic-data family; `dgps.py` is the "known-process"
 half. They coexist and are deliberately not merged.
 
-**Status:** foundation built 2026-11-08 (`tests/test_benchmark_dgps.py`, 16 tests).
-The Stage C ALE kernel is now validated here against exact known response curves
-(`ale_true_response_max_abs_error` at floating-point precision on `correlated` and
-`shift`). The D1 exit criterion — Stages B/C methods validated against known values —
-remains open for methods that have not landed yet; new explanation or evaluation
-methods are validated here first.
+**Status:** foundation built 2026-11-08 (`tests/test_benchmark_dgps.py`, 17 tests).
+Both landed Stage C methods are validated here against exact known response curves:
+the ALE kernel (`ale_true_response_max_abs_error`) and average PDP plus its
+reference-subset summary (`pdp_true_response_max_abs_error`,
+`pdp_subset_shape_max_deviation`), all at floating-point precision on `correlated`
+and `shift`. The D1 exit criterion is therefore closed for the landed Stage C
+methods; any future explanation or evaluation method is validated here first.

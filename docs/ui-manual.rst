@@ -325,6 +325,16 @@ because they have no canonical ordering. ALE still describes the fitted model,
 not a causal effect, and correlated features can make one feature's local
 differences reflect another's distribution.
 
+The **Row-level explanation** card explains one stored row against a stated
+baseline: enter a 0-based row index and choose 1, 5 or 10 feature orders, then
+click **Explain row**. Contributions are ordered-occlusion steps — each feature
+is credited with the model-response change observed when it is restored from the
+baseline in that order — so their sum plus the baseline prediction reconstructs
+the explained prediction exactly; the residual and its tolerance are shown. The
+per-feature spread across orders is displayed as sample standard deviation and
+is order-dependence, not a confidence interval. A single row's contributions
+are a model attribution, not feature importance or a causal effect.
+
 For regression bundles, **Compute intervals**
 produces split-conformal prediction intervals at 80/90/95% target coverage and
 reports observed coverage with a Wilson interval, mean and median width, and

@@ -553,6 +553,68 @@ Omitting ``features`` selects the ``top_k`` features by permutation importance
 computed on the same reference sample; ``features`` overrides that selection
 and accepts at most six numeric names.
 
+Row-level explanations
+~~~~~~~~~~~~~~~~~~~~~~
+
+Global profiles answer "how does this model respond on average"; a row-level
+explanation answers "why does *this* prediction differ from a stated baseline".
+The control-plane endpoint
+``POST /api/evaluation/{task}/{version}/explain/row`` implements exactly one
+deterministic method — **ordered-occlusion chain decomposition** — with this
+contract:
+
+.. math::
+
+    f(x)-f(b)=\sum_{j=1}^{n}\Bigl[f\bigl(x_{\pi_{\le j}}\cup b_{\pi_{>j}}\bigr)
+    -f\bigl(x_{\pi_{<j}}\cup b_{\pi_{>j}}\bigr)\Bigr].
+
+Starting from the baseline row :math:`b`, features are restored from the
+observed row :math:`x` one at a time in a stated order :math:`\pi`, and each
+model-response change is credited to that feature. The chain telescopes, so the
+contributions reconstruct :math:`f(x)-f(b)` **exactly for any estimator**; the
+response reports the residual (floating-point noise, not unexplained variance)
+and its tolerance. This is not a sampling approximation: no LIME/SHAP-style
+surrogate is fitted.
+
+* **Baseline.** ``baseline="reference_mean"`` (default) uses the finite mean of
+  each numeric feature and the most frequent level of each non-numeric feature
+  over a bounded, seeded subsample of the reference partition (at most 1,000
+  rows). ``baseline="row"`` uses an explicitly chosen stored row. The response
+  records the baseline mode, partition, row, per-feature value sources, and the
+  baseline prediction, because every contribution is relative to that point.
+* **Order dependence.** With interactions or correlated features, different
+  orders split the same total differently. ``orders`` in 1–10 draws distinct
+  seeded permutations and reports per-feature mean, sample standard deviation,
+  minimum, and maximum. The standard deviation measures order-dependence; it is
+  not a confidence interval. The order-averaged value equals the symmetric
+  Shapley value only when all :math:`n!` orders are enumerated, which the API
+  does not claim.
+* **Subset scope.** ``features`` selects at most 24 columns. A strict subset
+  explains the *hybrid* row (listed features at their observed values, the rest
+  at baseline) and reports ``explanation_scope = "subset_hybrid"``; it is never
+  presented as a decomposition of the full prediction. If more orders are
+  requested than distinct permutations exist, the request is rejected with the
+  exact bound.
+* **Scalar response.** Identical to ALE: regression uses ``predict``; binary
+  classification uses the labelled positive-class probability (or decision
+  value) and multiclass bundles are rejected. Contributions on different
+  response scales are not comparable.
+* **No causal or importance language.** The payload carries
+  ``category: "model_attribution"``, ``method: "ordered_occlusion_chain"`` and
+  ``causal_effect: false``. A single row's contributions are not "feature
+  importance", and an ICE difference is never labelled an attribution: ICE
+  remains a response-profile object.
+
+For example, explaining row 12 of a stored partition against the reference mean::
+
+    POST /api/evaluation/diabetes/<version>/explain/row
+    {"row_index": 12, "orders": 5, "baseline": "reference_mean",
+     "baseline_partition": "train", "random_state": 0}
+
+The stage contract — method alternatives, baseline semantics, error surface,
+and test plan — is recorded in ``AI_LAYER02_D3_ROW_LEVEL_CONTRACT.md`` at the
+repository root.
+
 ``plot_roc_curve`` supports multiclass classifiers with one-vs-rest curves for
 each class and a micro-average curve. ``plot_calibration_curve`` similarly
 reports one-vs-rest curves and probability distributions for each class; both
