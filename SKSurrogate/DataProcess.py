@@ -125,6 +125,20 @@ def _flatten_text_column(X):
     return pandas.DataFrame(X).iloc[:, 0].fillna("").astype(str).to_numpy()
 
 
+def _is_declared_text_dtype(dtype) -> bool:
+    """Whether ``dtype`` marks an explicitly declared text column.
+
+    pandas >= 3 infers plain string columns as a first-class ``StringDtype``
+    whose missing value is ``nan``, so an ``isinstance`` check alone can no
+    longer distinguish user-declared text from ordinary categorical strings.
+    Declared text columns (e.g. ``astype("string")`` or ``pandas.StringDtype()``)
+    carry :data:`pandas.NA` as their missing value on both pandas 2.x and 3.x;
+    only those receive TF-IDF vectorisation, while inferred string columns fall
+    through to one-hot encoding.
+    """
+    return isinstance(dtype, pandas.StringDtype) and dtype.na_value is pandas.NA
+
+
 class FoldLocalDataPreprocessor(TransformerMixin, BaseEstimator):
     """Fit DataFrame preprocessing within the current training partition.
 
@@ -132,8 +146,11 @@ class FoldLocalDataPreprocessor(TransformerMixin, BaseEstimator):
     validation fold learns its own imputations, category vocabulary, and text
     vocabulary. Numeric columns receive median imputation, booleans and
     non-text object/category columns receive imputation and one-hot encoding,
-    datetimes are converted to epoch seconds and imputed, and pandas
-    ``StringDtype`` columns receive per-column TF-IDF features.
+    datetimes are converted to epoch seconds and imputed. Explicitly declared
+    text columns (``astype("string")`` / ``pandas.StringDtype()``) receive
+    per-column TF-IDF features; on pandas >= 3, plain string columns are
+    inferred as a first-class string dtype and fall back to one-hot encoding
+    like object columns.
 
     The existing :class:`DataPreprocess` class remains available for eager
     whole-frame transformations; this transformer is the leakage-safe choice
@@ -172,8 +189,12 @@ class FoldLocalDataPreprocessor(TransformerMixin, BaseEstimator):
             dtype = X[column].dtype
             if pandas.api.types.is_datetime64_any_dtype(dtype):
                 datetime_columns.append(index)
-            elif isinstance(dtype, pandas.StringDtype):
+            elif _is_declared_text_dtype(dtype):
                 text_columns.append(index)
+            elif isinstance(dtype, pandas.StringDtype):
+                # pandas >= 3 infers plain string columns as a first-class
+                # StringDtype; only explicitly declared ones are text.
+                categorical_columns.append(index)
             elif pandas.api.types.is_bool_dtype(dtype):
                 categorical_columns.append(index)
             elif pandas.api.types.is_numeric_dtype(dtype):
@@ -241,7 +262,13 @@ class FoldLocalDataPreprocessor(TransformerMixin, BaseEstimator):
                     "text_%d" % index,
                     Pipeline(
                         [
-                            ("flatten", FunctionTransformer(_flatten_text_column)),
+                            (
+                                "flatten",
+                                FunctionTransformer(
+                                    _flatten_text_column,
+                                    feature_names_out="one-to-one",
+                                ),
+                            ),
                             ("tfidf", TfidfVectorizer(min_df=1)),
                         ]
                     ),

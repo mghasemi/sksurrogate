@@ -59,6 +59,8 @@ setup(
         "pandas",
         "matplotlib",
         "scikit-learn>=1.5",
+        "lightgbm>=4.6",
+        "xgboost>=2.1",
         "SALib",
         "imbalanced-learn",
         "joblib>=1.2",
