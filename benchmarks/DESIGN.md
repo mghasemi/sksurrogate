@@ -1,6 +1,6 @@
 # SKSurrogate Benchmark Suite — Design (B1)
 
-Status: **v1.13** (2026-11-05; bounded post-hoc ensemble probe). Datasets and baselines are pinned below; this doc is the
+Status: **v1.14** (2026-11-08; per-evaluation candidate configs, record schema v2). Datasets and baselines are pinned below; this doc is the
 contract for B2 (runner), B3 (ablation), B4 (publication). Changes after B2 starts require a
 version bump here.
 
@@ -224,6 +224,22 @@ v1.12 (2026-11-05; corrected response-surface selection):
   added. The reproducible component profiler narrows the legacy Hilbert overhead source, but P1.2
   remains open pending evidence that optimizing it improves time-to-result for a supported workload.
 
+v1.14 (2026-11-08; per-evaluation candidate configs and record schema v2 — Stage A of `AI_LAYER02_REMAINING_PLAN.md`):
+- **Per-eval records gain `params`.** Every arm (SRS family, random, optuna-tpe, skopt) now logs the full
+  candidate configuration — all keys of `SPACE` — in each per-evaluation entry (`(k, cv_score, wall_s, params)`),
+  so archived runs can be re-plotted and used for acquisition-function comparisons without re-running.
+  Previously only scores were stored; the SRS/random arms captured configs internally but stripped them before
+  serialization (see §5).
+- **Record schema v2.** `RunRecord` carries a top-level `schema_version`; `run_manifest.json` records
+  `record_schema_version`. Archive readers (`plot.py`, `analyze_surrogates.py`) treat both as optional, so legacy
+  v1 archives (no `params`, no stamp) remain fully readable — verified live against the real pre-v2 archive
+  `results/20261018T051214Z` (84 ok-runs re-read through `_load_records`, curves, and target tables). Reader
+  tolerance is pinned by `tests/test_benchmark_archive_readers.py` on fixtures mirroring the real v1 layout.
+- **Dataset cache before dependency.** `_download_openml` now checks the warm CSV cache *before* importing the
+  optional `openml` package, so cached datasets load in slim environments without the `[benchmark]` extra; only a
+  genuine download still requires it (actionable install-hint error unchanged). Regression-tested in
+  `tests/test_benchmark_datasets.py`.
+
 ## 1. Goal
 
 The README claims SKSurrogate performance "validated against benchmarks" with no findable
@@ -335,8 +351,10 @@ pandas StringDtype columns do not satisfy).
 - **Seeds**: S = **7** seeds per (method, dataset) — satisfies ≥5 and avoids even-split KFold
   symmetry artifacts. Seed controls: outer split, estimator `random_state`, sampler/surrogate RNG.
 - **Per-evaluation logging**: every method emits a record after each model evaluation
-  `(k, cv_score, wall_s)` → best-so-far curves are computed from these, not reconstructed
-  afterwards.
+  `(k, cv_score, wall_s, params)` → best-so-far curves are computed from these, not reconstructed
+  afterwards. Since record schema v2 (v1.14), `params` carries the full candidate configuration for that
+  evaluation and each run JSON is stamped with `schema_version`; legacy v1 archives lack both fields and
+  archive readers treat them as optional, so old runs stay re-plottable without re-running.
 
 ## 6. Metrics
 

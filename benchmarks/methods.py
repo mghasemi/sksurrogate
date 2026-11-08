@@ -19,10 +19,18 @@ Space design notes:
   wall time is logged with the same semantics as SKSurrogate's built-in
   ``evaluation_history_``.
 
-Per-evaluation records are ``(k, cv_score, wall_s)``; entries without a score
-(invalid/pruned/failed trials) keep their position in the curve with
+Per-evaluation records are ``(k, cv_score, wall_s, params)`` since record
+schema v2: ``params`` carries the full candidate configuration (every key of
+:data:`SPACE`) for that evaluation, so archived runs can be re-plotted and used
+for acquisition-function comparisons without rerunning. Entries without a
+score (invalid/pruned/failed trials) keep their position in the curve with
 ``cv_score=None`` so evaluation counting stays honest. ``total_wall_s`` records
 the search duration, excluding the final held-out evaluation.
+
+Schema contract (v2, Stage A of ``AI_LAYER02_REMAINING_PLAN.md``): legacy v1
+archives carry no top-level ``schema_version`` and no per-evaluation ``params``;
+readers must treat both as optional (see :func:`eval_params`). New writers
+always emit ``schema_version = RECORD_SCHEMA_VERSION``.
 """
 
 from __future__ import annotations
@@ -51,6 +59,23 @@ SPACE: dict[str, list[Any]] = {
 
 N_CONFIGS = int(np.prod([len(v) for v in SPACE.values()]))
 
+#: Version of the per-run JSON record schema written by :meth:`RunRecord.to_json`.
+#: v2 (Stage A, AI_LAYER02_REMAINING_PLAN.md): every per-evaluation ``records[]``
+#: entry carries the full candidate configuration under ``params``, and this top-level
+#: field is present. Legacy v1 archives carry neither; readers must stay tolerant —
+#: use :func:`eval_params` instead of indexing ``rec["params"]`` directly.
+RECORD_SCHEMA_VERSION = 2
+
+
+def eval_params(record_entry: dict[str, Any]) -> dict[str, Any]:
+    """Per-evaluation candidate configuration for one entry of ``records[]``.
+
+    Returns the full config (every key of :data:`SPACE`) for schema-v2 records and
+    an empty dict for legacy v1 entries that predate per-evaluation logging —
+    so archive readers degrade gracefully instead of raising on old runs.
+    """
+    return record_entry.get("params") or {}
+
 
 def make_pipeline(seed: int, n_estimators: int = 50) -> Pipeline:
     """Pipeline under tuning: StandardScaler + RandomForest (DESIGN.md section 2)."""
@@ -74,7 +99,8 @@ class RunRecord:
     status: str  # "ok" | "error" | "skipped_archived"
     error: Optional[str] = None
     n_evals: int = 0
-    #: list of {"k": int, "cv_score": float|None, "wall_s": float|None} in eval order
+    #: list of {"k": int, "cv_score": float|None, "wall_s": float|None,
+    #: "params": dict} in eval order (``params`` = full candidate config, schema v2)
     records: list[dict[str, Any]] = dataclasses.field(default_factory=list)
     best_params: dict[str, Any] = dataclasses.field(default_factory=dict)
     final_cv_best: Optional[float] = None
@@ -83,6 +109,8 @@ class RunRecord:
     #: Search wall time, excluding the final held-out evaluation.
     total_wall_s: Optional[float] = None
     extra: dict[str, Any] = dataclasses.field(default_factory=dict)
+    #: Per-run JSON record schema version (v2 adds per-evaluation ``params``).
+    schema_version: int = RECORD_SCHEMA_VERSION
 
     def to_json(self) -> str:
         return json.dumps(dataclasses.asdict(self), indent=2, sort_keys=True, default=str)
@@ -284,12 +312,14 @@ def _run_srs(
                 "cv_score": score,
                 "wall_s": float(item.get("duration", 0.0)),
                 "status": item.get("status"),
-                "_params": dict(item.get("params", {})),
+                # Full candidate config for this evaluation (schema v2): kept in the
+                # archive so runs can be re-analyzed without rerunning.
+                "params": dict(item.get("params", {})),
             }
         )
 
     best = _best_completed(records)
-    best_params = dict(best["_params"]) if best is not None else {}
+    best_params = dict(best["params"]) if best is not None else {}
     test_acc, test_bal = _final_test_scores(best_params, Xtr, ytr, Xte, yte, seed, n_estimators)
 
     return RunRecord(
@@ -301,7 +331,7 @@ def _run_srs(
         status="ok" if best is not None else "error",
         error=None if best is not None else "no completed evaluations in history",
         n_evals=len(records),
-        records=[{key: value for key, value in r.items() if key != "_params"} for r in records],
+        records=records,
         best_params=best_params,
         final_cv_best=float(-min(i["score"] for i in search.evaluation_history_ if i.get("score") is not None))
         if any(i.get("score") is not None for i in search.evaluation_history_)
@@ -336,10 +366,10 @@ def run_random(Xtr, ytr, Xte, yte, budget: int, seed: int, n_estimators: int = 5
             score = None
             status = f"failed: {exc.__class__.__name__}: {exc}"
         wall = time.perf_counter() - started
-        records.append({"k": k, "cv_score": score, "wall_s": wall, "status": status, "_params": params})
+        records.append({"k": k, "cv_score": score, "wall_s": wall, "status": status, "params": params})
 
     best = _best_completed(records)
-    best_params = dict(best.pop("_params")) if best is not None else {}
+    best_params = dict(best["params"]) if best is not None else {}
     total_wall = time.perf_counter() - search_started
     test_acc, test_bal = _final_test_scores(best_params, Xtr, ytr, Xte, yte, seed, n_estimators)
 
@@ -352,7 +382,7 @@ def run_random(Xtr, ytr, Xte, yte, budget: int, seed: int, n_estimators: int = 5
         status="ok" if best is not None else "error",
         error=None if best is not None else "no completed evaluations",
         n_evals=len(records),
-        records=[{key: value for key, value in r.items() if key != "_params"} for r in records],
+        records=records,
         best_params=best_params,
         final_cv_best=best["cv_score"] if best is not None else None,
         final_test_accuracy=test_acc,
@@ -400,7 +430,8 @@ def run_optuna_tpe(Xtr, ytr, Xte, yte, budget: int, seed: int, n_estimators: int
         if trial.datetime_start is not None and trial.datetime_complete is not None:
             wall = (trial.datetime_complete - trial.datetime_start).total_seconds()
         score = None if trial.value is None else float(trial.value)
-        records.append({"k": k, "cv_score": score, "wall_s": wall})
+        # Full candidate config for this trial (schema v2).
+        records.append({"k": k, "cv_score": score, "wall_s": wall, "params": dict(trial.params)})
 
     best_trial = study.best_trial
     best_params = dict(best_trial.params) if best_trial is not None and best_trial.value is not None else {}
@@ -475,7 +506,9 @@ def run_skopt(Xtr, ytr, Xte, yte, budget: int, seed: int, n_estimators: int = 50
     records: list[dict[str, Any]] = []
     for k in range(len(search.cv_results_["mean_test_score"])):
         score = float(search.cv_results_["mean_test_score"][k])
-        records.append({"k": k, "cv_score": score, "wall_s": None})
+        # Full candidate config for this evaluation (schema v2), same SPACE keys as every other arm.
+        params_k = {name: search.cv_results_["params"][k][name] for name in SPACE}
+        records.append({"k": k, "cv_score": score, "wall_s": None, "params": params_k})
 
     best_idx = int(search.best_index_)
     best_params = {name: search.cv_results_["params"][best_idx][name] for name in SPACE}

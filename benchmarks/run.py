@@ -28,7 +28,7 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 
 from .datasets import dataset_names, load_dataset
-from .methods import METHODS, RunRecord
+from .methods import METHODS, RECORD_SCHEMA_VERSION, RunRecord
 
 #: CI smoke subset (DESIGN.md section 8): must finish in well under 3 minutes.
 SMOKE = {"datasets": ["ionosphere"], "budget": 8, "seeds": 2, "n_estimators": 10}
@@ -126,6 +126,10 @@ def run_suite(
     manifest = {
         "stamp": stamp,
         "started_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        # Schema version of the per-run JSON files in this directory (see methods.py):
+        # v2 adds full candidate configs to every per-evaluation record. Legacy v1
+        # directories carry no such key; readers must stay tolerant.
+        "record_schema_version": RECORD_SCHEMA_VERSION,
         "config": {
             "datasets": list(datasets),
             "methods": list(methods),
