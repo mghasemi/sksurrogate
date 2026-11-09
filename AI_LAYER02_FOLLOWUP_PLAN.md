@@ -12,6 +12,13 @@ Phase 7 is not started. Broader inferential methods, provenance, and research
 workflow work remain. This plan is based on a review of the documentation,
 not a fresh audit of every implementation claim.
 
+**Remaining-work tracker (2026-11-08):** Phases 4–7 follow-up items have been
+re-baselined against current source in
+[`AI_LAYER02_REMAINING_PLAN.md`](./AI_LAYER02_REMAINING_PLAN.md), which now
+tracks what remains, its blockers, and the staged work plan (also mirrored as
+Phase 4 tasks in Vikunja project 40). This document is retained as the record
+of decisions made during implementation.
+
 The existing [`AI_LAYER_ROADMAP.md`](./AI_LAYER_ROADMAP.md) remains the
 canonical implementation plan and status record for overlapping work. Its
 bounded EDA, evaluation, provenance, notebook, and API-first project work is
