@@ -216,7 +216,7 @@ This code is distributed under `MIT license <https://en.wikipedia.org/wiki/MIT_L
 MIT License
 ----------------
 
-    Copyright (c) 2019 Mehdi Ghasemi
+    Copyright (c) 2019--2026 Mehdi Ghasemi
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to deal
