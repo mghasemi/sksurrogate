@@ -12,6 +12,7 @@ Welcome to SKSurrogate's documentation!
 
    intro
    surrogate
+   telemetry
    hilbert
    sensitivity
    experiment-design

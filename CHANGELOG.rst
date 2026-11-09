@@ -1,8 +1,8 @@
 Changelog
 =========
 
-Unreleased
-----------
+[0.3.0] - 2026-11-08
+--------------------
 
 Explanations: accumulated local effects and reference-subset stability
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -380,6 +380,11 @@ Logging and per-trial telemetry
   encoded search space, scoring/CV summaries, budget and termination state, all
   trial records with trial indices, surrogate diagnostics, and sampling
   provenance; ``json.dumps()`` succeeds without a custom encoder.
+* Documentation: new :doc:`telemetry` chapter covering logger names and level
+  mapping, the unconfigured-stdout fallback, the ``fit_score`` and
+  sampling-source records, the ``callbacks`` event schema (including the
+  seed-trial ``phase = None`` caveat), and the ``to_audit_dict()`` bundle; the
+  hyperparameter-optimization chapter links to it.
 
 [0.2.0] - 2026-10-24
 --------------------

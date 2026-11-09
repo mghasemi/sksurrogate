@@ -234,6 +234,13 @@ For an estimator with no tunable parameters, pass an empty ``params`` mapping.
 The search evaluates that estimator directly with cross-validation instead of
 building a zero-dimensional surrogate problem.
 
+Progress output goes through the standard library ``logging`` module
+(``SKSurrogate`` loggers, no change to default console output), and a search can
+report every trial to a callback and export a JSON audit bundle. The record
+contracts — logger names and levels, the ``fit_score`` and sampling-source
+telemetry, the ``callbacks`` event schema, and ``to_audit_dict()`` — are
+documented in :doc:`telemetry`.
+
 
 
 .. note::

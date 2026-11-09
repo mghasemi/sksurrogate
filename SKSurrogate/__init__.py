@@ -52,7 +52,7 @@ from .retraining import RetrainingJob
 from .synthdat import SynthData
 from .design import latin_hypercube, suggest_next_point
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "AML",
