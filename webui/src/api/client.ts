@@ -1415,6 +1415,10 @@ export interface LogQueryResponse {
   total: number;
   levels?: LogLevel[];
   job_id?: string;
+  /** Present when the query was scoped to a research project. */
+  project_id?: string;
+  /** Number of project-linked jobs the query scanned. */
+  job_count?: number;
 }
 
 export interface LogQuery {
@@ -1424,6 +1428,10 @@ export interface LogQuery {
   /** Explicit subset of severities (wins over `level`). */
   levels?: LogLevel[];
   kind?: string;
+  /** Restrict to one dataset/task. */
+  task_name?: string;
+  /** Restrict to the jobs linked as artifacts of this research project. */
+  project_id?: string;
   q?: string;
   limit?: number;
   since_seq?: number;
@@ -1435,6 +1443,8 @@ function logQueryString(query: LogQuery): string {
   if (query.level) params.set("level", query.level);
   if (query.levels && query.levels.length) params.set("levels", query.levels.join(","));
   if (query.kind) params.set("kind", query.kind);
+  if (query.task_name) params.set("task_name", query.task_name);
+  if (query.project_id) params.set("project_id", query.project_id);
   if (query.q) params.set("q", query.q);
   if (query.limit) params.set("limit", String(query.limit));
   if (query.since_seq !== undefined) params.set("since_seq", String(query.since_seq));

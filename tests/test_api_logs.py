@@ -171,6 +171,59 @@ def test_free_text_and_limit_filters(client):
     assert limited["total"] > 1
 
 
+def test_task_name_filter(client):
+    first = _submit(client, "task-alpha", None, messages=[("INFO", "alpha line")])
+    second = _submit(client, "task-beta", None, messages=[("INFO", "beta line")])
+    _wait(first)
+    _wait(second)
+
+    result = client.get("/api/logs", params={"task_name": "task-alpha"}).json()
+    messages = [entry["message"] for entry in result["entries"]]
+    assert "alpha line" in messages
+    assert "beta line" not in messages
+    assert {entry["task_name"] for entry in result["entries"]} == {"task-alpha"}
+
+
+def test_project_filter_scopes_to_linked_jobs(client):
+    linked = _submit(client, "project-task", None, messages=[("INFO", "inside project")])
+    outsider = _submit(client, "other-task", None, messages=[("INFO", "outside project")])
+    _wait(linked)
+    _wait(outsider)
+
+    project = client.post(
+        "/api/projects", json={"name": "Logs scope", "description": "project filter test"}
+    ).json()
+    project_id = project["project_id"]
+    response = client.post(
+        "/api/projects/%s/artifacts" % project_id,
+        json={"kind": "job", "task_name": "project-task", "artifact_id": linked},
+    )
+    assert response.status_code == 200, response.text
+
+    result = client.get("/api/logs", params={"project_id": project_id}).json()
+    messages = [entry["message"] for entry in result["entries"]]
+    assert "inside project" in messages
+    assert "outside project" not in messages
+    assert result["project_id"] == project_id
+    assert result["job_count"] == 1
+
+
+def test_project_filter_without_linked_jobs_is_empty(client):
+    project = client.post("/api/projects", json={"name": "Empty scope"}).json()
+    result = client.get(
+        "/api/logs", params={"project_id": project["project_id"]}
+    ).json()
+    assert result["entries"] == []
+    assert result["total"] == 0
+    assert result["job_count"] == 0
+
+
+def test_unknown_project_is_rejected(client):
+    response = client.get("/api/logs", params={"project_id": "0" * 32})
+    assert response.status_code == 404
+    assert "No research project" in response.json()["detail"]
+
+
 def test_repeated_trial_failures_are_capped_at_warning(client):
     job = {"job_id": "cap-test", "task_name": "cap", "kind": "test"}
     token = logs.set_current_job(job)

@@ -9,7 +9,7 @@ Web UI log browser and severity-aware logging
 
 * New **Logs** page in the control plane: captured log entries per background
   job, newest first, with time, severity badge, job, logger and message.
-  Severity chips toggle each level (showing live counts, with **Warnings only**
+  Severity chips toggle each level (showing live counts, with **Warnings & above**
   and **All levels** shortcuts); job, kind, free-text and row-count filters
   narrow the list, and selecting a job follows it live. Clicking an entry shows
   its trial/phase metadata or the full failure traceback. A **Logs** action on
@@ -25,6 +25,13 @@ Web UI log browser and severity-aware logging
   /api/logs/{job_id}`` (tail with ``since_seq``) and
   ``WS /api/logs/{job_id}/stream`` (incremental frames). Unknown levels return
   HTTP 422. The existing job status stream is unchanged.
+* Dataset and project scoping: every entry carries ``task_name`` and the
+  endpoint accepts ``task_name=`` to restrict to one dataset/task, plus
+  ``project_id=`` which resolves the project's linked ``job`` artifacts and
+  scans only those jobs (404 for unknown projects, empty result with
+  ``job_count: 0`` for a project without linked jobs). The Logs page gained
+  matching **Dataset / task** and **Project** selectors, both reflected in the
+  URL for shareable scoped views.
 * Severity is now used by the core, not just INFO/DEBUG: ``WARNING`` for a
   failed surrogate fit (logged before the exception propagates), for termination
   after too many non-improving iterations, and for one aggregated

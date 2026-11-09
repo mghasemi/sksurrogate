@@ -138,12 +138,20 @@ an API restart. Job records carry a ``log_counts`` summary
 themselves are read through the endpoints below.
 
 ``GET /api/logs``
-    Browse across jobs. Query parameters: ``job_id``, ``kind``,
-    ``q`` (substring over message/logger/task), ``limit`` (1–2000, default 200),
-    and either ``level`` (minimum severity — ``WARNING`` returns WARNING, ERROR
-    and CRITICAL) or ``levels`` (explicit comma-separated subset). The response
-    is ``{"entries": [...], "counts": {...}, "total": n, "levels": [...]}`` with
-    entries newest first.
+    Browse across jobs. Query parameters: ``job_id``, ``task_name`` (one
+    dataset/task), ``project_id`` (one research project), ``kind``, ``q``
+    (substring over message/logger/task), ``limit`` (1–2000, default 200), and
+    either ``level`` (minimum severity — ``WARNING`` returns WARNING, ERROR and
+    CRITICAL) or ``levels`` (explicit comma-separated subset). The response is
+    ``{"entries": [...], "counts": {...}, "total": n, "levels": [...],
+    "project_id"?, "job_count"?}`` with entries newest first.
+
+    ``project_id`` resolves scope from the project store rather than from the
+    entries: the referenced jobs are the project's artifacts of kind ``job``, so
+    jobs linked before this filter existed are included, and a job linked to two
+    projects appears under both. An unknown or malformed project id returns 404;
+    a project with no linked jobs returns an empty result with ``job_count: 0``
+    instead of scanning the whole store.
 
 ``GET /api/logs/{job_id}``
     Tail one job; same filters plus ``since_seq`` for polling. Returns 404 for an

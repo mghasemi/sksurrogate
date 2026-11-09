@@ -4,11 +4,12 @@ import { useSearchParams } from "react-router-dom";
 
 import {
   LOG_LEVELS,
+  listJobs,
   listLogs,
+  listProjects,
   subscribeToJobLogs,
 } from "../api/client";
 import type { JobRecord, LogEntry, LogLevel } from "../api/client";
-import { listJobs } from "../api/client";
 import { Badge, Card, ErrorNote, Loading, JsonView, Table } from "../components/ui";
 
 const LEVEL_TONE: Record<LogLevel, "muted" | "info" | "warn" | "err"> = {
@@ -35,6 +36,8 @@ function levelMaskKey(levels: LogLevel[]): string {
 export default function LogsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const jobId = searchParams.get("job") || "";
+  const taskFilter = searchParams.get("task") || "";
+  const projectFilter = searchParams.get("project") || "";
   const [levels, setLevels] = useState<LogLevel[]>([...LOG_LEVELS]);
   const [kind, setKind] = useState("all");
   const [text, setText] = useState("");
@@ -44,16 +47,32 @@ export default function LogsPage() {
   const [liveEntries, setLiveEntries] = useState<LogEntry[]>([]);
 
   const jobsQ = useQuery({ queryKey: ["jobs"], queryFn: () => listJobs() });
+  const projectsQ = useQuery({ queryKey: ["projects"], queryFn: () => listProjects() });
   const jobs: JobRecord[] = jobsQ.data?.jobs ?? [];
+  const projects = projectsQ.data?.projects ?? [];
+  const taskOptions = useMemo(
+    () => [...new Set(jobs.map((job) => job.task_name).filter(Boolean))].sort(),
+    [jobs],
+  );
+
+  /** Update one filter in the URL so a scoped log view is shareable. */
+  const setFilter = (key: "job" | "task" | "project", value: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (value) next.set(key, value);
+    else next.delete(key);
+    setSearchParams(next);
+  };
   const activeJob = jobs.find((job) => job.job_id === jobId) ?? null;
   const running = activeJob?.status === "running" || activeJob?.status === "queued";
 
   const maskKey = levelMaskKey(levels);
   const logsQ = useQuery({
-    queryKey: ["logs", jobId, maskKey, kind, text, limit],
+    queryKey: ["logs", jobId, taskFilter, projectFilter, maskKey, kind, text, limit],
     queryFn: () =>
       listLogs({
         job_id: jobId || undefined,
+        task_name: taskFilter || undefined,
+        project_id: projectFilter || undefined,
         levels,
         kind: kind === "all" ? undefined : kind,
         q: text || undefined,
@@ -126,8 +145,7 @@ export default function LogsPage() {
             <select
               value={jobId}
               onChange={(event) => {
-                const value = event.target.value;
-                setSearchParams(value ? { job: value } : {});
+                setFilter("job", event.target.value);
                 setSelected(null);
               }}
             >
@@ -135,6 +153,34 @@ export default function LogsPage() {
               {jobs.map((job) => (
                 <option key={job.job_id} value={job.job_id}>
                   {job.task_name} · {job.kind} · {job.job_id.slice(0, 8)} ({job.status})
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field fixed" style={{ flex: "0 1 170px", minWidth: 130 }}>
+            <label>Dataset / task</label>
+            <select
+              value={taskFilter}
+              onChange={(event) => setFilter("task", event.target.value)}
+            >
+              <option value="">All tasks</option>
+              {taskOptions.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field fixed" style={{ flex: "0 1 200px", minWidth: 150 }}>
+            <label>Project</label>
+            <select
+              value={projectFilter}
+              onChange={(event) => setFilter("project", event.target.value)}
+            >
+              <option value="">All projects</option>
+              {projects.map((project) => (
+                <option key={project.project_id} value={project.project_id}>
+                  {project.name}
                 </option>
               ))}
             </select>
@@ -195,8 +241,9 @@ export default function LogsPage() {
             type="button"
             className="btn"
             onClick={() => setLevels(["WARNING", "ERROR", "CRITICAL"])}
+            title="Show WARNING, ERROR and CRITICAL entries (the same semantics as level=WARNING)"
           >
-            Warnings only
+            Warnings & above
           </button>
           <button type="button" className="btn" onClick={() => setLevels([...LOG_LEVELS])}>
             All levels
@@ -215,7 +262,13 @@ export default function LogsPage() {
 
       <Card
         title={`Entries (${entries.length}${logsQ.data && logsQ.data.total > entries.length ? ` of ${logsQ.data.total}` : ""})`}
-        sub={jobId ? undefined : "Newest first. Select a job to follow it live."}
+        sub={
+          projectFilter && logsQ.data?.job_count !== undefined
+            ? `Project scope: ${logsQ.data.job_count} linked job(s). Newest first.`
+            : jobId
+              ? undefined
+              : "Newest first. Select a job to follow it live."
+        }
       >
         {logsQ.isLoading && <Loading />}
         {entries.length === 0 && !logsQ.isLoading ? (

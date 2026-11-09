@@ -567,9 +567,11 @@ are browser-local; registry audit history is task data stored by the API.
 Use **Logs** to read what a job actually did. The page lists captured entries
 newest first with time, severity badge, job, logger and message. Severity chips
 filter by level — each chip toggles one level and shows its current count, with
-**Warnings only** and **All levels** shortcuts; a minimum severity is available
-through the API (``level=WARNING``). Job, kind, free-text and row-count filters
-narrow the list further. Clicking a row opens the entry detail, including the
+**Warnings & above** and **All levels** shortcuts; a minimum severity is available
+through the API (``level=WARNING``). Job, **dataset/task**, **project**, kind,
+free-text and row-count filters narrow the list further; a project scope is
+resolved through the jobs linked as that project's artifacts, so it covers runs
+attached to the project at any time. Clicking a row opens the entry detail, including the
 trial/phase of per-trial telemetry and the full traceback of a failure.
 
 Selecting a job (or pressing **Logs** on a job row) scopes the page to that job

@@ -209,29 +209,40 @@ class JobLogStore:
         self,
         *,
         job_id=None,
+        job_ids=None,
         level=None,
         levels=None,
         query_text=None,
         kind=None,
+        task_name=None,
         limit=200,
         since_seq=None,
         newest_first=True,
     ):
-        """Filter entries by job, severity, kind and free text.
+        """Filter entries by job, job set, dataset/task, severity, kind and text.
 
+        ``job_ids`` restricts the scan to an explicit set of jobs (used for
+        project-scoped queries); it is ignored when ``job_id`` is given.
         Returns ``{"entries": [...], "counts": {...}, "total": n}`` where
         ``counts`` covers the returned selection and ``total`` is its size
         before ``limit`` was applied.
         """
         allowed = set(parse_levels(level=level, levels=levels))
-        job_ids = [str(job_id)] if job_id else sorted(self.known_jobs())
+        if job_id:
+            scan_ids = [str(job_id)]
+        elif job_ids is not None:
+            scan_ids = [str(item) for item in job_ids]
+        else:
+            scan_ids = sorted(self.known_jobs())
         needle = (query_text or "").strip().lower()
         selected = []
-        for current in job_ids:
+        for current in scan_ids:
             for entry in self.entries(current):
                 if entry.get("level") not in allowed:
                     continue
                 if kind and entry.get("kind") != kind:
+                    continue
+                if task_name and entry.get("task_name") != task_name:
                     continue
                 if since_seq is not None and int(entry.get("seq") or 0) <= int(since_seq):
                     continue
