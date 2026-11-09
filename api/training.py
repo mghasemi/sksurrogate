@@ -11,6 +11,7 @@ from sklearn.utils.validation import check_is_fitted
 
 from SKSurrogate import AML, Categorical, Integer, ModelBundle, Real
 
+from . import logs
 from .config import settings
 from .deps import bad_request, finite_or_none, not_found, open_tracker
 
@@ -596,6 +597,7 @@ def fit_experiment_bundle(
         cv=cv if cv is not None else 3,
         forbidden=forbidden_rules,
         conditional=conditional,
+        callbacks=[logs.trial_callback],
         **stacking,
     )
     if surrogate_mode:
@@ -755,6 +757,7 @@ def fit_pipeline_bundle(
         check_point=str(checkpoint_dir) + "/",
         random_state=random_state,
         cv=cv if cv is not None else 3,
+        callbacks=[logs.trial_callback],
         **stacking,
     )
     # optimize_pipeline requires at least one surrogate regressor; a plain

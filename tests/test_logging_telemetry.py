@@ -185,3 +185,71 @@ def test_to_audit_dict_works_before_fit(tmp_path):
     assert audit["evaluations"] == []
     assert audit["sampling_sources"] == []
     assert json.dumps(audit)
+
+
+def test_warning_level_is_not_duplicated_on_stdout(capsys):
+    from SKSurrogate import _logutil
+
+    logger = logging.getLogger(__name__)
+    previous = logger.propagate
+    logger.propagate = False
+    try:
+        _logutil.emit(logging.WARNING, "warning probe")
+    finally:
+        logger.propagate = previous
+
+    captured = capsys.readouterr()
+    # lastResort handles stderr; the stdout fallback must not repeat the line.
+    assert "warning probe" in captured.err
+    assert captured.out == ""
+
+
+class _BrokenRegressor:
+    def fit(self, X, y):
+        raise RuntimeError("intentional surrogate fit failure")
+
+    def predict(self, X):
+        return np.zeros(len(X))
+
+
+def test_surrogate_fit_failure_is_logged_as_warning_before_raising(tmp_path, caplog):
+    X, y = _data()
+    search = SurrogateRandomCV(
+        Ridge(),
+        params={"alpha": (0.1, 10.0)},
+        max_iter=3,
+        min_evals=1,
+        n_jobs=1,
+        random_state=0,
+        regressor=_BrokenRegressor(),
+        task_name=str(tmp_path / "warning-fit"),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="SKSurrogate.structsearch"):
+        with pytest.raises(RuntimeError, match="intentional surrogate fit failure"):
+            search.fit(X, y)
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("Surrogate fit failed" in record.getMessage() for record in warnings)
+
+
+def test_no_progress_termination_is_logged_as_warning(tmp_path, caplog):
+    from SKSurrogate.structsearch import SurrogateSearch
+
+    search = SurrogateSearch(
+        lambda point: point[0] ** 2,
+        x0=[0.5],
+        bounds=[(-1.0, 1.0)],
+        max_iter=6,
+        min_evals=100,  # never fit a surrogate -> every iteration is a direct sample
+        max_itr_no_prog=0,
+        task_name=str(tmp_path / "warning-no-progress"),
+        random_state=0,
+    )
+
+    with caplog.at_level(logging.WARNING, logger="SKSurrogate.structsearch"):
+        search()
+
+    assert search.termination_reason == "max_iter_no_progress"
+    messages = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("without improvement" in message for message in messages)

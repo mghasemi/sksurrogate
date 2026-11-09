@@ -564,11 +564,33 @@ Use **Settings / Audit** to configure the API base URL and shared API key for
 this browser, and to review task registry audit events. Connection settings
 are browser-local; registry audit history is task data stored by the API.
 
+Use **Logs** to read what a job actually did. The page lists captured entries
+newest first with time, severity badge, job, logger and message. Severity chips
+filter by level — each chip toggles one level and shows its current count, with
+**Warnings only** and **All levels** shortcuts; a minimum severity is available
+through the API (``level=WARNING``). Job, kind, free-text and row-count filters
+narrow the list further. Clicking a row opens the entry detail, including the
+trial/phase of per-trial telemetry and the full traceback of a failure.
+
+Selecting a job (or pressing **Logs** on a job row) scopes the page to that job
+and follows it live while it runs; entries persist as JSONL under the API home,
+so they remain available after a restart. Loggers are the ``SKSurrogate``
+package loggers plus ``sksurrogate.api`` for job lifecycle and trial events; the
+contract is documented in :doc:`controlplane` and the level mapping in
+:doc:`telemetry`.
+
 .. figure:: images/ui-jobs.png
    :alt: Jobs page with kind and status filters
    :width: 100%
 
    Filter and inspect asynchronous work from across tasks.
+
+.. figure:: images/ui-logs.png
+   :alt: Logs page filtered to warnings with an entry detail card
+   :width: 100%
+
+   Filter captured job logs by severity, job, kind and text, then open an entry
+   for its trial metadata or failure traceback.
 
 .. figure:: images/ui-settings.png
    :alt: Settings page showing API connection and audit log

@@ -16,6 +16,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
+from . import logs
 from .config import settings
 
 _executor = ThreadPoolExecutor(max_workers=4)
@@ -78,10 +79,26 @@ class JobManager:
         if metadata_factory is not None:
             record.update(metadata_factory(job_id))
         self._write(record)
+        logs.store.append(
+            record,
+            "INFO",
+            "Job accepted (kind=%s, backend=%s)" % (kind, backend),
+        )
+        record["log_counts"] = logs.store.counts(job_id)
+        self._write(record)
 
         def _run():
+            token = logs.set_current_job(
+                {
+                    "job_id": job_id,
+                    "task_name": task_name,
+                    "kind": kind,
+                }
+            )
             record["status"] = "running"
             record["updated_at"] = _now()
+            logs.log_event("INFO", "Job started (kind=%s)" % kind)
+            record["log_counts"] = logs.store.counts(job_id)
             self._write(record)
             try:
                 fn = fn_factory(job_id)
@@ -113,11 +130,25 @@ class JobManager:
                 else:
                     record["result"] = fn()
                 record["status"] = "completed"
-            except Exception:
+                logs.log_event("INFO", "Job completed (kind=%s)" % kind)
+            except Exception as exc:
                 record["status"] = "failed"
                 record["error"] = traceback.format_exc()
+                frames = traceback.extract_tb(exc.__traceback__)
+                location = (
+                    " at %s:%s" % (frames[-1].filename.rsplit("/", 1)[-1], frames[-1].lineno)
+                    if frames
+                    else ""
+                )
+                logs.log_event(
+                    "ERROR",
+                    "Job failed: %s: %s%s" % (type(exc).__name__, exc, location),
+                    detail=record["error"],
+                )
             record["updated_at"] = _now()
+            record["log_counts"] = logs.store.counts(job_id)
             self._write(record)
+            logs.reset_current_job(token)
 
         _executor.submit(_run)
         return job_id

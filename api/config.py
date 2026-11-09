@@ -56,6 +56,10 @@ class Settings:
         return self.root / "jobs"
 
     @property
+    def logs_dir(self):
+        return self.root / "logs"
+
+    @property
     def checkpoints_dir(self):
         return self.root / "checkpoints"
 
@@ -72,6 +76,7 @@ class Settings:
             self.predictions_dir,
             self.monitoring_dir,
             self.jobs_dir,
+            self.logs_dir,
             self.checkpoints_dir,
             self.projects_dir,
         ):

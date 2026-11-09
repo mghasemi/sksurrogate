@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { listJobs, resumeJob } from "../api/client";
 import type { JobRecord } from "../api/client";
@@ -113,6 +113,13 @@ export default function JobsPage() {
               <td key="c" className="mono">{new Date(j.created_at).toLocaleString()}</td>,
               <td key="u" className="mono">{new Date(j.updated_at).toLocaleString()}</td>,
               <td key="a">
+                <Link
+                  className="btn"
+                  to={`/logs?job=${j.job_id}`}
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  Logs
+                </Link>
                 {j.kind === "experiment" && j.status === "failed" && (
                   <button
                     className="btn"

@@ -1,6 +1,53 @@
 Changelog
 =========
 
+Unreleased
+----------
+
+Web UI log browser and severity-aware logging
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* New **Logs** page in the control plane: captured log entries per background
+  job, newest first, with time, severity badge, job, logger and message.
+  Severity chips toggle each level (showing live counts, with **Warnings only**
+  and **All levels** shortcuts); job, kind, free-text and row-count filters
+  narrow the list, and selecting a job follows it live. Clicking an entry shows
+  its trial/phase metadata or the full failure traceback. A **Logs** action on
+  each job row opens the page scoped to that job.
+* New ``api/logs.py`` capture layer: a ``logging.Handler`` bound to the
+  ``SKSurrogate`` and ``sksurrogate.api`` loggers through a ``ContextVar``, so
+  concurrent jobs never mix lines and API request handling is not captured.
+  Entries are kept in a 2,000-entry ring buffer per job and appended to
+  ``<SKSURROGATE_API_HOME>/logs/<job_id>.jsonl``; history survives a restart.
+  Job records gain a ``log_counts`` summary.
+* New endpoints: ``GET /api/logs`` (cross-job browse with ``level`` minimum
+  severity or ``levels`` subset, ``kind``, ``q``, ``limit``), ``GET
+  /api/logs/{job_id}`` (tail with ``since_seq``) and
+  ``WS /api/logs/{job_id}/stream`` (incremental frames). Unknown levels return
+  HTTP 422. The existing job status stream is unchanged.
+* Severity is now used by the core, not just INFO/DEBUG: ``WARNING`` for a
+  failed surrogate fit (logged before the exception propagates), for termination
+  after too many non-improving iterations, and for one aggregated
+  surrogate-failure line per search; ``ERROR`` for a non-finite surrogate
+  prediction, an ``AML`` search that cannot fit any candidate, a failed user
+  callback, and a failed job with its traceback. Repeated per-trial failures are
+  logged at WARNING for the first five occurrences per job and status, then at
+  DEBUG, so a systemic failure cannot flood the log.
+* ``_logutil.emit`` no longer duplicates WARNING-or-above records: with logging
+  unconfigured, ``logging.lastResort`` writes them to stderr and the stdout
+  fallback is skipped. INFO/DEBUG console parity is unchanged.
+* ``AML`` accepts ``callbacks=None`` and forwards it to the underlying
+  ``SurrogateRandomCV``, so API-launched experiments emit per-trial telemetry
+  (``trial``, ``phase``, ``status``) into the job log.
+* Tests: ``tests/test_api_logs.py`` (lifecycle capture, severity and free-text
+  filters, invalid-level rejection, failure traceback detail, concurrency
+  isolation, JSONL persistence, warning cap, experiment trial events) and three
+  new core tests for WARNING routing, fit-failure logging and no-progress
+  termination.
+* Docs: new log-browsing section in ``controlplane.rst`` (endpoint and entry
+  contract, persistence, retention), the Logs page in ``ui-manual.rst`` with a
+  figure, and the severity table plus the stderr rule in ``telemetry.rst``.
+
 [0.3.0] - 2026-11-08
 --------------------
 

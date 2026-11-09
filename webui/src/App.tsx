@@ -16,6 +16,7 @@ import {
   ListChecks,
   Menu,
   RefreshCw,
+  ScrollText,
   Settings2,
   Ruler,
   Sigma,
@@ -40,6 +41,7 @@ const InferencePage = lazy(() => import("./pages/Inference"));
 const MonitoringPage = lazy(() => import("./pages/Monitoring"));
 const RetrainingPage = lazy(() => import("./pages/Retraining"));
 const JobsPage = lazy(() => import("./pages/Jobs"));
+const LogsPage = lazy(() => import("./pages/Logs"));
 const SettingsPage = lazy(() => import("./pages/Settings"));
 const ProjectsPage = lazy(() => import("./pages/Projects"));
 const ExplainPage = lazy(() => import("./pages/Explain"));
@@ -99,6 +101,7 @@ const NAV_GROUPS: Array<{ label: string; items: NavEntry[] }> = [
     label: "System",
     items: [
       { to: "/jobs", label: "Jobs", icon: ListChecks },
+      { to: "/logs", label: "Logs", icon: ScrollText },
       { to: "/settings", label: "Settings / Audit", icon: Settings2 },
     ],
   },
@@ -120,6 +123,7 @@ const TITLES: Record<string, string> = {
   "/monitoring": "Monitoring",
   "/retraining": "Retraining",
   "/jobs": "Jobs",
+  "/logs": "Logs",
   "/settings": "Settings / Audit",
 };
 
@@ -263,6 +267,7 @@ function Shell() {
             <Route path="/monitoring" element={<MonitoringPage />} />
             <Route path="/retraining" element={<RetrainingPage />} />
             <Route path="/jobs" element={<JobsPage />} />
+            <Route path="/logs" element={<LogsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>
           </Suspense>

@@ -484,6 +484,7 @@ class AML(BaseEstimator):
             conditional=(),
             preset=None,
             resume=False,
+            callbacks=None,
     ):
         from collections import OrderedDict
 
@@ -555,6 +556,7 @@ class AML(BaseEstimator):
         self.stack_n_jobs = stack_n_jobs
         self.stacking = stacking
         self.resume = resume
+        self.callbacks = callbacks
         self.verbose = verbose
         self.num_features_upper_bound = 2
         self.cpu_limit = cpu_limit
@@ -846,11 +848,13 @@ class AML(BaseEstimator):
                 if not math.isfinite(item.get("score", float("inf")))
             ]
             if failed_items and all(bool(item.get("rule_rejected")) for item in failed_items):
-                raise ValueError(
+                message = (
                     "No search candidate could be fitted: every candidate was rejected. "
                     "Check that the forbidden rules (and any conditional parameters) leave "
                     "at least one viable configuration."
                 )
+                emit(logging.ERROR, message)
+                raise ValueError(message)
             errors = next(
                 (
                     item.get("errors", [])
@@ -863,6 +867,7 @@ class AML(BaseEstimator):
             message = "All candidate pipelines failed to produce a finite CV score"
             if detail:
                 message += ": " + detail
+            emit(logging.ERROR, message)
             raise ValueError(message)
         self.best_estimator_ = best_estimator
         self.best_estimator_score = best_score
@@ -1459,6 +1464,7 @@ class AML(BaseEstimator):
                 random_state=self.random_state,
                 forbidden=pipeline_forbidden,
                 conditional=pipeline_conditional,
+                callbacks=self.callbacks,
             )
             OPTIM.fit(X, y)
             stage_profiles.append(

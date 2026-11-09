@@ -54,8 +54,16 @@ def emit(level, msg):
     fallback fires only when no logger in that logger's propagation chain has a
     handler, i.e. when the user has attached no logging configuration; this
     reproduces the pre-logging ``print()`` output exactly.
+
+    Records at :data:`logging.WARNING` and above are **not** duplicated: with no
+    handler, the standard library's ``logging.lastResort`` already writes them to
+    stderr, so the stdout fallback is skipped for them.
     """
     logger = _caller_logger(2)
+    enabled = logger.isEnabledFor(level)
     logger.log(level, msg)
-    if not _has_handler(logger):
-        sys.stdout.write(str(msg) + "\n")
+    if _has_handler(logger):
+        return
+    if enabled and level >= logging.WARNING and logging.lastResort is not None:
+        return
+    sys.stdout.write(str(msg) + "\n")

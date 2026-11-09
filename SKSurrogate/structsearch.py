@@ -480,6 +480,11 @@ class SurrogateSearch(object):
                     failure_type=type(exc).__name__,
                 )
                 self.surrogate_info_["fit_failures"] += 1
+                emit(
+                    logging.WARNING,
+                    "Surrogate fit failed at iteration %d: %s: %s"
+                    % (self.iteration, type(exc).__name__, exc),
+                )
                 raise
             fit_record["fit_status"] = "complete"
             # In-sample fidelity of the surrogate itself (Commit B1). Records how
@@ -510,6 +515,11 @@ class SurrogateSearch(object):
                         failure_type=type(exc).__name__,
                     )
                     self.surrogate_info_["prediction_failures"] += 1
+                    emit(
+                        logging.ERROR,
+                        "Surrogate prediction failed at iteration %d: %s: %s"
+                        % (self.iteration, type(exc).__name__, exc),
+                    )
                     raise
                 return float(prediction.reshape(-1)[0])
 
@@ -633,8 +643,11 @@ class SurrogateSearch(object):
             )
             self.__iterate(new_point)
             if self.NumIterNoProg > self.MaxIterNoProg:
-                if self.verbose > 1:
-                    emit(logging.DEBUG, "No progress in %d iterations." % self.NumIterNoProg)
+                emit(
+                    logging.WARNING,
+                    "Search stopped after %d iterations without improvement."
+                    % self.NumIterNoProg,
+                )
                 self.termination_reason = "max_iter_no_progress"
                 break
             # if tqdm is not None:
@@ -660,6 +673,26 @@ class SurrogateSearch(object):
             "current_value": getattr(self, "current_val", None),
             "surrogate": self.surrogate_info_,
         }
+        fit_failures = int(self.surrogate_info_.get("fit_failures", 0))
+        prediction_failures = int(self.surrogate_info_.get("prediction_failures", 0))
+        local_optimization_failures = int(
+            self.surrogate_info_.get("local_optimization_failures", 0)
+        )
+        if fit_failures or prediction_failures or local_optimization_failures:
+            # One aggregated line instead of one per event: the per-event detail
+            # already lives in surrogate_fit_history_, so warning on every failure
+            # would flood a long run without adding information.
+            emit(
+                logging.WARNING,
+                "Surrogate diagnostics: %d fit failure(s), %d prediction failure(s), "
+                "%d local-optimization failure(s) across %d fit attempt(s)."
+                % (
+                    fit_failures,
+                    prediction_failures,
+                    local_optimization_failures,
+                    int(self.surrogate_info_.get("fit_attempts", 0)),
+                ),
+            )
         return self.current, self.current_val
 
     def progress(self):

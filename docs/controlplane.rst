@@ -107,6 +107,57 @@ job result and any saved note follow the normal jobs/notes storage rules; the
 operator is responsible for the chosen provider's retention behaviour. See
 :doc:`research-projects` for the full contract and limitations.
 
+Job logs
+========
+
+Background jobs write structured log entries while they run. Entries come from
+two sources: records emitted by the ``SKSurrogate`` core through the standard
+library ``logging`` module (see :doc:`telemetry`), and lifecycle lines written by
+the job manager itself (accepted, started, completed, failed). Each entry is a
+JSON-safe dictionary::
+
+    {"seq": 42, "ts": "2026-11-09T03:15:00.512+00:00", "level": "WARNING",
+     "logger": "sksurrogate.api", "message": "trial 4 (explore) failed ...",
+     "job_id": "f62e8efe...", "task_name": "texty", "kind": "experiment",
+     "trial": 4, "phase": "explore", "status": "failed"}
+
+Failure entries carry the full traceback under ``detail``. Levels follow the
+standard library ordering: ``DEBUG`` < ``INFO`` < ``WARNING`` < ``ERROR`` <
+``CRITICAL``. The core emits INFO for progress, DEBUG for surrogate internals,
+WARNING for degraded fits and repeated trial failures (capped at five per job
+and status, with the rest kept at DEBUG), and ERROR when a search or a job
+fails. The capture handler is attached to the ``SKSurrogate`` and
+``sksurrogate.api`` loggers and only forwards records while a job is bound to
+the current execution context, so concurrent jobs never mix their lines and
+ordinary API request handling is not captured.
+
+Entries are kept in an in-memory ring buffer per job (2 000 entries) and
+appended to ``<SKSURROGATE_API_HOME>/logs/<job_id>.jsonl``, so history survives
+an API restart. Job records carry a ``log_counts`` summary
+(``{DEBUG, INFO, WARNING, ERROR, CRITICAL}``) for list views; the entries
+themselves are read through the endpoints below.
+
+``GET /api/logs``
+    Browse across jobs. Query parameters: ``job_id``, ``kind``,
+    ``q`` (substring over message/logger/task), ``limit`` (1–2000, default 200),
+    and either ``level`` (minimum severity — ``WARNING`` returns WARNING, ERROR
+    and CRITICAL) or ``levels`` (explicit comma-separated subset). The response
+    is ``{"entries": [...], "counts": {...}, "total": n, "levels": [...]}`` with
+    entries newest first.
+
+``GET /api/logs/{job_id}``
+    Tail one job; same filters plus ``since_seq`` for polling. Returns 404 for an
+    unknown job.
+
+``WS /api/logs/{job_id}/stream``
+    Incremental tail: accepts ``level``/``levels``/``since_seq`` as query
+    parameters and pushes ``{"entries": [...], "since_seq": n, "status": ...}``
+    frames until the job reaches a terminal state. The existing
+    ``/api/jobs/{job_id}/stream`` status stream is unchanged.
+
+Unknown severity names are rejected with HTTP 422. Log files are not pruned
+automatically; the API operator owns retention under ``logs/``.
+
 API and UI coverage
 ===================
 

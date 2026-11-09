@@ -36,11 +36,39 @@ their meaning:
 * ``EOA`` prints its per-generation line unconditionally and therefore emits it
   at :data:`logging.INFO` without a ``verbose`` gate.
 
+Severity beyond progress output is used deliberately, so a configured handler or
+the control-plane log view can separate routine noise from problems:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Level
+     - Emitted for
+   * - ``INFO``
+     - iteration progress, new best candidate, chosen pipelines, job lifecycle
+   * - ``DEBUG``
+     - surrogate fit diagnostics, sampled points, local-optimization status,
+       pruned or repeatedly failing trials
+   * - ``WARNING``
+     - a surrogate fit that failed (the exception is logged before it is
+       re-raised), termination after too many iterations without improvement,
+       and one aggregated line listing surrogate failure counts at the end of a
+       search
+   * - ``ERROR``
+     - a fitted surrogate producing a non-finite prediction, an ``AML`` search
+       that could not fit any candidate, a failed user callback, and a failed
+       background job (with the traceback)
+   * - ``CRITICAL``
+     - reserved; the library does not declare catastrophic state on its own
+
 Unconfigured logging keeps the old console behaviour. When no logger in the
 emitting logger's propagation chain has a handler, the message is also written
-to ``sys.stdout`` — byte-identical to the former ``print()`` output. As soon as a
-handler is configured anywhere in that chain, the stdout copy stops, so a
-configured pipeline sees exactly one copy of each message::
+to ``sys.stdout`` — byte-identical to the former ``print()`` output. Records at
+WARNING or above are the exception: the standard library's ``logging.lastResort``
+already writes them to ``stderr``, so ``emit`` skips the stdout copy for them and
+nothing is duplicated. As soon as a handler is configured anywhere in that
+chain, the stdout copy stops entirely, so a configured pipeline sees exactly one
+copy of each message::
 
     import logging
 
@@ -57,6 +85,12 @@ logger both work: messages propagate upward from ``SKSurrogate.structsearch`` to
 .. note::
     Records arrive pre-formatted as text. Structured consumers should use the
     per-trial callback described below rather than parsing log lines.
+
+.. note::
+    The control plane captures these records per background job — including the
+    WARNING and ERROR lines above — and exposes them with severity filters in the
+    web UI's **Logs** page. See :doc:`controlplane` for the endpoint contract and
+    :doc:`ui-manual` for the page.
 
 Per-trial telemetry
 ===================

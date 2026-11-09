@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
 from .config import settings
+from . import logs as log_capture
 from .routers import (
     bundles,
     datasets,
@@ -32,6 +33,7 @@ from .routers import (
     inference,
     jobs,
     lineage,
+    logs,
     monitoring,
     projects,
     quality_gates,
@@ -148,6 +150,12 @@ app.include_router(evaluation.router)
 app.include_router(explain.router)
 app.include_router(design.router)
 app.include_router(synthesis.router)
+app.include_router(logs.router)
+
+# Capture core + control-plane log records into the per-job store. The handler
+# only forwards records while a job is bound to the current context, so API
+# request handling is not captured.
+log_capture.install()
 
 
 @app.get("/api/health", tags=["health"])

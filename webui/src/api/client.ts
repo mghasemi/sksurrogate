@@ -1376,6 +1376,127 @@ export function subscribeToJob(
 }
 
 /* ------------------------------------------------------------------ */
+/* Logs                                                                */
+/* ------------------------------------------------------------------ */
+
+/** Severity vocabulary, matching the standard library's ordering. */
+export const LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] as const;
+export type LogLevel = (typeof LOG_LEVELS)[number];
+
+export interface LogEntry {
+  seq: number;
+  ts: string;
+  level: LogLevel;
+  logger: string;
+  message: string;
+  job_id: string;
+  task_name?: string | null;
+  kind?: string | null;
+  /** Zero-based trial index, present on per-trial telemetry entries. */
+  trial?: number | null;
+  /** Sampling phase of the trial: init | explore | surrogate_exploit. */
+  phase?: string | null;
+  status?: string | null;
+  /** Full traceback, present on error entries raised from a job. */
+  detail?: string;
+}
+
+export interface LogCounts {
+  DEBUG: number;
+  INFO: number;
+  WARNING: number;
+  ERROR: number;
+  CRITICAL: number;
+}
+
+export interface LogQueryResponse {
+  entries: LogEntry[];
+  counts: LogCounts;
+  total: number;
+  levels?: LogLevel[];
+  job_id?: string;
+}
+
+export interface LogQuery {
+  job_id?: string;
+  /** Minimum severity; `WARNING` means WARNING and above. */
+  level?: LogLevel;
+  /** Explicit subset of severities (wins over `level`). */
+  levels?: LogLevel[];
+  kind?: string;
+  q?: string;
+  limit?: number;
+  since_seq?: number;
+}
+
+function logQueryString(query: LogQuery): string {
+  const params = new URLSearchParams();
+  if (query.job_id) params.set("job_id", query.job_id);
+  if (query.level) params.set("level", query.level);
+  if (query.levels && query.levels.length) params.set("levels", query.levels.join(","));
+  if (query.kind) params.set("kind", query.kind);
+  if (query.q) params.set("q", query.q);
+  if (query.limit) params.set("limit", String(query.limit));
+  if (query.since_seq !== undefined) params.set("since_seq", String(query.since_seq));
+  const text = params.toString();
+  return text ? `?${text}` : "";
+}
+
+/** Browse captured log entries across jobs. */
+export function listLogs(query: LogQuery = {}): Promise<LogQueryResponse> {
+  return get<LogQueryResponse>(`/api/logs${logQueryString(query)}`);
+}
+
+/** Tail one job's captured entries. */
+export function jobLogs(jobId: string, query: LogQuery = {}): Promise<LogQueryResponse> {
+  return get<LogQueryResponse>(`/api/logs/${encodeURIComponent(jobId)}${logQueryString(query)}`);
+}
+
+/**
+ * Subscribe to a job's log stream. Frames look like
+ * `{entries: LogEntry[], since_seq: number, status: "running"}`; `done` fires
+ * once the job reached a terminal state and no further entries arrive.
+ */
+export function subscribeToJobLogs(
+  jobId: string,
+  options: { level?: LogLevel; levels?: LogLevel[]; since_seq?: number },
+  onBatch: (frame: { entries: LogEntry[]; since_seq: number; status?: string }) => void,
+  onDone?: () => void,
+): () => void {
+  const wsBase = getEffectiveApiBase().replace(/^http/, "ws");
+  const params = new URLSearchParams();
+  if (options.level) params.set("level", options.level);
+  if (options.levels && options.levels.length) params.set("levels", options.levels.join(","));
+  if (options.since_seq) params.set("since_seq", String(options.since_seq));
+  const key = getApiKey();
+  if (key) params.set("api_key", key);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const ws = new WebSocket(
+    `${wsBase}/api/logs/${encodeURIComponent(jobId)}/stream${suffix}`,
+  );
+  ws.onmessage = (event) => {
+    try {
+      const frame = JSON.parse(event.data as string) as {
+        entries?: LogEntry[];
+        since_seq?: number;
+        status?: string;
+        error?: string;
+      };
+      if (frame.error) return;
+      onBatch({
+        entries: frame.entries ?? [],
+        since_seq: frame.since_seq ?? options.since_seq ?? 0,
+        status: frame.status,
+      });
+    } catch {
+      /* ignore malformed frames */
+    }
+  };
+  ws.onclose = () => onDone?.();
+  return () => ws.close();
+}
+
+/* ------------------------------------------------------------------ */
 /* Retraining                                                          */
 /* ------------------------------------------------------------------ */
 
