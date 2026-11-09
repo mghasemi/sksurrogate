@@ -5,6 +5,12 @@ individuals. Fitness values are maximized by the built-in crossover and
 elitism operators.
 """
 
+import logging
+
+from ._logutil import emit, get_logger
+
+logger = get_logger(__name__)
+
 
 class EOA(object):
     """Coordinate population initialization, evolution, and checkpointing.
@@ -209,7 +215,10 @@ class EOA(object):
         #    pbar = tqdm(total=self.max_generations)
         #pbar.update(self.generation_num)
         while not self.termination(self):
-            print("Generation {g} of {t}".format(g=self.generation_num, t=self.max_generations))
+            emit(
+                logging.INFO,
+                "Generation {g} of {t}".format(g=self.generation_num, t=self.max_generations),
+            )
             self.__save()
             self.generation_num += 1
             self.parents = self.fitness(self.parents)
