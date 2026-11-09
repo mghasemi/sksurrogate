@@ -59,22 +59,15 @@ benchmarks/results/
 playwright-report/
 
 # Internal working documents and plans (kept out of the public repo; see P2.2)
+# Documents referenced from tracked/shipped files are committed instead, each
+# carrying an "Internal working document." banner in its header.
 /AI_LAYER_ROADMAP.md
-/AI_LAYER02_B1_ARTIFACT_INGESTION_SCOPE.md
-/AI_LAYER02_B2_ARTIFACT_RECOVERY.md
-/AI_LAYER02_C1_SHAP_DECISION.md
-/AI_LAYER02_D2_LLM_SYNTHESIS_SCOPE.md
-/AI_LAYER02_D3_ROW_LEVEL_CONTRACT.md
-/AI_LAYER02_D4_READINESS_ASSESSMENT.md
-/AI_LAYER02_REMAINING_PLAN.md
 /AI_LAYER02_FOLLOWUP_PLAN.md
 /API_SIMPLIFICATION_PLAN.md
-/HANDOFF-explainability-visibility.md
 /HANDOFF-logging-telemetry.md
 /ai_layer02.md
 /ailayer.md
 /IDEA.md
-/LAUNCH_PLAN.md
 /logging.md
 /LOGGING_TELEMETRY_PLAN.md
 /UI_DOCKER_UPGRADE_PLAN.md
