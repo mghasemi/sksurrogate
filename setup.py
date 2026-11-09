@@ -28,6 +28,9 @@ setup(
     packages=["SKSurrogate"],
     url="https://github.com/mghasemi/sksurrogate",
     license="MIT",
+    # Ship the single authoritative licence file explicitly (setuptools also
+    # auto-detects LICENSE, but naming it keeps the sdist deterministic).
+    license_files=["LICENSE"],
     description=Description,
     long_description=open("./readme.rst").read(),
     long_description_content_type="text/x-rst",

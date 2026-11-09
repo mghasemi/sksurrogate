@@ -243,4 +243,4 @@ MIT License
     :target: https://sksurrogate.readthedocs.io/en/latest/?badge=latest
     :alt: Documentation Status
 .. |Licence| image:: https://img.shields.io/badge/license-MIT-blue.svg
-   :target: https://github.com/mghasemi/sksurrogate/blob/master/License.txt
+   :target: https://github.com/mghasemi/sksurrogate/blob/master/LICENSE
