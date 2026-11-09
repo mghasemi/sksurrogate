@@ -53,7 +53,11 @@ Web UI log browser and severity-aware logging
   termination.
 * Docs: new log-browsing section in ``controlplane.rst`` (endpoint and entry
   contract, persistence, retention), the Logs page in ``ui-manual.rst`` with a
-  figure, and the severity table plus the stderr rule in ``telemetry.rst``.
+  figure, the severity table plus the stderr rule in ``telemetry.rst``, a
+  ``14. Logs`` step in the UI walkthrough (severity, dataset/task and project
+  scoping, REST equivalents), an "Observe what a run did" section in the readme,
+  and ``callbacks`` documented in the ``SurrogateRandomCV``/``AML`` class
+  docstrings so the generated API reference covers it.
 
 [0.3.0] - 2026-11-08
 --------------------

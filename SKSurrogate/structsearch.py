@@ -913,6 +913,13 @@ class SurrogateRandomCV(BaseSearchCV):
         this RandomizedSearchCV instance after fitting.
     :param verbose: int, default=0
         Prints internal information about the progress of each iteration.
+    :param callbacks: callable or iterable of callables, default=None
+        Called with one event dictionary per evaluated candidate: the trial record
+        plus a zero-based ``trial`` index and the optimizer's ``phase``
+        (``init`` / ``explore`` / ``surrogate_exploit``, or ``None`` when unknown).
+        A callback that raises is logged and skipped; it never aborts the search.
+        See :doc:`telemetry` for the event contract and ``to_audit_dict`` for the
+        end-of-run bundle.
     """
 
     def __init__(

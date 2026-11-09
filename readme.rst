@@ -61,6 +61,18 @@ Once a run has finished, ``SKSurrogate`` explains *what* the fitted model depend
 Both are descriptive, model-attributive analyses: they quantify how the learned response depends
 on its inputs, not causal effects.
 
+Observe what a run did
+----------------------
+Search progress goes through the standard library ``logging`` module (``SKSurrogate`` loggers, with
+``WARNING``/``ERROR`` for degraded surrogate fits, stagnation and failures), and the core exposes
+per-trial telemetry: a per-refit ``fit_score``, ``init``/``explore``/``surrogate_exploit`` sampling
+tags, a ``callbacks`` hook that delivers one event per evaluated candidate, and a JSON-safe
+``to_audit_dict()`` export. The control plane captures those records per background job into a
+**Logs** page with severity, dataset/task and research-project filters — see the
+`telemetry contract <https://sksurrogate.readthedocs.io/en/latest/telemetry.html>`_,
+the `log endpoints <https://sksurrogate.readthedocs.io/en/latest/controlplane.html>`_
+and the `UI manual <https://sksurrogate.readthedocs.io/en/latest/ui-manual.html>`_.
+
 Quick start
 -----------
 ``SurrogateRandomCV`` is a drop-in for ``RandomizedSearchCV``; ranges can be written as plain

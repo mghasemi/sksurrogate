@@ -483,6 +483,31 @@ REST: ``POST /api/design/latin-hypercube`` and ``POST /api/design/suggest-next``
 Library: ``SKSurrogate.design.latin_hypercube`` and ``suggest_next_point``
 (see :doc:`experiment-design`).
 
+14. Logs: investigate what a run did
+====================================
+
+Every background job records its own log. Open **Logs** in the sidebar and press
+**Warnings & above** to hide routine progress, or toggle the individual severity
+chips (each shows how many entries it currently holds). Click a job to follow it
+live; clicking an entry opens its detail — the trial index, sampling phase and
+status for per-trial telemetry, or the full traceback for a failure.
+
+Two selectors narrow the view beyond a single job: **Dataset / task** restricts
+entries to one dataset, and **Project** restricts them to the jobs linked as
+evidence of that research project. Both are written to the URL
+(``/logs?project=…&task=diabetes``), so a scoped investigation view can be
+bookmarked or shared. Entries are captured per job as JSONL under the API home,
+so they remain available after an API restart.
+
+The same data is available over the API: ``GET /api/logs`` with ``level`` (a
+minimum severity — ``WARNING`` returns WARNING, ERROR and CRITICAL),
+``levels`` (an explicit subset), ``task_name``, ``project_id``, ``kind`` and
+``q``; ``GET /api/logs/{job_id}`` to tail one job; and
+``WS /api/logs/{job_id}/stream`` for incremental frames. In the library, the
+same events are produced by ``SurrogateRandomCV(callbacks=[...])`` (forwarded
+through ``AML(callbacks=...)``) and the finished run can be exported with
+``to_audit_dict()``.
+
 Everything in one Python script
 ===============================
 

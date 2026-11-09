@@ -455,6 +455,10 @@ class AML(BaseEstimator):
         inactive parameters are dropped from each candidate before evaluation. Rules follow
         the same bare-name convention as ``forbidden`` (a list value means "any of these
         values").
+    :param callbacks: default=None; a callable or iterable of callables forwarded to every
+        ``SurrogateRandomCV`` stage, receiving one event dictionary per evaluated candidate
+        (the trial record plus zero-based ``trial`` and ``phase``). A raising callback is
+        logged and skipped. See :doc:`telemetry`.
     """
 
     def __init__(

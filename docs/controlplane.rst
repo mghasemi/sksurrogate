@@ -154,8 +154,9 @@ themselves are read through the endpoints below.
     instead of scanning the whole store.
 
 ``GET /api/logs/{job_id}``
-    Tail one job; same filters plus ``since_seq`` for polling. Returns 404 for an
-    unknown job.
+    Tail one job; accepts the same severity, ``kind``, ``task_name`` and ``q``
+    filters plus ``since_seq`` for polling (``project_id`` is only meaningful on
+    the cross-job endpoint). Returns 404 for an unknown job.
 
 ``WS /api/logs/{job_id}/stream``
     Incremental tail: accepts ``level``/``levels``/``since_seq`` as query
