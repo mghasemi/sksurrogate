@@ -172,6 +172,11 @@ search itself continue. A broken callback can therefore never abort a run.
 ``callbacks`` is a normal init parameter, so ``get_params`` and ``clone`` keep
 working.
 
+``AML`` accepts the same ``callbacks`` parameter and forwards it to every
+``SurrogateRandomCV`` stage it constructs, so one callback list receives trial
+events from all surrogate searches across all pipeline candidates; the
+candidate-level records themselves remain in ``AML.evaluation_history_``.
+
 Audit export
 ------------
 
@@ -219,11 +224,63 @@ non-finite floats) are converted to their string form or ``None``, so
 ``json.dumps`` succeeds without arguments. The method is also usable before
 ``fit``; the evaluation and sampling lists are then empty.
 
+AML audit export
+----------------
+
+``AML.to_audit_dict()`` packages a pipeline search into schema version ``2``
+of the same contract. It embeds — per candidate, in ``evaluation_history_``
+order — the schema-version-1 bundles produced by each of that candidate's
+surrogate stages, so trial records and sampling provenance are carried without
+duplicating their definition::
+
+    import json
+
+    payload = json.dumps(aml.to_audit_dict())   # no custom encoder required
+
+The bundle contains:
+
+.. list-table::
+  :header-rows: 1
+
+  * - Key
+    - Content
+  * - ``schema_version``, ``object``
+    - ``2`` and the discriminator ``"aml"`` (version-1 bundles have neither)
+  * - ``estimator``
+    - ``{"class": "SKSurrogate.aml.AML", "params": {...}}`` from
+      ``get_params(deep=False)``
+  * - ``preset``, ``scoring``, ``cv``, ``length``, ``min_random_evals``,
+      ``random_state``
+    - The search settings; objects are reduced to ``str``
+  * - ``budget``
+    - Configured per-stage limits (``time_limit``, ``max_evals``,
+      ``cpu_limit``, ``memory_limit``) plus aggregates over all stages of all
+      candidates: ``candidates``, ``evaluations``, and the summed stage wall
+      time in ``elapsed_seconds``
+  * - ``termination``
+    - AML-level verdict (``status`` is ``"completed"`` once a best candidate
+      exists); per-stage termination reasons stay inside each stage bundle
+  * - ``candidates``
+    - One entry per evaluated pipeline sequence: ``candidate`` index,
+      ``pipeline``, ``score``, ``rule_rejected``, ``errors``, and the embedded
+      schema-version-1 ``stages``
+  * - ``best_candidate``
+    - The winning ``pipeline`` and its score, or ``None`` before ``fit``
+  * - ``sampling_sources``
+    - Every stage's per-evaluation tags aggregated into counts, e.g.
+      ``{"init": 4, "explore": 12, "surrogate_exploit": 20}``
+
+Fitted estimator objects stay out of the bundle (they remain reachable through
+``evaluation_history_`` and ``models``), non-finite scores become ``None``,
+and other values that are not JSON-native are reduced to their string form —
+the same conversion rules as version 1. The method is also usable before
+``fit``; the candidate list is then empty.
+
 What stays out of the core
 ==========================
 
-Persistent stores (JSONL/SQLite), MLOps connectors (MLflow/W&B), live
-progress streaming into the web API, and ``AML``-level callbacks are not part of
-this package. They are built on top of the contracts above — a callback that
-writes events to disk, or a consumer that reads ``to_audit_dict()`` — so the core
-keeps its standard-library-only footprint.
+Persistent stores (JSONL/SQLite), MLOps connectors (MLflow/W&B), and live
+progress streaming into the web API are not part of this package. They are
+built on top of the contracts above — a callback that writes events to disk, or
+a consumer that reads ``to_audit_dict()`` — so the core keeps its
+standard-library-only footprint.

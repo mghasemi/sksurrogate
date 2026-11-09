@@ -1,6 +1,24 @@
 Changelog
 =========
 
+[Unreleased]
+------------
+
+Logging and telemetry
+~~~~~~~~~~~~~~~~~~~~~
+
+* New ``AML.to_audit_dict()``: a JSON-safe audit bundle (schema version 2) for
+  pipeline searches, mirroring ``SurrogateRandomCV.to_audit_dict()`` — one
+  entry per evaluated candidate with the schema-version-1 bundles of each of
+  its surrogate stages embedded, plus AML-level settings, budget aggregates,
+  and an aggregated sampling-source tag list. ``json.dumps`` succeeds without
+  a custom encoder; works before ``fit`` as well.
+* ``AML`` now records the per-candidate stage audit trail (new
+  ``stage_audits_history_``, parallel to ``evaluation_history_``) backing that
+  export, and forwards its ``callbacks`` parameter to every surrogate stage —
+  one callback list receives trial events from all searches of a run. No
+  existing result key changes.
+
 [0.3.0] - 2026-11-08
 --------------------
 
