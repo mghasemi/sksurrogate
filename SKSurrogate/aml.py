@@ -591,8 +591,10 @@ class AML(BaseEstimator):
         self.words = Words(self.letters, last=self.couldBlast, first=self.couldBfirst)
         self.models = OrderedDict([])
         self.evaluation_history_ = []
+        self.stage_audits_history_ = []
         self.last_candidate_duration_ = None
         self.best_estimator_ = None
+        self._best_sequence_ = None
         self.best_estimator_score = 0.0
         self.termination_reason = None
         self.summary_ = {}
@@ -808,6 +810,7 @@ class AML(BaseEstimator):
                 self, "_last_candidate_rule_rejected_", False
             )
             self.evaluation_history_.append(result)
+            self.stage_audits_history_.append(list(self._last_candidate_stage_audits_))
             if self.verbose > 0:
                 emit(logging.INFO, "score:%f" % best_scr)
                 emit(logging.INFO, best_mdl)
@@ -832,8 +835,10 @@ class AML(BaseEstimator):
             raise TypeError("unexpected fit arguments for strategy='surrogate': %s" % sorted(kwargs))
         self.models.clear()
         self.evaluation_history_.clear()
+        self.stage_audits_history_.clear()
         self.last_candidate_errors_ = []
         self.termination_reason = None
+        self._best_sequence_ = None
         self.summary_ = {}
         self.num_features_upper_bound = self._feature_count_upper_bound(X)
         for l in range(1, self.length + 1):
@@ -875,6 +880,7 @@ class AML(BaseEstimator):
             raise ValueError(message)
         self.best_estimator_ = best_estimator
         self.best_estimator_score = best_score
+        self._best_sequence_ = best_sequence
         return best_estimator
 
     @staticmethod
@@ -920,7 +926,9 @@ class AML(BaseEstimator):
 
         self.models.clear()
         self.evaluation_history_.clear()
+        self.stage_audits_history_.clear()
         self.termination_reason = None
+        self._best_sequence_ = None
         self.summary_ = {}
         self.num_features_upper_bound = self._feature_count_upper_bound(X)
         Pop = []
@@ -998,6 +1006,7 @@ class AML(BaseEstimator):
                         self, "_last_candidate_rule_rejected_", False
                     )
                     self.evaluation_history_.append(result)
+                    self.stage_audits_history_.append(list(self._last_candidate_stage_audits_))
                 if self.verbose > 0:
                     emit(logging.INFO, "score:%f" % best_scr)
                     emit(logging.INFO, best_mdl)
@@ -1064,6 +1073,105 @@ class AML(BaseEstimator):
             records.append(record)
         holder = SimpleNamespace(evaluation_history_=records)
         return SurrogateRandomCV.pareto_frontier(holder, score_key=score_key, cost_key=cost_key)
+
+    def to_audit_dict(self):
+        """Return a JSON-safe audit bundle describing the pipeline search.
+
+        Schema version ``2`` of the telemetry contract (:doc:`telemetry`): one
+        top-level bundle for this :class:`AML` instance whose ``candidates``
+        embed, per candidate, the schema-version-1 bundles produced by each of
+        its ``SurrogateRandomCV`` stages — so trial records and sampling
+        provenance are carried without duplicating that contract.
+
+        The bundle is JSON-native: ``json.dumps(aml.to_audit_dict())`` succeeds
+        without a custom encoder. Fitted estimator objects stay out of the
+        bundle (they remain reachable through ``evaluation_history_`` and
+        ``models``), non-finite scores become ``None``, and other values that
+        are not JSON-native are reduced to their string form.
+
+        ``sampling_sources`` aggregates every stage's per-evaluation tags into
+        counts, e.g. ``{"init": 4, "explore": 12, "surrogate_exploit": 20}``;
+        the per-trial detail stays inside each stage bundle. Works before
+        ``fit`` as well, with empty candidate lists.
+        """
+        from .structsearch import SurrogateRandomCV
+
+        safe = SurrogateRandomCV._json_safe
+        history = self.evaluation_history_
+        stage_lists = getattr(self, "stage_audits_history_", None) or []
+        candidates = []
+        source_counts = {}
+        total_evaluations = 0
+        total_elapsed = 0.0
+        for index, item in enumerate(history):
+            stages = list(stage_lists[index]) if index < len(stage_lists) else []
+            errors = [str(error) for error in (item.get("errors") or [])]
+            candidates.append(
+                {
+                    "candidate": index,
+                    "pipeline": safe(list(item.get("pipeline", ()))),
+                    "score": safe(item.get("score")),
+                    "rule_rejected": bool(item.get("rule_rejected", False)),
+                    "errors": errors or None,
+                    "stages": stages,
+                }
+            )
+            for stage in stages:
+                budget = stage.get("budget") or {}
+                evaluations = budget.get("evaluations")
+                if isinstance(evaluations, (int, float)) and not isinstance(
+                    evaluations, bool
+                ):
+                    total_evaluations += int(evaluations)
+                elapsed = budget.get("elapsed_seconds")
+                if isinstance(elapsed, (int, float)) and not isinstance(
+                    elapsed, bool
+                ):
+                    total_elapsed += float(elapsed)
+                for tag in stage.get("sampling_sources") or []:
+                    source_counts[tag] = source_counts.get(tag, 0) + 1
+        best_sequence = getattr(self, "_best_sequence_", None)
+        if self.best_estimator_ is not None and best_sequence is not None:
+            best_candidate = {
+                "pipeline": safe(list(best_sequence)),
+                "score": safe(self.best_estimator_score),
+            }
+        else:
+            best_candidate = None
+        return {
+            "schema_version": 2,
+            "object": "aml",
+            "estimator": {
+                "class": "%s.%s" % (self.__class__.__module__, self.__class__.__qualname__),
+                "params": safe(self.get_params(deep=False)),
+            },
+            "preset": self.preset,
+            "scoring": safe(self.scoring),
+            "cv": safe(self.cv),
+            "length": self.length,
+            "min_random_evals": self.min_random_evals,
+            "random_state": safe(self.random_state),
+            "budget": {
+                # Configured per-stage limits; the last two aggregate over all
+                # stages of all candidates (sum of stage wall times).
+                "time_limit": safe(self.time_limit),
+                "max_evals": safe(self.max_evals),
+                "cpu_limit": safe(self.cpu_limit),
+                "memory_limit": safe(self.memory_limit),
+                "candidates": len(history),
+                "evaluations": total_evaluations,
+                "elapsed_seconds": total_elapsed,
+            },
+            "termination": {
+                # AML-level verdict; per-stage termination reasons stay inside
+                # each candidate's stage bundles.
+                "status": "completed" if self.best_estimator_ is not None else None,
+                "termination_reason": safe(self.termination_reason),
+            },
+            "candidates": candidates,
+            "best_candidate": best_candidate,
+            "sampling_sources": source_counts,
+        }
 
     def _require_fitted(self):
         if self.best_estimator_ is None:
@@ -1172,6 +1280,8 @@ class AML(BaseEstimator):
         self._apply_resource_limits()
         self.best_estimator_ = None
         self.evaluation_history_ = []
+        self.stage_audits_history_ = []
+        self._best_sequence_ = None
         self.termination_reason = None
         self.summary_ = {}
         return self
@@ -1294,6 +1404,7 @@ class AML(BaseEstimator):
         :return: the optimized pipeline and its score
         """
         self.last_candidate_errors_ = []
+        self._last_candidate_stage_audits_ = []
         from .structsearch import SurrogateRandomCV
         surrogates = self.surrogates
         if surrogates is None:
@@ -1471,6 +1582,9 @@ class AML(BaseEstimator):
                 callbacks=self.callbacks,
             )
             OPTIM.fit(X, y)
+            # Capture this stage's audit bundle (JSON-safe by construction) so
+            # the candidate-level record stays complete after fit.
+            self._last_candidate_stage_audits_.append(OPTIM.to_audit_dict())
             stage_profiles.append(
                 self._surrogate_rejection_profile(OPTIM.evaluation_history_)
             )

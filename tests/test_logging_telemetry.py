@@ -2,7 +2,10 @@
 
 Covers the stdlib-logging fallback (:mod:`SKSurrogate._logutil`), the surrogate
 fit score, sampling-source tags, the ``callbacks`` hook on
-:class:`~SKSurrogate.structsearch.SurrogateRandomCV`, and ``to_audit_dict()``.
+:class:`~SKSurrogate.structsearch.SurrogateRandomCV` (including forwarding
+through :class:`~SKSurrogate.aml.AML`), and the JSON-safe audit exports:
+schema-version-1 search bundles from ``to_audit_dict()`` and the
+schema-version-2 bundle from ``AML.to_audit_dict()``.
 """
 
 import io
@@ -185,6 +188,107 @@ def test_to_audit_dict_works_before_fit(tmp_path):
     assert audit["evaluations"] == []
     assert audit["sampling_sources"] == []
     assert json.dumps(audit)
+
+
+def _aml(tmp_path, *, verbose=0, callbacks=None):
+    from SKSurrogate.aml import AML
+    from SKSurrogate.structsearch import BoxSample
+
+    # Minimal legacy configuration: one candidate pipeline sequence, one cheap
+    # surrogate stage with a small evaluation budget — fast enough to fit in a
+    # unit test while exercising the real optimize_pipeline/_cast path.
+    return AML(
+        config={"sklearn.linear_model.LogisticRegression": {"C": (0.1, 5.0)}},
+        length=1,
+        min_random_evals=3,
+        max_evals=4,
+        cv=2,
+        n_jobs=1,
+        random_state=0,
+        surrogates=[(LinearRegression(), 6, BoxSample, "L-BFGS-B")],
+        check_point=str(tmp_path / "aml-audit"),
+        verbose=verbose,
+        callbacks=callbacks,
+    )
+
+
+def test_aml_to_audit_dict_is_json_serialisable_and_complete(tmp_path):
+    X = np.random.RandomState(0).rand(30, 4)
+    y = (X.sum(axis=1) > 2.0).astype(int)
+    events = []
+    aml = _aml(tmp_path, callbacks=[events.append]).fit(X, y)
+
+    audit = aml.to_audit_dict()
+    blob = json.dumps(audit)  # must succeed without a custom encoder
+    assert json.loads(blob) == audit
+
+    assert set(audit) >= {
+        "schema_version",
+        "object",
+        "estimator",
+        "preset",
+        "scoring",
+        "cv",
+        "budget",
+        "termination",
+        "candidates",
+        "best_candidate",
+        "sampling_sources",
+    }
+    assert audit["schema_version"] == 2
+    assert audit["object"] == "aml"
+    assert audit["estimator"]["class"].endswith(".AML")
+    assert audit["preset"] is None
+    assert audit["termination"]["status"] == "completed"
+
+    # One candidate per evaluated pipeline sequence, in history order.
+    candidates = audit["candidates"]
+    assert len(candidates) == len(aml.evaluation_history_)
+    assert [item["candidate"] for item in candidates] == list(range(len(candidates)))
+    for record in candidates:
+        assert set(record) >= {"pipeline", "score", "rule_rejected", "errors", "stages"}
+        # Each surrogate stage embeds its own schema-version-1 search bundle.
+        for stage in record["stages"]:
+            assert stage["schema_version"] == 1
+            assert len(stage["sampling_sources"]) == len(stage["evaluations"])
+
+    # The AML-level tag list aggregates every stage's per-evaluation tags, and
+    # the budget totals aggregate across all stages of all candidates.
+    aggregated = {}
+    total_evals = 0
+    for record in candidates:
+        for stage in record["stages"]:
+            total_evals += len(stage["evaluations"])
+            for tag in stage["sampling_sources"]:
+                aggregated[tag] = aggregated.get(tag, 0) + 1
+    assert audit["sampling_sources"] == aggregated
+    assert set(audit["sampling_sources"]) <= SAMPLING_VOCABULARY
+    assert audit["budget"]["candidates"] == len(candidates)
+    assert audit["budget"]["evaluations"] == total_evals
+
+    # Callback forwarding: AML passes its callbacks through to every stage, so
+    # one trial event is delivered per evaluation of every surrogate search.
+    assert len(events) == total_evals
+    for event in events:
+        assert {"trial", "phase"} <= set(event)
+        assert event["phase"] in SAMPLING_VOCABULARY or event["phase"] is None
+
+    # The best candidate matches the fitted result.
+    assert aml._best_sequence_ is not None
+    assert audit["best_candidate"]["score"] == aml.best_estimator_score
+    assert audit["best_candidate"]["pipeline"] == list(aml._best_sequence_)
+
+
+def test_aml_to_audit_dict_works_before_fit(tmp_path):
+    aml = _aml(tmp_path)
+
+    audit = aml.to_audit_dict()
+    assert audit["candidates"] == []
+    assert audit["sampling_sources"] == {}
+    assert audit["best_candidate"] is None
+    assert audit["termination"]["status"] is None
+    blob = json.dumps(audit)
+    assert json.loads(blob) == audit
 
 
 def test_warning_level_is_not_duplicated_on_stdout(capsys):
