@@ -1,8 +1,8 @@
 Changelog
 =========
 
-Unreleased
-----------
+[0.3.0] - 2026-11-08
+--------------------
 
 Web UI log browser and severity-aware logging
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -58,9 +58,6 @@ Web UI log browser and severity-aware logging
   scoping, REST equivalents), an "Observe what a run did" section in the readme,
   and ``callbacks`` documented in the ``SurrogateRandomCV``/``AML`` class
   docstrings so the generated API reference covers it.
-
-[0.3.0] - 2026-11-08
---------------------
 
 Explanations: accumulated local effects and reference-subset stability
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
