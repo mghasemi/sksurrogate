@@ -75,8 +75,9 @@ AML(preset="classification").fit(X, y)</code></pre>
           <li><a href="https://sksurrogate.readthedocs.io/en/latest/controlplane.html" target="_blank" rel="noopener">Control plane ↗</a>
             — the API, the UI and the compose profile on port 8013.</li>
           <li><a href="%s">Benchmarks</a> — what the search claims, and where it does not win.</li>
+          <li><a href="%s">Concepts</a> — what surrogate-based optimization is, and when it pays.</li>
         </ul>
-      </div>''' % (crumb(rel, "quickstart"), L(rel, "/benchmarks/"))
+      </div>''' % (crumb(rel, "quickstart"), L(rel, "/benchmarks/"), L(rel, "/concepts/"))
 
 
 # ---------------------------------------------------------------- benchmarks
@@ -123,7 +124,7 @@ def benchmarks(rel):
         <h2>The caveat, in full</h2>
         <p>Seven seeds per cell; budgets of 30–60 evaluations; the fixed-pipeline suite's space is
           only three parameters wide; D-track objectives are smooth and low-dimensional
-          ($d \le 3$); the wall-clock arm uses a different currency (seconds, hardware-dependent)
+          (d ≤ 3); the wall-clock arm uses a different currency (seconds, hardware-dependent)
           and is explicitly <em>not</em> comparable to the evaluation-count tables. These are
           small-budget results, and TPE remains competitive. SKSurrogate's edge is in stability,
           surface quality and evidence — not a universal accuracy crown.</p>
@@ -381,13 +382,343 @@ def contact(rel):
 
 
 # ----------------------------------------------------------------------- faq
+
+# ---------------------------------------------------------------- concepts
+def concepts_index(rel):
+    return '''%s
+      <h1>Concepts</h1>
+      <p class="lede">Three ideas do the work in SKSurrogate. Each is defined here in the terms the
+        documentation uses, with the evidence the package publishes on its own behaviour.</p>
+      <div class="cards">
+        <a class="card" href="%s">
+          <div class="k">optimization</div>
+          <h3>Surrogate-based optimization</h3>
+          <p>Fit an approximate model to expensive evaluations and use it to choose the next
+            point — when that saves evaluations, and when it does not.</p>
+        </a>
+        <a class="card" href="%s">
+          <div class="k">uncertainty</div>
+          <h3>Split-conformal intervals</h3>
+          <p>Finite-sample marginal coverage from a calibration split, and the assumptions that
+            make the guarantee fail.</p>
+        </a>
+        <a class="card" href="%s">
+          <div class="k">evaluation</div>
+          <h3>Nested cross-validation</h3>
+          <p>Keep model selection separate from the estimate of generalisation, so the score you
+            report is not the score you optimised.</p>
+        </a>
+      </div>''' % (crumb(rel, "concepts"),
+                   L(rel, "/concepts/surrogate-optimization/"),
+                   L(rel, "/concepts/conformal-intervals/"),
+                   L(rel, "/concepts/nested-cross-validation/"))
+
+
+def concept_surrogate(rel):
+    return '''%s
+      <h1>What is surrogate-based optimization?</h1>
+      <p class="lede">Surrogate-based optimization fits an approximate model — the surrogate — to
+        the evaluations of an expensive function, then uses that model to decide where to evaluate
+        next. The cost of a prediction is negligible compared with the cost of an evaluation, so the
+        search happens on the model and only the chosen points are paid for.</p>
+      <p class="chiprow"><span class="chip">also: surrogate modelling, SBO</span>
+        <span class="chip">budget: number of evaluations</span>
+        <span class="chip">default surface: RBF Gaussian process</span></p>
+      <div class="prose">
+        <h2>The mechanism</h2>
+        <p>For a function <code>f</code> that can only be evaluated a limited number of times, one iteration
+          is: sample a point in the feasible set; evaluate <code>f</code> there; add the pair to the evaluation
+          set <code>E</code>; fit a surrogate to <code>E</code>; minimise the surrogate to propose the next point;
+          evaluate <code>f</code> at that proposal. Repeat until the budget is exhausted, then return the best
+          evaluated pair. The package's own description of this loop, including the
+          <code>MinEvals</code> random-evaluation phase before the surrogate engages, is in the
+          <a href="https://sksurrogate.readthedocs.io/en/latest/surrogate.html" target="_blank" rel="noopener">surrogate search guide</a>.</p>
+        <p>Three design choices carry most of the behaviour: how the initial and subsequent points
+          are sampled, which model is fitted, and how the model is minimised. SKSurrogate ships
+          three samplers — a random point in the feasible set, a cube around the last point (with
+          <code>init_radius</code> 2.0 and a <code>contraction</code> of 0.9 by default), and a
+          sphere around the last point — and accepts user-defined sampling classes with the same
+          signature. The surrogate is any scikit-learn regressor; the default is an RBF Gaussian
+          process.</p>
+
+        <h2>When it pays, and when it does not</h2>
+        <p>The case for a surrogate is economic, not algorithmic: it pays when one evaluation costs
+          minutes and a model fit costs milliseconds. The package publishes what happens when that
+          condition is not met. On six public datasets at a budget of 30 evaluations, the
+          surrogate-guided search is <em>at parity</em> with Optuna-TPE, which is top on five of the
+          six; the whole table spans about half a point of accuracy. At 60 evaluations the
+          surrogate arm leads all six datasets. The honest summary is that on a flat, three-parameter
+          landscape your choice among these tools will not move your accuracy much — the
+          <a href="%s">benchmark page</a> has the tables.</p>
+        <p>What the surrogate buys instead is evaluation efficiency. On the 1,220-pipeline space the
+          search reached within 1&nbsp;%% of its own final best in a median of <strong>6
+          evaluations</strong>, against 11–17 for the other arms at identical final accuracy. That
+          advantage does not transfer to wall-clock time: the Gaussian-process fit grows as
+          O(n³), so per-fit cost rose from 3&nbsp;ms to 174&nbsp;ms across a run and 49&nbsp;%% of
+          a 120&nbsp;s budget went to search overhead (22&nbsp;%% fitting, 27&nbsp;%% acquisition).</p>
+
+        <h2>The response surface matters more than the search</h2>
+        <p>Inside the same search loop, changing only the fitted surface changes the result. An
+          un-tuned RBF Gaussian process beat the legacy cubic Hilbert polynomial on all six datasets
+          at both budgets, with seed-level wins of 20W/17T/5L at B=30 and 25W/13T/4L at B=60 (exact
+          binomial <code>p ≈ 4×10⁻³</code> and <code>p ≈ 10⁻⁴</code>). That is why v0.2 made the
+          RBF Gaussian process the default and kept <code>HilbertRegressor</code> available. A
+          controlled synthetic study explains the mechanism: the polynomial regressor is exact on
+          in-span objectives but truncates elsewhere, the stock Gaussian process has no noise term
+          and interpolates noise, and a tree ensemble is the robust generalist.</p>
+
+        <h2>How SKSurrogate implements it</h2>
+        <p><code>SurrogateRandomCV</code> is a <code>BaseSearchCV</code> subclass, so it has the
+          call shape of <code>RandomizedSearchCV</code>: pass an estimator, a
+          <code>param_distributions</code> mapping of tuples (numeric ranges) and lists (categorical
+          values), and <code>n_iter</code>. For pipeline design, <code>AML</code> adds an
+          evolutionary search over transformers and estimators
+          (<code>fit(X, y, strategy="eoa")</code>) before the local surrogate refinement. Every
+          evaluation is recorded, which is what makes the result an artifact rather than a single
+          returned winner.</p>
+
+        <h2>What it does not do</h2>
+        <p>The surrogate is an approximation of the observed surface, not a certificate: it can be
+          confidently wrong between samples, and no coverage guarantee is claimed for the search
+          itself. It does not remove the need for a held-out evaluation, and it does not make a flat
+          objective steep. Compare with a single-split score using
+          <a href="%s">nested cross-validation</a>, and quantify deployed uncertainty with
+          <a href="%s">conformal intervals</a>.</p>
+      </div>'''  % (crumb(rel, "concepts <span>/</span> surrogate optimization"),
+                    L(rel, "/benchmarks/"),
+                    L(rel, "/concepts/nested-cross-validation/"),
+                    L(rel, "/concepts/conformal-intervals/"))
+
+
+def concept_conformal(rel):
+    return '''%s
+      <h1>What is a split-conformal prediction interval?</h1>
+      <p class="lede">A split-conformal interval is a prediction interval built from the residuals
+        of a model on a calibration set that was not used to fit it. It comes with a finite-sample
+        <em>marginal</em> coverage guarantee — under assumptions that are stated, and that fail in
+        ways worth knowing before you report a number.</p>
+      <p class="chiprow"><span class="chip">guarantee: marginal</span>
+        <span class="chip">requires: exchangeability</span>
+        <span class="chip">calibration ≠ training</span></p>
+      <div class="prose">
+        <h2>The procedure</h2>
+        <p>Split the labelled data into a training part and a disjoint calibration part. Fit the
+          estimator on the training part only. Compute absolute residuals on the calibration part.
+          Take the finite-sample corrected empirical quantile of those residuals, and report
+          the predicted value ± <code>q</code> for each test point. In SKSurrogate this is
+          <code>split_conformal_regression_interval(regressor, X_train, y_train, X_calibration,
+          y_calibration, X_test, alpha=0.1)</code>. The estimator is cloned and fitted only on the
+          training data, and the function does not accept test labels — by construction, the interval
+          cannot peek at the answer it is meant to bracket.</p>
+
+        <h2>What the guarantee covers</h2>
+        <p>The marginal coverage statement assumes that calibration examples and future examples are
+          exchangeable — drawn from the same distribution, in any order — and that the fitted model
+          was chosen independently of the calibration set. If a hyperparameter search used the
+          calibration rows, the correction is computed on data the model has already seen and the
+          guarantee no longer applies. Coverage is <em>marginal</em>: it holds on average over draws,
+          not per subgroup, not per region of feature space, and not under distribution shift.</p>
+
+        <h2>Checking it in practice</h2>
+        <p>A guarantee you never test is a claim, not a measurement. Given held-out labels,
+          <code>prediction_interval_diagnostics(y_holdout, lower, upper, alpha=0.1)</code> reports
+          nominal and empirical coverage, a Wilson score interval for the empirical coverage (which
+          describes finite-sample uncertainty and is <em>not</em> the conformal guarantee), mean and
+          median width, and the mean Winkler score for a central two-sided interval. An optional
+          <code>groups</code> argument adds bounded per-group coverage counts and Wilson intervals;
+          small groups are highly uncertain, and marginal coverage does not imply subgroup coverage.
+          Unbounded intervals stay in the coverage count, while width and interval score are
+          <code>None</code> if any interval is unbounded — a detail that matters when a model is
+          badly miscalibrated.</p>
+
+        <h2>Conformalized quantile regression</h2>
+        <p>When two conditional-quantile estimators are available — typically at
+          <code>α/2</code> and <code>1−α/2</code> — the conformal correction can widen or narrow the base
+          interval according to the calibration residuals
+          (<code>split_conformal_quantile_interval</code>). Predicted bounds are ordered before
+          calibration, and the result includes an <code>empty_interval_mask</code>: a negative
+          correction can produce an empty set when the corrected lower bound exceeds the upper one.
+          The correction is infinite when the requested rank exceeds the calibration size, which is
+          the honest answer to "you asked for 99.9&nbsp;%% coverage from 40 calibration points".</p>
+
+        <h2>Limitations to state when you report one</h2>
+        <ul>
+          <li>Marginal, not conditional: no per-subgroup coverage claim follows.</li>
+          <li>Exchangeability, not i.i.d. forever: drift voids the guarantee.</li>
+          <li>The model must not be selected on the calibration split.</li>
+          <li>Interval width is a property of the data and model, not a quality score; a narrow
+            interval on a bad model is still narrow.</li>
+        </ul>
+        <p>The API reference and the full caveats are in the
+          <a href="https://sksurrogate.readthedocs.io/en/latest/mltrace.html" target="_blank" rel="noopener">tracking and evaluation guide</a>;
+          the deployed model bundle and its interval diagnostics are described in the
+          <a href="https://sksurrogate.readthedocs.io/en/latest/controlplane.html" target="_blank" rel="noopener">control-plane guide</a>.
+          The measurement half of the workflow — what a single split can and cannot tell you — is on
+          <a href="%s">nested cross-validation</a>.</p>
+      </div>''' % (crumb(rel, "concepts <span>/</span> conformal intervals"),
+                   L(rel, "/concepts/nested-cross-validation/"))
+
+
+def concept_nested(rel):
+    return '''%s
+      <h1>What is nested cross-validation?</h1>
+      <p class="lede">Nested cross-validation keeps the step that <em>chooses</em> a model separate
+        from the step that <em>estimates</em> its generalisation error. The inner loop selects;
+        the outer loop scores the selection procedure on data the inner loop never saw. Without
+        that separation, the reported score is the score you optimised, and it is optimistic by
+        construction.</p>
+      <p class="chiprow"><span class="chip">inner: selection</span>
+        <span class="chip">outer: estimate</span>
+        <span class="chip">repeated CV: interval, not a test</span></p>
+      <div class="prose">
+        <h2>Why a single split misleads</h2>
+        <p>When the same folds are used to tune and to score, every configuration is evaluated on
+          the same data and the winner's score inherits the selection. The bias grows with the number
+          of candidates and shrinks with the size of the data — which is exactly the regime where
+          expensive problems live. Nested CV answers a different question: not "how well does the
+          chosen configuration score on these folds" but "how well does this <em>selection
+          procedure</em> score on unseen folds".</p>
+
+        <h2>What SKSurrogate's <code>nested_cv_evaluation</code> does</h2>
+        <p><code>nested_cv_evaluation</code> computes inner-CV scores and outer-fold estimates for
+          the estimator you supply, then evaluates it on the untouched validation partition. It
+          stores fold-level predictions and metrics, mean outer scores, repeated-CV confidence
+          intervals and the final validation score in task metadata. Mixed-type DataFrame features
+          are preprocessed inside each training fold, and unseen categories are ignored at scoring
+          time rather than being folded into the vocabulary — the leakage that quietly inflates a
+          score. Group-aware splitters preserve group labels through the evaluation path.</p>
+        <p>Two limits are stated plainly in the documentation and should be repeated here: the
+          function <strong>does not search among estimators or tune hyperparameters</strong>, and it
+          does not replace the search layer. It is the evaluation half — the part that scores what
+          the search produced without re-using the search's own optimised number. Tuning happens in
+          <code>SurrogateRandomCV</code> / <code>AML</code>; the evaluation asks how that result
+          behaves on partitions it never touched.</p>
+
+        <h2>Reading the result honestly</h2>
+        <p>Results carry an evaluation protocol: registered partition fingerprints, the CV splitter
+          specification, the repeat seed policy, the preprocessing path, the scoring identity and
+          whether a validation set was used. When two results are compared with
+          <code>compare_repeated_cv_results</code>, known mismatches are rejected and the output
+          reports whether alignment could be verified — opaque custom scorers, missing fingerprints
+          and older result dictionaries remain explicitly <em>unverified</em>, which is a signal, not
+          a gap to paper over.</p>
+        <p>The paired comparison reports the candidate-minus-reference mean and median repeat-score
+          difference, a percentile bootstrap interval and paired Cohen's <code>d_z</code>. It is deliberately
+          descriptive: the resampling unit is a complete repeat-level score difference, repeats reuse
+          observations, and the interval summarizes variation across repeats. It is not an
+          independent-sample significance test, and excluding zero is not a significance claim. BCa
+          intervals do not resolve dependence between repeats either; for a confirmatory comparison,
+          define the independent unit and the comparison family before looking at the data.</p>
+
+        <h2>Time series</h2>
+        <p>For ordered observations, pass <code>TimeSeriesSplit</code> for both the inner and outer
+          loops and choose a <code>gap</code> that excludes observations between the training and test
+          windows. Rows must already be in chronological order: the package does not infer timestamps
+          or sort them, and it does not construct lag, rolling or horizon features — doing that
+          without future leakage is the caller's responsibility.</p>
+
+        <h2>What it does not settle</h2>
+        <p>Nested CV estimates the procedure's error on the distribution your folds were drawn from.
+          It says nothing about a shifted deployment population, and it does not produce prediction
+          intervals — that is <a href="%s">split conformal</a>. Reporting one number from one split
+          is still the most common way to overstate a result; the API reference is in the
+          <a href="https://sksurrogate.readthedocs.io/en/latest/mltrace.html" target="_blank" rel="noopener">tracking and evaluation guide</a>.</p>
+      </div>''' % (crumb(rel, "concepts <span>/</span> nested cross-validation"),
+                   L(rel, "/concepts/conformal-intervals/"))
+
+# ----------------------------------------------------------------------- faq
+FAQ_QA = [
+    ("What is SKSurrogate?",
+     "SKSurrogate is an open-source Python package built on scikit-learn for surrogate-based optimization "
+     "of expensive objectives — hyperparameter and pipeline search, statistical evaluation, sensitivity "
+     "analysis and experiment design — with a control plane that runs and logs searches and a research "
+     "workspace that records evidence. It is MIT licensed and installs with pip."),
+    ("Is SKSurrogate a replacement for scikit-learn?",
+     "No. It is a search and evaluation layer on top of scikit-learn. SurrogateRandomCV is a BaseSearchCV "
+     "subclass with the same call shape as RandomizedSearchCV, and your estimators, splitters, scorers and "
+     "pipelines are used as they are."),
+    ("Does it work with scikit-learn pipelines and parameter grids?",
+     "Yes. You pass an estimator or a pipeline plus a param_distributions mapping, with numeric ranges as "
+     "tuples and categorical choices as lists. Because the class is a BaseSearchCV subclass, best_params_, "
+     "best_score_, cv_results_ and refitting behave as they do in scikit-learn."),
+    ("Is it faster than Optuna?",
+     "Not at small budgets. On six public datasets at 30 evaluations Optuna-TPE is top on five of six and the "
+     "whole table spans about half a point of accuracy; at 60 evaluations the surrogate arm leads all six. "
+     "The surrogate's advantage is evaluation efficiency rather than wall-clock speed: in the pipeline-space "
+     "study it reached within 1 per cent of its final best in a median of 6 evaluations against 11 to 17 for "
+     "the other arms, while the Gaussian-process fit grows as O(n^3) and search overhead consumed about half "
+     "of a 120-second budget."),
+    ("How many evaluations does the search need?",
+     "Budgets are counted in candidate-model evaluations, not seconds, so they are hardware-independent. The "
+     "published equal-budget suite used 30 and 60 evaluations with seven seeds per cell; the pipeline-space "
+     "study used equal wall-clock, equal 40 evaluations, and a wall-budget cap."),
+    ("What surrogate model does it use by default?",
+     "Since v0.2 the default response surface is a stock, un-tuned RBF GaussianProcessRegressor. The previous "
+     "cubic Hilbert polynomial remains available as HilbertRegressor, and any scikit-learn regressor can be "
+     "supplied. The change was made on the evidence of the equal-budget benchmark, where the Gaussian process "
+     "beat the polynomial surface at both budgets."),
+    ("Does it handle classification and regression?",
+     "Yes. AML(preset=\"classification\") and AML(preset=\"regression\") need no search configuration. For "
+     "pandas DataFrames the preset fits numeric, categorical, datetime and text preprocessing inside each "
+     "cross-validation fold when cat_cols is omitted."),
+    ("How does it handle categorical features?",
+     "Through the preset's fold-local preprocessing, or explicitly with cat_cols. This is worth checking in "
+     "your own pipeline: the benchmark study found ordinal encoding of unordered categories to be a defect "
+     "in the package itself. Replacing it with a mixed categorical surface lifted best cross-validated score "
+     "by at least 0.3 points on four of six datasets and moved the search above TPE on three of them."),
+    ("What guarantee do the prediction intervals have?",
+     "The split-conformal intervals assume that calibration and future examples are exchangeable and that "
+     "the model was chosen independently of the calibration set. Under those assumptions they provide "
+     "finite-sample marginal coverage — not per-subgroup or conditional coverage, and not coverage under "
+     "distribution shift. Coverage is meant to be measured on held-out labels with "
+     "prediction_interval_diagnostics."),
+    ("Can I run it without a server or cloud account?",
+     "Yes. It is a Python package. The control plane with its API and UI is optional and runs from a Docker "
+     "Compose profile on a single port, 8013, with an optional API key; nothing in the loop calls an external "
+     "service."),
+    ("How do I cite SKSurrogate?",
+     "Cite the archived release rather than the repository URL. The software archive recorded in CITATION.cff "
+     "carries a DOI, and the benchmark records and the D-track study have their own DOIs. Ready-to-paste "
+     "BibTeX and BibLaTeX are on the citation page."),
+    ("What is SKSurrogate not?",
+     "Not a managed cloud service, not a fixed model zoo, and not a chat assistant. The shipped tooling is "
+     "deterministic, the search space is your pipeline plus the ranges you declare, and every evaluation is "
+     "recorded. A bounded, opt-in cited-note synthesis exists; a conversational research assistant is roadmap, "
+     "not this release."),
+]
+
+
+def faq_jsonld():
+    import json as _json
+    data = {
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": [
+            {"@type": "Question", "name": q,
+             "acceptedAnswer": {"@type": "Answer", "text": a}}
+            for q, a in FAQ_QA
+        ],
+    }
+    return '<script type="application/ld+json">\n%s\n</script>\n' % _json.dumps(data, ensure_ascii=False)
+
+
 def faq(rel):
+    blocks = "\n".join(
+        "        <h2>%s</h2>\n        <p>%s</p>" % (q, a) for q, a in FAQ_QA)
     return '''%s
       <h1>SKSurrogate FAQ</h1>
-      <p class="lede">Answers to the questions the documentation keeps getting asked.</p>
+      <p class="lede">Twelve questions that decide whether the package fits your problem. Every answer
+        restates a documented behaviour or a published result; the source is linked where the detail
+        matters.</p>
       <div class="prose">
-        %s
-      </div>''' % (crumb(rel, "faq"), TODO)
+%s
+        <h2>Where to go next</h2>
+        <p>The <a href="%s">quickstart</a> installs and runs the tuner; the
+          <a href="%s">benchmark page</a> has the tables and the caveats; the
+          <a href="%s">concepts</a> explain surrogate optimization, conformal intervals and nested
+          cross-validation in the terms the documentation uses.</p>
+      </div>''' % (crumb(rel, "faq"), blocks,
+                   L(rel, "/quickstart/"), L(rel, "/benchmarks/"), L(rel, "/concepts/"))
 
 
 # ----------------------------------------------------------------- vs-optuna
@@ -401,7 +732,7 @@ def vs_optuna(rel):
           <thead><tr><th>Claim</th><th>Artifact</th></tr></thead>
           <tbody>
             <tr><td><b>A stable plateau, not a brittle peak.</b> The surrogate response surface makes the neighborhood of the optimum inspectable — broad plateaus and needle-like peaks are visible at a glance before you commit a run.</td><td><a href="%s">figure</a></td></tr>
-            <tr><td><b>Statistical evaluation, not a single score.</b> Repeated nested cross-validation, paired comparison protocol checks, and split-conformal intervals with coverage diagnostics — the “90 %% interval” is a number you can check, not an adjective.</td><td><a href="https://sksurrogate.readthedocs.io/en/latest/controlplane.html" target="_blank" rel="noopener">docs ↗</a></td></tr>
+            <tr><td><b>Statistical evaluation, not a single score.</b> Repeated nested cross-validation, paired comparison protocol checks, and split-conformal intervals with coverage diagnostics.</td><td><a href="https://sksurrogate.readthedocs.io/en/latest/controlplane.html" target="_blank" rel="noopener">docs ↗</a></td></tr>
             <tr><td><b>A research workspace with receipts.</b> Projects, hypotheses with a status lifecycle, evidence records that snapshot artifacts — plus LHS + GP-LCB experiment design for expensive physical experiments.</td><td><a href="https://sksurrogate.readthedocs.io/en/latest/mltrace.html" target="_blank" rel="noopener">docs ↗</a></td></tr>
             <tr><td><b>Surrogate hybrid search, honestly benchmarked.</b> Equal-budget comparison against TPE, random and no-surrogate arms — published with the raw data DOI and a plain statement of where the surrogate loses.</td><td><a href="%s">benchmarks</a></td></tr>
             <tr><td><b>A drop-in, not a rewrite.</b> SurrogateRandomCV is a BaseSearchCV subclass — the same call shape as RandomizedSearchCV, so adopting it changes one import, not your codebase.</td><td><a href="https://github.com/mghasemi/sksurrogate/blob/master/readme.rst" target="_blank" rel="noopener">readme ↗</a></td></tr>
@@ -414,32 +745,43 @@ def vs_optuna(rel):
 
 
 PAGES = [
-    # path, title, description, body, og:type, jsonld name, noindex
-    ("quickstart", "SKSurrogate in five minutes — SKSurrogate",
-     "Install SKSurrogate, run a surrogate-guided search over an SVM's hyperparameters, and switch to automatic pipeline design with AML — from the project readme.",
-     quickstart, "article", "SKSurrogate in five minutes", False),
-    ("benchmarks", "Honest benchmark: surrogate search vs TPE at small budgets — SKSurrogate",
-     "Equal-budget comparison of SKSurrogate's surrogate-guided search against Optuna-TPE, random search and a no-surrogate ablation on six public datasets, with the raw-data DOI.",
-     benchmarks, "article", "Honest benchmark: surrogate search vs TPE at small budgets", False),
-    ("cite", "Cite SKSurrogate",
-     "How to cite SKSurrogate: BibTeX and BibLaTeX for the archived software release, plus the DOIs of the benchmark and D-track datasets.",
-     cite, "article", "Cite SKSurrogate", False),
-    ("about", "About SKSurrogate",
-     "What SKSurrogate is, what it deliberately is not, how it is developed, who maintains it, and the licence it ships under.",
-     about, "article", "About SKSurrogate", False),
-    ("roadmap", "Roadmap — SKSurrogate",
-     "What is next, what is later, and what is explicitly not on the roadmap for SKSurrogate.",
-     roadmap, "article", "Roadmap", False),
-    ("blog", "Notes and benchmarks — SKSurrogate",
-     "Long-form write-ups of the studies behind SKSurrogate: equal-budget benchmarks, pre-registered hypotheses, and the results that did not go our way.",
-     blog, "website", "Notes and benchmarks", False),
-    ("contact", "Contact — SKSurrogate",
-     "How to reach the SKSurrogate maintainer: reproducible bug reports, usage questions, security disclosure, and corrections to published results.",
-     contact, "article", "Contact", False),
-    ("faq", "SKSurrogate FAQ",
-     "Frequently asked questions about SKSurrogate. (Structural shell — copy pending.)",
-     faq, "article", "SKSurrogate FAQ", True),
-    ("vs-optuna", "SKSurrogate vs Optuna and skopt",
-     "How SKSurrogate compares with Optuna and scikit-optimize on the criteria that decide an HPO tool. (Structural shell — copy pending.)",
-     vs_optuna, "article", "SKSurrogate vs Optuna and skopt", True),
+    dict(path="quickstart", title="SKSurrogate in five minutes — SKSurrogate",
+         desc="Install SKSurrogate, run a surrogate-guided search over an SVM's hyperparameters, and switch to automatic pipeline design with AML — from the project readme.",
+         body=quickstart, name="SKSurrogate in five minutes"),
+    dict(path="benchmarks", title="Honest benchmark: surrogate search vs TPE at small budgets — SKSurrogate",
+         desc="Equal-budget comparison of SKSurrogate's surrogate-guided search against Optuna-TPE, random search and a no-surrogate ablation on six public datasets, with the raw-data DOI.",
+         body=benchmarks, name="Honest benchmark: surrogate search vs TPE at small budgets"),
+    dict(path="concepts", title="Concepts — SKSurrogate",
+         desc="Surrogate-based optimization, split-conformal prediction intervals and nested cross-validation, defined in the terms the SKSurrogate documentation uses.",
+         body=concepts_index, name="Concepts"),
+    dict(path="concepts/surrogate-optimization", title="What is surrogate-based optimization? — SKSurrogate",
+         desc="Surrogate-based optimization fits an approximate model to expensive evaluations and uses it to choose the next point. The mechanism, when it pays, the measured evidence, and the limitations.",
+         body=concept_surrogate, name="What is surrogate-based optimization?"),
+    dict(path="concepts/conformal-intervals", title="What is a split-conformal prediction interval? — SKSurrogate",
+         desc="How split-conformal intervals are built, what their marginal coverage guarantee assumes, how to check empirical coverage, and when the guarantee fails.",
+         body=concept_conformal, name="What is a split-conformal prediction interval?"),
+    dict(path="concepts/nested-cross-validation", title="What is nested cross-validation? — SKSurrogate",
+         desc="Nested cross-validation separates model selection from the estimate of generalisation error. What the nested_cv_evaluation API does, what it does not, and how to read the result honestly.",
+         body=concept_nested, name="What is nested cross-validation?"),
+    dict(path="cite", title="Cite SKSurrogate",
+         desc="How to cite SKSurrogate: BibTeX and BibLaTeX for the archived software release, plus the DOIs of the benchmark and D-track datasets.",
+         body=cite, name="Cite SKSurrogate"),
+    dict(path="about", title="About SKSurrogate",
+         desc="What SKSurrogate is, what it deliberately is not, how it is developed, who maintains it, and the licence it ships under.",
+         body=about, name="About SKSurrogate"),
+    dict(path="roadmap", title="Roadmap — SKSurrogate",
+         desc="What is next, what is later, and what is explicitly not on the roadmap for SKSurrogate.",
+         body=roadmap, name="Roadmap"),
+    dict(path="blog", title="Notes and benchmarks — SKSurrogate",
+         desc="Long-form write-ups of the studies behind SKSurrogate: equal-budget benchmarks, pre-registered hypotheses, and the results that did not go our way.",
+         body=blog, name="Notes and benchmarks", ogtype="website"),
+    dict(path="contact", title="Contact — SKSurrogate",
+         desc="How to reach the SKSurrogate maintainer: reproducible bug reports, usage questions, security disclosure, and corrections to published results.",
+         body=contact, name="Contact"),
+    dict(path="faq", title="SKSurrogate FAQ",
+         desc="Twelve questions about SKSurrogate, answered from documented behaviour and published benchmark results: scikit-learn fit, speed versus Optuna, categorical features, conformal intervals, deployment.",
+         body=faq, name="SKSurrogate FAQ", jsonld=faq_jsonld),
+    dict(path="vs-optuna", title="SKSurrogate vs Optuna and skopt",
+         desc="How SKSurrogate compares with Optuna and scikit-optimize on the criteria that decide an HPO tool. (Structural shell — copy pending.)",
+         body=vs_optuna, name="SKSurrogate vs Optuna and skopt", noindex=True),
 ]

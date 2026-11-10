@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What is nested cross-validation? — SKSurrogate</title>
+<meta name="description" content="Nested cross-validation separates model selection from the estimate of generalisation error. What the nested_cv_evaluation API does, what it does not, and how to read the result honestly.">
+<link rel="canonical" href="https://sksurrogate.com/concepts/nested-cross-validation/">
+<meta property="og:site_name" content="SKSurrogate">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://sksurrogate.com/concepts/nested-cross-validation/">
+<meta property="og:title" content="What is nested cross-validation? — SKSurrogate">
+<meta property="og:description" content="Nested cross-validation separates model selection from the estimate of generalisation error. What the nested_cv_evaluation API does, what it does not, and how to read the result honestly.">
+<meta property="og:image" content="https://sksurrogate.com/assets/og-card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="SKSurrogate — from raw dataset to deployed, drift-monitored model. MIT, pip install sksurrogate.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://sksurrogate.com/assets/og-card.png">
+<link rel="icon" href="../../assets/mark.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../../icons/icon-180.png">
+<link rel="stylesheet" href="../../assets/site.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","@id":"https://sksurrogate.com/concepts/nested-cross-validation/","url":"https://sksurrogate.com/concepts/nested-cross-validation/","name":"What is nested cross-validation?","isPartOf":{"@id":"https://sksurrogate.com/#website"}}
+</script>
+</head>
+<body class="sub">
+
+<header class="topbar">
+  <a class="brand" href="../../"><img src="../../assets/mark.svg" alt="">SKSurrogate</a>
+  <nav>
+    <a href="../../">Product</a>
+    <a href="../../benchmarks/">Benchmarks</a>
+    <a href="../../concepts/">Concepts</a>
+    <a href="../../quickstart/">Quickstart</a>
+    <a href="../../blog/">Blog</a>
+    <a href="../../faq/">FAQ</a>
+    <a href="../../cite/">Cite</a>
+    <a href="../../about/">About</a>
+    <a href="https://sksurrogate.readthedocs.io/en/latest/intro.html" target="_blank" rel="noopener">Docs ↗</a>
+    <a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a>
+  </nav>
+</header>
+
+<main class="wrap">
+<div class="crumb"><a href="../../">sksurrogate</a><span>/</span>concepts <span>/</span> nested cross-validation</div>
+      <h1>What is nested cross-validation?</h1>
+      <p class="lede">Nested cross-validation keeps the step that <em>chooses</em> a model separate
+        from the step that <em>estimates</em> its generalisation error. The inner loop selects;
+        the outer loop scores the selection procedure on data the inner loop never saw. Without
+        that separation, the reported score is the score you optimised, and it is optimistic by
+        construction.</p>
+      <p class="chiprow"><span class="chip">inner: selection</span>
+        <span class="chip">outer: estimate</span>
+        <span class="chip">repeated CV: interval, not a test</span></p>
+      <div class="prose">
+        <h2>Why a single split misleads</h2>
+        <p>When the same folds are used to tune and to score, every configuration is evaluated on
+          the same data and the winner's score inherits the selection. The bias grows with the number
+          of candidates and shrinks with the size of the data — which is exactly the regime where
+          expensive problems live. Nested CV answers a different question: not "how well does the
+          chosen configuration score on these folds" but "how well does this <em>selection
+          procedure</em> score on unseen folds".</p>
+
+        <h2>What SKSurrogate's <code>nested_cv_evaluation</code> does</h2>
+        <p><code>nested_cv_evaluation</code> computes inner-CV scores and outer-fold estimates for
+          the estimator you supply, then evaluates it on the untouched validation partition. It
+          stores fold-level predictions and metrics, mean outer scores, repeated-CV confidence
+          intervals and the final validation score in task metadata. Mixed-type DataFrame features
+          are preprocessed inside each training fold, and unseen categories are ignored at scoring
+          time rather than being folded into the vocabulary — the leakage that quietly inflates a
+          score. Group-aware splitters preserve group labels through the evaluation path.</p>
+        <p>Two limits are stated plainly in the documentation and should be repeated here: the
+          function <strong>does not search among estimators or tune hyperparameters</strong>, and it
+          does not replace the search layer. It is the evaluation half — the part that scores what
+          the search produced without re-using the search's own optimised number. Tuning happens in
+          <code>SurrogateRandomCV</code> / <code>AML</code>; the evaluation asks how that result
+          behaves on partitions it never touched.</p>
+
+        <h2>Reading the result honestly</h2>
+        <p>Results carry an evaluation protocol: registered partition fingerprints, the CV splitter
+          specification, the repeat seed policy, the preprocessing path, the scoring identity and
+          whether a validation set was used. When two results are compared with
+          <code>compare_repeated_cv_results</code>, known mismatches are rejected and the output
+          reports whether alignment could be verified — opaque custom scorers, missing fingerprints
+          and older result dictionaries remain explicitly <em>unverified</em>, which is a signal, not
+          a gap to paper over.</p>
+        <p>The paired comparison reports the candidate-minus-reference mean and median repeat-score
+          difference, a percentile bootstrap interval and paired Cohen's <code>d_z</code>. It is deliberately
+          descriptive: the resampling unit is a complete repeat-level score difference, repeats reuse
+          observations, and the interval summarizes variation across repeats. It is not an
+          independent-sample significance test, and excluding zero is not a significance claim. BCa
+          intervals do not resolve dependence between repeats either; for a confirmatory comparison,
+          define the independent unit and the comparison family before looking at the data.</p>
+
+        <h2>Time series</h2>
+        <p>For ordered observations, pass <code>TimeSeriesSplit</code> for both the inner and outer
+          loops and choose a <code>gap</code> that excludes observations between the training and test
+          windows. Rows must already be in chronological order: the package does not infer timestamps
+          or sort them, and it does not construct lag, rolling or horizon features — doing that
+          without future leakage is the caller's responsibility.</p>
+
+        <h2>What it does not settle</h2>
+        <p>Nested CV estimates the procedure's error on the distribution your folds were drawn from.
+          It says nothing about a shifted deployment population, and it does not produce prediction
+          intervals — that is <a href="../../concepts/conformal-intervals/">split conformal</a>. Reporting one number from one split
+          is still the most common way to overstate a result; the API reference is in the
+          <a href="https://sksurrogate.readthedocs.io/en/latest/mltrace.html" target="_blank" rel="noopener">tracking and evaluation guide</a>.</p>
+      </div>
+</main>
+
+<footer class="subfooter">
+  <div>
+    <h5>Project</h5>
+    <ul>
+      <li><a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a></li>
+      <li><a href="https://pypi.org/project/sksurrogate/" target="_blank" rel="noopener">PyPI ↗</a></li>
+      <li><a href="https://sksurrogate.readthedocs.io/en/latest/" target="_blank" rel="noopener">Documentation ↗</a></li>
+      <li><a href="https://github.com/mghasemi/sksurrogate/blob/master/CHANGELOG.rst" target="_blank" rel="noopener">Changelog ↗</a></li>
+    </ul>
+  </div>
+  <div>
+    <h5>Site</h5>
+    <ul>
+      <li><a href="../../quickstart/">Quickstart</a></li>
+      <li><a href="../../benchmarks/">Benchmarks</a></li>
+      <li><a href="../../concepts/">Concepts</a></li>
+      <li><a href="../../blog/">Blog</a></li>
+      <li><a href="../../faq/">FAQ</a></li>
+      <li><a href="../../cite/">Citation</a></li>
+      <li><a href="../../about/">About</a></li>
+      <li><a href="../../roadmap/">Roadmap</a></li>
+      <li><a href="../../contact/">Contact</a></li>
+    </ul>
+  </div>
+  <div>
+    <h5>Maintainer</h5>
+    <ul>
+      <li><a href="https://mghasemi.net" target="_blank" rel="noopener">mghasemi.net ↗</a></li>
+      <li><a href="mailto:mehdi.ghasemi@gmail.com">mehdi.ghasemi@gmail.com</a></li>
+      <li><a href="https://orcid.org/0000-0002-9551-1780" target="_blank" rel="noopener">ORCID ↗</a></li>
+    </ul>
+  </div>
+</footer>
+<div class="subfootline">
+  <span>© 2019–2026 Mehdi Ghasemi · MIT licence</span>
+  <span>sksurrogate v0.3.0 · scikit-learn-native</span>
+</div>
+</body>
+</html>

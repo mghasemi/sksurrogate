@@ -297,20 +297,31 @@ def main():
         check("FAQPage answers match visible text", not mismatched, ", ".join(mismatched))
 
     # ---- 11. reachability from the homepage ---------------------------
-    home_html = open(os.path.join(ROOT, "index.html")).read()
-    linked = set()
-    for href in re.findall(r'href="([^"]+)"', home_html):
-        if href.startswith(("http", "mailto:", "#")):
+    # Breadth-first crawl over relative links: a page two hops down a hub
+    # (/concepts/ -> /concepts/x/) is fine; an unreachable page is not.
+    from collections import deque
+    seen, queue = {"/"}, deque(["/"])
+    while queue:
+        cur = queue.popleft()
+        src = os.path.join(ROOT, cur.strip("/"), "index.html") if cur != "/" else os.path.join(ROOT, "index.html")
+        if not os.path.exists(src):
             continue
-        target = os.path.normpath(os.path.join(ROOT, href.split("#")[0]))
-        if href.endswith("/"):
-            if os.path.exists(os.path.join(target, "index.html")):
-                linked.add(url_path(os.path.join(target, "index.html")))
-        elif os.path.isfile(target):
-            linked.add(url_path(target))
-    unlinked = indexable - linked - {"/"}
-    check("no orphaned indexable page (reachable from index in one hop)",
-          not unlinked, ", ".join(sorted(unlinked)))
+        base = os.path.dirname(src)
+        for href in re.findall(r'href="([^"]+)"', open(src).read()):
+            if href.startswith(("http", "mailto:", "#", "data:")):
+                continue
+            if href.startswith("/"):
+                continue  # root-absolute links live only in 404.html
+            target = os.path.normpath(os.path.join(base, href.split("#")[0]))
+            if not os.path.exists(os.path.join(target, "index.html")):
+                continue
+            page = url_path(os.path.join(target, "index.html"))
+            if page not in seen:
+                seen.add(page)
+                queue.append(page)
+    unlinked = indexable - seen
+    check("no orphaned indexable page (crawl from index)", not unlinked,
+          ", ".join(sorted(unlinked)))
 
     # ---- 12. copy freeze on the homepage -----------------------------
     text, core = text_of_index()

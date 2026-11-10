@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Concepts — SKSurrogate</title>
+<meta name="description" content="Surrogate-based optimization, split-conformal prediction intervals and nested cross-validation, defined in the terms the SKSurrogate documentation uses.">
+<link rel="canonical" href="https://sksurrogate.com/concepts/">
+<meta property="og:site_name" content="SKSurrogate">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://sksurrogate.com/concepts/">
+<meta property="og:title" content="Concepts — SKSurrogate">
+<meta property="og:description" content="Surrogate-based optimization, split-conformal prediction intervals and nested cross-validation, defined in the terms the SKSurrogate documentation uses.">
+<meta property="og:image" content="https://sksurrogate.com/assets/og-card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="SKSurrogate — from raw dataset to deployed, drift-monitored model. MIT, pip install sksurrogate.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://sksurrogate.com/assets/og-card.png">
+<link rel="icon" href="../assets/mark.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../icons/icon-180.png">
+<link rel="stylesheet" href="../assets/site.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","@id":"https://sksurrogate.com/concepts/","url":"https://sksurrogate.com/concepts/","name":"Concepts","isPartOf":{"@id":"https://sksurrogate.com/#website"}}
+</script>
+</head>
+<body class="sub">
+
+<header class="topbar">
+  <a class="brand" href="../"><img src="../assets/mark.svg" alt="">SKSurrogate</a>
+  <nav>
+    <a href="../">Product</a>
+    <a href="../benchmarks/">Benchmarks</a>
+    <a href="../concepts/">Concepts</a>
+    <a href="../quickstart/">Quickstart</a>
+    <a href="../blog/">Blog</a>
+    <a href="../faq/">FAQ</a>
+    <a href="../cite/">Cite</a>
+    <a href="../about/">About</a>
+    <a href="https://sksurrogate.readthedocs.io/en/latest/intro.html" target="_blank" rel="noopener">Docs ↗</a>
+    <a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a>
+  </nav>
+</header>
+
+<main class="wrap">
+<div class="crumb"><a href="../">sksurrogate</a><span>/</span>concepts</div>
+      <h1>Concepts</h1>
+      <p class="lede">Three ideas do the work in SKSurrogate. Each is defined here in the terms the
+        documentation uses, with the evidence the package publishes on its own behaviour.</p>
+      <div class="cards">
+        <a class="card" href="../concepts/surrogate-optimization/">
+          <div class="k">optimization</div>
+          <h3>Surrogate-based optimization</h3>
+          <p>Fit an approximate model to expensive evaluations and use it to choose the next
+            point — when that saves evaluations, and when it does not.</p>
+        </a>
+        <a class="card" href="../concepts/conformal-intervals/">
+          <div class="k">uncertainty</div>
+          <h3>Split-conformal intervals</h3>
+          <p>Finite-sample marginal coverage from a calibration split, and the assumptions that
+            make the guarantee fail.</p>
+        </a>
+        <a class="card" href="../concepts/nested-cross-validation/">
+          <div class="k">evaluation</div>
+          <h3>Nested cross-validation</h3>
+          <p>Keep model selection separate from the estimate of generalisation, so the score you
+            report is not the score you optimised.</p>
+        </a>
+      </div>
+</main>
+
+<footer class="subfooter">
+  <div>
+    <h5>Project</h5>
+    <ul>
+      <li><a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a></li>
+      <li><a href="https://pypi.org/project/sksurrogate/" target="_blank" rel="noopener">PyPI ↗</a></li>
+      <li><a href="https://sksurrogate.readthedocs.io/en/latest/" target="_blank" rel="noopener">Documentation ↗</a></li>
+      <li><a href="https://github.com/mghasemi/sksurrogate/blob/master/CHANGELOG.rst" target="_blank" rel="noopener">Changelog ↗</a></li>
+    </ul>
+  </div>
+  <div>
+    <h5>Site</h5>
+    <ul>
+      <li><a href="../quickstart/">Quickstart</a></li>
+      <li><a href="../benchmarks/">Benchmarks</a></li>
+      <li><a href="../concepts/">Concepts</a></li>
+      <li><a href="../blog/">Blog</a></li>
+      <li><a href="../faq/">FAQ</a></li>
+      <li><a href="../cite/">Citation</a></li>
+      <li><a href="../about/">About</a></li>
+      <li><a href="../roadmap/">Roadmap</a></li>
+      <li><a href="../contact/">Contact</a></li>
+    </ul>
+  </div>
+  <div>
+    <h5>Maintainer</h5>
+    <ul>
+      <li><a href="https://mghasemi.net" target="_blank" rel="noopener">mghasemi.net ↗</a></li>
+      <li><a href="mailto:mehdi.ghasemi@gmail.com">mehdi.ghasemi@gmail.com</a></li>
+      <li><a href="https://orcid.org/0000-0002-9551-1780" target="_blank" rel="noopener">ORCID ↗</a></li>
+    </ul>
+  </div>
+</footer>
+<div class="subfootline">
+  <span>© 2019–2026 Mehdi Ghasemi · MIT licence</span>
+  <span>sksurrogate v0.3.0 · scikit-learn-native</span>
+</div>
+</body>
+</html>

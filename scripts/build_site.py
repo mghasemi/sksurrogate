@@ -23,6 +23,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NAV = [
     ("/", "Product", False),
     ("/benchmarks/", "Benchmarks", False),
+    ("/concepts/", "Concepts", False),
     ("/quickstart/", "Quickstart", False),
     ("/blog/", "Blog", False),
     ("/faq/", "FAQ", False),
@@ -42,6 +43,7 @@ FOOTER = [
     ("Site", [
         ("/quickstart/", "Quickstart", False),
         ("/benchmarks/", "Benchmarks", False),
+    ("/concepts/", "Concepts", False),
         ("/blog/", "Blog", False),
         ("/faq/", "FAQ", False),
         ("/cite/", "Citation", False),
@@ -178,10 +180,17 @@ def main():
     from site_pages import PAGES  # same directory as this script
 
     written = []
-    for path, title, desc, body_fn, ogtype, name, noindex in PAGES:
-        url_path = "/%s/" % path
-        target = write_page(url_path, title, desc, body_fn, ogtype=ogtype,
-                            jsonld=webpage_jsonld(url_path, name) if not noindex else "",
+    for page in PAGES:
+        url_path = "/%s/" % page["path"]
+        noindex = page.get("noindex", False)
+        if noindex:
+            jsonld = ""
+        elif "jsonld" in page:
+            jsonld = page["jsonld"]()
+        else:
+            jsonld = webpage_jsonld(url_path, page["name"])
+        target = write_page(url_path, page["title"], page["desc"], page["body"],
+                            ogtype=page.get("ogtype", "article"), jsonld=jsonld,
                             noindex=noindex)
         written.append((url_path, target, noindex))
         print("wrote", os.path.relpath(target, ROOT))

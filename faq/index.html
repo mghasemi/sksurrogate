@@ -4,15 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SKSurrogate FAQ</title>
-<meta name="description" content="Frequently asked questions about SKSurrogate. (Structural shell — copy pending.)">
-<meta name="robots" content="noindex">
+<meta name="description" content="Twelve questions about SKSurrogate, answered from documented behaviour and published benchmark results: scikit-learn fit, speed versus Optuna, categorical features, conformal intervals, deployment.">
 <link rel="canonical" href="https://sksurrogate.com/faq/">
 <meta property="og:site_name" content="SKSurrogate">
 <meta property="og:locale" content="en_US">
 <meta property="og:type" content="article">
 <meta property="og:url" content="https://sksurrogate.com/faq/">
 <meta property="og:title" content="SKSurrogate FAQ">
-<meta property="og:description" content="Frequently asked questions about SKSurrogate. (Structural shell — copy pending.)">
+<meta property="og:description" content="Twelve questions about SKSurrogate, answered from documented behaviour and published benchmark results: scikit-learn fit, speed versus Optuna, categorical features, conformal intervals, deployment.">
 <meta property="og:image" content="https://sksurrogate.com/assets/og-card.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -22,6 +21,9 @@
 <link rel="icon" href="../assets/mark.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="../icons/icon-180.png">
 <link rel="stylesheet" href="../assets/site.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "What is SKSurrogate?", "acceptedAnswer": {"@type": "Answer", "text": "SKSurrogate is an open-source Python package built on scikit-learn for surrogate-based optimization of expensive objectives — hyperparameter and pipeline search, statistical evaluation, sensitivity analysis and experiment design — with a control plane that runs and logs searches and a research workspace that records evidence. It is MIT licensed and installs with pip."}}, {"@type": "Question", "name": "Is SKSurrogate a replacement for scikit-learn?", "acceptedAnswer": {"@type": "Answer", "text": "No. It is a search and evaluation layer on top of scikit-learn. SurrogateRandomCV is a BaseSearchCV subclass with the same call shape as RandomizedSearchCV, and your estimators, splitters, scorers and pipelines are used as they are."}}, {"@type": "Question", "name": "Does it work with scikit-learn pipelines and parameter grids?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. You pass an estimator or a pipeline plus a param_distributions mapping, with numeric ranges as tuples and categorical choices as lists. Because the class is a BaseSearchCV subclass, best_params_, best_score_, cv_results_ and refitting behave as they do in scikit-learn."}}, {"@type": "Question", "name": "Is it faster than Optuna?", "acceptedAnswer": {"@type": "Answer", "text": "Not at small budgets. On six public datasets at 30 evaluations Optuna-TPE is top on five of six and the whole table spans about half a point of accuracy; at 60 evaluations the surrogate arm leads all six. The surrogate's advantage is evaluation efficiency rather than wall-clock speed: in the pipeline-space study it reached within 1 per cent of its final best in a median of 6 evaluations against 11 to 17 for the other arms, while the Gaussian-process fit grows as O(n^3) and search overhead consumed about half of a 120-second budget."}}, {"@type": "Question", "name": "How many evaluations does the search need?", "acceptedAnswer": {"@type": "Answer", "text": "Budgets are counted in candidate-model evaluations, not seconds, so they are hardware-independent. The published equal-budget suite used 30 and 60 evaluations with seven seeds per cell; the pipeline-space study used equal wall-clock, equal 40 evaluations, and a wall-budget cap."}}, {"@type": "Question", "name": "What surrogate model does it use by default?", "acceptedAnswer": {"@type": "Answer", "text": "Since v0.2 the default response surface is a stock, un-tuned RBF GaussianProcessRegressor. The previous cubic Hilbert polynomial remains available as HilbertRegressor, and any scikit-learn regressor can be supplied. The change was made on the evidence of the equal-budget benchmark, where the Gaussian process beat the polynomial surface at both budgets."}}, {"@type": "Question", "name": "Does it handle classification and regression?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. AML(preset=\"classification\") and AML(preset=\"regression\") need no search configuration. For pandas DataFrames the preset fits numeric, categorical, datetime and text preprocessing inside each cross-validation fold when cat_cols is omitted."}}, {"@type": "Question", "name": "How does it handle categorical features?", "acceptedAnswer": {"@type": "Answer", "text": "Through the preset's fold-local preprocessing, or explicitly with cat_cols. This is worth checking in your own pipeline: the benchmark study found ordinal encoding of unordered categories to be a defect in the package itself. Replacing it with a mixed categorical surface lifted best cross-validated score by at least 0.3 points on four of six datasets and moved the search above TPE on three of them."}}, {"@type": "Question", "name": "What guarantee do the prediction intervals have?", "acceptedAnswer": {"@type": "Answer", "text": "The split-conformal intervals assume that calibration and future examples are exchangeable and that the model was chosen independently of the calibration set. Under those assumptions they provide finite-sample marginal coverage — not per-subgroup or conditional coverage, and not coverage under distribution shift. Coverage is meant to be measured on held-out labels with prediction_interval_diagnostics."}}, {"@type": "Question", "name": "Can I run it without a server or cloud account?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. It is a Python package. The control plane with its API and UI is optional and runs from a Docker Compose profile on a single port, 8013, with an optional API key; nothing in the loop calls an external service."}}, {"@type": "Question", "name": "How do I cite SKSurrogate?", "acceptedAnswer": {"@type": "Answer", "text": "Cite the archived release rather than the repository URL. The software archive recorded in CITATION.cff carries a DOI, and the benchmark records and the D-track study have their own DOIs. Ready-to-paste BibTeX and BibLaTeX are on the citation page."}}, {"@type": "Question", "name": "What is SKSurrogate not?", "acceptedAnswer": {"@type": "Answer", "text": "Not a managed cloud service, not a fixed model zoo, and not a chat assistant. The shipped tooling is deterministic, the search space is your pipeline plus the ranges you declare, and every evaluation is recorded. A bounded, opt-in cited-note synthesis exists; a conversational research assistant is roadmap, not this release."}}]}
+</script>
 </head>
 <body class="sub">
 
@@ -30,6 +32,7 @@
   <nav>
     <a href="../">Product</a>
     <a href="../benchmarks/">Benchmarks</a>
+    <a href="../concepts/">Concepts</a>
     <a href="../quickstart/">Quickstart</a>
     <a href="../blog/">Blog</a>
     <a href="../faq/">FAQ</a>
@@ -43,9 +46,39 @@
 <main class="wrap">
 <div class="crumb"><a href="../">sksurrogate</a><span>/</span>faq</div>
       <h1>SKSurrogate FAQ</h1>
-      <p class="lede">Answers to the questions the documentation keeps getting asked.</p>
+      <p class="lede">Twelve questions that decide whether the package fits your problem. Every answer
+        restates a documented behaviour or a published result; the source is linked where the detail
+        matters.</p>
       <div class="prose">
-        <p class="todo">Copy pending — this page is a structural shell. Nothing here is approved text, and the page is excluded from search indexing (robots: noindex) until the copy lands.</p>
+        <h2>What is SKSurrogate?</h2>
+        <p>SKSurrogate is an open-source Python package built on scikit-learn for surrogate-based optimization of expensive objectives — hyperparameter and pipeline search, statistical evaluation, sensitivity analysis and experiment design — with a control plane that runs and logs searches and a research workspace that records evidence. It is MIT licensed and installs with pip.</p>
+        <h2>Is SKSurrogate a replacement for scikit-learn?</h2>
+        <p>No. It is a search and evaluation layer on top of scikit-learn. SurrogateRandomCV is a BaseSearchCV subclass with the same call shape as RandomizedSearchCV, and your estimators, splitters, scorers and pipelines are used as they are.</p>
+        <h2>Does it work with scikit-learn pipelines and parameter grids?</h2>
+        <p>Yes. You pass an estimator or a pipeline plus a param_distributions mapping, with numeric ranges as tuples and categorical choices as lists. Because the class is a BaseSearchCV subclass, best_params_, best_score_, cv_results_ and refitting behave as they do in scikit-learn.</p>
+        <h2>Is it faster than Optuna?</h2>
+        <p>Not at small budgets. On six public datasets at 30 evaluations Optuna-TPE is top on five of six and the whole table spans about half a point of accuracy; at 60 evaluations the surrogate arm leads all six. The surrogate's advantage is evaluation efficiency rather than wall-clock speed: in the pipeline-space study it reached within 1 per cent of its final best in a median of 6 evaluations against 11 to 17 for the other arms, while the Gaussian-process fit grows as O(n^3) and search overhead consumed about half of a 120-second budget.</p>
+        <h2>How many evaluations does the search need?</h2>
+        <p>Budgets are counted in candidate-model evaluations, not seconds, so they are hardware-independent. The published equal-budget suite used 30 and 60 evaluations with seven seeds per cell; the pipeline-space study used equal wall-clock, equal 40 evaluations, and a wall-budget cap.</p>
+        <h2>What surrogate model does it use by default?</h2>
+        <p>Since v0.2 the default response surface is a stock, un-tuned RBF GaussianProcessRegressor. The previous cubic Hilbert polynomial remains available as HilbertRegressor, and any scikit-learn regressor can be supplied. The change was made on the evidence of the equal-budget benchmark, where the Gaussian process beat the polynomial surface at both budgets.</p>
+        <h2>Does it handle classification and regression?</h2>
+        <p>Yes. AML(preset="classification") and AML(preset="regression") need no search configuration. For pandas DataFrames the preset fits numeric, categorical, datetime and text preprocessing inside each cross-validation fold when cat_cols is omitted.</p>
+        <h2>How does it handle categorical features?</h2>
+        <p>Through the preset's fold-local preprocessing, or explicitly with cat_cols. This is worth checking in your own pipeline: the benchmark study found ordinal encoding of unordered categories to be a defect in the package itself. Replacing it with a mixed categorical surface lifted best cross-validated score by at least 0.3 points on four of six datasets and moved the search above TPE on three of them.</p>
+        <h2>What guarantee do the prediction intervals have?</h2>
+        <p>The split-conformal intervals assume that calibration and future examples are exchangeable and that the model was chosen independently of the calibration set. Under those assumptions they provide finite-sample marginal coverage — not per-subgroup or conditional coverage, and not coverage under distribution shift. Coverage is meant to be measured on held-out labels with prediction_interval_diagnostics.</p>
+        <h2>Can I run it without a server or cloud account?</h2>
+        <p>Yes. It is a Python package. The control plane with its API and UI is optional and runs from a Docker Compose profile on a single port, 8013, with an optional API key; nothing in the loop calls an external service.</p>
+        <h2>How do I cite SKSurrogate?</h2>
+        <p>Cite the archived release rather than the repository URL. The software archive recorded in CITATION.cff carries a DOI, and the benchmark records and the D-track study have their own DOIs. Ready-to-paste BibTeX and BibLaTeX are on the citation page.</p>
+        <h2>What is SKSurrogate not?</h2>
+        <p>Not a managed cloud service, not a fixed model zoo, and not a chat assistant. The shipped tooling is deterministic, the search space is your pipeline plus the ranges you declare, and every evaluation is recorded. A bounded, opt-in cited-note synthesis exists; a conversational research assistant is roadmap, not this release.</p>
+        <h2>Where to go next</h2>
+        <p>The <a href="../quickstart/">quickstart</a> installs and runs the tuner; the
+          <a href="../benchmarks/">benchmark page</a> has the tables and the caveats; the
+          <a href="../concepts/">concepts</a> explain surrogate optimization, conformal intervals and nested
+          cross-validation in the terms the documentation uses.</p>
       </div>
 </main>
 
@@ -64,6 +97,7 @@
     <ul>
       <li><a href="../quickstart/">Quickstart</a></li>
       <li><a href="../benchmarks/">Benchmarks</a></li>
+      <li><a href="../concepts/">Concepts</a></li>
       <li><a href="../blog/">Blog</a></li>
       <li><a href="../faq/">FAQ</a></li>
       <li><a href="../cite/">Citation</a></li>

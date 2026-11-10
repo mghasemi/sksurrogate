@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What is surrogate-based optimization? — SKSurrogate</title>
+<meta name="description" content="Surrogate-based optimization fits an approximate model to expensive evaluations and uses it to choose the next point. The mechanism, when it pays, the measured evidence, and the limitations.">
+<link rel="canonical" href="https://sksurrogate.com/concepts/surrogate-optimization/">
+<meta property="og:site_name" content="SKSurrogate">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://sksurrogate.com/concepts/surrogate-optimization/">
+<meta property="og:title" content="What is surrogate-based optimization? — SKSurrogate">
+<meta property="og:description" content="Surrogate-based optimization fits an approximate model to expensive evaluations and uses it to choose the next point. The mechanism, when it pays, the measured evidence, and the limitations.">
+<meta property="og:image" content="https://sksurrogate.com/assets/og-card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="SKSurrogate — from raw dataset to deployed, drift-monitored model. MIT, pip install sksurrogate.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://sksurrogate.com/assets/og-card.png">
+<link rel="icon" href="../../assets/mark.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../../icons/icon-180.png">
+<link rel="stylesheet" href="../../assets/site.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","@id":"https://sksurrogate.com/concepts/surrogate-optimization/","url":"https://sksurrogate.com/concepts/surrogate-optimization/","name":"What is surrogate-based optimization?","isPartOf":{"@id":"https://sksurrogate.com/#website"}}
+</script>
+</head>
+<body class="sub">
+
+<header class="topbar">
+  <a class="brand" href="../../"><img src="../../assets/mark.svg" alt="">SKSurrogate</a>
+  <nav>
+    <a href="../../">Product</a>
+    <a href="../../benchmarks/">Benchmarks</a>
+    <a href="../../concepts/">Concepts</a>
+    <a href="../../quickstart/">Quickstart</a>
+    <a href="../../blog/">Blog</a>
+    <a href="../../faq/">FAQ</a>
+    <a href="../../cite/">Cite</a>
+    <a href="../../about/">About</a>
+    <a href="https://sksurrogate.readthedocs.io/en/latest/intro.html" target="_blank" rel="noopener">Docs ↗</a>
+    <a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a>
+  </nav>
+</header>
+
+<main class="wrap">
+<div class="crumb"><a href="../../">sksurrogate</a><span>/</span>concepts <span>/</span> surrogate optimization</div>
+      <h1>What is surrogate-based optimization?</h1>
+      <p class="lede">Surrogate-based optimization fits an approximate model — the surrogate — to
+        the evaluations of an expensive function, then uses that model to decide where to evaluate
+        next. The cost of a prediction is negligible compared with the cost of an evaluation, so the
+        search happens on the model and only the chosen points are paid for.</p>
+      <p class="chiprow"><span class="chip">also: surrogate modelling, SBO</span>
+        <span class="chip">budget: number of evaluations</span>
+        <span class="chip">default surface: RBF Gaussian process</span></p>
+      <div class="prose">
+        <h2>The mechanism</h2>
+        <p>For a function <code>f</code> that can only be evaluated a limited number of times, one iteration
+          is: sample a point in the feasible set; evaluate <code>f</code> there; add the pair to the evaluation
+          set <code>E</code>; fit a surrogate to <code>E</code>; minimise the surrogate to propose the next point;
+          evaluate <code>f</code> at that proposal. Repeat until the budget is exhausted, then return the best
+          evaluated pair. The package's own description of this loop, including the
+          <code>MinEvals</code> random-evaluation phase before the surrogate engages, is in the
+          <a href="https://sksurrogate.readthedocs.io/en/latest/surrogate.html" target="_blank" rel="noopener">surrogate search guide</a>.</p>
+        <p>Three design choices carry most of the behaviour: how the initial and subsequent points
+          are sampled, which model is fitted, and how the model is minimised. SKSurrogate ships
+          three samplers — a random point in the feasible set, a cube around the last point (with
+          <code>init_radius</code> 2.0 and a <code>contraction</code> of 0.9 by default), and a
+          sphere around the last point — and accepts user-defined sampling classes with the same
+          signature. The surrogate is any scikit-learn regressor; the default is an RBF Gaussian
+          process.</p>
+
+        <h2>When it pays, and when it does not</h2>
+        <p>The case for a surrogate is economic, not algorithmic: it pays when one evaluation costs
+          minutes and a model fit costs milliseconds. The package publishes what happens when that
+          condition is not met. On six public datasets at a budget of 30 evaluations, the
+          surrogate-guided search is <em>at parity</em> with Optuna-TPE, which is top on five of the
+          six; the whole table spans about half a point of accuracy. At 60 evaluations the
+          surrogate arm leads all six datasets. The honest summary is that on a flat, three-parameter
+          landscape your choice among these tools will not move your accuracy much — the
+          <a href="../../benchmarks/">benchmark page</a> has the tables.</p>
+        <p>What the surrogate buys instead is evaluation efficiency. On the 1,220-pipeline space the
+          search reached within 1&nbsp;% of its own final best in a median of <strong>6
+          evaluations</strong>, against 11–17 for the other arms at identical final accuracy. That
+          advantage does not transfer to wall-clock time: the Gaussian-process fit grows as
+          O(n³), so per-fit cost rose from 3&nbsp;ms to 174&nbsp;ms across a run and 49&nbsp;% of
+          a 120&nbsp;s budget went to search overhead (22&nbsp;% fitting, 27&nbsp;% acquisition).</p>
+
+        <h2>The response surface matters more than the search</h2>
+        <p>Inside the same search loop, changing only the fitted surface changes the result. An
+          un-tuned RBF Gaussian process beat the legacy cubic Hilbert polynomial on all six datasets
+          at both budgets, with seed-level wins of 20W/17T/5L at B=30 and 25W/13T/4L at B=60 (exact
+          binomial <code>p ≈ 4×10⁻³</code> and <code>p ≈ 10⁻⁴</code>). That is why v0.2 made the
+          RBF Gaussian process the default and kept <code>HilbertRegressor</code> available. A
+          controlled synthetic study explains the mechanism: the polynomial regressor is exact on
+          in-span objectives but truncates elsewhere, the stock Gaussian process has no noise term
+          and interpolates noise, and a tree ensemble is the robust generalist.</p>
+
+        <h2>How SKSurrogate implements it</h2>
+        <p><code>SurrogateRandomCV</code> is a <code>BaseSearchCV</code> subclass, so it has the
+          call shape of <code>RandomizedSearchCV</code>: pass an estimator, a
+          <code>param_distributions</code> mapping of tuples (numeric ranges) and lists (categorical
+          values), and <code>n_iter</code>. For pipeline design, <code>AML</code> adds an
+          evolutionary search over transformers and estimators
+          (<code>fit(X, y, strategy="eoa")</code>) before the local surrogate refinement. Every
+          evaluation is recorded, which is what makes the result an artifact rather than a single
+          returned winner.</p>
+
+        <h2>What it does not do</h2>
+        <p>The surrogate is an approximation of the observed surface, not a certificate: it can be
+          confidently wrong between samples, and no coverage guarantee is claimed for the search
+          itself. It does not remove the need for a held-out evaluation, and it does not make a flat
+          objective steep. Compare with a single-split score using
+          <a href="../../concepts/nested-cross-validation/">nested cross-validation</a>, and quantify deployed uncertainty with
+          <a href="../../concepts/conformal-intervals/">conformal intervals</a>.</p>
+      </div>
+</main>
+
+<footer class="subfooter">
+  <div>
+    <h5>Project</h5>
+    <ul>
+      <li><a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a></li>
+      <li><a href="https://pypi.org/project/sksurrogate/" target="_blank" rel="noopener">PyPI ↗</a></li>
+      <li><a href="https://sksurrogate.readthedocs.io/en/latest/" target="_blank" rel="noopener">Documentation ↗</a></li>
+      <li><a href="https://github.com/mghasemi/sksurrogate/blob/master/CHANGELOG.rst" target="_blank" rel="noopener">Changelog ↗</a></li>
+    </ul>
+  </div>
+  <div>
+    <h5>Site</h5>
+    <ul>
+      <li><a href="../../quickstart/">Quickstart</a></li>
+      <li><a href="../../benchmarks/">Benchmarks</a></li>
+      <li><a href="../../concepts/">Concepts</a></li>
+      <li><a href="../../blog/">Blog</a></li>
+      <li><a href="../../faq/">FAQ</a></li>
+      <li><a href="../../cite/">Citation</a></li>
+      <li><a href="../../about/">About</a></li>
+      <li><a href="../../roadmap/">Roadmap</a></li>
+      <li><a href="../../contact/">Contact</a></li>
+    </ul>
+  </div>
+  <div>
+    <h5>Maintainer</h5>
+    <ul>
+      <li><a href="https://mghasemi.net" target="_blank" rel="noopener">mghasemi.net ↗</a></li>
+      <li><a href="mailto:mehdi.ghasemi@gmail.com">mehdi.ghasemi@gmail.com</a></li>
+      <li><a href="https://orcid.org/0000-0002-9551-1780" target="_blank" rel="noopener">ORCID ↗</a></li>
+    </ul>
+  </div>
+</footer>
+<div class="subfootline">
+  <span>© 2019–2026 Mehdi Ghasemi · MIT licence</span>
+  <span>sksurrogate v0.3.0 · scikit-learn-native</span>
+</div>
+</body>
+</html>
