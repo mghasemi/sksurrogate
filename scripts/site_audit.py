@@ -25,6 +25,9 @@ import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SITE = "https://mghasemi.github.io/sksurrogate"
+# Some hosts (Read the Docs, Zenodo behind doi.org) 403 the default python-urllib
+# User-Agent while serving the same URL to a browser, so a live check needs one.
+UA = "Mozilla/5.0 (X11; Linux x86_64) sksurrogate-site-audit/1.0"
 FIXTURE = os.path.join(ROOT, "scripts", "fixtures", "index_text.sha256")
 
 results = []
@@ -329,7 +332,7 @@ def main():
         bad = []
         for u in urls:
             try:
-                req = urllib.request.Request(u, method="GET")
+                req = urllib.request.Request(u, method="GET", headers={"User-Agent": UA})
                 with urllib.request.urlopen(req, timeout=25) as r:
                     if r.status != 200:
                         bad.append("%s %s" % (r.status, u))
@@ -341,7 +344,8 @@ def main():
         bad_llms = []
         for u in llms_urls:
             try:
-                with urllib.request.urlopen(u, timeout=25) as r:
+                req = urllib.request.Request(u, headers={"User-Agent": UA})
+                with urllib.request.urlopen(req, timeout=25) as r:
                     if r.status != 200:
                         bad_llms.append(u)
             except Exception:  # noqa: BLE001
