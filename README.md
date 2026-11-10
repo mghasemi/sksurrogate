@@ -93,21 +93,46 @@ Two checks need a rendering engine and are done in a browser instead:
 2. `python scripts/site_audit.py` — must be 0 failed
 3. Commit, push `gh-pages`, wait for Pages `status: built`, then `--live` audit.
 
+## Edge / DNS (Cloudflare)
+
+The zone is `sksurrogate.com` (id `5d88f6a942534daea5cf0498e18ba771`), plan Free, serving through
+Cloudflare with GitHub Pages as origin. Current state, set 2026-11-10:
+
+| Setting | Value |
+|---|---|
+| DNS | `<CNAME @ → mghasemi.github.io>` + `<CNAME www → mghasemi.github.io>`, both **proxied** |
+| SSL/TLS mode | **Full (strict)** — Cloudflare validates GitHub Pages' Let's Encrypt cert |
+| Min TLS | 1.2 (TLS 1.0/1.1 refused; TLS 1.3 on) |
+| Always Use HTTPS | on |
+| HSTS | `max-age=15552000; includeSubDomains` + `nosniff`; **preload off** |
+| Redirect rule | `http_request_dynamic_redirect` entrypoint `682058bb744f44a6b71d85a1167a77dc`: `http.host eq "www.sksurrogate.com"` → 301 `https://sksurrogate.com<path>` (query preserved) |
+| HTML at edge | `cf-cache-status: DYNAMIC` (not cached — deploys are visible immediately); assets `HIT` |
+
+Two consequences worth knowing:
+
+- **HSTS is sticky.** Browsers keep the 6-month policy after the header disappears; do not plan a
+  return to plain HTTP or to a different host on this zone without accounting for that.
+- **`www` no longer reaches GitHub.** Before the proxy, Pages answered `www` with its own 301; behind
+  the proxy the request never leaves the edge, hence the redirect rule above. Deleting that rule
+  reintroduces a 404 on `www`.
+
 ## Post-launch checklist (outside this repo)
 
-Verified by the 2026-11-10 checks: apex + www serve over HTTPS (Let's Encrypt, SAN covers both,
-expiry 2027-02-08), HTTP→HTTPS 301, `www`→apex 301, legacy `mghasemi.github.io/sksurrogate/`→apex
-301, all 11 pages 200, sitemap/robots/llms.txt live on the apex.
+Verified by the 2026-11-10 checks: apex + www serve over HTTPS, HTTP→HTTPS 301, `www`→apex 301 with
+path and query preserved, legacy `mghasemi.github.io/sksurrogate/`→apex 301, all 11 pages 200,
+sitemap/robots/llms.txt live on the apex, HSTS + `X-Content-Type-Options` present.
+
+Done:
+- GitHub "Website" field → `https://sksurrogate.com` (was Read the Docs).
+- HSTS + strict TLS at the edge (see above).
 
 Still owner-side, because they need accounts this repo does not hold:
 
-1. **Google Search Console + Bing Webmaster Tools** — add `sksurrogate.com`, verify by DNS TXT,
-   submit `https://sksurrogate.com/sitemap.xml`.
-2. **Repo metadata** — set the GitHub "Website" field to `https://sksurrogate.com` (it currently
-   points at Read the Docs), so the sidebar and search results carry the product URL.
-3. **PyPI** — `setup.py`'s `url` and `project_urls` point at GitHub; they only change with a release.
-4. **External mentions** — anything written before the domain existed still points at the github.io
+1. **Google Search Console + Bing Webmaster Tools** — add `sksurrogate.com`, verify by DNS TXT
+   (add the TXT in Cloudflare, DNS-only), submit `https://sksurrogate.com/sitemap.xml`.
+2. **PyPI** — `setup.py`'s `url` and `project_urls` point at GitHub; they only change with a release.
+3. **External mentions** — anything written before the domain existed still points at the github.io
    URL; it now 301s, so links keep working, but the canonical reference should be updated when those
    pages are next touched.
-5. **HSTS** — GitHub Pages sends no `Strict-Transport-Security`. Adding it requires putting
-   Cloudflare in front (proxy on) or accepting the gap; `https_enforced` is already on.
+4. **HSTS preload** — deliberately off. Only submit to `hstspreload.org` once the domain has run
+   HSTS for months and `includeSubDomains` is known to be safe for every future subdomain.
