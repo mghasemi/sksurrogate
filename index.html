@@ -39,11 +39,10 @@
       "operatingSystem": "Linux, macOS, Windows",
       "softwareVersion": "0.2.0",
       "softwareRequirements": "Python >=3.10, scikit-learn",
-      "programmingLanguage": "Python",
       "license": "https://opensource.org/licenses/MIT",
       "isAccessibleForFree": true,
-      "codeRepository": "https://github.com/mghasemi/sksurrogate",
       "downloadUrl": "https://pypi.org/project/sksurrogate/",
+      "isBasedOn": {"@id": "https://sksurrogate.com/#source"},
       "identifier": {
         "@type": "PropertyValue",
         "propertyID": "DOI",
@@ -71,6 +70,17 @@
       "url": "https://sksurrogate.com/",
       "name": "SKSurrogate",
       "publisher": {"@id": "https://sksurrogate.com/#person"}
+    },
+    {
+      "@type": "SoftwareSourceCode",
+      "@id": "https://sksurrogate.com/#source",
+      "name": "SKSurrogate source repository",
+      "description": "Python source for SKSurrogate: the surrogate search layer, evaluation and tracking utilities, the control-plane API and the web UI.",
+      "codeRepository": "https://github.com/mghasemi/sksurrogate",
+      "programmingLanguage": {"@type": "ComputerLanguage", "name": "Python", "url": "https://www.python.org/"},
+      "runtimePlatform": "Python 3.10+",
+      "license": "https://opensource.org/licenses/MIT",
+      "author": {"@id": "https://sksurrogate.com/#person"}
     },
     {
       "@type": "Dataset",

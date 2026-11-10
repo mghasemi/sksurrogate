@@ -213,6 +213,16 @@ def main():
     check("Person.sameAs has >= 3 entries", len(person.get("sameAs", [])) >= 3,
           "%d" % len(person.get("sameAs", [])))
 
+    # programmingLanguage/codeRepository are SoftwareSourceCode properties; the
+    # schema.org validator flags them as UNKNOWN_FIELD on SoftwareApplication.
+    src = next((n for n in nodes if n.get("@type") == "SoftwareSourceCode"), None)
+    check("SoftwareSourceCode node carries the repo and language",
+          bool(src) and src.get("codeRepository") and src.get("programmingLanguage"),
+          "missing isBasedOn target" if not src else str(src.get("codeRepository")))
+    leaked = [k for k in ("codeRepository", "programmingLanguage") if k in app]
+    check("SoftwareApplication does not carry SoftwareSourceCode fields",
+          not leaked, ", ".join(leaked))
+
     # Google's Dataset rich result requires name + description; both were
     # missing until a validator flagged "Missing field description".
     datasets = [n for n in nodes if n.get("@type") == "Dataset"]
