@@ -2,46 +2,48 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>An Honest Benchmark of My Own AutoML Package — SKSurrogate</title>
-<meta name="description" content="At equal evaluation budgets on six public datasets, surrogate-guided search does not beat Optuna-TPE on accuracy — TPE is top on 5 of 6. What is real: the response surface matters more than the search mechanism, and a defect in our own pipeline was the most useful finding.">
-<link rel="canonical" href="https://sksurrogate.com/blog/honest-benchmark.html">
-<meta property="og:title" content="An Honest Benchmark of My Own AutoML Package">
-<meta property="og:description" content="Where SKSurrogate beats Optuna-TPE, where it loses — and why the null results are the point.">
+<meta name="description" content="At equal evaluation budgets on six public datasets, surrogate-guided search does not beat Optuna-TPE on accuracy. What is real: the response surface matters more than the search mechanism.">
+<link rel="canonical" href="https://mghasemi.github.io/sksurrogate/blog/honest-benchmark/">
+<meta property="og:site_name" content="SKSurrogate">
+<meta property="og:locale" content="en_US">
 <meta property="og:type" content="article">
-<meta property="og:url" content="https://sksurrogate.com/blog/honest-benchmark.html">
-<meta property="article:published_time" content="2026-10-26">
-<meta property="article:author" content="Mehdi Ghasemi">
+<meta property="og:url" content="https://mghasemi.github.io/sksurrogate/blog/honest-benchmark/">
+<meta property="og:title" content="An Honest Benchmark of My Own AutoML Package — SKSurrogate">
+<meta property="og:description" content="At equal evaluation budgets on six public datasets, surrogate-guided search does not beat Optuna-TPE on accuracy. What is real: the response surface matters more than the search mechanism.">
+<meta property="og:image" content="https://mghasemi.github.io/sksurrogate/assets/og-card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="SKSurrogate — from raw dataset to deployed, drift-monitored model. MIT, pip install sksurrogate.">
 <meta name="twitter:card" content="summary_large_image">
-<link rel="icon" href="../assets/mark.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="../icons/icon-180.png">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Fira+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="../assets/page.css">
-<script>
-window.MathJax = {
-  tex: {inlineMath: [['$','$']], displayMath: [['$$','$$']]},
-  options: {skipHtmlTags: ['script','noscript','style','textarea','pre','code']}
-};
+<meta name="twitter:image" content="https://mghasemi.github.io/sksurrogate/assets/og-card.png">
+<link rel="icon" href="../../assets/mark.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../../icons/icon-180.png">
+<link rel="stylesheet" href="../../assets/site.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","mainEntityOfPage":"https://mghasemi.github.io/sksurrogate/blog/honest-benchmark/","headline":"An Honest Benchmark of My Own AutoML Package","description":"At equal evaluation budgets on six public datasets, surrogate-guided search does not beat Optuna-TPE on accuracy.","datePublished":"2026-10-26","author":{"@type":"Person","name":"Mehdi Ghasemi","url":"https://mghasemi.net"}}
 </script>
-<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
 </head>
-<body>
+<body class="sub">
 
 <header class="topbar">
-  <a class="brand" href="../"><img src="../assets/mark.svg" alt="">SKSurrogate</a>
+  <a class="brand" href="../../"><img src="../../assets/mark.svg" alt="">SKSurrogate</a>
   <nav>
-    <a href="../#product">Product</a>
-    <a href="../#evidence">Benchmarks</a>
-    <a href="index.html">Blog</a>
-    <a href="../about.html">About</a>
-    <a href="../cite.html">Citation</a>
-    <a href="../contact.html">Contact</a>
+    <a href="../../">Product</a>
+    <a href="../../benchmarks/">Benchmarks</a>
+    <a href="../../quickstart/">Quickstart</a>
+    <a href="../../blog/">Blog</a>
+    <a href="../../faq/">FAQ</a>
+    <a href="../../cite/">Cite</a>
+    <a href="../../about/">About</a>
     <a href="https://sksurrogate.readthedocs.io/en/latest/intro.html" target="_blank" rel="noopener">Docs ↗</a>
+    <a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a>
   </nav>
 </header>
 
 <main class="wrap">
-  <div class="crumb"><a href="../">sksurrogate</a><span>/</span><a href="index.html">blog</a><span>/</span> honest benchmark</div>
-  <h1>An Honest Benchmark of My Own AutoML Package</h1>
+<h1>An Honest Benchmark of My Own AutoML Package</h1>
   <p class="lede">Where SKSurrogate beats Optuna-TPE, where it loses — and why the null results are
     the point.</p>
   <div class="byline">Mehdi Ghasemi · 26 October 2026 · benchmarks</div>
@@ -248,28 +250,31 @@ python -m benchmarks.dtrack.d2_compare                  # the regime-map study</
     <p style="font-size:13px;color:var(--faint)">This post is also kept in the repository at
       <a href="https://github.com/mghasemi/sksurrogate/blob/master/docs/blog-honest-benchmark.md" target="_blank" rel="noopener">docs/blog-honest-benchmark.md</a>.
       If you use the benchmark numbers, cite the archived records — see
-      <a href="../cite.html">citation</a>.</p>
+      <a href="../../cite/">citation</a>.</p>
   </div>
 </main>
 
-<footer class="footer">
+<footer class="subfooter">
   <div>
     <h5>Project</h5>
     <ul>
       <li><a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a></li>
-      <li><a href="https://github.com/mghasemi/sksurrogate/blob/master/benchmarks/DESIGN.md" target="_blank" rel="noopener">Protocol contract ↗</a></li>
       <li><a href="https://pypi.org/project/sksurrogate/" target="_blank" rel="noopener">PyPI ↗</a></li>
       <li><a href="https://sksurrogate.readthedocs.io/en/latest/" target="_blank" rel="noopener">Documentation ↗</a></li>
+      <li><a href="https://github.com/mghasemi/sksurrogate/blob/master/CHANGELOG.rst" target="_blank" rel="noopener">Changelog ↗</a></li>
     </ul>
   </div>
   <div>
     <h5>Site</h5>
     <ul>
-      <li><a href="../">Home</a></li>
-      <li><a href="index.html">Blog</a></li>
-      <li><a href="../about.html">About</a></li>
-      <li><a href="../cite.html">Citation</a></li>
-      <li><a href="../contact.html">Contact</a></li>
+      <li><a href="../../quickstart/">Quickstart</a></li>
+      <li><a href="../../benchmarks/">Benchmarks</a></li>
+      <li><a href="../../blog/">Blog</a></li>
+      <li><a href="../../faq/">FAQ</a></li>
+      <li><a href="../../cite/">Citation</a></li>
+      <li><a href="../../about/">About</a></li>
+      <li><a href="../../roadmap/">Roadmap</a></li>
+      <li><a href="../../contact/">Contact</a></li>
     </ul>
   </div>
   <div>
@@ -281,23 +286,9 @@ python -m benchmarks.dtrack.d2_compare                  # the regime-map study</
     </ul>
   </div>
 </footer>
-<div class="footline">
+<div class="subfootline">
   <span>© 2019–2026 Mehdi Ghasemi · MIT licence</span>
   <span>sksurrogate v0.3.0 · scikit-learn-native</span>
 </div>
-
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "BlogPosting",
-  "mainEntityOfPage": "https://sksurrogate.com/blog/honest-benchmark.html",
-  "headline": "An Honest Benchmark of My Own AutoML Package",
-  "description": "At equal evaluation budgets on six public datasets, surrogate-guided search does not beat Optuna-TPE on accuracy. What is real: the response surface matters more than the search mechanism.",
-  "datePublished": "2026-10-26",
-  "author": {"@type": "Person", "name": "Mehdi Ghasemi", "url": "https://mghasemi.net"},
-  "publisher": {"@type": "Person", "name": "Mehdi Ghasemi"},
-  "about": {"@type": "SoftwareApplication", "name": "SKSurrogate"}
-}
-</script>
 </body>
 </html>

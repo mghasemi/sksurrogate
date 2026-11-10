@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>About SKSurrogate</title>
+<meta name="description" content="What SKSurrogate is, what it deliberately is not, how it is developed, who maintains it, and the licence it ships under.">
+<link rel="canonical" href="https://mghasemi.github.io/sksurrogate/about/">
+<meta property="og:site_name" content="SKSurrogate">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://mghasemi.github.io/sksurrogate/about/">
+<meta property="og:title" content="About SKSurrogate">
+<meta property="og:description" content="What SKSurrogate is, what it deliberately is not, how it is developed, who maintains it, and the licence it ships under.">
+<meta property="og:image" content="https://mghasemi.github.io/sksurrogate/assets/og-card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="SKSurrogate — from raw dataset to deployed, drift-monitored model. MIT, pip install sksurrogate.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://mghasemi.github.io/sksurrogate/assets/og-card.png">
+<link rel="icon" href="../assets/mark.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../icons/icon-180.png">
+<link rel="stylesheet" href="../assets/site.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","@id":"https://mghasemi.github.io/sksurrogate/about/","url":"https://mghasemi.github.io/sksurrogate/about/","name":"About SKSurrogate","isPartOf":{"@id":"https://mghasemi.github.io/sksurrogate/#website"}}
+</script>
+</head>
+<body class="sub">
+
+<header class="topbar">
+  <a class="brand" href="../"><img src="../assets/mark.svg" alt="">SKSurrogate</a>
+  <nav>
+    <a href="../">Product</a>
+    <a href="../benchmarks/">Benchmarks</a>
+    <a href="../quickstart/">Quickstart</a>
+    <a href="../blog/">Blog</a>
+    <a href="../faq/">FAQ</a>
+    <a href="../cite/">Cite</a>
+    <a href="../about/">About</a>
+    <a href="https://sksurrogate.readthedocs.io/en/latest/intro.html" target="_blank" rel="noopener">Docs ↗</a>
+    <a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a>
+  </nav>
+</header>
+
+<main class="wrap">
+<div class="crumb"><a href="../">sksurrogate</a><span>/</span>about</div>
+      <h1>About SKSurrogate</h1>
+      <p class="lede">Software you can audit, not just install: an open-source,
+        scikit-learn-native environment for optimizing expensive objectives, where every number it
+        reports is traceable to a protocol, a seed and an archived record.</p>
+      <p class="chiprow"><span class="chip">MIT licence</span>
+        <span class="chip">Python 3 · scikit-learn</span>
+        <span class="chip">v0.3.0</span>
+        <span class="chip">open development</span></p>
+      <div class="prose">
+        <h2>What it is</h2>
+        <p>SKSurrogate implements surrogate-guided optimization for objectives that are expensive
+          to evaluate: each evaluation costs minutes rather than milliseconds, so the question is
+          not how many candidates you can try but how much you learn from each one. The package
+          builds a response surface over the space you have sampled, then uses that surface to
+          decide where to spend the next evaluation.</p>
+        <p>Around that core it provides the machinery a research or production workflow needs:
+          dataset registration with identity, a drop-in <code>BaseSearchCV</code> tuner, statistical
+          evaluation with nested cross-validation and conformal intervals, sensitivity and
+          dependence analysis, experiment design for expensive runs, a control plane that executes
+          and logs searches, and a research workspace that keeps each claim attached to the
+          evidence that supports it.</p>
+
+        <h2>What it is not</h2>
+        <div class="prose">
+          <p><strong>Not a managed cloud service.</strong> Self-hosted and single-machine by
+            design — local API or one compose profile. If you need multi-node training or GPU
+            fleets, that is a different category of tool.</p>
+          <p><strong>No LLM magic in the box.</strong> The shipped tooling is deterministic. A
+            bounded, opt-in cited-note synthesis (your endpoint, aggregate facts only, enforced
+            citations) already runs inside it; a conversational research assistant is roadmap, not
+            this release.</p>
+          <p><strong>Not a black-box AutoML zoo.</strong> The search space is your pipeline plus
+            the ranges you declare, and every evaluation is recorded — results are auditable
+            artifacts, not opaque picks from a fixed model zoo.</p>
+        </div>
+        <p>What is dated and gated lives on the <a href="../roadmap/">roadmap</a>.</p>
+
+        <h2>How it is developed</h2>
+        <p>Development happens in the open on
+          <a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub</a>.
+          The benchmark suite is part of the repository, not a marketing appendix: a frozen protocol
+          contract, pre-registered hypotheses with explicit falsifiers, and raw run records archived
+          with DOIs so a reader can check the advertised results without rerunning anything.</p>
+        <p>That has two consequences. The changelog is public and versioned, documentation lives at a
+          stable address on Read the Docs instead of being regenerated per release, and when the
+          data says the package does not beat a baseline, that gets published too — see
+          <a href="../blog/honest-benchmark/">the honest benchmark post</a>.</p>
+
+        <h2>Who maintains it</h2>
+        <p>SKSurrogate is written and maintained by <strong>Mehdi Ghasemi</strong>, a
+          scientist-mathematician. Contact is by email or through the issue tracker — see
+          <a href="../contact/">contact</a>. There is no support contract and no service-level agreement
+          attached to the project; it is maintained software, not a hosted product.</p>
+        <p class="mono" style="font-size:11px">
+          <a href="https://github.com/mghasemi" target="_blank" rel="noopener">GitHub ↗</a> ·
+          <a href="https://scholar.google.com/citations?user=1PlVtHsAAAAJ" target="_blank" rel="noopener">Google Scholar ↗</a> ·
+          <a href="https://orcid.org/0000-0002-9551-1780" target="_blank" rel="noopener">ORCID ↗</a> ·
+          <a href="https://mghasemi.net" target="_blank" rel="noopener">mghasemi.net ↗</a></p>
+
+        <h2>Licence</h2>
+        <p>SKSurrogate is released under the <strong>MIT licence</strong>. You may use it
+          commercially, modify it and redistribute it, provided the copyright notice and permission
+          notice are retained. The canonical wording is the
+          <a href="https://opensource.org/license/mit" target="_blank" rel="noopener">MIT licence</a>.</p>
+      </div>
+</main>
+
+<footer class="subfooter">
+  <div>
+    <h5>Project</h5>
+    <ul>
+      <li><a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a></li>
+      <li><a href="https://pypi.org/project/sksurrogate/" target="_blank" rel="noopener">PyPI ↗</a></li>
+      <li><a href="https://sksurrogate.readthedocs.io/en/latest/" target="_blank" rel="noopener">Documentation ↗</a></li>
+      <li><a href="https://github.com/mghasemi/sksurrogate/blob/master/CHANGELOG.rst" target="_blank" rel="noopener">Changelog ↗</a></li>
+    </ul>
+  </div>
+  <div>
+    <h5>Site</h5>
+    <ul>
+      <li><a href="../quickstart/">Quickstart</a></li>
+      <li><a href="../benchmarks/">Benchmarks</a></li>
+      <li><a href="../blog/">Blog</a></li>
+      <li><a href="../faq/">FAQ</a></li>
+      <li><a href="../cite/">Citation</a></li>
+      <li><a href="../about/">About</a></li>
+      <li><a href="../roadmap/">Roadmap</a></li>
+      <li><a href="../contact/">Contact</a></li>
+    </ul>
+  </div>
+  <div>
+    <h5>Maintainer</h5>
+    <ul>
+      <li><a href="https://mghasemi.net" target="_blank" rel="noopener">mghasemi.net ↗</a></li>
+      <li><a href="mailto:mehdi.ghasemi@gmail.com">mehdi.ghasemi@gmail.com</a></li>
+      <li><a href="https://orcid.org/0000-0002-9551-1780" target="_blank" rel="noopener">ORCID ↗</a></li>
+    </ul>
+  </div>
+</footer>
+<div class="subfootline">
+  <span>© 2019–2026 Mehdi Ghasemi · MIT licence</span>
+  <span>sksurrogate v0.3.0 · scikit-learn-native</span>
+</div>
+</body>
+</html>

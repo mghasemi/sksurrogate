@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SKSurrogate in five minutes — SKSurrogate</title>
+<meta name="description" content="Install SKSurrogate, run a surrogate-guided search over an SVM's hyperparameters, and switch to automatic pipeline design with AML — from the project readme.">
+<link rel="canonical" href="https://mghasemi.github.io/sksurrogate/quickstart/">
+<meta property="og:site_name" content="SKSurrogate">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://mghasemi.github.io/sksurrogate/quickstart/">
+<meta property="og:title" content="SKSurrogate in five minutes — SKSurrogate">
+<meta property="og:description" content="Install SKSurrogate, run a surrogate-guided search over an SVM's hyperparameters, and switch to automatic pipeline design with AML — from the project readme.">
+<meta property="og:image" content="https://mghasemi.github.io/sksurrogate/assets/og-card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="SKSurrogate — from raw dataset to deployed, drift-monitored model. MIT, pip install sksurrogate.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://mghasemi.github.io/sksurrogate/assets/og-card.png">
+<link rel="icon" href="../assets/mark.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../icons/icon-180.png">
+<link rel="stylesheet" href="../assets/site.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","@id":"https://mghasemi.github.io/sksurrogate/quickstart/","url":"https://mghasemi.github.io/sksurrogate/quickstart/","name":"SKSurrogate in five minutes","isPartOf":{"@id":"https://mghasemi.github.io/sksurrogate/#website"}}
+</script>
+</head>
+<body class="sub">
+
+<header class="topbar">
+  <a class="brand" href="../"><img src="../assets/mark.svg" alt="">SKSurrogate</a>
+  <nav>
+    <a href="../">Product</a>
+    <a href="../benchmarks/">Benchmarks</a>
+    <a href="../quickstart/">Quickstart</a>
+    <a href="../blog/">Blog</a>
+    <a href="../faq/">FAQ</a>
+    <a href="../cite/">Cite</a>
+    <a href="../about/">About</a>
+    <a href="https://sksurrogate.readthedocs.io/en/latest/intro.html" target="_blank" rel="noopener">Docs ↗</a>
+    <a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a>
+  </nav>
+</header>
+
+<main class="wrap">
+<div class="crumb"><a href="../">sksurrogate</a><span>/</span>quickstart</div>
+      <h1>SKSurrogate in five minutes</h1>
+      <p class="lede"><code>SurrogateRandomCV</code> is a drop-in for
+        <code>RandomizedSearchCV</code>; ranges are written as plain tuples (integers or floats)
+        and lists (categorical values).</p>
+      <div class="prose">
+        <h2>Install</h2>
+        <pre><code>pip install sksurrogate</code></pre>
+        <p>The package requires Python 3.10 or newer and ships the search layer on top of
+          scikit-learn. Nothing else is needed for the tuner; the control plane runs from a
+          compose profile when you want it.</p>
+
+        <h2>Optimize a model</h2>
+        <pre><code>from sklearn.svm import SVC
+from SKSurrogate import SurrogateRandomCV
+
+search = SurrogateRandomCV(
+    SVC(),
+    param_distributions={"C": (1e-3, 10.0), "kernel": ["poly", "rbf"], "degree": (1, 4)},
+    n_iter=30,
+).fit(X, y)
+search.best_params_, search.best_score_</code></pre>
+        <p>The object is a <code>BaseSearchCV</code> subclass, so <code>best_params_</code>,
+          <code>best_score_</code>, <code>cv_results_</code>, refitting and scoring behave as they
+          do in scikit-learn — adopting it changes one import, not your codebase. Every candidate
+          evaluation is recorded, so the result is an artifact you can inspect rather than a single
+          returned winner.</p>
+
+        <h2>Automatic pipeline design</h2>
+        <pre><code>from SKSurrogate import AML
+
+AML(preset="classification").fit(X, y)</code></pre>
+        <p><code>AML(preset="regression")</code> covers the regression case and needs no search
+          configuration. For pandas DataFrames the preset fits numeric, categorical, datetime and
+          text preprocessing inside each cross-validation fold when <code>cat_cols</code> is
+          omitted; array-like inputs should already be numeric. <code>fit(X, y, strategy="eoa")</code>
+          selects evolutionary search.</p>
+
+        <h2>Where to go next</h2>
+        <ul>
+          <li><a href="https://sksurrogate.readthedocs.io/en/latest/surrogate.html" target="_blank" rel="noopener">Surrogate search guide ↗</a>
+            — strategies, acquisition, and how the response surface is fitted.</li>
+          <li><a href="https://sksurrogate.readthedocs.io/en/latest/dataproc.html" target="_blank" rel="noopener">Preprocessing guide ↗</a>
+            — how presets build fold-local preprocessing.</li>
+          <li><a href="https://sksurrogate.readthedocs.io/en/latest/controlplane.html" target="_blank" rel="noopener">Control plane ↗</a>
+            — the API, the UI and the compose profile on port 8013.</li>
+          <li><a href="../benchmarks/">Benchmarks</a> — what the search claims, and where it does not win.</li>
+        </ul>
+      </div>
+</main>
+
+<footer class="subfooter">
+  <div>
+    <h5>Project</h5>
+    <ul>
+      <li><a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a></li>
+      <li><a href="https://pypi.org/project/sksurrogate/" target="_blank" rel="noopener">PyPI ↗</a></li>
+      <li><a href="https://sksurrogate.readthedocs.io/en/latest/" target="_blank" rel="noopener">Documentation ↗</a></li>
+      <li><a href="https://github.com/mghasemi/sksurrogate/blob/master/CHANGELOG.rst" target="_blank" rel="noopener">Changelog ↗</a></li>
+    </ul>
+  </div>
+  <div>
+    <h5>Site</h5>
+    <ul>
+      <li><a href="../quickstart/">Quickstart</a></li>
+      <li><a href="../benchmarks/">Benchmarks</a></li>
+      <li><a href="../blog/">Blog</a></li>
+      <li><a href="../faq/">FAQ</a></li>
+      <li><a href="../cite/">Citation</a></li>
+      <li><a href="../about/">About</a></li>
+      <li><a href="../roadmap/">Roadmap</a></li>
+      <li><a href="../contact/">Contact</a></li>
+    </ul>
+  </div>
+  <div>
+    <h5>Maintainer</h5>
+    <ul>
+      <li><a href="https://mghasemi.net" target="_blank" rel="noopener">mghasemi.net ↗</a></li>
+      <li><a href="mailto:mehdi.ghasemi@gmail.com">mehdi.ghasemi@gmail.com</a></li>
+      <li><a href="https://orcid.org/0000-0002-9551-1780" target="_blank" rel="noopener">ORCID ↗</a></li>
+    </ul>
+  </div>
+</footer>
+<div class="subfootline">
+  <span>© 2019–2026 Mehdi Ghasemi · MIT licence</span>
+  <span>sksurrogate v0.3.0 · scikit-learn-native</span>
+</div>
+</body>
+</html>

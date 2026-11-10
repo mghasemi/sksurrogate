@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Honest benchmark: surrogate search vs TPE at small budgets — SKSurrogate</title>
+<meta name="description" content="Equal-budget comparison of SKSurrogate's surrogate-guided search against Optuna-TPE, random search and a no-surrogate ablation on six public datasets, with the raw-data DOI.">
+<link rel="canonical" href="https://mghasemi.github.io/sksurrogate/benchmarks/">
+<meta property="og:site_name" content="SKSurrogate">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://mghasemi.github.io/sksurrogate/benchmarks/">
+<meta property="og:title" content="Honest benchmark: surrogate search vs TPE at small budgets — SKSurrogate">
+<meta property="og:description" content="Equal-budget comparison of SKSurrogate's surrogate-guided search against Optuna-TPE, random search and a no-surrogate ablation on six public datasets, with the raw-data DOI.">
+<meta property="og:image" content="https://mghasemi.github.io/sksurrogate/assets/og-card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="SKSurrogate — from raw dataset to deployed, drift-monitored model. MIT, pip install sksurrogate.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://mghasemi.github.io/sksurrogate/assets/og-card.png">
+<link rel="icon" href="../assets/mark.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../icons/icon-180.png">
+<link rel="stylesheet" href="../assets/site.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"WebPage","@id":"https://mghasemi.github.io/sksurrogate/benchmarks/","url":"https://mghasemi.github.io/sksurrogate/benchmarks/","name":"Honest benchmark: surrogate search vs TPE at small budgets","isPartOf":{"@id":"https://mghasemi.github.io/sksurrogate/#website"}}
+</script>
+</head>
+<body class="sub">
+
+<header class="topbar">
+  <a class="brand" href="../"><img src="../assets/mark.svg" alt="">SKSurrogate</a>
+  <nav>
+    <a href="../">Product</a>
+    <a href="../benchmarks/">Benchmarks</a>
+    <a href="../quickstart/">Quickstart</a>
+    <a href="../blog/">Blog</a>
+    <a href="../faq/">FAQ</a>
+    <a href="../cite/">Cite</a>
+    <a href="../about/">About</a>
+    <a href="https://sksurrogate.readthedocs.io/en/latest/intro.html" target="_blank" rel="noopener">Docs ↗</a>
+    <a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a>
+  </nav>
+</header>
+
+<main class="wrap">
+<div class="crumb"><a href="../">sksurrogate</a><span>/</span>benchmarks</div>
+      <h1>Honest benchmark: surrogate search vs TPE at small budgets</h1>
+      <p class="lede">Equal evaluation budgets, six public datasets, seven seeds per cell. TPE is
+        top on five of six; the interesting result is which response surface you fit.</p>
+      <div class="prose">
+        <p>All methods optimize the <em>same</em> estimator
+          (<code>StandardScaler → RandomForestClassifier(50)</code>) over the <em>same</em> shared
+          discrete grid (224 configurations across 3 parameters), with stratified 5-fold CV inside
+          every search and one shared held-out 80/20 outer split per dataset-seed. Budgets are
+          measured in <strong>candidate-model evaluations</strong> — a hardware-independent
+          currency. Seven seeds per cell; 6 datasets from OpenML (pinned by <code>did</code>) plus
+          one bundled synthetic set, B = 30 and B = 60 evaluations.</p>
+
+        <table>
+          <thead><tr><th>Arm</th><th>What it is</th></tr></thead>
+          <tbody>
+            <tr><td>SRS + RBF-GP</td><td>The package's search with its v0.2 default surface (stock un-tuned <code>GaussianProcessRegressor</code>)</td></tr>
+            <tr><td>SRS, no surrogate</td><td>Identical outer loop, surrogate never engages — the ablation that isolates the surrogate's contribution</td></tr>
+            <tr><td>random / Optuna-TPE</td><td>Uniform sampling and TPE as the standard baselines (<code>scikit-optimize</code> is archived upstream; recorded as “not runnable” rather than silently dropped)</td></tr>
+          </tbody>
+        </table>
+
+        <h2>Mean final CV accuracy, B = 30</h2>
+        <table>
+          <thead><tr><th>dataset</th><th class="num">SRS + RBF-GP</th><th class="num">no surrogate</th><th class="num">random</th><th class="num">Optuna-TPE</th></tr></thead>
+          <tbody>
+            <tr><td>arrhythmia</td><td class="num">0.7020</td><td class="num">0.6910</td><td class="num">0.6941</td><td class="num"><b>0.7036</b></td></tr>
+            <tr><td>credit-g</td><td class="num">0.7423</td><td class="num">0.7391</td><td class="num">0.7405</td><td class="num"><b>0.7436</b></td></tr>
+            <tr><td>galaxy3</td><td class="num">0.6473</td><td class="num">0.6448</td><td class="num">0.6484</td><td class="num"><b>0.6507</b></td></tr>
+            <tr><td>ionosphere</td><td class="num"><b>0.9352</b></td><td class="num">0.9347</td><td class="num">0.9347</td><td class="num">0.9337</td></tr>
+            <tr><td>optdigits</td><td class="num">0.9403</td><td class="num">0.9392</td><td class="num">0.9380</td><td class="num"><b>0.9405</b></td></tr>
+            <tr><td>spambase</td><td class="num">0.9280</td><td class="num">0.9269</td><td class="num">0.9272</td><td class="num"><b>0.9286</b></td></tr>
+          </tbody>
+        </table>
+        <p>TPE is top on five of six datasets, and the whole table spans roughly half a point — a
+          RandomForest(50) over three parameters is a flat landscape where no search method
+          separates. On four of six datasets, uniform random reaches its own near-best in as few as
+          2 evaluations.</p>
+
+        <h2>The caveat, in full</h2>
+        <p>Seven seeds per cell; budgets of 30–60 evaluations; the fixed-pipeline suite's space is
+          only three parameters wide; D-track objectives are smooth and low-dimensional
+          ($d \le 3$); the wall-clock arm uses a different currency (seconds, hardware-dependent)
+          and is explicitly <em>not</em> comparable to the evaluation-count tables. These are
+          small-budget results, and TPE remains competitive. SKSurrogate's edge is in stability,
+          surface quality and evidence — not a universal accuracy crown.</p>
+
+        <h2>Reproduce it</h2>
+        <pre><code>pip install sksurrogate
+python -m benchmarks.run --dataset all --budget 30      # full five-method suite (~1–3 h laptop-scale)
+python -m benchmarks.dtrack.d2_compare                  # the regime-map study</code></pre>
+        <ul>
+          <li>Protocol contract + errata history:
+            <a href="https://github.com/mghasemi/sksurrogate/blob/master/benchmarks/DESIGN.md" target="_blank" rel="noopener">benchmarks/DESIGN.md</a></li>
+          <li>Raw B=30/B=60 records (462 runs):
+            <a href="https://doi.org/10.5281/zenodo.23629024" target="_blank" rel="noopener">10.5281/zenodo.23629024</a></li>
+          <li>D-track raw data + report:
+            <a href="https://doi.org/10.5281/zenodo.23652613" target="_blank" rel="noopener">10.5281/zenodo.23652613</a></li>
+          <li>Full write-up: <a href="../blog/honest-benchmark/">An Honest Benchmark of My Own AutoML Package</a></li>
+        </ul>
+      </div>
+</main>
+
+<footer class="subfooter">
+  <div>
+    <h5>Project</h5>
+    <ul>
+      <li><a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a></li>
+      <li><a href="https://pypi.org/project/sksurrogate/" target="_blank" rel="noopener">PyPI ↗</a></li>
+      <li><a href="https://sksurrogate.readthedocs.io/en/latest/" target="_blank" rel="noopener">Documentation ↗</a></li>
+      <li><a href="https://github.com/mghasemi/sksurrogate/blob/master/CHANGELOG.rst" target="_blank" rel="noopener">Changelog ↗</a></li>
+    </ul>
+  </div>
+  <div>
+    <h5>Site</h5>
+    <ul>
+      <li><a href="../quickstart/">Quickstart</a></li>
+      <li><a href="../benchmarks/">Benchmarks</a></li>
+      <li><a href="../blog/">Blog</a></li>
+      <li><a href="../faq/">FAQ</a></li>
+      <li><a href="../cite/">Citation</a></li>
+      <li><a href="../about/">About</a></li>
+      <li><a href="../roadmap/">Roadmap</a></li>
+      <li><a href="../contact/">Contact</a></li>
+    </ul>
+  </div>
+  <div>
+    <h5>Maintainer</h5>
+    <ul>
+      <li><a href="https://mghasemi.net" target="_blank" rel="noopener">mghasemi.net ↗</a></li>
+      <li><a href="mailto:mehdi.ghasemi@gmail.com">mehdi.ghasemi@gmail.com</a></li>
+      <li><a href="https://orcid.org/0000-0002-9551-1780" target="_blank" rel="noopener">ORCID ↗</a></li>
+    </ul>
+  </div>
+</footer>
+<div class="subfootline">
+  <span>© 2019–2026 Mehdi Ghasemi · MIT licence</span>
+  <span>sksurrogate v0.3.0 · scikit-learn-native</span>
+</div>
+</body>
+</html>
