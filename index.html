@@ -18,8 +18,8 @@
 <!-- og:image: design dir hero-surface-ink.png, shipped as assets/hero-surface-ink.png (per HANDOFF Task B) -->
 <meta property="og:image" content="https://sksurrogate.com/assets/hero-surface-ink.png">
 <meta name="twitter:card" content="summary_large_image">
-<link rel="icon" href="/assets/mark.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="/icons/icon-180.png">
+<link rel="icon" href="assets/mark.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Fira+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root{--bg:#0B0F14;--panel:#0F141B;--panel2:#131A22;--line:rgba(235,238,245,.13);--line2:rgba(235,238,245,.26);
@@ -173,6 +173,46 @@ pre.codeblock .p{color:var(--ember)}
 .footer .ledecol p{color:var(--dim);font-size:13.5px;margin-top:14px;max-width:34ch}
 .footline{display:flex;justify-content:space-between;padding:22px 56px;border-top:1px solid var(--line);font-family:"Fira Mono",monospace;font-size:11px;color:var(--faint);letter-spacing:.08em}
 </style>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://sksurrogate.com/#software",
+      "name": "SKSurrogate",
+      "alternateName": "sksurrogate",
+      "description": "An end-to-end scientific MLOps environment built on scikit-learn: surrogate-based optimization of expensive objectives, statistical evaluation with nested cross-validation and conformal intervals, sensitivity and dependence analysis, experiment design, and a research workspace that tracks evidence.",
+      "url": "https://sksurrogate.com/",
+      "applicationCategory": "DeveloperApplication",
+      "applicationSubCategory": "Machine learning tooling",
+      "operatingSystem": "Linux, macOS, Windows",
+      "softwareVersion": "0.3.0",
+      "programmingLanguage": "Python",
+      "license": "https://opensource.org/license/mit",
+      "isAccessibleForFree": true,
+      "codeRepository": "https://github.com/mghasemi/sksurrogate",
+      "downloadUrl": "https://pypi.org/project/sksurrogate/",
+      "author": {"@id": "https://sksurrogate.com/#author"},
+      "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}
+    },
+    {
+      "@type": "Person",
+      "@id": "https://sksurrogate.com/#author",
+      "name": "Mehdi Ghasemi",
+      "url": "https://mghasemi.net",
+      "sameAs": ["https://orcid.org/0000-0002-9551-1780", "https://github.com/mghasemi"]
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://sksurrogate.com/#website",
+      "url": "https://sksurrogate.com/",
+      "name": "SKSurrogate",
+      "publisher": {"@id": "https://sksurrogate.com/#author"}
+    }
+  ]
+}
+</script>
 </head>
 <body id="top">
 
@@ -589,15 +629,18 @@ search.best_params_, search.best_score_</pre>
     <!-- RTD intro + controlplane verified 200 at build time -->
     <li><a href="https://sksurrogate.readthedocs.io/en/latest/intro.html" target="_blank" rel="noopener">Documentation ↗</a></li>
     <li><a href="https://sksurrogate.readthedocs.io/en/latest/controlplane.html" target="_blank" rel="noopener">Control plane ↗</a></li>
-    <li><a href="https://github.com/mghasemi/sksurrogate/blob/master/docs/blog-honest-benchmark.md" target="_blank" rel="noopener">Honest benchmark post ↗</a></li>
+    <li><a href="blog/index.html">Blog</a></li>
+    <li><a href="blog/honest-benchmark.html">Honest benchmark post</a></li>
   </ul></div>
   <div><h5>Project</h5><ul>
-    <!-- README/CITATION.cff/LICENSE on master; v0.3.0 cut ships the PDF manual as a Release asset -->
+    <!-- CITATION.cff/README on master; v0.3.0 cut ships the PDF manual as a Release asset -->
     <li><a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a></li>
-    <li><a href="https://github.com/mghasemi/sksurrogate/blob/master/CITATION.cff" target="_blank" rel="noopener">Citation (CITATION.cff) ↗</a></li>
+    <li><a href="cite.html">Citation</a></li>
     <li><a href="https://github.com/mghasemi/sksurrogate/blob/master/CHANGELOG.rst" target="_blank" rel="noopener">Changelog ↗</a></li>
+    <li><a href="about.html">About</a></li>
+    <li><a href="contact.html">Contact</a></li>
   </ul></div>
-  <div class="ledecol"><h5>Maintainer</h5><p style="font-size:13.5px;color:var(--dim)">Mehdi Ghasemi — senior scientist-mathematician.<br><a href="https://mghasemi.net" target="_blank" rel="noopener">mghasemi.net ↗</a></p></div>
+  <div class="ledecol"><h5>Maintainer</h5><p style="font-size:13.5px;color:var(--dim)">Mehdi Ghasemi — senior scientist-mathematician.<br><a href="mailto:mehdi.ghasemi@gmail.com">mehdi.ghasemi@gmail.com</a><br><a href="https://mghasemi.net" target="_blank" rel="noopener">mghasemi.net ↗</a></p></div>
   <div class="ledecol"><h5>sksurrogate</h5>
     <!-- positioning line: LAUNCH_PLAN.md §1 (Option A) -->
     <p>An end-to-end scientific MLOps environment: surrogate-based optimization, statistical evaluation and evidence-tracked research — from dataset registration to deployed, drift-monitored models. Built on scikit-learn.</p>
