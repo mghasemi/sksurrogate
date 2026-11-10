@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="en">
+<head>
+<!-- ============================================================================
+  SKSurrogate — product page (single static file + assets/)
+  Source of truth for copy: Atelier/designs/sksurrogate/{HANDOFF-website.md,
+  content-plan.md, brand.md}; every figure/number carries an inline source
+  comment. Launch version constant: v0.3.0 (see strip + hero meta).
+============================================================================ -->
+<meta charset="utf-8">
+<title>SKSurrogate — end-to-end scientific MLOps environment</title>
+<meta name="description" content="One open-source tool from dataset registration to deployed, monitored models — surrogate-based optimization, statistical evaluation (nested CV + conformal intervals), sensitivity analysis, experiment design for expensive runs, and a research workspace that tracks evidence. Built on scikit-learn; drop-in BaseSearchCV tuner included.">
+<link rel="canonical" href="https://sksurrogate.com/">
+<meta property="og:title" content="SKSurrogate — end-to-end scientific MLOps environment">
+<meta property="og:description" content="From raw dataset to deployed, drift-monitored model — in one scikit-learn-native environment. Surrogate-based optimization with statistical proof. MIT open source.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://sksurrogate.com/">
+<!-- og:image: design dir hero-surface-ink.png, shipped as assets/hero-surface-ink.png (per HANDOFF Task B) -->
+<meta property="og:image" content="https://sksurrogate.com/assets/hero-surface-ink.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/assets/mark.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icons/icon-180.png">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Fira+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0B0F14;--panel:#0F141B;--panel2:#131A22;--line:rgba(235,238,245,.13);--line2:rgba(235,238,245,.26);
+      --ink:#E7ECF4;--dim:rgba(231,236,244,.62);--faint:rgba(231,236,244,.40);
+      --ultra:#8AA5FF;--teal:#4FB3BF;--ember:#E07A3C}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--ink);font-family:"Inter",system-ui,sans-serif;font-size:15px;line-height:1.6;width:1440px;margin:0 auto;overflow-x:hidden}
+.mono{font-family:"Fira Mono","SF Mono",Menlo,monospace;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+a{color:inherit;text-decoration:none}
+section[id],[id]{scroll-margin-top:76px}
+
+/* strip + nav */
+.strip{display:flex;justify-content:space-between;align-items:center;padding:14px 56px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--dim)}
+.strip b{color:var(--ink);font-weight:500}
+.strip .dot{display:inline-block;width:7px;height:7px;border-radius:4px;background:var(--ember);margin-right:8px;vertical-align:1px}
+.strip nav a{margin-left:22px;color:var(--dim)}
+.strip nav a:hover{color:var(--ink)}
+.nav{display:flex;justify-content:space-between;align-items:center;padding:16px 56px;border-bottom:1px solid var(--line);position:relative}
+.brand{display:flex;gap:12px;align-items:center;font-weight:600;letter-spacing:-.01em;font-size:17px}
+.nav .links{display:flex;gap:30px;font-size:14px;color:var(--dim)}
+.nav .links a:hover{color:var(--ink)}
+.btn{background:var(--ember);color:#170B04;font-weight:600;padding:9px 18px;border-radius:8px;font-size:14px;display:inline-block}
+
+/* hero */
+.hero{display:grid;grid-template-columns:minmax(0,540px) 1fr;gap:64px;padding:92px 56px 84px;align-items:center}
+.eyebrow{display:flex;align-items:center;gap:10px;margin-bottom:26px}
+.eyebrow .bar{width:26px;height:3px;background:var(--ember);border-radius:2px}
+h1{font-family:"Inter Display","Inter",sans-serif;font-weight:300;font-size:50px;line-height:1.08;letter-spacing:-.03em;margin-bottom:24px}
+h1 em{font-style:normal;color:var(--ultra)}
+.lede{color:var(--dim);font-size:16px;max-width:52ch;margin-bottom:30px}
+.cta-row{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:22px}
+.doc-link{color:var(--dim);border-bottom:1px solid var(--line2);padding-bottom:2px;font-size:14px}
+.doc-link:hover{color:var(--ink)}
+.hero .meta{margin-top:30px;display:flex;gap:18px;font-size:11.5px;color:var(--faint)}
+.copy{display:flex;align-items:center;gap:12px;background:#0D1219;border:1px solid var(--line);border-radius:10px;padding:12px 16px;font-family:"Fira Mono",monospace;font-size:13px;color:var(--ink)}
+.copy .sigil{color:var(--ember)}
+.copy kbd{font-family:"Fira Mono",monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);border:1px solid var(--line);border-radius:6px;padding:4px 9px;background:#0A0E13}
+.copy .sep{width:1px;height:18px;background:var(--line)}
+.chips{display:flex;flex-direction:column;gap:10px;margin-bottom:2px}
+.heroart{position:relative;border-radius:16px;overflow:hidden;background:#0A0E14;border:1px solid var(--line)}
+.heroart img{width:100%;height:auto;display:block}
+.tag{position:absolute;font-family:"Fira Mono",monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:rgba(235,238,245,.75);background:rgba(9,12,17,.72);border:1px solid rgba(235,238,245,.16);padding:6px 10px;border-radius:7px}
+.tag.tl{top:16px;left:16px}.tag.tr{top:16px;right:16px;color:var(--ember)}
+.tag.bl{bottom:16px;left:16px}.tag.br{bottom:16px;right:16px}
+
+/* capability rail */
+.rail{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.cell{padding:26px 30px;border-right:1px solid var(--line)}
+.cell:last-child{border-right:none}
+.cell .k{font-family:"Fira Mono",monospace;font-size:12px;letter-spacing:.14em;color:var(--ember);text-transform:uppercase;margin-bottom:8px}
+.cell p{color:var(--dim);font-size:13.5px}
+
+/* section head */
+.sechead{display:flex;justify-content:space-between;align-items:flex-end;padding:96px 56px 40px;gap:60px}
+h2{font-family:"Inter Display","Inter",sans-serif;font-weight:300;font-size:38px;line-height:1.15;letter-spacing:-.02em;max-width:24ch}
+h2 em{font-style:normal;color:var(--ultra)}
+.sechead .side{color:var(--dim);font-size:14px;max-width:36ch;text-align:right;padding-bottom:6px}
+
+/* two-layer loop */
+.loop{display:grid;grid-template-columns:minmax(0,520px) 1fr;gap:70px;padding:0 56px 20px;align-items:center}
+.loop p{color:var(--dim);margin-top:18px;font-size:15px}
+.diagram{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:30px}
+
+/* stages */
+.stages{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border-top:1px solid var(--line);margin-top:28px}
+.stage{background:var(--bg);padding:30px 26px 56px;min-height:300px}
+.stage .n{font-family:"Fira Mono",monospace;font-size:12px;color:var(--faint);letter-spacing:.14em;margin-bottom:14px}
+.stage h3{font-weight:500;font-size:16.5px;letter-spacing:-.01em;margin-bottom:18px}
+.stage ul{list-style:none;display:flex;flex-direction:column;gap:9px}
+.stage li{display:flex;justify-content:space-between;align-items:center;color:var(--dim);font-size:13.5px;border-top:1px solid var(--line);padding-top:9px}
+.stage li span{font-family:"Fira Mono",monospace;font-size:10.5px;color:var(--faint);letter-spacing:.04em;text-transform:none;white-space:nowrap;margin-left:12px}
+
+/* research workspace (S6) */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:36px;padding:0 56px}
+.panelcard{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;display:flex;flex-direction:column;gap:18px}
+.shot{position:relative;border-radius:10px;overflow:hidden;border:1px solid var(--line)}
+.shot img{width:100%;display:block;background:#fff}
+.shot .shotbar{font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);padding:8px 12px;border-bottom:1px solid var(--line)}
+.panelcard h4{font-weight:600;font-size:17px;letter-spacing:-.01em}
+.panelcard p{color:var(--dim);font-size:13.5px;line-height:1.65}
+
+/* explainability charts */
+.explain .grid2{display:grid;grid-template-columns:minmax(0,480px) 1fr;gap:70px;padding:0 56px;align-items:center}
+.figrow{display:grid;grid-template-columns:repeat(3,1fr);gap:26px;margin-top:44px}
+.fig{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px 20px 16px}
+.fig .cap{font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:16px;display:flex;justify-content:space-between;align-items:center}
+.bars{display:flex;gap:14%;height:92px;align-items:flex-end;padding:0 8%}
+.bar{width:17%;background:#1B2430;border-radius:5px 5px 0 0;position:relative;display:flex;justify-content:center}
+.bar i{display:block;width:62%;border-radius:4px 4px 0 0;background:#33415A}
+.bar.hi i{background:var(--ember)}
+.blabel{font-family:"Fira Mono",monospace;font-size:10.5px;color:var(--dim);margin-top:9px;text-align:center;letter-spacing:.06em}
+.bandrow{display:flex;flex-direction:column;gap:7px;height:92px;justify-content:center;position:relative}
+.band{height:8px;border-radius:3px;background:#2A3548;display:flex;align-items:center}
+.band i{height:100%;border-radius:3px;background:#55648A;width:var(--w)}
+.flag{font-family:"Fira Mono",monospace;font-size:9.5px;color:var(--ember);letter-spacing:.08em;position:absolute;right:-4px;top:-2px}
+
+/* product band */
+.band{display:grid;grid-template-columns:minmax(0,640px) 1fr;gap:70px;padding:0 56px 96px;align-items:center}
+.band .shotbar{border-radius:10px 10px 0 0;border-bottom:1px solid var(--line);font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);padding:9px 14px;background:#0D1219}
+.band img{width:100%;display:block;border-left:1px solid var(--line);border-right:1px solid var(--line)}
+.features li{list-style:none;display:flex;gap:18px;padding:17px 0;border-top:1px solid var(--line)}
+.features .k{font-family:"Fira Mono",monospace;font-size:12px;color:var(--ultra);letter-spacing:.1em;min-width:34px}
+.features b{display:block;font-weight:600;font-size:15px;margin-bottom:3px}
+.features p{color:var(--dim);font-size:13.5px}
+
+/* evidence */
+.tblwrap{margin:0 56px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}
+.tblwrap .tcap{padding:16px 22px;border-bottom:1px solid var(--line);font-family:"Fira Mono",monospace;font-size:11px;letter-spacing:.06em;color:var(--dim);text-transform:none}
+table.bench{width:100%;border-collapse:collapse;font-family:"Fira Mono",monospace;font-size:13px}
+table.bench th{text-align:right;font-weight:400;color:var(--faint);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;padding:12px 22px;border-bottom:1px solid var(--line)}
+table.bench th:first-child,table.bench td:first-child{text-align:left}
+table.bench td{padding:11px 22px;border-bottom:1px solid var(--line);color:var(--dim)}
+table.bench tr:last-child td{border-bottom:none}
+table.bench .best{color:var(--ultra);font-weight:500}
+.tblwrap .tfoot{padding:16px 22px;border-top:1px solid var(--line);color:var(--dim);font-size:13px;line-height:1.7;max-width:118ch;text-transform:none;font-family:"Inter",sans-serif;letter-spacing:normal}
+.evidgrid{display:grid;grid-template-columns:1fr 1fr;gap:36px;margin:36px 56px 0;align-items:start}
+.figpanel{border:1px solid var(--line);border-radius:14px;background:var(--panel);overflow:hidden;display:flex;flex-direction:column}
+.figpanel img{width:100%;display:block}
+.figpanel .fcap{padding:16px 20px;color:var(--dim);font-size:13px;line-height:1.65;border-top:1px solid var(--line)}
+.reproblock{border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:22px}
+.reproblock .lab{font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin-bottom:16px}
+.dochips{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px}
+.dochip{border:1px solid var(--line);border-radius:8px;padding:9px 13px;font-family:"Fira Mono",monospace;font-size:12px;color:var(--dim)}
+.dochip b{color:var(--ink);font-weight:500}
+.dochip:hover{border-color:var(--line2);color:var(--ink)}
+pre.codeblock{background:#0A0E13;border:1px solid var(--line);border-radius:10px;padding:16px 18px;font-family:"Fira Mono",monospace;font-size:12.5px;line-height:1.75;color:var(--dim);overflow-x:auto;position:relative}
+pre.codeblock .c{color:var(--faint)}
+pre.codeblock .p{color:var(--ember)}
+
+/* what-it's-not + comparison (S10/S11) */
+.notrows,.cmp{margin:0 56px;border-top:1px solid var(--line)}
+.nrow,.crown{display:flex;justify-content:space-between;gap:48px;padding:22px 4px;border-bottom:1px solid var(--line);align-items:baseline}
+.nrow .claim{font-size:15px;color:var(--ink);max-width:60ch;line-height:1.6}
+.nrow .claim b,.crown .claim b{font-weight:600}
+.nrow .src,.crown .src{font-family:"Fira Mono",monospace;font-size:10.5px;color:var(--faint);letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;padding-top:3px}
+.caveat{margin:20px 56px 0;color:var(--dim);font-size:13.5px;line-height:1.7;max-width:100ch}
+
+/* quick start */
+.qsgrid{display:grid;grid-template-columns:1fr 1fr;gap:36px;padding:0 56px 96px;align-items:start}
+.atlaunch{display:flex;flex-direction:column;gap:12px;margin-top:18px}
+.atchip{border:1px solid var(--line);border-radius:10px;padding:13px 16px;font-family:"Fira Mono",monospace;font-size:12px;color:var(--faint);letter-spacing:.05em;display:flex;justify-content:space-between}
+.atchip i{font-style:normal;color:var(--ember)}
+
+/* cta + footer */
+.cta{text-align:center;padding:96px 56px;border-top:1px solid var(--line)}
+.cta h2{margin:0 auto 18px;max-width:none}
+.cta p{color:var(--dim);max-width:56ch;margin:0 auto 34px;font-size:15.5px}
+.footer{display:grid;grid-template-columns:repeat(4,1fr) minmax(280px,1.4fr);gap:40px;padding:64px 56px;border-top:1px solid var(--line)}
+.footer h5{font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin-bottom:18px}
+.footer ul{list-style:none;display:flex;flex-direction:column;gap:10px;font-size:13.5px}
+.footer a{color:var(--dim)}
+.footer a:hover{color:var(--ink)}
+.footer .ledecol p{color:var(--dim);font-size:13.5px;margin-top:14px;max-width:34ch}
+.footline{display:flex;justify-content:space-between;padding:22px 56px;border-top:1px solid var(--line);font-family:"Fira Mono",monospace;font-size:11px;color:var(--faint);letter-spacing:.08em}
+</style>
+</head>
+<body id="top">
+
+<!-- ============================================================ S1 · STRIP -->
+<!-- VERSION (launch constant, per owner decision 2026-11-09): v0.3.0 — in progress;
+     bump this and the hero .meta together if it moves before launch. -->
+<div class="strip">
+  <div><span class="dot"></span><b>sksurrogate v0.3.0</b> · MIT licence · Python ≥ 3.10 · scikit-learn-native</div>
+  <!-- Manual: PDF is an untracked build artifact until the v0.3.0 cut ships it as a GitHub Release asset —
+       link to RTD for now; flip href to the release asset at launch (content-plan S1 ⚠). -->
+  <nav>
+    <a href="https://sksurrogate.readthedocs.io/en/latest/intro.html" target="_blank" rel="noopener">Docs ↗</a>
+    <a href="https://sksurrogate.readthedocs.io/en/latest/" target="_blank" rel="noopener">Manual ↗</a>
+    <a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a>
+  </nav>
+</div>
+
+<!-- ============================================================ NAV -->
+<nav class="nav">
+  <div class="brand">
+    <!-- mark.svg inlined (design dir assets/mark.svg; regenerating source make_mark.py) -->
+    <svg width="24" height="26.4" viewBox="0 0 120 132" fill="none"><defs><linearGradient id="m1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8AA5FF"/><stop offset=".42" stop-color="#5B7CFA"/><stop offset=".72" stop-color="#4FB3BF"/><stop offset="1" stop-color="#E07A3C"/></linearGradient></defs><g stroke="url(#m1)" stroke-width="6"><ellipse cx="60" cy="14" rx="40" ry="10.4"/><ellipse cx="60" cy="29.8" rx="35.4" ry="9.2"/><ellipse cx="60" cy="45.6" rx="31.2" ry="8.1"/><ellipse cx="60" cy="61.4" rx="27.3" ry="7.1"/><ellipse cx="60" cy="77.2" rx="23.6" ry="6.1"/><ellipse cx="60" cy="93" rx="20.3" ry="5.3"/></g><circle cx="60" cy="120" r="9" fill="#E07A3C"/></svg>
+    sksurrogate
+  </div>
+  <div class="links">
+    <a href="#product">Product</a>
+    <a href="#stages">Workflow</a>
+    <a href="#evidence">Benchmarks</a>
+    <a href="https://sksurrogate.readthedocs.io/en/latest/intro.html" target="_blank" rel="noopener">Docs</a>
+    <a href="https://sksurrogate.readthedocs.io/en/latest/" target="_blank" rel="noopener">Manual</a>
+  </div>
+  <a class="btn" href="#qs">Get started</a>
+</nav>
+
+<!-- ============================================================ S2 · HERO -->
+<!-- Headline: LAUNCH_PLAN.md §1 positioning (Option A, RESOLVED 2026-11-07).
+     Former mockup line demoted to secondary subhead per content-plan S2 ⚠. -->
+<section class="hero">
+  <div>
+    <div class="eyebrow"><span class="bar"></span><span class="mono">Scientific MLOps · open source</span></div>
+    <h1>From raw dataset to deployed, drift‑monitored model —<br><em>in one scikit‑learn‑native environment.</em></h1>
+    <!-- subhead: former mockup lede (verified claims, content-plan S2) -->
+    <p class="lede">Learn the surface before you spend another experiment. SKSurrogate searches hyperparameters and pipeline structure with a surrogate response surface — then proves the result: nested cross-validation, conformal intervals, Sobol and Morris sensitivity. From dataset registration to monitored deployment, every run keeps its data identity and evaluation record.</p>
+    <div class="chips">
+      <!-- pip line per content-plan S2 -->
+      <div class="copy"><span class="sigil">$</span><span id="pipcmd">pip install scikit-learn sksurrogate</span><span class="sep"></span><kbd data-copy-target="pipcmd" role="button" tabindex="0">Copy</kbd></div>
+      <!-- Docker line verified against docs/controlplane.rst (compose profile, port 8013) -->
+      <div class="copy"><span class="sigil">$</span><span id="dockercmd">docker compose --profile prod up -d</span><span class="sep"></span><kbd data-copy-target="dockercmd" role="button" tabindex="0">Copy</kbd></div>
+    </div>
+    <div class="cta-row">
+      <a class="btn" href="#qs">Get started</a>
+      <a class="doc-link" href="https://sksurrogate.readthedocs.io/en/latest/intro.html" target="_blank" rel="noopener">Read the docs ↗</a>
+    </div>
+    <!-- meta: MIT (setup.py), drop-in BaseSearchCV (readme.rst), scikit-learn 1.x, launch version -->
+    <div class="meta mono"><span>MIT licence</span><span>BaseSearchCV drop-in</span><span>scikit-learn 1.x</span><span>v0.3.0</span></div>
+  </div>
+  <!-- Art: design dir assets/hero-surface.png (transparent); axis tags pinned per brand.md §Layout.2 -->
+  <div class="heroart">
+    <img src="assets/hero-surface.png" alt="Surrogate response surface with acquisition points converging on the optimum">
+    <span class="tag tl">posterior mean</span>
+    <span class="tag tr">acquisition · converged</span>
+    <span class="tag bl">contraction 0.90</span>
+    <span class="tag br">search budget B = 30</span>
+  </div>
+</section>
+
+<!-- ============================================================ S3 · CAPABILITY RAIL -->
+<!-- Verbatim from mockup (all four claims verified, content-plan S3) -->
+<div class="rail">
+  <div class="cell"><div class="k">Search</div><p>Surrogate-guided + evolutionary pipeline search with every evaluation recorded.</p></div>
+  <div class="cell"><div class="k">Prove</div><p>Nested CV, paired comparisons, split-conformal intervals and coverage checks.</p></div>
+  <div class="cell"><div class="k">Explain</div><p>PDP, ALE, permutation importance, row-level contributions; Sobol / Morris sensitivity.</p></div>
+  <div class="cell"><div class="k">Operate</div><p>Fingerprinted data identity, drift-aware model versions, retrain triggers.</p></div>
+</div>
+
+<!-- ============================================================ S4 · TWO-LAYER LOOP -->
+<section id="product" style="padding-top:96px">
+  <div class="sechead" style="padding:0 0 40px">
+    <h2>Two layers, one loop:<br><em>explore the structure</em>, then refine locally.</h2>
+  </div>
+  <!-- Diagram + copy verbatim from mockup (content-plan S4) -->
+  <div class="loop">
+    <p>The surrogate layer explores pipeline structure and hyperparameter ranges jointly; the tuner layer refines within a local neighborhood of that proposal. Both record every evaluation, so the search itself is an auditable artifact.</p>
+    <div class="diagram">
+      <svg width="100%" height="360" viewBox="0 0 720 380" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs><linearGradient id="gA" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#5B7CFA"/><stop offset="1" stop-color="#8AA5FF"/></linearGradient>
+        <radialGradient id="gB" cx=".35" cy=".3" r="1"><stop offset="0" stop-color="#4FB3BF"/><stop offset="1" stop-color="#123A46"/></radialGradient></defs>
+        <rect x="8" y="10" width="300" height="150" rx="10" stroke="rgba(235,238,245,.22)"/>
+        <text x="26" y="36" font-family="Fira Mono, monospace" font-size="11" fill="#E7ECF4">SURROGATE LAYER</text>
+        <path d="M40 120 C 90 40, 150 40, 200 80 S 260 130, 285 70" stroke="#4FB3BF" stroke-width="1.6"/>
+        <path d="M40 135 C 95 60, 155 55, 205 95 S 262 140, 287 85" stroke="#4FB3BF" stroke-width="1.6" opacity=".55"/>
+        <path d="M40 150 C 100 75, 160 70, 210 108 S 265 150, 290 100" stroke="#4FB3BF" stroke-width="1.6" opacity=".3"/>
+        <circle cx="200" cy="80" r="3.4" fill="#E7ECF4"/><circle cx="205" cy="95" r="3.4" fill="#E7ECF4" opacity=".6"/><circle cx="210" cy="108" r="3.4" fill="#E7ECF4" opacity=".3"/>
+        <rect x="412" y="220" width="300" height="150" rx="10" stroke="rgba(235,238,245,.22)"/>
+        <text x="430" y="246" font-family="Fira Mono, monospace" font-size="11" fill="#E7ECF4">TUNER LAYER</text>
+        <ellipse cx="560" cy="300" rx="118" ry="44" stroke="#8AA5FF" stroke-width="1.4"/>
+        <ellipse cx="560" cy="300" rx="78" ry="29" stroke="#8AA5FF" stroke-width="1.4" opacity=".7"/>
+        <ellipse cx="560" cy="300" rx="40" ry="15" stroke="#E07A3C" stroke-width="1.6"/>
+        <circle cx="560" cy="300" r="4.2" fill="#E07A3C"/>
+        <text x="598" y="304" font-family="Fira Mono, monospace" font-size="10" fill="#E07A3C">x&#7326;</text>
+        <path d="M310 95 C 380 95, 340 250, 405 275" stroke="rgba(235,238,245,.4)" stroke-width="1.6"/>
+        <path d="M398 262 l10 12 l-14 3 z" fill="rgba(235,238,245,.5)"/>
+        <text x="330" y="180" font-family="Fira Mono, monospace" font-size="10.5" fill="#E7ECF4">proposal + neighborhood</text>
+        <path d="M410 296 C 350 296, 380 160, 315 152" stroke="rgba(235,238,245,.4)" stroke-width="1.6"/>
+        <path d="M322 146 l-10 12 l14 4 z" fill="rgba(235,238,245,.5)"/>
+        <text x="330" y="272" font-family="Fira Mono, monospace" font-size="10.5" fill="#E7ECF4">evidence updates the surface</text>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ S5 · STAGES -->
+<section id="stages">
+  <div class="sechead">
+    <h2>One workspace,<br><em>four stages.</em></h2>
+    <div class="side">The control plane's sidebar has exactly these areas — the tour mirrors the product one-to-one, CSV in to monitored model out. (Content-plan S5; stage cells per docs/walkthrough.rst steps 1–13.)</div>
+  </div>
+  <div class="stages">
+    <div class="stage"><div class="n">01</div><h3>Data</h3>
+      <ul>
+        <li>Datasets<span>schema · fingerprint</span></li>
+        <li>Feature analysis<span>sobol · morris · δ</span></li>
+        <li>Experiment design<span>LHS · GP-LCB</span></li>
+      </ul></div>
+    <div class="stage"><div class="n">02</div><h3>Model</h3>
+      <ul>
+        <li>Experiments<span>EOA + surrogate</span></li>
+        <li>Evaluation<span>nested CV · conformal</span></li>
+        <li>Explain<span>PDP · ALE · row-level</span></li>
+        <li>Bundles<span>versioned · fingerprinted</span></li>
+      </ul></div>
+    <div class="stage"><div class="n">03</div><h3>Release</h3>
+      <ul>
+        <li>Quality gates<span>metrics vs thresholds</span></li>
+        <li>Registry<span>candidate → prod</span></li>
+        <li>Deployment<span>docker · :8013</span></li>
+      </ul></div>
+    <div class="stage"><div class="n">04</div><h3>Operate</h3>
+      <ul>
+        <li>Inference<span>alias or version</span></li>
+        <li>Monitoring<span>PSI drift</span></li>
+        <li>Retraining<span>on trigger</span></li>
+        <li>Jobs<span>queue · resume</span></li>
+      </ul></div>
+  </div>
+</section>
+
+<!-- ============================================================ S6 · RESEARCH WORKSPACE (new) -->
+<!-- Fully live per owner decision 2026-11-08 (content-plan S6). Product tour only;
+     no deep links to ailayer-only docs until the v0.3.0 cut lands them on RTD. -->
+<section id="research">
+  <div class="sechead">
+    <h2>Research questions, with <em>receipts</em>.</h2>
+    <!-- hook: LAUNCH_PLAN.md §3.3 "your models, with receipts" (evidence-tracked projects post) -->
+    <div class="side">A project ties data partitions, model bundles and jobs to the question they answer — so evidence travels with each claim.</div>
+  </div>
+  <div class="split">
+    <!-- Screenshot: docs/images/wt-19-projects.png (walkthrough step 13) -->
+    <div class="panelcard">
+      <div class="shot"><div class="shotbar">control plane · projects</div><img src="assets/wt-19-projects.png" alt="Research project view with partitions, bundles and hypotheses"></div>
+      <!-- Source: docs/research-projects.rst — hypothesis status lifecycle (proposed / under investigation / supported / contradicted / inconclusive) with append-only history; evidence records snapshot artifact state beside each claim. -->
+      <h4>Projects that keep receipts</h4>
+      <p>A project groups data partitions, model bundles and jobs around its research question. Partitions carry schema and fingerprint; hypotheses move through a status lifecycle — proposed, under investigation, supported, contradicted or inconclusive — with an append-only history. Evidence records snapshot the state of each artifact beside the claim it supports.</p>
+    </div>
+    <!-- Screenshot: docs/images/wt-20-design.png (walkthrough step 13) -->
+    <div class="panelcard">
+      <div class="shot"><div class="shotbar">control plane · experiment design</div><img src="assets/wt-20-design.png" alt="Experiment design view proposing the next points to sample"></div>
+      <!-- Source: docs/experiment-design.rst — LHS space-filling plans + GP lower-confidence-bound acquisition for expensive physical/lab experiments; plan exported as CSV. -->
+      <h4>Design the next run, not just fit the last one</h4>
+      <p>For expensive experiments — lab or physical runs where you choose what to sample rather than score existing data — SKSurrogate proposes where to evaluate next: a space-filling Latin-hypercube plan plus GP-lower-confidence-bound acquisition over past results. Export the plan as CSV and run it.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ S7 · EXPLAINABILITY -->
+<section id="explain" class="explain">
+  <div class="sechead">
+    <h2>Know what the model depends on —<br><em>not just where the search stopped.</em></h2>
+    <!-- ⚠ content-plan S7: labels real; numbers from docs/walkthrough.rst diabetes walkthrough (steps 11–13) -->
+  </div>
+  <div class="grid2">
+    <p style="color:var(--dim);font-size:15px;line-height:1.7">Permutation importance, partial dependence and ALE for a stored model bundle say which features drive its predictions globally; an exact row-level explanation reconstructs one prediction from its baseline as ordered feature contributions. Variance-based sensitivity — Sobol, Morris, moment-independent δ — says which inputs dominate the output variance, so an expensive model can be pruned or trusted on evidence.</p>
+    <!-- honesty line: readme.rst "Both are descriptive, model-attributive analyses … not causal effects"; content-plan S7 ⚠ -->
+    <div class="mono" style="text-align:right;color:var(--faint)">descriptive · model-attributive —<br>not causal</div>
+  </div>
+  <!-- Chart 1 labels: walkthrough.rst L264-265 — permutation importance; bmi, s5 and bp dominate.
+       Bar heights encode the documented dominance ranking only (no numeric values claimed). -->
+  <div class="figrow">
+    <div class="fig"><div class="cap">permutation importance · diabetes bundle</div>
+      <div><div class="bars">
+        <div style="display:flex;flex-direction:column;height:100%;justify-content:flex-end;width:17%"><div class="bar" style="height:84%;width:auto;border-radius:5px 5px 0 0"><i style="background:#E07A3C"></i></div></div>
+        <div style="display:flex;flex-direction:column;height:100%;justify-content:flex-end;width:17%"><div class="bar" style="height:68%;width:auto;border-radius:5px 5px 0 0"><i></i></div></div>
+        <div style="display:flex;flex-direction:column;height:100%;justify-content:flex-end;width:17%"><div class="bar" style="height:54%;width:auto;border-radius:5px 5px 0 0"><i></i></div></div>
+      </div><div style="display:flex;gap:14%;padding:0 8%"><div class="blabel">bmi</div><div class="blabel">s5</div><div class="blabel">bp</div></div></div>
+    </div>
+    <!-- Chart 2: walkthrough.rst L267 — PDP rises with bmi (likewise s5, bp) across the feature range -->
+    <div class="fig"><div class="cap">partial dependence · rises with bmi</div>
+      <svg width="100%" height="92" viewBox="0 0 300 92" preserveAspectRatio="none"><path d="M8 74 C 60 72, 95 66, 130 52 S 210 22, 292 14" stroke="#4FB3BF" stroke-width="2.2" fill="none"/><path d="M8 74 C 60 72, 95 66, 130 52 S 210 22, 292 14 L 292 84 L 8 84 Z" fill="#4FB3BF" opacity=".08"/><circle cx="130" cy="52" r="3.6" fill="#E7ECF4"/></svg>
+    </div>
+    <!-- Chart 3: walkthrough.rst L293-296 — "Prediction ± 88" is a 90 % split-conformal interval on this model -->
+    <div class="fig"><div class="cap">split-conformal · 90 % interval</div>
+      <div class="bandrow">
+        <span class="flag">± 88 (widest fold)</span>
+        <div class="band" style="--w:56%"></div><div class="band" style="--w:74%;outline:1px solid rgba(224,122,60,.5)"><i></i></div><div class="band" style="--w:58%"></div><div class="band" style="--w:81%"><i></i></div><div class="band" style="--w:63%"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ S8 · CONTROL PLANE BAND -->
+<section id="controlplane">
+  <div class="sechead">
+    <h2>The control plane<br><em>runs it.</em></h2>
+    <!-- copy verified: content-plan S8 (four features) -->
+  </div>
+  <div class="band">
+    <!-- Screenshot: docs/images/ui-dashboard.png — control-plane dashboard (content-plan S8 ⚠ window-framed, absolute path fixed to assets/) -->
+    <div><div class="shotbar">control plane · dashboard</div><img src="assets/ui-dashboard.png" alt="SKSurrogate control plane dashboard"></div>
+    <ul class="features">
+      <!-- readme.rst: the tuner records data identity so drift is detectable before inference -->
+      <li><span class="k">01</span><div><b>Drift-aware by construction</b><p>The tuner records the identity of the data it optimized, so drift is detectable before inference rather than after a bad prediction.</p></div></li>
+      <!-- docs/quality gates + walkthrough step 10: metrics checked against declared thresholds before registry entry -->
+      <li><span class="k">02</span><div><b>Quality gates before release</b><p>Metrics are checked against declared thresholds; a bundle reaches the registry only when its evidence passes.</p></div></li>
+      <!-- readme.rst: drop-in BaseSearchCV, stock scikit-learn estimators -->
+      <li><span class="k">03</span><div><b>No framework lock-in</b><p>Estimators, pipelines and cross-validators are stock scikit-learn — nothing to migrate away from later.</p></div></li>
+      <!-- docs/controlplane.rst: local API or docker compose profile on port 8013; API key optional -->
+      <li><span class="k">04</span><div><b>Runs where you do</b><p>Local API or a single Docker Compose profile on one port (8013); the API key is optional.</p></div></li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============================================================ S9 · EVIDENCE & BENCHMARKS -->
+<section id="evidence">
+  <div class="sechead">
+    <h2>Claims are cheap.<br><em>Benchmarks are not.</em></h2>
+    <div class="side">Equal-budget comparison against published baselines — raw results archived with DOIs, protocol and seed-level tables in the post.</div>
+  </div>
+
+  <!-- Table VERBATIM from docs/blog-honest-benchmark.md "Finding 1" (L30-40; on master + ailayer).
+       Bold = best per row, exactly as published. Caption below: Finding 1 sentence verbatim + Finding 2 summary. -->
+  <div class="tblwrap">
+    <div class="tcap">Mean final CV accuracy, B = 30 evaluations · identical estimator (StandardScaler → RandomForestClassifier(50)) over one shared 224-configuration discrete space · stratified 5-fold CV inside every search · seven seeds per cell — bold = best per row</div>
+    <table class="bench">
+      <thead><tr><th>dataset</th><th>SRS + RBF-GP</th><th>no surrogate</th><th>random</th><th>Optuna-TPE</th></tr></thead>
+      <tbody>
+        <tr><td>arrhythmia</td><td>0.7020</td><td>0.6910</td><td>0.6941</td><td class="best">0.7036</td></tr>
+        <tr><td>credit-g</td><td>0.7423</td><td>0.7391</td><td>0.7405</td><td class="best">0.7436</td></tr>
+        <tr><td>galaxy3</td><td>0.6473</td><td>0.6448</td><td>0.6484</td><td class="best">0.6507</td></tr>
+        <tr><td>ionosphere</td><td class="best">0.9352</td><td>0.9347</td><td>0.9347</td><td>0.9337</td></tr>
+        <tr><td>optdigits</td><td>0.9403</td><td>0.9392</td><td>0.9380</td><td class="best">0.9405</td></tr>
+        <tr><td>spambase</td><td>0.9280</td><td>0.9269</td><td>0.9272</td><td class="best">0.9286</td></tr>
+      </tbody>
+    </table>
+    <!-- Finding 1 sentence verbatim; B=60 claims per Finding 2 (RBF-GP top mean CV on all six at both budgets;
+         ablation matches or raises accuracy vs no-surrogate on all six) -->
+    <div class="tfoot">TPE is top on five of six datasets, and the whole table spans roughly half a point — a RandomForest(50) over three parameters is a flat landscape where no search method separates. Where the data does separate things is inside SRS itself: at B = 60 the RBF-GP surface is top mean CV on all six datasets and matches or raises final accuracy against the no-surrogate arm everywhere, while an un-tuned KernelRidge sits below doing nothing on all six.</div>
+  </div>
+
+  <div class="evidgrid">
+    <!-- Figure: docs/images/stability_contour.png — caption VERBATIM from make_stability_contour.py docstring (allowed claims) -->
+    <div class="figpanel">
+      <img src="assets/stability_contour.png" alt="Contour of mean CV accuracy over max_depth by min_samples_leaf for RandomForest on credit-g">
+      <div class="fcap">Contour of mean CV accuracy over the joint (max_depth × min_samples_leaf) space for RandomForest on credit-g, B = 30. The optimum is broad rather than needle-like: small changes in either parameter move accuracy little.</div>
+    </div>
+    <!-- Reproducibility: DOIs verbatim from blog "How to reproduce all of this" (L81-92); commands verbatim from the same block -->
+    <div class="reproblock">
+      <div class="lab">Reproducibility</div>
+      <div class="dochips">
+        <a class="dochip" href="https://doi.org/10.5281/zenodo.23629024" target="_blank" rel="noopener"><b>raw benchmark records</b> · 462 runs ↗</a>
+        <a class="dochip" href="https://doi.org/10.5281/zenodo.23652613" target="_blank" rel="noopener"><b>D-track raw data + report</b> ↗</a>
+        <!-- software archive is the v0.2.0 Zenodo record; a new DOI accompanies the v0.3.0 cut -->
+        <a class="dochip" href="https://doi.org/10.5281/zenodo.23631823" target="_blank" rel="noopener"><b>software archive</b> · 0.2.0 ↗</a>
+      </div>
+<pre class="codeblock"><span class="p">$</span> pip install sksurrogate
+<span class="c"># v0.2.0, PyPI (v0.3.0 at launch)</span>
+<span class="p">$</span> python -m benchmarks.run --dataset all --budget 30
+<span class="c"># full five-method suite (~1–3 h laptop-scale)</span>
+<span class="p">$</span> python -m benchmarks.dtrack.d2_compare
+<span class="c"># the regime-map study</span></pre>
+      <div style="display:flex;gap:26px;margin-top:18px">
+        <!-- blog on master + ailayer (stable blob); D-track notes resolve after the v0.3.0 ailayer→master cut — DOI above is the durable link -->
+        <a class="doc-link" href="https://github.com/mghasemi/sksurrogate/blob/master/docs/blog-honest-benchmark.md" target="_blank" rel="noopener">Honest benchmark post ↗</a>
+        <a class="doc-link" href="https://github.com/mghasemi/sksurrogate/blob/master/benchmarks/DESIGN.md" target="_blank" rel="noopener">Protocol contract (benchmarks/DESIGN.md) ↗</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- D-track regime map: VERBATIM from blog Finding 2 table — winning cells of 18 per objective family (dimension × sample size × noise grid), 2,160 additional runs -->
+  <div class="tblwrap" style="margin-top:36px">
+    <div class="tcap">D-track controlled synthetic study · 2,160 archived runs — winning cells (of 18 per objective family across the dimension × sample size × noise grid) by response-surface family</div>
+    <table class="bench" style="width:auto;min-width:520px;margin:0 auto">
+      <thead><tr><th>objective family</th><th>Hilbert poly</th><th>RBF-GP</th><th>Random forest</th></tr></thead>
+      <tbody>
+        <tr><td>polynomial (in-span)</td><td class="best">14/18</td><td>2</td><td>2</td></tr>
+        <tr><td>Gaussian bump</td><td>2</td><td class="best">10</td><td>6</td></tr>
+        <tr><td>rational</td><td>3</td><td>5</td><td class="best">10</td></tr>
+        <tr><td>trigonometric</td><td>0</td><td>1</td><td class="best">17</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Contract chips: BaseSearchCV (readme), MIT + self-hosted single port (controlplane.rst; content-plan S9 ⚠ softened "self-hosted"), DOI-archived results -->
+  <div class="rail" style="margin-top:36px">
+    <div class="cell"><div class="k">Drop-in</div><p>SurrogateRandomCV is a BaseSearchCV subclass — it slots into any scikit-learn pipeline and estimator without changing your code.</p></div>
+    <div class="cell"><div class="k">Self-hosted · MIT</div><p>Fully self-hosted: one compose profile, no external service required; the API key is optional. MIT-licensed, free to use.</p></div>
+    <div class="cell"><div class="k">Archived raw results</div><p>Benchmark inputs and outputs carry DOIs — what you cite is exactly what we ran.</p></div>
+  </div>
+</section>
+
+<!-- ============================================================ S10 · WHAT IT'S NOT + ROADMAP -->
+<section id="notnew" style="padding-top:96px">
+  <div class="sechead">
+    <h2>What SKSurrogate is <em>not</em>.</h2>
+    <div class="side">Scope kept deliberately narrow. The roadmap below is dated and gated — claims are only allowed to say "coming" with a link, never "it does that today". (LAUNCH_PLAN §9 / risk register; AI_LAYER_ROADMAP D2.)</div>
+  </div>
+  <!-- Rows per LAUNCH_PLAN.md positioning decisions + AI_LAYER_ROADMAP.md status table -->
+  <div class="notrows">
+    <!-- Option A positioning, RESOLVED 2026-11-07: self-hosted single-machine environment; no managed cloud service -->
+    <div class="nrow"><span class="claim"><b>Not a managed cloud service.</b> Self-hosted and single-machine by design — local API or one compose profile. If you need multi-node training or GPU fleets, that is a different category of tool.</span><span class="src">launch plan · positioning</span></div>
+    <!-- AI_LAYER_ROADMAP: conversational assistant deferred; bounded opt-in cited-note synthesis (D2) exists with enforced citations -->
+    <div class="nrow"><span class="claim"><b>No LLM magic in the box.</b> The shipped tooling is deterministic. A bounded, opt-in cited-note synthesis (your endpoint, aggregate facts only, enforced citations) already runs inside it; a conversational research assistant is roadmap, not this release.</span><span class="src">AI layer roadmap · D2</span></div>
+    <!-- readme: drop-in tuner over your pipeline + declared ranges; every evaluation recorded -->
+    <div class="nrow"><span class="claim"><b>Not a black-box AutoML zoo.</b> The search space is your pipeline plus the ranges you declare, and every evaluation is recorded — results are auditable artifacts, not opaque picks from a fixed model zoo.</span><span class="src">readme · surrogate-search guide</span></div>
+  </div>
+  <!-- Roadmap items grounded in AI_LAYER_ROADMAP.md open items (P1.4 quantile-interval UI/API diagnostics pending calibration-data contract; D2 conversational direction). Dates presented as horizons, not dates -->
+  <div class="sechead" style="padding:64px 56px 30px"><h2 style="font-size:28px">Roadmap</h2></div>
+  <div class="notrows">
+    <div class="nrow"><span class="claim">Quantile / conformal-interval diagnostics in the UI and API — the Python split-conformal protocol already ships; the calibration-data contract for serving them is the next step.</span><span class="src">next</span></div>
+    <div class="nrow"><span class="claim">LLM-assisted synthesis beyond bounded cited notes — toward a human-gated, citation-enforced research assistant. Shipped only with its gates intact.</span><span class="src">later</span></div>
+  </div>
+</section>
+
+<!-- ============================================================ S11 · WHERE IT SITS (comparison) -->
+<section id="compare" style="padding-top:48px">
+  <div class="sechead">
+    <h2>Where it sits.</h2>
+    <!-- Differentiators: LAUNCH_PLAN.md §3.2 item 3 (four, each with a concrete artifact) + drop-in/self-hosted from readme/controlplane.rst -->
+  </div>
+  <div class="cmp">
+    <!-- Artifact: stability contour figure (regenerable; caption/allowed claims in the script docstring) -->
+    <div class="crown"><span class="claim"><b>A stable plateau, not a brittle peak.</b> The surrogate response surface makes the neighborhood of the optimum inspectable — broad plateaus and needle-like peaks are visible at a glance before you commit a run.</span><a class="src" href="#evidence">figure above ↑</a></div>
+    <!-- nested CV + paired protocol checks + split-conformal coverage diagnostics (walkthrough steps 10–13; P1.4) -->
+    <div class="crown"><span class="claim"><b>Statistical evaluation, not a single score.</b> Repeated nested cross-validation, paired comparison protocol checks, and split-conformal intervals with coverage diagnostics — the "90 % interval" is a number you can check, not an adjective.</span><a class="src" href="https://sksurrogate.readthedocs.io/en/latest/controlplane.html" target="_blank" rel="noopener">docs ↗</a></div>
+    <!-- projects/hypotheses/evidence/experiment design (research workspace above) -->
+    <div class="crown"><span class="claim"><b>A research workspace with receipts.</b> Projects, hypotheses with a status lifecycle, evidence records that snapshot artifacts — plus LHS + GP-LCB experiment design for expensive physical experiments.</span><a class="src" href="#research">section above ↑</a></div>
+    <!-- blog Finding 2: surrogate hybrid search, equal-budget benchmark published with raw data DOI and honest read of where it loses -->
+    <div class="crown"><span class="claim"><b>Surrogate hybrid search, honestly benchmarked.</b> Equal-budget comparison against TPE, random and no-surrogate arms — published with the raw data DOI and a plain statement of where the surrogate loses.</span><a class="src" href="#evidence">benchmarks ↑</a></div>
+    <!-- readme: BaseSearchCV drop-in -->
+    <div class="crown"><span class="claim"><b>A drop-in, not a rewrite.</b> SurrogateRandomCV is a BaseSearchCV subclass — the same call shape as RandomizedSearchCV, so adopting it changes one import, not your codebase.</span><a class="src" href="https://github.com/mghasemi/sksurrogate/blob/master/readme.rst" target="_blank" rel="noopener">readme ↗</a></div>
+    <!-- controlplane.rst: single port 8013, optional API key; MIT -->
+    <div class="crown"><span class="claim"><b>Yours to run.</b> One compose profile on a single port (8013), optional API key, MIT licence — no external service in the loop and nothing to migrate away from later.</span><a class="src" href="https://sksurrogate.readthedocs.io/en/latest/controlplane.html" target="_blank" rel="noopener">control plane docs ↗</a></div>
+  </div>
+  <!-- Caveat: blog "Caveats I'm not hiding" + Finding 1 -->
+  <p class="caveat">The honest caveat, from the benchmark post itself: these are small-budget results — seven seeds per cell, budgets of 30–60 evaluations, and a fixed-pipeline suite only three parameters wide. TPE remains competitive on flat landscapes at laptop budgets; SKSurrogate's edge is in stability, surface quality and evidence, not a universal accuracy crown.</p>
+</section>
+
+<!-- ============================================================ S12 · QUICK START -->
+<section id="qs">
+  <div class="sechead">
+    <h2>Five minutes to a model<br><em>you can defend.</em></h2>
+    <!-- Snippet VERBATIM from readme.rst "Quick start" (identical on master + ailayer) -->
+  </div>
+  <div class="qsgrid">
+    <pre id="qscmd" class="codeblock"><span class="p">$</span> pip install scikit-learn sksurrogate
+
+<span class="c"># Python — drop-in for RandomizedSearchCV (readme quick start, verbatim)</span>
+from sklearn.svm import SVC
+from SKSurrogate import SurrogateRandomCV
+
+search = SurrogateRandomCV(
+    SVC(),
+    param_distributions={"C": (1e-3, 10.0), "kernel": ["poly", "rbf"], "degree": (1, 4)},
+    n_iter=30,
+).fit(X, y)
+search.best_params_, search.best_score_</pre>
+    <div>
+      <!-- Docker line verified against docs/controlplane.rst (compose profile prod → UI+API on :8013) -->
+<pre class="codeblock"><span class="p">$</span> docker compose --profile prod up -d
+<span class="c"># control-plane UI + API on http://localhost:8013 — API key optional</span></pre>
+      <!-- Placeholders per content-plan S12 ⚠: render as muted labels, no dead links -->
+      <div class="atlaunch">
+        <div class="atchip"><span>Colab notebook</span><i>at launch</i></div>
+        <div class="atchip"><span>2-minute demo video</span><i>at launch</i></div>
+      </div>
+      <div style="display:flex;gap:26px;margin-top:24px">
+        <a class="doc-link" href="https://sksurrogate.readthedocs.io/en/latest/intro.html" target="_blank" rel="noopener">Read the docs ↗</a>
+        <!-- Manual flips to the v0.3.0 GitHub Release asset at launch (untracked PDF until then) -->
+        <a class="doc-link" href="https://sksurrogate.readthedocs.io/en/latest/" target="_blank" rel="noopener">Manual ↗</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ S13 · CTA + FOOTER -->
+<section class="cta">
+  <h2>Bring your data in<br><em>with its identity.</em></h2>
+  <p>MIT-licensed, scikit-learn-native, and built so the evaluation record travels with every model. Start with the drop-in tuner; keep the receipts when you ship it.</p>
+  <!-- single ember convergence point (brand.md: one warm accent per view) -->
+  <a class="btn" href="#qs">Get started</a>&nbsp;&nbsp;<a class="doc-link" style="margin-left:14px" href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a>
+</section>
+
+<!-- Footer links verified live at build time (RTD pages 200; GitHub blobs on master).
+     No links to ailayer-only docs until the v0.3.0 cut lands them on RTD/master. -->
+<footer class="footer">
+  <div><h5>Product</h5><ul>
+    <li><a href="#product">Two-layer search</a></li>
+    <li><a href="#stages">Workflow stages</a></li>
+    <li><a href="#research">Research workspace</a></li>
+    <li><a href="#evidence">Benchmarks</a></li>
+  </ul></div>
+  <div><h5>Resources</h5><ul>
+    <!-- RTD intro + controlplane verified 200 at build time -->
+    <li><a href="https://sksurrogate.readthedocs.io/en/latest/intro.html" target="_blank" rel="noopener">Documentation ↗</a></li>
+    <li><a href="https://sksurrogate.readthedocs.io/en/latest/controlplane.html" target="_blank" rel="noopener">Control plane ↗</a></li>
+    <li><a href="https://github.com/mghasemi/sksurrogate/blob/master/docs/blog-honest-benchmark.md" target="_blank" rel="noopener">Honest benchmark post ↗</a></li>
+  </ul></div>
+  <div><h5>Project</h5><ul>
+    <!-- README/CITATION.cff/LICENSE on master; v0.3.0 cut ships the PDF manual as a Release asset -->
+    <li><a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a></li>
+    <li><a href="https://github.com/mghasemi/sksurrogate/blob/master/CITATION.cff" target="_blank" rel="noopener">Citation (CITATION.cff) ↗</a></li>
+    <li><a href="https://github.com/mghasemi/sksurrogate/blob/master/CHANGELOG.rst" target="_blank" rel="noopener">Changelog ↗</a></li>
+  </ul></div>
+  <div class="ledecol"><h5>Maintainer</h5><p style="font-size:13.5px;color:var(--dim)">Mehdi Ghasemi — senior scientist-mathematician.<br><a href="https://mghasemi.net" target="_blank" rel="noopener">mghasemi.net ↗</a></p></div>
+  <div class="ledecol"><h5>sksurrogate</h5>
+    <!-- positioning line: LAUNCH_PLAN.md §1 (Option A) -->
+    <p>An end-to-end scientific MLOps environment: surrogate-based optimization, statistical evaluation and evidence-tracked research — from dataset registration to deployed, drift-monitored models. Built on scikit-learn.</p>
+  </div>
+</footer>
+<div class="footline">
+  <!-- copyright per content-plan S13 ⚠ (combined 2019–2026 notice requested by owner; MIT) -->
+  <span>© 2019–2026 Mehdi Ghasemi · MIT licence</span>
+  <span>sksurrogate v0.3.0 · scikit-learn-native</span>
+</div>
+
+<script>
+// copy-to-clipboard for the install chips and code blocks (no external deps)
+document.querySelectorAll('kbd[data-copy-target]').forEach(function(k){
+  k.addEventListener('click', function(){
+    var el = document.getElementById(k.dataset.copyTarget);
+    if(!el) return;
+    navigator.clipboard.writeText(el.textContent).then(function(){
+      var old = k.textContent; k.textContent = 'copied ✓';
+      setTimeout(function(){ k.textContent = old; }, 1400);
+    }).catch(function(){});
+  });
+});
+</script>
+</body>
+</html>
