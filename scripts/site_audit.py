@@ -213,6 +213,14 @@ def main():
     check("Person.sameAs has >= 3 entries", len(person.get("sameAs", [])) >= 3,
           "%d" % len(person.get("sameAs", [])))
 
+    # Google's Dataset rich result requires name + description; both were
+    # missing until a validator flagged "Missing field description".
+    datasets = [n for n in nodes if n.get("@type") == "Dataset"]
+    incomplete = [d.get("name", "<unnamed>") for d in datasets
+                  if not (d.get("description") and d.get("name") and d.get("url"))]
+    check("every Dataset node has name, description and url",
+          bool(datasets) and not incomplete, ", ".join(incomplete) or "%d datasets ok" % len(datasets))
+
     # ---- 5. robots + sitemap -----------------------------------------
     robots = open(os.path.join(ROOT, "robots.txt")).read()
     check("robots Sitemap matches SITE_URL", ("Sitemap: %s/sitemap.xml" % SITE) in robots)
