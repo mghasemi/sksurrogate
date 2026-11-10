@@ -1,0 +1,129 @@
+/* ============================================================================
+   SKSurrogate — styles for secondary pages (about, contact, cite, blog).
+   Mirrors the tokens and type scale of index.html, which keeps its styles
+   inline; this file exists so the subpages share one source instead of
+   duplicating 700 lines of CSS five times.
+   Brand tokens: Atelier/designs/sksurrogate/brand.md, palette.json.
+   ========================================================================= */
+:root{
+  --bg:#0B0F14; --panel:#0F141B; --panel2:#131A22;
+  --line:rgba(235,238,245,.13); --line2:rgba(235,238,245,.26);
+  --ink:#E7ECF4; --dim:rgba(231,236,244,.62); --faint:rgba(231,236,244,.40);
+  --ultra:#8AA5FF; --teal:#4FB3BF; --ember:#E07A3C;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--ink);font-family:"Inter",system-ui,sans-serif;
+     font-size:15px;line-height:1.68;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+.mono{font-family:"Fira Mono","SF Mono",Menlo,monospace;font-size:12px;
+      letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+.wrap{max-width:1080px;margin:0 auto;padding:0 40px}
+
+/* top bar ---------------------------------------------------------------- */
+.topbar{display:flex;justify-content:space-between;align-items:center;
+        padding:16px 40px;border-bottom:1px solid var(--line);gap:32px}
+.brand{display:flex;gap:11px;align-items:center;font-weight:600;font-size:16.5px;
+       letter-spacing:-.01em;white-space:nowrap}
+.brand img{width:26px;height:26px;display:block}
+.topbar nav{display:flex;gap:26px;font-size:13.5px;color:var(--dim);align-items:center;flex-wrap:wrap}
+.topbar nav a:hover{color:var(--ink)}
+.topbar nav a.cta{background:var(--ember);color:#170B04;font-weight:600;
+                  padding:7px 15px;border-radius:7px}
+
+/* article ---------------------------------------------------------------- */
+main{padding:72px 0 96px}
+.crumb{font-family:"Fira Mono",monospace;font-size:11px;letter-spacing:.12em;
+       text-transform:uppercase;color:var(--faint);margin-bottom:26px}
+.crumb a:hover{color:var(--dim)}
+.crumb span{color:var(--line2);margin:0 8px}
+h1{font-family:"Inter Display","Inter",sans-serif;font-weight:300;font-size:46px;
+   line-height:1.1;letter-spacing:-.03em;margin-bottom:20px;max-width:26ch}
+h1 em{font-style:normal;color:var(--ultra)}
+.lede{color:var(--dim);font-size:16.5px;max-width:62ch;margin-bottom:18px}
+.byline{font-size:12px;letter-spacing:.06em;color:var(--faint);
+        font-family:"Fira Mono",monospace;text-transform:uppercase;margin-bottom:44px}
+.byline a{border-bottom:1px solid var(--line2)}
+
+/* prose ------------------------------------------------------------------ */
+.prose{max-width:74ch}
+.prose h2{font-family:"Inter Display","Inter",sans-serif;font-weight:400;font-size:26px;
+          letter-spacing:-.02em;margin:52px 0 16px;padding-top:18px;border-top:1px solid var(--line)}
+.prose h2:first-child{margin-top:0;padding-top:0;border-top:none}
+.prose h3{font-weight:600;font-size:16.5px;letter-spacing:-.01em;margin:32px 0 10px}
+.prose p{color:var(--dim);margin-bottom:18px}
+.prose strong{color:var(--ink);font-weight:600}
+.prose a{color:var(--ink);border-bottom:1px solid var(--line2)}
+.prose a:hover{border-bottom-color:var(--ember)}
+.prose ul,.prose ol{color:var(--dim);margin:0 0 20px 22px}
+.prose li{margin-bottom:9px}
+.prose li::marker{color:var(--faint)}
+.prose code{font-family:"Fira Mono",monospace;font-size:.86em;background:#0D1219;
+            border:1px solid var(--line);border-radius:5px;padding:1.5px 5px;color:var(--ink)}
+.prose pre{background:#0A0E13;border:1px solid var(--line);border-radius:10px;
+           padding:18px 20px;overflow-x:auto;margin:0 0 22px}
+.prose pre code{background:none;border:none;padding:0;font-size:12.5px;line-height:1.6}
+.prose blockquote{background:var(--panel);border:1px solid var(--line);
+                  border-left:2px solid var(--ember);border-radius:8px;
+                  padding:18px 22px;margin:0 0 26px}
+.prose blockquote p{color:var(--dim);margin-bottom:10px}
+.prose blockquote p:last-child{margin-bottom:0}
+.prose blockquote ul{margin-bottom:0}
+.prose hr{border:0;border-top:1px solid var(--line);margin:40px 0}
+
+/* tables ----------------------------------------------------------------- */
+.prose table{width:100%;border-collapse:collapse;font-size:13.5px;margin:0 0 26px}
+.prose th{font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.1em;
+          text-transform:uppercase;color:var(--faint);text-align:left;
+          padding:10px 12px;border-bottom:1px solid var(--line2);font-weight:400}
+.prose td{padding:9px 12px;border-bottom:1px solid var(--line);color:var(--dim)}
+.prose th.num,.prose td.num{text-align:right;font-variant-numeric:tabular-nums}
+.prose tr:last-child td{border-bottom:none}
+.prose td b,.prose td strong{color:var(--ink)}
+
+/* callout / card grid ---------------------------------------------------- */
+.cards{display:grid;grid-template-columns:repeat(2,1fr);gap:18px;margin:34px 0 0;max-width:74ch}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+      padding:22px 24px;display:block}
+.card:hover{border-color:var(--line2)}
+.card .k{font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.14em;
+         text-transform:uppercase;color:var(--ember);margin-bottom:8px}
+.card h3{font-weight:600;font-size:15.5px;margin-bottom:6px}
+.card p{color:var(--dim);font-size:13.5px;line-height:1.6}
+
+.tagrow{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 28px}
+.tag{font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.1em;
+     text-transform:uppercase;color:var(--dim);border:1px solid var(--line);
+     border-radius:6px;padding:5px 10px}
+
+/* post list -------------------------------------------------------------- */
+.postlist{list-style:none;margin:40px 0 0;max-width:74ch}
+.postlist li{border-top:1px solid var(--line);padding:26px 0}
+.postlist li:last-child{border-bottom:1px solid var(--line)}
+.postlist .date{font-family:"Fira Mono",monospace;font-size:11px;letter-spacing:.1em;
+                text-transform:uppercase;color:var(--faint);margin-bottom:8px}
+.postlist h2{font-family:"Inter Display","Inter",sans-serif;font-weight:400;font-size:22px;
+             letter-spacing:-.015em;margin-bottom:8px}
+.postlist a:hover h2{color:var(--ultra)}
+.postlist p{color:var(--dim);font-size:14px;max-width:66ch}
+
+/* footer ----------------------------------------------------------------- */
+.footer{border-top:1px solid var(--line);padding:48px 40px 40px;
+        display:grid;grid-template-columns:repeat(3,1fr);gap:36px;max-width:1080px;margin:0 auto}
+.footer h5{font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.14em;
+           text-transform:uppercase;color:var(--faint);margin-bottom:14px;font-weight:400}
+.footer ul{list-style:none;display:flex;flex-direction:column;gap:9px;font-size:13.5px}
+.footer a{color:var(--dim)}
+.footer a:hover{color:var(--ink)}
+.footline{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;
+          max-width:1080px;margin:0 auto;padding:20px 40px 40px;
+          border-top:1px solid var(--line);
+          font-family:"Fira Mono",monospace;font-size:11px;color:var(--faint);letter-spacing:.08em}
+
+@media (max-width:820px){
+  .wrap,.footer,.footline{padding-left:22px;padding-right:22px}
+  .topbar{padding:14px 22px}
+  h1{font-size:34px}
+  .cards{grid-template-columns:1fr}
+  .footer{grid-template-columns:1fr 1fr}
+}

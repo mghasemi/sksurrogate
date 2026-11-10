@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>An Honest Benchmark of My Own AutoML Package — SKSurrogate</title>
+<meta name="description" content="At equal evaluation budgets on six public datasets, surrogate-guided search does not beat Optuna-TPE on accuracy — TPE is top on 5 of 6. What is real: the response surface matters more than the search mechanism, and a defect in our own pipeline was the most useful finding.">
+<link rel="canonical" href="https://sksurrogate.com/blog/honest-benchmark.html">
+<meta property="og:title" content="An Honest Benchmark of My Own AutoML Package">
+<meta property="og:description" content="Where SKSurrogate beats Optuna-TPE, where it loses — and why the null results are the point.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://sksurrogate.com/blog/honest-benchmark.html">
+<meta property="article:published_time" content="2026-10-26">
+<meta property="article:author" content="Mehdi Ghasemi">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../assets/mark.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../icons/icon-180.png">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Fira+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/page.css">
+<script>
+window.MathJax = {
+  tex: {inlineMath: [['$','$']], displayMath: [['$$','$$']]},
+  options: {skipHtmlTags: ['script','noscript','style','textarea','pre','code']}
+};
+</script>
+<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml.js" async></script>
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../"><img src="../assets/mark.svg" alt="">SKSurrogate</a>
+  <nav>
+    <a href="../#product">Product</a>
+    <a href="../#evidence">Benchmarks</a>
+    <a href="index.html">Blog</a>
+    <a href="../about.html">About</a>
+    <a href="../cite.html">Citation</a>
+    <a href="../contact.html">Contact</a>
+    <a href="https://sksurrogate.readthedocs.io/en/latest/intro.html" target="_blank" rel="noopener">Docs ↗</a>
+  </nav>
+</header>
+
+<main class="wrap">
+  <div class="crumb"><a href="../">sksurrogate</a><span>/</span><a href="index.html">blog</a><span>/</span> honest benchmark</div>
+  <h1>An Honest Benchmark of My Own AutoML Package</h1>
+  <p class="lede">Where SKSurrogate beats Optuna-TPE, where it loses — and why the null results are
+    the point.</p>
+  <div class="byline">Mehdi Ghasemi · 26 October 2026 · benchmarks</div>
+
+  <div class="prose">
+    <blockquote>
+      <p><strong>TL;DR</strong></p>
+      <ul>
+        <li>At equal evaluation budgets on six public datasets, my surrogate-guided search
+          (<strong>SRS</strong>) in <a href="https://pypi.org/project/sksurrogate/" target="_blank" rel="noopener">SKSurrogate</a>
+          does <strong>not</strong> beat Optuna-TPE on accuracy — TPE is top on 5 of 6 datasets and
+          everything sits within ~0.5 pt.</li>
+        <li>What <em>is</em> real: the <strong>response surface matters more than the search
+          mechanism</strong>. An un-tuned RBF Gaussian process beats my default polynomial
+          regressor with seed-level significance ($p \approx 10^{-4}$ at B=60), while an un-tuned
+          kernel ridge regressor is <strong>worse than doing nothing</strong>.</li>
+        <li>The most useful result was a defect in <em>my own</em> pipeline: ordinal encoding of
+          categorical features was silently masking the surrogate's advantage. Fixing it flipped
+          SRS above TPE on 3 of 6 datasets — small, not significant at n=7 seeds, but uniformly
+          directional.</li>
+      </ul>
+    </blockquote>
+
+    <h2>Why I wrote this post</h2>
+    <p>Most AutoML packages ship “state-of-the-art” claims that are impossible to reproduce: no
+      protocol contract, no archived raw runs, baselines chosen to lose. SKSurrogate was built the
+      other way around — an equal-budget benchmark suite with a frozen protocol, pre-registered
+      hypotheses with explicit falsifiers, integrity gates run before any canonical launch, and
+      every raw record archived on Zenodo so the advertised “validated against benchmarks” claim is
+      verifiable without rerunning anything.</p>
+    <p>That means I also have to publish what the data says when it's inconvenient: <strong>at
+      small budgets, my package does not beat TPE.</strong> This post walks through three findings
+      from ~460 archived runs — one null result, one mechanism explanation, and one defect we
+      caught in ourselves.</p>
+
+    <h2>The setup, in 60 seconds</h2>
+    <p>All methods optimize the <em>same</em> estimator
+      (<code>StandardScaler → RandomForestClassifier(50)</code>) over the <em>same</em> shared
+      discrete grid (224 configurations across 3 parameters), with stratified 5-fold CV inside
+      every search and one shared held-out 80/20 outer split per dataset-seed. Budgets are measured
+      in <strong>candidate-model evaluations</strong> — a hardware-independent currency. Seven seeds
+      per cell; 6 datasets from OpenML (pinned by <code>did</code>) plus one bundled synthetic set,
+      B = 30 and B = 60 evaluations:</p>
+
+    <table>
+      <thead><tr><th>Arm</th><th>What it is</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>SRS + RBF-GP</td>
+          <td>The package's search with its v0.2 default surface (stock un-tuned <code>GaussianProcessRegressor</code>)</td>
+        </tr>
+        <tr>
+          <td>SRS, no surrogate</td>
+          <td>Identical outer loop, surrogate never engages — the ablation that isolates the surrogate's contribution</td>
+        </tr>
+        <tr>
+          <td>random / Optuna-TPE</td>
+          <td>Uniform sampling and TPE as the standard baselines (<code>scikit-optimize</code> is archived upstream; recorded as “not runnable” rather than silently dropped)</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>Finding 1: parity is the honest headline</h2>
+    <p>Mean final CV accuracy, B = 30 (bold = best per row):</p>
+    <table>
+      <thead>
+        <tr>
+          <th>dataset</th>
+          <th class="num">SRS + RBF-GP</th>
+          <th class="num">no surrogate</th>
+          <th class="num">random</th>
+          <th class="num">Optuna-TPE</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>arrhythmia</td><td class="num">0.7020</td><td class="num">0.6910</td><td class="num">0.6941</td><td class="num"><b>0.7036</b></td></tr>
+        <tr><td>credit-g</td><td class="num">0.7423</td><td class="num">0.7391</td><td class="num">0.7405</td><td class="num"><b>0.7436</b></td></tr>
+        <tr><td>galaxy3</td><td class="num">0.6473</td><td class="num">0.6448</td><td class="num">0.6484</td><td class="num"><b>0.6507</b></td></tr>
+        <tr><td>ionosphere</td><td class="num"><b>0.9352</b></td><td class="num">0.9347</td><td class="num">0.9347</td><td class="num">0.9337</td></tr>
+        <tr><td>optdigits</td><td class="num">0.9403</td><td class="num">0.9392</td><td class="num">0.9380</td><td class="num"><b>0.9405</b></td></tr>
+        <tr><td>spambase</td><td class="num">0.9280</td><td class="num">0.9269</td><td class="num">0.9272</td><td class="num"><b>0.9286</b></td></tr>
+      </tbody>
+    </table>
+    <p>TPE is top on five of six datasets, and the whole table spans roughly half a point — a
+      RandomForest(50) over three parameters is a flat landscape where no search method separates.
+      I deliberately do <em>not</em> claim “fewer evaluations to reach target accuracy” either: on
+      four of six datasets, uniform random reaches its own near-best in as few as 2 evaluations. If
+      you're tuning one model with three knobs on a laptop budget, the honest advice is that your
+      choice among these tools will not move your accuracy much.</p>
+
+    <h2>Finding 2: surface quality beats search mechanism</h2>
+    <p>Where the data <em>does</em> separate things is inside SRS itself — which response surface
+      you fit to the evaluations:</p>
+    <ul>
+      <li><strong>RBF-GP vs my legacy cubic Hilbert polynomial:</strong> top mean CV on all six
+        datasets at both budgets; seed-level wins of 20W/17T/5L (B=30) and 25W/13T/4L (B=60), exact
+        binomial $p \approx 4\times10^{-3}$ and $p \approx 10^{-4}$. The advantage <em>grows</em> as
+        the guidance window opens — a real effect, not seed luck. This is why v0.2 ships RBF-GP as
+        the default.</li>
+      <li><strong>The ablation says the surrogate earns its keep with a good surface:</strong> at
+        B=60, SRS + GP matches or raises final accuracy on all six datasets vs the no-surrogate arm
+        (e.g., credit-g 0.7446 vs 0.7430; arrhythmia 0.7056 vs 0.7004).</li>
+      <li><strong>Un-tuned KernelRidge is worse than doing nothing:</strong> at B=60 it sits below
+        the no-surrogate arm on mean CV in <em>all six</em> datasets and never wins a seed against
+        the Hilbert arm (0W/23T/19L). At these budgets an un-tuned RBF kernel ridge fits noise as
+        readily as signal. If you build this kind of thing: don't ship it.</li>
+    </ul>
+    <p>A controlled synthetic study (the “D-track”, 2,160 additional runs) explains <em>why</em> the
+      surfaces separate the way they do — a regime map over objective family × dimension × sample
+      size × noise:</p>
+    <table>
+      <thead>
+        <tr>
+          <th>objective family</th>
+          <th class="num">Hilbert poly</th>
+          <th class="num">RBF-GP</th>
+          <th class="num">Random forest</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>polynomial (in-span)</td><td class="num"><b>14</b>/18</td><td class="num">2</td><td class="num">2</td></tr>
+        <tr><td>Gaussian bump</td><td class="num">2</td><td class="num"><b>10</b></td><td class="num">6</td></tr>
+        <tr><td>rational</td><td class="num">3</td><td class="num">5</td><td class="num"><b>10</b></td></tr>
+        <tr><td>trigonometric</td><td class="num">0</td><td class="num">1</td><td class="num"><b>17</b></td></tr>
+      </tbody>
+    </table>
+    <p>The mechanisms, not just the winners: the polynomial regressor is <em>exact</em> on in-span
+      objectives even at $n=10$ (its error elsewhere is basis-truncation, flat in sample size); the
+      stock RBF-GP has no noise term and interpolates noise — RMSE jumps from $\approx 0$ clean to
+      0.6–2.9 with moderate noise; RF is the robust generalist that never gets exactness. Real HPO
+      landscapes (CV accuracy over a discrete grid) are not polynomial, which is exactly why the GP
+      surface wins in Finding 2 and why my original Hilbert default was the weak link.</p>
+
+    <h2>Finding 3: the defect we found in ourselves</h2>
+    <p>The pipeline-space track (“C-space”) searches what an AutoML system actually chooses —
+      <strong>1,220 pipelines</strong> (4 preprocessors × 5 reducers × 61 classifier
+      configurations) — under three pre-registered protocols (equal wall-clock 120 s; equal 40
+      evaluations; wall budget as a cap), with hypotheses H1–H4 and their falsifiers fixed before
+      the first canonical run. Six hundred thirty cells, zero invalid candidates. What came back:</p>
+    <ol>
+      <li><strong>No arm separates on held-out accuracy</strong> — every paired comparison is null
+        after Holm correction ($p_{\text{Holm}} = 1.000$ throughout). Flat again.</li>
+      <li><strong>But SRS is evaluation-efficient:</strong> it reaches within 1% of its own final
+        best in a median of <strong>6 evaluations</strong>, against 11–17 for every other arm, at
+        identical final accuracy.</li>
+      <li><strong>That advantage doesn't transfer to wall-clock.</strong> The GP surface fit grows
+        as $O(n^3)$ — per-fit cost rises from 3 ms to 174 ms over a run — so 49% of SRS's 120 s
+        budget is search overhead (22% fitting, 27% acquisition), buying ~half as many candidates as
+        random search. And TPE spends 28–65% of its budget <em>re-proposing configurations it
+        already evaluated</em>.</li>
+      <li><strong>The ordinal-encoding defect was load-bearing.</strong> With the default ordinal
+        encoding, SRS loses to or ties TPE (H1: confirmed). Replacing it with a mixed categorical
+        surface lifts best-CV by ≥0.3 pt in 4 of 6 datasets (+1.63 on galaxy3, +0.51 ionosphere,
+        +0.43 credit-g, +0.37 optdigits) and moves SRS <strong>above TPE in three of them</strong>.
+        Not significant after multiplicity correction — only 3 of the 4 bootstrap CIs exclude zero.
+        But it is uniformly directional, and it changed what we ship next.</li>
+      <li><strong>Portfolio AutoML still wins on accuracy:</strong> FLAML beats every search arm on
+        5 of 6 datasets at the same wall cap (AutoGluon: 3/6 — which <em>refuted</em> our
+        pre-registered joint hypothesis H3; that's pre-registration doing its job, telling us
+        exactly what to believe and how strongly).</li>
+    </ol>
+
+    <h2>What this means if you're choosing an HPO tool</h2>
+    <ul>
+      <li><strong>Small flat spaces, laptop budgets:</strong> TPE or plain random search is fine.
+        The differences are below the noise of your problem.</li>
+      <li><strong>Surrogate-guided search earns its keep when evaluations are expensive</strong>
+        (each one costs minutes) and you care about final quality at a fixed budget — that's where
+        SRS + a good surface shows up, with ~half the evaluations to get near-best on pipeline
+        spaces.</li>
+      <li><strong>If your space has categorical features, check how they're encoded.</strong>
+        Ordinal encoding of unordered categories silently degrades surrogate guidance — the single
+        most actionable lesson from this study.</li>
+      <li><strong>Match the surface to the objective's shape</strong> when you can: polynomial-like
+        / noisy → polynomial basis; clean and smooth → GP (with a noise term if evaluations are
+        noisy); unknown shape → tree-based generalist or an ensemble with fallback.</li>
+    </ul>
+
+    <h2>How to reproduce all of this</h2>
+    <pre><code>pip install sksurrogate          # v0.2.0, PyPI
+python -m benchmarks.run --dataset all --budget 30      # full five-method suite (~1–3 h laptop-scale)
+python -m benchmarks.dtrack.d2_compare                  # the regime-map study</code></pre>
+    <ul>
+      <li>Protocol contract + errata history: <code>benchmarks/DESIGN.md</code> (v1.9) in
+        <a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">github.com/mghasemi/sksurrogate</a></li>
+      <li>Raw B=30/B=60 records (462 runs):
+        <a href="https://doi.org/10.5281/zenodo.23629024" target="_blank" rel="noopener">doi.org/10.5281/zenodo.23629024</a></li>
+      <li>D-track raw data + report:
+        <a href="https://doi.org/10.5281/zenodo.23652613" target="_blank" rel="noopener">doi.org/10.5281/zenodo.23652613</a></li>
+      <li>Software archive (v0.2.0):
+        <a href="https://doi.org/10.5281/zenodo.23631823" target="_blank" rel="noopener">doi.org/10.5281/zenodo.23631823</a></li>
+    </ul>
+
+    <h2>Caveats I'm not hiding</h2>
+    <p>Seven seeds per cell; budgets of 30–60 evaluations; the fixed-pipeline suite's space is only
+      three parameters wide; D-track objectives are smooth and low-dimensional ($d \le 3$); the
+      wall-clock arm uses a different currency (seconds, hardware-dependent) and is explicitly
+      <em>not</em> comparable to the evaluation-count tables. These are small-budget results, and
+      TPE remains competitive — that's stated in the docs too, no spin required. The suite being
+      public means anyone can extend it with more seeds or datasets; I'd rather be wrong in a
+      verifiable way than impressive in an unverifiable one.</p>
+
+    <hr>
+    <p style="font-size:13px;color:var(--faint)">This post is also kept in the repository at
+      <a href="https://github.com/mghasemi/sksurrogate/blob/master/docs/blog-honest-benchmark.md" target="_blank" rel="noopener">docs/blog-honest-benchmark.md</a>.
+      If you use the benchmark numbers, cite the archived records — see
+      <a href="../cite.html">citation</a>.</p>
+  </div>
+</main>
+
+<footer class="footer">
+  <div>
+    <h5>Project</h5>
+    <ul>
+      <li><a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a></li>
+      <li><a href="https://github.com/mghasemi/sksurrogate/blob/master/benchmarks/DESIGN.md" target="_blank" rel="noopener">Protocol contract ↗</a></li>
+      <li><a href="https://pypi.org/project/sksurrogate/" target="_blank" rel="noopener">PyPI ↗</a></li>
+      <li><a href="https://sksurrogate.readthedocs.io/en/latest/" target="_blank" rel="noopener">Documentation ↗</a></li>
+    </ul>
+  </div>
+  <div>
+    <h5>Site</h5>
+    <ul>
+      <li><a href="../">Home</a></li>
+      <li><a href="index.html">Blog</a></li>
+      <li><a href="../about.html">About</a></li>
+      <li><a href="../cite.html">Citation</a></li>
+      <li><a href="../contact.html">Contact</a></li>
+    </ul>
+  </div>
+  <div>
+    <h5>Maintainer</h5>
+    <ul>
+      <li><a href="https://mghasemi.net" target="_blank" rel="noopener">mghasemi.net ↗</a></li>
+      <li><a href="mailto:mehdi.ghasemi@gmail.com">mehdi.ghasemi@gmail.com</a></li>
+      <li><a href="https://orcid.org/0000-0002-9551-1780" target="_blank" rel="noopener">ORCID ↗</a></li>
+    </ul>
+  </div>
+</footer>
+<div class="footline">
+  <span>© 2019–2026 Mehdi Ghasemi · MIT licence</span>
+  <span>sksurrogate v0.3.0 · scikit-learn-native</span>
+</div>
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "mainEntityOfPage": "https://sksurrogate.com/blog/honest-benchmark.html",
+  "headline": "An Honest Benchmark of My Own AutoML Package",
+  "description": "At equal evaluation budgets on six public datasets, surrogate-guided search does not beat Optuna-TPE on accuracy. What is real: the response surface matters more than the search mechanism.",
+  "datePublished": "2026-10-26",
+  "author": {"@type": "Person", "name": "Mehdi Ghasemi", "url": "https://mghasemi.net"},
+  "publisher": {"@type": "Person", "name": "Mehdi Ghasemi"},
+  "about": {"@type": "SoftwareApplication", "name": "SKSurrogate"}
+}
+</script>
+</body>
+</html>

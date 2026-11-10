@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://sksurrogate.com/</loc></url>
+  <url><loc>https://sksurrogate.com/</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://sksurrogate.com/about.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://sksurrogate.com/contact.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://sksurrogate.com/cite.html</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://sksurrogate.com/blog/</loc><lastmod>2026-11-09</lastmod></url>
+  <url><loc>https://sksurrogate.com/blog/honest-benchmark.html</loc><lastmod>2026-10-26</lastmod></url>
 </urlset>

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Blog — SKSurrogate</title>
+<meta name="description" content="Long-form write-ups of the studies behind SKSurrogate: equal-budget benchmarks, pre-registered hypotheses, and the results that did not go our way.">
+<link rel="canonical" href="https://sksurrogate.com/blog/">
+<meta property="og:title" content="Blog — SKSurrogate">
+<meta property="og:description" content="Long-form write-ups of the studies behind SKSurrogate.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://sksurrogate.com/blog/">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="../assets/mark.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../icons/icon-180.png">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Fira+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/page.css">
+</head>
+<body>
+
+<header class="topbar">
+  <a class="brand" href="../"><img src="../assets/mark.svg" alt="">SKSurrogate</a>
+  <nav>
+    <a href="../#product">Product</a>
+    <a href="../#evidence">Benchmarks</a>
+    <a href="../about.html">About</a>
+    <a href="../cite.html">Citation</a>
+    <a href="../contact.html">Contact</a>
+    <a href="https://sksurrogate.readthedocs.io/en/latest/intro.html" target="_blank" rel="noopener">Docs ↗</a>
+    <a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a>
+  </nav>
+</header>
+
+<main class="wrap">
+  <div class="crumb"><a href="../">sksurrogate</a><span>/</span> blog</div>
+  <h1>Numbers, and what they <em>refuse</em> to say.</h1>
+  <p class="lede">Write-ups of the studies behind the product page: the protocol, the seeds, the
+    results that supported the hypothesis, and the ones that refuted it.</p>
+
+  <ul class="postlist">
+    <li>
+      <a href="honest-benchmark.html">
+        <div class="date">26 October 2026 · benchmarks</div>
+        <h2>An Honest Benchmark of My Own AutoML Package</h2>
+        <p>At equal evaluation budgets, surrogate-guided search does not beat Optuna-TPE on
+          accuracy. What <em>is</em> real: the response surface matters more than the search
+          mechanism, and the most useful finding was a defect in our own pipeline — ordinal
+          encoding was silently masking the surrogate's advantage.</p>
+      </a>
+    </li>
+  </ul>
+</main>
+
+<footer class="footer">
+  <div>
+    <h5>Project</h5>
+    <ul>
+      <li><a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a></li>
+      <li><a href="https://github.com/mghasemi/sksurrogate/blob/master/benchmarks/DESIGN.md" target="_blank" rel="noopener">Protocol contract ↗</a></li>
+      <li><a href="https://pypi.org/project/sksurrogate/" target="_blank" rel="noopener">PyPI ↗</a></li>
+      <li><a href="https://sksurrogate.readthedocs.io/en/latest/" target="_blank" rel="noopener">Documentation ↗</a></li>
+    </ul>
+  </div>
+  <div>
+    <h5>Site</h5>
+    <ul>
+      <li><a href="../">Home</a></li>
+      <li><a href="index.html">Blog</a></li>
+      <li><a href="../about.html">About</a></li>
+      <li><a href="../cite.html">Citation</a></li>
+      <li><a href="../contact.html">Contact</a></li>
+    </ul>
+  </div>
+  <div>
+    <h5>Maintainer</h5>
+    <ul>
+      <li><a href="https://mghasemi.net" target="_blank" rel="noopener">mghasemi.net ↗</a></li>
+      <li><a href="mailto:mehdi.ghasemi@gmail.com">mehdi.ghasemi@gmail.com</a></li>
+      <li><a href="https://orcid.org/0000-0002-9551-1780" target="_blank" rel="noopener">ORCID ↗</a></li>
+    </ul>
+  </div>
+</footer>
+<div class="footline">
+  <span>© 2019–2026 Mehdi Ghasemi · MIT licence</span>
+  <span>sksurrogate v0.3.0 · scikit-learn-native</span>
+</div>
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Blog",
+  "url": "https://sksurrogate.com/blog/",
+  "name": "SKSurrogate blog",
+  "author": {"@type": "Person", "name": "Mehdi Ghasemi"}
+}
+</script>
+</body>
+</html>
