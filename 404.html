@@ -2,29 +2,37 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>404 — SKSurrogate</title>
 <meta name="robots" content="noindex">
-<link rel="canonical" href="https://sksurrogate.com/">
+<link rel="canonical" href="https://mghasemi.github.io/sksurrogate/">
+<link rel="stylesheet" href="/sksurrogate/assets/site.css">
+<!-- NOTE: absolute paths are required in this file — GitHub Pages serves 404.html
+     at whatever URL was requested, so relative hrefs resolve against the wrong
+     directory. At the custom-domain launch, the /sksurrogate/ prefix goes away. -->
 <style>
-:root{--ink:#0B0F14;--line:rgba(235,238,245,.13);--chalk:#E7ECF4;--dim:rgba(231,236,244,.62);--ember:#E07A3C}
-*{margin:0;padding:0;box-sizing:border-box}
-body{background:var(--ink);color:var(--chalk);font-family:"Inter",system-ui,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;width:1440px;margin:0 auto}
-.mono{font-family:"Fira Mono","SF Mono",Menlo,monospace;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
-.wrap{text-align:center;padding:96px 0}
-h1{font-weight:300;font-size:72px;letter-spacing:-.04em;margin:18px 0 14px}
-p{color:var(--dim);font-size:15px;max-width:52ch;margin:0 auto;line-height:1.6}
-a.btn{display:inline-block;margin-top:36px;background:var(--ember);color:#170B04;text-decoration:none;font-weight:600;font-size:15px;padding:14px 28px;border-radius:9px}
-hr{border:0;border-top:1px solid var(--line);max-width:340px;margin:0 auto}
+  body{display:flex;align-items:center;justify-content:center;min-height:100vh}
+  .nf{text-align:center;padding:96px 24px;max-width:620px}
+  .nf h1{font-size:64px;line-height:1.05;margin:18px 0 14px;max-width:none}
+  .nf p{color:var(--dim);font-size:15px;line-height:1.7;margin:0 auto}
+  .nf .btn{margin-top:32px;padding:14px 28px;font-size:15px;border-radius:9px}
+  .nf hr{border:0;border-top:1px solid var(--line);max-width:340px;margin:0 auto}
+  .nf .next{margin-top:28px;font-size:13px}
+  .nf .next a{border-bottom:1px solid var(--line2);color:var(--ink)}
+  @media (max-width:620px){.nf h1{font-size:44px}}
 </style>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Fira+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
-<body>
-<div class="wrap">
+<body class="sub">
+<div class="nf">
   <hr>
   <div class="mono">404 · page not found</div>
   <h1>This surface has no signal.</h1>
-  <p>The address you followed does not exist on sksurrogate.com. The documentation lives on Read the Docs; the code lives on GitHub.</p>
-  <a class="btn" href="/">Back to sksurrogate</a>
+  <p>The address you followed does not exist on this site. The documentation lives on Read the
+    Docs; the code lives on GitHub.</p>
+  <a class="btn" href="/sksurrogate/">Back to sksurrogate</a>
+  <p class="next">Or try the <a href="/sksurrogate/quickstart/">quickstart</a>, the
+    <a href="/sksurrogate/benchmarks/">benchmarks</a>, or the
+    <a href="/sksurrogate/blog/">blog</a>.</p>
 </div>
 </body>
 </html>

@@ -1,214 +1,94 @@
 <!doctype html>
 <html lang="en">
 <head>
-<!-- ============================================================================
-  SKSurrogate — product page (single static file + assets/)
-  Source of truth for copy: Atelier/designs/sksurrogate/{HANDOFF-website.md,
-  content-plan.md, brand.md}; every figure/number carries an inline source
-  comment. Launch version constant: v0.3.0 (see strip + hero meta).
-============================================================================ -->
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SKSurrogate — end-to-end scientific MLOps environment</title>
 <meta name="description" content="One open-source tool from dataset registration to deployed, monitored models — surrogate-based optimization, statistical evaluation (nested CV + conformal intervals), sensitivity analysis, experiment design for expensive runs, and a research workspace that tracks evidence. Built on scikit-learn; drop-in BaseSearchCV tuner included.">
-<link rel="canonical" href="https://sksurrogate.com/">
+<link rel="canonical" href="https://mghasemi.github.io/sksurrogate/">
+<meta property="og:site_name" content="SKSurrogate">
+<meta property="og:locale" content="en_US">
 <meta property="og:title" content="SKSurrogate — end-to-end scientific MLOps environment">
 <meta property="og:description" content="From raw dataset to deployed, drift-monitored model — in one scikit-learn-native environment. Surrogate-based optimization with statistical proof. MIT open source.">
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://sksurrogate.com/">
-<!-- og:image: design dir hero-surface-ink.png, shipped as assets/hero-surface-ink.png (per HANDOFF Task B) -->
-<meta property="og:image" content="https://sksurrogate.com/assets/hero-surface-ink.png">
+<meta property="og:url" content="https://mghasemi.github.io/sksurrogate/">
+<meta property="og:image" content="https://mghasemi.github.io/sksurrogate/assets/og-card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="SKSurrogate — from raw dataset to deployed, drift-monitored model. MIT, pip install sksurrogate.">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://mghasemi.github.io/sksurrogate/assets/og-card.png">
+<meta name="twitter:image:alt" content="SKSurrogate — from raw dataset to deployed, drift-monitored model.">
 <link rel="icon" href="assets/mark.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icons/icon-180.png">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Fira+Mono:wght@400;500&display=swap" rel="stylesheet">
-<style>
-:root{--bg:#0B0F14;--panel:#0F141B;--panel2:#131A22;--line:rgba(235,238,245,.13);--line2:rgba(235,238,245,.26);
-      --ink:#E7ECF4;--dim:rgba(231,236,244,.62);--faint:rgba(231,236,244,.40);
-      --ultra:#8AA5FF;--teal:#4FB3BF;--ember:#E07A3C}
-*{margin:0;padding:0;box-sizing:border-box}
-html{scroll-behavior:smooth}
-body{background:var(--bg);color:var(--ink);font-family:"Inter",system-ui,sans-serif;font-size:15px;line-height:1.6;width:1440px;margin:0 auto;overflow-x:hidden}
-.mono{font-family:"Fira Mono","SF Mono",Menlo,monospace;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
-a{color:inherit;text-decoration:none}
-section[id],[id]{scroll-margin-top:76px}
-
-/* strip + nav */
-.strip{display:flex;justify-content:space-between;align-items:center;padding:14px 56px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--dim)}
-.strip b{color:var(--ink);font-weight:500}
-.strip .dot{display:inline-block;width:7px;height:7px;border-radius:4px;background:var(--ember);margin-right:8px;vertical-align:1px}
-.strip nav a{margin-left:22px;color:var(--dim)}
-.strip nav a:hover{color:var(--ink)}
-.nav{display:flex;justify-content:space-between;align-items:center;padding:16px 56px;border-bottom:1px solid var(--line);position:relative}
-.brand{display:flex;gap:12px;align-items:center;font-weight:600;letter-spacing:-.01em;font-size:17px}
-.nav .links{display:flex;gap:30px;font-size:14px;color:var(--dim)}
-.nav .links a:hover{color:var(--ink)}
-.btn{background:var(--ember);color:#170B04;font-weight:600;padding:9px 18px;border-radius:8px;font-size:14px;display:inline-block}
-
-/* hero */
-.hero{display:grid;grid-template-columns:minmax(0,540px) 1fr;gap:64px;padding:92px 56px 84px;align-items:center}
-.eyebrow{display:flex;align-items:center;gap:10px;margin-bottom:26px}
-.eyebrow .bar{width:26px;height:3px;background:var(--ember);border-radius:2px}
-h1{font-family:"Inter Display","Inter",sans-serif;font-weight:300;font-size:50px;line-height:1.08;letter-spacing:-.03em;margin-bottom:24px}
-h1 em{font-style:normal;color:var(--ultra)}
-.lede{color:var(--dim);font-size:16px;max-width:52ch;margin-bottom:30px}
-.cta-row{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:22px}
-.doc-link{color:var(--dim);border-bottom:1px solid var(--line2);padding-bottom:2px;font-size:14px}
-.doc-link:hover{color:var(--ink)}
-.hero .meta{margin-top:30px;display:flex;gap:18px;font-size:11.5px;color:var(--faint)}
-.copy{display:flex;align-items:center;gap:12px;background:#0D1219;border:1px solid var(--line);border-radius:10px;padding:12px 16px;font-family:"Fira Mono",monospace;font-size:13px;color:var(--ink)}
-.copy .sigil{color:var(--ember)}
-.copy kbd{font-family:"Fira Mono",monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);border:1px solid var(--line);border-radius:6px;padding:4px 9px;background:#0A0E13}
-.copy .sep{width:1px;height:18px;background:var(--line)}
-.chips{display:flex;flex-direction:column;gap:10px;margin-bottom:2px}
-.heroart{position:relative;border-radius:16px;overflow:hidden;background:#0A0E14;border:1px solid var(--line)}
-.heroart img{width:100%;height:auto;display:block}
-.tag{position:absolute;font-family:"Fira Mono",monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:rgba(235,238,245,.75);background:rgba(9,12,17,.72);border:1px solid rgba(235,238,245,.16);padding:6px 10px;border-radius:7px}
-.tag.tl{top:16px;left:16px}.tag.tr{top:16px;right:16px;color:var(--ember)}
-.tag.bl{bottom:16px;left:16px}.tag.br{bottom:16px;right:16px}
-
-/* capability rail */
-.rail{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
-.cell{padding:26px 30px;border-right:1px solid var(--line)}
-.cell:last-child{border-right:none}
-.cell .k{font-family:"Fira Mono",monospace;font-size:12px;letter-spacing:.14em;color:var(--ember);text-transform:uppercase;margin-bottom:8px}
-.cell p{color:var(--dim);font-size:13.5px}
-
-/* section head */
-.sechead{display:flex;justify-content:space-between;align-items:flex-end;padding:96px 56px 40px;gap:60px}
-h2{font-family:"Inter Display","Inter",sans-serif;font-weight:300;font-size:38px;line-height:1.15;letter-spacing:-.02em}
-h2 em{font-style:normal;color:var(--ultra)}
-.sechead .side{color:var(--dim);font-size:14px;max-width:36ch;text-align:right;padding-bottom:6px}
-
-/* two-layer loop */
-.loop{display:grid;grid-template-columns:minmax(0,520px) 1fr;gap:70px;padding:0 56px 20px;align-items:center}
-.loop p{color:var(--dim);margin-top:18px;font-size:15px}
-.diagram{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:30px}
-
-/* stages */
-.stages{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border-top:1px solid var(--line);margin-top:28px}
-.stage{background:var(--bg);padding:30px 26px 56px;min-height:300px}
-.stage .n{font-family:"Fira Mono",monospace;font-size:12px;color:var(--faint);letter-spacing:.14em;margin-bottom:14px}
-.stage h3{font-weight:500;font-size:16.5px;letter-spacing:-.01em;margin-bottom:18px}
-.stage ul{list-style:none;display:flex;flex-direction:column;gap:9px}
-.stage li{display:flex;justify-content:space-between;align-items:center;color:var(--dim);font-size:13.5px;border-top:1px solid var(--line);padding-top:9px}
-.stage li span{font-family:"Fira Mono",monospace;font-size:10.5px;color:var(--faint);letter-spacing:.04em;text-transform:none;white-space:nowrap;margin-left:12px}
-
-/* research workspace (S6) */
-.split{display:grid;grid-template-columns:1fr 1fr;gap:36px;padding:0 56px}
-.panelcard{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;display:flex;flex-direction:column;gap:18px}
-.shot{position:relative;border-radius:10px;overflow:hidden;border:1px solid var(--line)}
-.shot img{width:100%;display:block;background:#fff}
-.shot .shotbar{font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);padding:8px 12px;border-bottom:1px solid var(--line)}
-.panelcard h4{font-weight:600;font-size:17px;letter-spacing:-.01em}
-.panelcard p{color:var(--dim);font-size:13.5px;line-height:1.65}
-
-/* explainability charts */
-.explain .grid2{display:grid;grid-template-columns:minmax(0,480px) 1fr;gap:70px;padding:0 56px;align-items:center}
-.figrow{display:grid;grid-template-columns:repeat(3,1fr);gap:26px;margin:44px 56px 0}
-.fig{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px 20px 16px}
-.fig .cap{font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:16px;display:flex;justify-content:space-between;align-items:center}
-.blabels{display:flex;gap:14%;padding:0 8%;margin-top:9px}
-.blabel{font-family:"Fira Mono",monospace;font-size:10.5px;color:var(--dim);letter-spacing:.06em}
-.bandrow{display:flex;flex-direction:column;gap:7px;height:92px;justify-content:center}
-.ivl{height:9px;border-radius:4px;background:#2A3548}
-.ivl.wide{background:#3D4E70;box-shadow:inset 0 0 0 1px rgba(224,122,60,.55)}
-.flagchip{font-family:"Fira Mono",monospace;font-size:9.5px;color:var(--ember);letter-spacing:.08em;text-transform:none}
-
-/* product band */
-.band{display:grid;grid-template-columns:minmax(0,640px) 1fr;gap:70px;padding:0 56px 96px;align-items:center}
-.band .shotbar{border-radius:10px 10px 0 0;border-bottom:1px solid var(--line);font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);padding:9px 14px;background:#0D1219}
-.band img{width:100%;display:block;border-left:1px solid var(--line);border-right:1px solid var(--line)}
-.features li{list-style:none;display:flex;gap:18px;padding:17px 0;border-top:1px solid var(--line)}
-.features .k{font-family:"Fira Mono",monospace;font-size:12px;color:var(--ultra);letter-spacing:.1em;min-width:34px}
-.features b{display:block;font-weight:600;font-size:15px;margin-bottom:3px}
-.features p{color:var(--dim);font-size:13.5px}
-
-/* evidence */
-.tblwrap{margin:0 56px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}
-.tblwrap .tcap{padding:16px 22px;border-bottom:1px solid var(--line);font-family:"Fira Mono",monospace;font-size:11px;letter-spacing:.06em;color:var(--dim);text-transform:none}
-table.bench{width:100%;border-collapse:collapse;font-family:"Fira Mono",monospace;font-size:13px}
-table.bench th{text-align:right;font-weight:400;color:var(--faint);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;padding:12px 22px;border-bottom:1px solid var(--line)}
-table.bench th:first-child,table.bench td:first-child{text-align:left}
-table.bench td{padding:11px 22px;border-bottom:1px solid var(--line);color:var(--dim)}
-table.bench tr:last-child td{border-bottom:none}
-table.bench .best{color:var(--ultra);font-weight:500}
-.tblwrap .tfoot{padding:16px 22px;border-top:1px solid var(--line);color:var(--dim);font-size:13px;line-height:1.7;max-width:118ch;text-transform:none;font-family:"Inter",sans-serif;letter-spacing:normal}
-.evidgrid{display:grid;grid-template-columns:1fr 1fr;gap:36px;margin:36px 56px 0;align-items:start}
-.figpanel{border:1px solid var(--line);border-radius:14px;background:var(--panel);overflow:hidden;display:flex;flex-direction:column}
-.figpanel img{width:100%;display:block}
-.figpanel .fcap{padding:16px 20px;color:var(--dim);font-size:13px;line-height:1.65;border-top:1px solid var(--line)}
-.reproblock{border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:22px}
-.reproblock .lab{font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin-bottom:16px}
-.dochips{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px}
-.dochip{border:1px solid var(--line);border-radius:8px;padding:9px 13px;font-family:"Fira Mono",monospace;font-size:12px;color:var(--dim)}
-.dochip b{color:var(--ink);font-weight:500}
-.dochip:hover{border-color:var(--line2);color:var(--ink)}
-pre.codeblock{background:#0A0E13;border:1px solid var(--line);border-radius:10px;padding:16px 18px;font-family:"Fira Mono",monospace;font-size:12.5px;line-height:1.75;color:var(--dim);overflow-x:auto;position:relative}
-pre.codeblock .c{color:var(--faint)}
-pre.codeblock .p{color:var(--ember)}
-
-/* what-it's-not + comparison (S10/S11) */
-.notrows,.cmp{margin:0 56px;border-top:1px solid var(--line)}
-.nrow,.crown{display:flex;justify-content:space-between;gap:48px;padding:22px 4px;border-bottom:1px solid var(--line);align-items:baseline}
-.nrow .claim{font-size:15px;color:var(--ink);max-width:60ch;line-height:1.6}
-.nrow .claim b,.crown .claim b{font-weight:600}
-.nrow .src,.crown .src{font-family:"Fira Mono",monospace;font-size:10.5px;color:var(--faint);letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;padding-top:3px}
-.caveat{margin:20px 56px 0;color:var(--dim);font-size:13.5px;line-height:1.7;max-width:100ch}
-
-/* quick start */
-.qsgrid{display:grid;grid-template-columns:1fr 1fr;gap:36px;padding:0 56px 96px;align-items:start}
-.atlaunch{display:flex;flex-direction:column;gap:12px;margin-top:18px}
-.atchip{border:1px solid var(--line);border-radius:10px;padding:13px 16px;font-family:"Fira Mono",monospace;font-size:12px;color:var(--faint);letter-spacing:.05em;display:flex;justify-content:space-between}
-.atchip i{font-style:normal;color:var(--ember)}
-
-/* cta + footer */
-.cta{text-align:center;padding:96px 56px;border-top:1px solid var(--line)}
-.cta h2{margin:0 auto 18px;max-width:none}
-.cta p{color:var(--dim);max-width:56ch;margin:0 auto 34px;font-size:15.5px}
-.footer{display:grid;grid-template-columns:repeat(4,1fr) minmax(280px,1.4fr);gap:40px;padding:64px 56px;border-top:1px solid var(--line)}
-.footer h5{font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin-bottom:18px}
-.footer ul{list-style:none;display:flex;flex-direction:column;gap:10px;font-size:13.5px}
-.footer a{color:var(--dim)}
-.footer a:hover{color:var(--ink)}
-.footer .ledecol p{color:var(--dim);font-size:13.5px;margin-top:14px;max-width:34ch}
-.footline{display:flex;justify-content:space-between;padding:22px 56px;border-top:1px solid var(--line);font-family:"Fira Mono",monospace;font-size:11px;color:var(--faint);letter-spacing:.08em}
-</style>
+<link rel="preload" href="assets/fonts/inter-var-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="assets/site.css">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
   "@graph": [
     {
       "@type": "SoftwareApplication",
-      "@id": "https://sksurrogate.com/#software",
+      "@id": "https://mghasemi.github.io/sksurrogate/#software",
       "name": "SKSurrogate",
       "alternateName": "sksurrogate",
       "description": "An end-to-end scientific MLOps environment built on scikit-learn: surrogate-based optimization of expensive objectives, statistical evaluation with nested cross-validation and conformal intervals, sensitivity and dependence analysis, experiment design, and a research workspace that tracks evidence.",
-      "url": "https://sksurrogate.com/",
+      "url": "https://mghasemi.github.io/sksurrogate/",
       "applicationCategory": "DeveloperApplication",
-      "applicationSubCategory": "Machine learning tooling",
+      "applicationSubCategory": "Machine learning / hyperparameter optimization",
       "operatingSystem": "Linux, macOS, Windows",
-      "softwareVersion": "0.3.0",
+      "softwareVersion": "0.2.0",
+      "softwareRequirements": "Python >=3.10, scikit-learn",
       "programmingLanguage": "Python",
-      "license": "https://opensource.org/license/mit",
+      "license": "https://opensource.org/licenses/MIT",
       "isAccessibleForFree": true,
       "codeRepository": "https://github.com/mghasemi/sksurrogate",
       "downloadUrl": "https://pypi.org/project/sksurrogate/",
-      "author": {"@id": "https://sksurrogate.com/#author"},
+      "identifier": {
+        "@type": "PropertyValue",
+        "propertyID": "DOI",
+        "value": "10.5281/zenodo.23631823",
+        "url": "https://doi.org/10.5281/zenodo.23631823"
+      },
+      "author": {"@id": "https://mghasemi.github.io/sksurrogate/#person"},
       "offers": {"@type": "Offer", "price": "0", "priceCurrency": "USD"}
     },
     {
       "@type": "Person",
-      "@id": "https://sksurrogate.com/#author",
+      "@id": "https://mghasemi.github.io/sksurrogate/#person",
       "name": "Mehdi Ghasemi",
+      "jobTitle": "Senior Scientist-Mathematician",
       "url": "https://mghasemi.net",
-      "sameAs": ["https://orcid.org/0000-0002-9551-1780", "https://github.com/mghasemi"]
+      "sameAs": [
+        "https://github.com/mghasemi",
+        "https://scholar.google.com/citations?user=1PlVtHsAAAAJ",
+        "https://orcid.org/0000-0002-9551-1780"
+      ]
     },
     {
       "@type": "WebSite",
-      "@id": "https://sksurrogate.com/#website",
-      "url": "https://sksurrogate.com/",
+      "@id": "https://mghasemi.github.io/sksurrogate/#website",
+      "url": "https://mghasemi.github.io/sksurrogate/",
       "name": "SKSurrogate",
-      "publisher": {"@id": "https://sksurrogate.com/#author"}
+      "publisher": {"@id": "https://mghasemi.github.io/sksurrogate/#person"}
+    },
+    {
+      "@type": "Dataset",
+      "@id": "https://doi.org/10.5281/zenodo.23629024",
+      "identifier": "10.5281/zenodo.23629024",
+      "name": "SKSurrogate benchmark raw results --- equal-budget HPO suite (B=30/B=60), DESIGN v1.9",
+      "url": "https://doi.org/10.5281/zenodo.23629024",
+      "license": "https://opensource.org/licenses/MIT",
+      "creator": {"@id": "https://mghasemi.github.io/sksurrogate/#person"}
+    },
+    {
+      "@type": "Dataset",
+      "@id": "https://doi.org/10.5281/zenodo.23652613",
+      "identifier": "10.5281/zenodo.23652613",
+      "name": "SKSurrogate D-track raw data and report",
+      "url": "https://doi.org/10.5281/zenodo.23652613",
+      "license": "https://opensource.org/licenses/MIT",
+      "creator": {"@id": "https://mghasemi.github.io/sksurrogate/#person"}
     }
   ]
 }
@@ -241,6 +121,7 @@ pre.codeblock .p{color:var(--ember)}
     <a href="#product">Product</a>
     <a href="#stages">Workflow</a>
     <a href="#evidence">Benchmarks</a>
+    <a href="blog/">Blog</a>
     <a href="https://sksurrogate.readthedocs.io/en/latest/intro.html" target="_blank" rel="noopener">Docs</a>
     <a href="https://sksurrogate.readthedocs.io/en/latest/" target="_blank" rel="noopener">Manual</a>
   </div>
@@ -271,7 +152,10 @@ pre.codeblock .p{color:var(--ember)}
   </div>
   <!-- Art: design dir assets/hero-surface.png (transparent); axis tags pinned per brand.md §Layout.2 -->
   <div class="heroart">
-    <img src="assets/hero-surface.png" alt="Surrogate response surface with acquisition points converging on the optimum">
+    <picture>
+      <source srcset="assets/hero-surface.webp" type="image/webp">
+      <img src="assets/hero-surface.png" width="1400" height="966" alt="Surrogate response surface with acquisition points converging on the optimum" decoding="async" fetchpriority="high">
+    </picture>
     <span class="tag tl">posterior mean</span>
     <span class="tag tr">acquisition · converged</span>
     <span class="tag bl">contraction 0.90</span>
@@ -372,14 +256,14 @@ pre.codeblock .p{color:var(--ember)}
   <div class="split">
     <!-- Screenshot: docs/images/wt-19-projects.png (walkthrough step 13) -->
     <div class="panelcard">
-      <div class="shot"><div class="shotbar">control plane · projects</div><img src="assets/wt-19-projects.png" alt="Research project view with partitions, bundles and hypotheses"></div>
+      <div class="shot"><div class="shotbar">control plane · projects</div><picture><source srcset="assets/wt-19-projects.webp" type="image/webp"><img src="assets/wt-19-projects.png" width="1280" height="800" alt="Research project view with partitions, bundles and hypotheses" loading="lazy" decoding="async"></picture></div>
       <!-- Source: docs/research-projects.rst — hypothesis status lifecycle (proposed / under investigation / supported / contradicted / inconclusive) with append-only history; evidence records snapshot artifact state beside each claim. -->
       <h4>Projects that keep receipts</h4>
       <p>A project groups data partitions, model bundles and jobs around its research question. Partitions carry schema and fingerprint; hypotheses move through a status lifecycle — proposed, under investigation, supported, contradicted or inconclusive — with an append-only history. Evidence records snapshot the state of each artifact beside the claim it supports.</p>
     </div>
     <!-- Screenshot: docs/images/wt-20-design.png (walkthrough step 13) -->
     <div class="panelcard">
-      <div class="shot"><div class="shotbar">control plane · experiment design</div><img src="assets/wt-20-design.png" alt="Experiment design view proposing the next points to sample"></div>
+      <div class="shot"><div class="shotbar">control plane · experiment design</div><picture><source srcset="assets/wt-20-design.webp" type="image/webp"><img src="assets/wt-20-design.png" width="1280" height="800" alt="Experiment design view proposing the next points to sample" loading="lazy" decoding="async"></picture></div>
       <!-- Source: docs/experiment-design.rst — LHS space-filling plans + GP lower-confidence-bound acquisition for expensive physical/lab experiments; plan exported as CSV. -->
       <h4>Design the next run, not just fit the last one</h4>
       <p>For expensive experiments — lab or physical runs where you choose what to sample rather than score existing data — SKSurrogate proposes where to evaluate next: a space-filling Latin-hypercube plan plus GP-lower-confidence-bound acquisition over past results. Export the plan as CSV and run it.</p>
@@ -432,7 +316,7 @@ pre.codeblock .p{color:var(--ember)}
   </div>
   <div class="band">
     <!-- Screenshot: docs/images/ui-dashboard.png — control-plane dashboard (content-plan S8 ⚠ window-framed, absolute path fixed to assets/) -->
-    <div><div class="shotbar">control plane · dashboard</div><img src="assets/ui-dashboard.png" alt="SKSurrogate control plane dashboard"></div>
+    <div><div class="shotbar">control plane · dashboard</div><picture><source srcset="assets/ui-dashboard.webp" type="image/webp"><img src="assets/ui-dashboard.png" width="1366" height="682" alt="SKSurrogate control plane dashboard" loading="lazy" decoding="async"></picture></div>
     <ul class="features">
       <!-- readme.rst: the tuner records data identity so drift is detectable before inference -->
       <li><span class="k">01</span><div><b>Drift-aware by construction</b><p>The tuner records the identity of the data it optimized, so drift is detectable before inference rather than after a bad prediction.</p></div></li>
@@ -457,7 +341,7 @@ pre.codeblock .p{color:var(--ember)}
        Bold = best per row, exactly as published. Caption below: Finding 1 sentence verbatim + Finding 2 summary. -->
   <div class="tblwrap">
     <div class="tcap">Mean final CV accuracy, B = 30 evaluations · identical estimator (StandardScaler → RandomForestClassifier(50)) over one shared 224-configuration discrete space · stratified 5-fold CV inside every search · seven seeds per cell — bold = best per row</div>
-    <table class="bench">
+    <div class="tblscroll"><table class="bench">
       <thead><tr><th>dataset</th><th>SRS + RBF-GP</th><th>no surrogate</th><th>random</th><th>Optuna-TPE</th></tr></thead>
       <tbody>
         <tr><td>arrhythmia</td><td>0.7020</td><td>0.6910</td><td>0.6941</td><td class="best">0.7036</td></tr>
@@ -467,7 +351,7 @@ pre.codeblock .p{color:var(--ember)}
         <tr><td>optdigits</td><td>0.9403</td><td>0.9392</td><td>0.9380</td><td class="best">0.9405</td></tr>
         <tr><td>spambase</td><td>0.9280</td><td>0.9269</td><td>0.9272</td><td class="best">0.9286</td></tr>
       </tbody>
-    </table>
+    </table></div>
     <!-- Finding 1 sentence verbatim; B=60 claims per Finding 2 (RBF-GP top mean CV on all six at both budgets;
          ablation matches or raises accuracy vs no-surrogate on all six) -->
     <div class="tfoot">TPE is top on five of six datasets, and the whole table spans roughly half a point — a RandomForest(50) over three parameters is a flat landscape where no search method separates. Where the data does separate things is inside SRS itself: at B = 60 the RBF-GP surface is top mean CV on all six datasets and matches or raises final accuracy against the no-surrogate arm everywhere, while an un-tuned KernelRidge sits below doing nothing on all six.</div>
@@ -476,7 +360,7 @@ pre.codeblock .p{color:var(--ember)}
   <div class="evidgrid">
     <!-- Figure: docs/images/stability_contour.png — caption VERBATIM from make_stability_contour.py docstring (allowed claims) -->
     <div class="figpanel">
-      <img src="assets/stability_contour.png" alt="Contour of mean CV accuracy over max_depth by min_samples_leaf for RandomForest on credit-g">
+      <picture><source srcset="assets/stability_contour.webp" type="image/webp"><img src="assets/stability_contour.png" width="1200" height="750" alt="Contour of mean CV accuracy over max_depth by min_samples_leaf for RandomForest on credit-g" loading="lazy" decoding="async"></picture>
       <div class="fcap">Contour of mean CV accuracy over the joint (max_depth × min_samples_leaf) space for RandomForest on credit-g, B = 30. The optimum is broad rather than needle-like: small changes in either parameter move accuracy little.</div>
     </div>
     <!-- Reproducibility: DOIs verbatim from blog "How to reproduce all of this" (L81-92); commands verbatim from the same block -->
@@ -505,7 +389,7 @@ pre.codeblock .p{color:var(--ember)}
   <!-- D-track regime map: VERBATIM from blog Finding 2 table — winning cells of 18 per objective family (dimension × sample size × noise grid), 2,160 additional runs -->
   <div class="tblwrap" style="margin-top:36px">
     <div class="tcap">D-track controlled synthetic study · 2,160 archived runs — winning cells (of 18 per objective family across the dimension × sample size × noise grid) by response-surface family</div>
-    <table class="bench" style="width:auto;min-width:520px;margin:0 auto">
+    <div class="tblscroll"><table class="bench" style="width:auto;min-width:520px;margin:0 auto">
       <thead><tr><th>objective family</th><th>Hilbert poly</th><th>RBF-GP</th><th>Random forest</th></tr></thead>
       <tbody>
         <tr><td>polynomial (in-span)</td><td class="best">14/18</td><td>2</td><td>2</td></tr>
@@ -513,7 +397,7 @@ pre.codeblock .p{color:var(--ember)}
         <tr><td>rational</td><td>3</td><td>5</td><td class="best">10</td></tr>
         <tr><td>trigonometric</td><td>0</td><td>1</td><td class="best">17</td></tr>
       </tbody>
-    </table>
+    </table></div>
   </div>
 
   <!-- Contract chips: BaseSearchCV (readme), MIT + self-hosted single port (controlplane.rst; content-plan S9 ⚠ softened "self-hosted"), DOI-archived results -->
@@ -627,18 +511,22 @@ search.best_params_, search.best_score_</pre>
   </ul></div>
   <div><h5>Resources</h5><ul>
     <!-- RTD intro + controlplane verified 200 at build time -->
+    <li><a href="benchmarks/">Benchmark page</a></li>
     <li><a href="https://sksurrogate.readthedocs.io/en/latest/intro.html" target="_blank" rel="noopener">Documentation ↗</a></li>
     <li><a href="https://sksurrogate.readthedocs.io/en/latest/controlplane.html" target="_blank" rel="noopener">Control plane ↗</a></li>
-    <li><a href="blog/index.html">Blog</a></li>
-    <li><a href="blog/honest-benchmark.html">Honest benchmark post</a></li>
+    <li><a href="quickstart/">Quickstart</a></li>
+    <li><a href="blog/">Blog</a></li>
+    <li><a href="blog/honest-benchmark/">Honest benchmark post</a></li>
+    <li><a href="faq/">FAQ</a></li>
   </ul></div>
   <div><h5>Project</h5><ul>
     <!-- CITATION.cff/README on master; v0.3.0 cut ships the PDF manual as a Release asset -->
     <li><a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a></li>
-    <li><a href="cite.html">Citation</a></li>
+    <li><a href="cite/">Citation</a></li>
     <li><a href="https://github.com/mghasemi/sksurrogate/blob/master/CHANGELOG.rst" target="_blank" rel="noopener">Changelog ↗</a></li>
-    <li><a href="about.html">About</a></li>
-    <li><a href="contact.html">Contact</a></li>
+    <li><a href="about/">About</a></li>
+    <li><a href="roadmap/">Roadmap</a></li>
+    <li><a href="contact/">Contact</a></li>
   </ul></div>
   <div class="ledecol"><h5>Maintainer</h5><p style="font-size:13.5px;color:var(--dim)">Mehdi Ghasemi — senior scientist-mathematician.<br><a href="mailto:mehdi.ghasemi@gmail.com">mehdi.ghasemi@gmail.com</a><br><a href="https://mghasemi.net" target="_blank" rel="noopener">mghasemi.net ↗</a></p></div>
   <div class="ledecol"><h5>sksurrogate</h5>

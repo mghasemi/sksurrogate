@@ -1,0 +1,323 @@
+/* ============================================================================
+   SKSurrogate — shared stylesheet for every page on the site.
+   SITE_URL lives in one place: scripts/site_url.py (used by the audit script);
+   in markup it appears as absolute URLs only in canonical/og/sitemap.
+
+   Structure
+     1. tokens + base
+     2. homepage rules (extracted verbatim from the original inline <style>)
+     3. subpage shell + article/prose rules (body.sub)
+     4. responsive breakpoints: 1100 / 860 / 620
+   The homepage rules are frozen: at 1440 px the page must render exactly as it
+   did before this file existed. New rules go under body.sub or a media query.
+   ========================================================================= */
+
+/* 1. tokens + base ------------------------------------------------------- */
+/* Self-hosted fonts (latin subset, fetched from fonts.gstatic.com at build
+   time): Inter is a single variable file covering 300–600, Fira Mono ships
+   two static weights. No runtime request to fonts.googleapis.com. */
+@font-face{font-family:'Inter';font-style:normal;font-weight:300 600;font-display:swap;
+  src:url('fonts/inter-var-latin.woff2') format('woff2');
+  unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:'Fira Mono';font-style:normal;font-weight:400;font-display:swap;
+  src:url('fonts/firamono-400-latin.woff2') format('woff2');
+  unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:'Fira Mono';font-style:normal;font-weight:500;font-display:swap;
+  src:url('fonts/firamono-500-latin.woff2') format('woff2');
+  unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+:root{--bg:#0B0F14;--panel:#0F141B;--panel2:#131A22;--line:rgba(235,238,245,.13);--line2:rgba(235,238,245,.26);
+      --ink:#E7ECF4;--dim:rgba(231,236,244,.62);--faint:rgba(231,236,244,.40);
+      --ultra:#8AA5FF;--teal:#4FB3BF;--ember:#E07A3C}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--ink);font-family:"Inter",system-ui,sans-serif;font-size:15px;line-height:1.6;width:100%;max-width:1440px;margin:0 auto;overflow-x:clip}
+.mono{font-family:"Fira Mono","SF Mono",Menlo,monospace;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+a{color:inherit;text-decoration:none}
+/* width/height attributes reserve layout space; height:auto keeps the authored
+   aspect ratio once CSS sets a responsive width (prevents CLS and distortion). */
+img{max-width:100%;height:auto}
+/* <picture> is a wrapper only: display:contents keeps the <img> as the direct
+   flow child (no inline-box baseline gap, identical layout to a bare <img>). */
+picture{display:contents}
+section[id],[id]{scroll-margin-top:76px}
+
+/* 2. homepage ------------------------------------------------------------ */
+/* strip + nav */
+.strip{display:flex;justify-content:space-between;align-items:center;padding:14px 56px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--dim)}
+.strip b{color:var(--ink);font-weight:500}
+.strip .dot{display:inline-block;width:7px;height:7px;border-radius:4px;background:var(--ember);margin-right:8px;vertical-align:1px}
+.strip nav a{margin-left:22px;color:var(--dim)}
+.strip nav a:hover{color:var(--ink)}
+.nav{display:flex;justify-content:space-between;align-items:center;padding:16px 56px;border-bottom:1px solid var(--line);position:relative;gap:24px}
+.brand{display:flex;gap:12px;align-items:center;font-weight:600;letter-spacing:-.01em;font-size:17px;white-space:nowrap}
+.nav .links{display:flex;gap:30px;font-size:14px;color:var(--dim)}
+.nav .links a:hover{color:var(--ink)}
+.btn{background:var(--ember);color:#170B04;font-weight:600;padding:9px 18px;border-radius:8px;font-size:14px;display:inline-block}
+
+/* hero */
+.hero{display:grid;grid-template-columns:minmax(0,540px) 1fr;gap:64px;padding:92px 56px 84px;align-items:center}
+.eyebrow{display:flex;align-items:center;gap:10px;margin-bottom:26px}
+.eyebrow .bar{width:26px;height:3px;background:var(--ember);border-radius:2px}
+h1{font-family:"Inter Display","Inter",sans-serif;font-weight:300;font-size:50px;line-height:1.08;letter-spacing:-.03em;margin-bottom:24px}
+h1 em{font-style:normal;color:var(--ultra)}
+.lede{color:var(--dim);font-size:16px;max-width:52ch;margin-bottom:30px}
+.cta-row{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:22px}
+.doc-link{color:var(--dim);border-bottom:1px solid var(--line2);padding-bottom:2px;font-size:14px}
+.doc-link:hover{color:var(--ink)}
+.hero .meta{margin-top:30px;display:flex;gap:18px;font-size:11.5px;color:var(--faint);flex-wrap:wrap}
+.copy{display:flex;align-items:center;gap:12px;background:#0D1219;border:1px solid var(--line);border-radius:10px;padding:12px 16px;font-family:"Fira Mono",monospace;font-size:13px;color:var(--ink)}
+.copy .sigil{color:var(--ember)}
+.copy kbd{font-family:"Fira Mono",monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);border:1px solid var(--line);border-radius:6px;padding:4px 9px;background:#0A0E13}
+.copy .sep{width:1px;height:18px;background:var(--line)}
+.chips{display:flex;flex-direction:column;gap:10px;margin-bottom:2px}
+.heroart{position:relative;border-radius:16px;overflow:hidden;background:#0A0E14;border:1px solid var(--line)}
+.heroart img{width:100%;height:auto;display:block}
+.tag{position:absolute;font-family:"Fira Mono",monospace;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:rgba(235,238,245,.75);background:rgba(9,12,17,.72);border:1px solid rgba(235,238,245,.16);padding:6px 10px;border-radius:7px}
+.tag.tl{top:16px;left:16px}.tag.tr{top:16px;right:16px;color:var(--ember)}
+.tag.bl{bottom:16px;left:16px}.tag.br{bottom:16px;right:16px}
+
+/* capability rail */
+.rail{display:grid;grid-template-columns:repeat(4,1fr);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+.cell{padding:26px 30px;border-right:1px solid var(--line)}
+.cell:last-child{border-right:none}
+.cell .k{font-family:"Fira Mono",monospace;font-size:12px;letter-spacing:.14em;color:var(--ember);text-transform:uppercase;margin-bottom:8px}
+.cell p{color:var(--dim);font-size:13.5px}
+
+/* section head */
+.sechead{display:flex;justify-content:space-between;align-items:flex-end;padding:96px 56px 40px;gap:60px}
+h2{font-family:"Inter Display","Inter",sans-serif;font-weight:300;font-size:38px;line-height:1.15;letter-spacing:-.02em}
+h2 em{font-style:normal;color:var(--ultra)}
+.sechead .side{color:var(--dim);font-size:14px;max-width:36ch;text-align:right;padding-bottom:6px}
+
+/* two-layer loop */
+.loop{display:grid;grid-template-columns:minmax(0,520px) 1fr;gap:70px;padding:0 56px 20px;align-items:center}
+.loop p{color:var(--dim);margin-top:18px;font-size:15px}
+.diagram{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:30px}
+
+/* stages */
+.stages{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border-top:1px solid var(--line);margin-top:28px}
+.stage{background:var(--bg);padding:30px 26px 56px;min-height:300px}
+.stage .n{font-family:"Fira Mono",monospace;font-size:12px;color:var(--faint);letter-spacing:.14em;margin-bottom:14px}
+.stage h3{font-weight:500;font-size:16.5px;letter-spacing:-.01em;margin-bottom:18px}
+.stage ul{list-style:none;display:flex;flex-direction:column;gap:9px}
+.stage li{display:flex;justify-content:space-between;align-items:center;color:var(--dim);font-size:13.5px;border-top:1px solid var(--line);padding-top:9px}
+.stage li span{font-family:"Fira Mono",monospace;font-size:10.5px;color:var(--faint);letter-spacing:.04em;text-transform:none;white-space:nowrap;margin-left:12px}
+
+/* research workspace (S6) */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:36px;padding:0 56px}
+.panelcard{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;display:flex;flex-direction:column;gap:18px}
+.shot{position:relative;border-radius:10px;overflow:hidden;border:1px solid var(--line)}
+.shot img{width:100%;display:block;background:#fff}
+.shot .shotbar{font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);padding:8px 12px;border-bottom:1px solid var(--line)}
+.panelcard h4{font-weight:600;font-size:17px;letter-spacing:-.01em}
+.panelcard p{color:var(--dim);font-size:13.5px;line-height:1.65}
+
+/* explainability charts */
+.explain .grid2{display:grid;grid-template-columns:minmax(0,480px) 1fr;gap:70px;padding:0 56px;align-items:center}
+.figrow{display:grid;grid-template-columns:repeat(3,1fr);gap:26px;margin:44px 56px 0}
+.fig{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px 20px 16px}
+.fig .cap{font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:16px;display:flex;justify-content:space-between;align-items:center}
+.blabels{display:flex;gap:14%;padding:0 8%;margin-top:9px}
+.blabel{font-family:"Fira Mono",monospace;font-size:10.5px;color:var(--dim);letter-spacing:.06em}
+.bandrow{display:flex;flex-direction:column;gap:7px;height:92px;justify-content:center}
+.ivl{height:9px;border-radius:4px;background:#2A3548}
+.ivl.wide{background:#3D4E70;box-shadow:inset 0 0 0 1px rgba(224,122,60,.55)}
+.flagchip{font-family:"Fira Mono",monospace;font-size:9.5px;color:var(--ember);letter-spacing:.08em;text-transform:none}
+
+/* product band */
+.band{display:grid;grid-template-columns:minmax(0,640px) 1fr;gap:70px;padding:0 56px 96px;align-items:center}
+.band .shotbar{border-radius:10px 10px 0 0;border-bottom:1px solid var(--line);font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);padding:9px 14px;background:#0D1219}
+.band img{width:100%;display:block;border-left:1px solid var(--line);border-right:1px solid var(--line)}
+.features li{list-style:none;display:flex;gap:18px;padding:17px 0;border-top:1px solid var(--line)}
+.features .k{font-family:"Fira Mono",monospace;font-size:12px;color:var(--ultra);letter-spacing:.1em;min-width:34px}
+.features b{display:block;font-weight:600;font-size:15px;margin-bottom:3px}
+.features p{color:var(--dim);font-size:13.5px}
+
+/* evidence */
+.tblwrap{margin:0 56px;border:1px solid var(--line);border-radius:14px;background:var(--panel)}
+.tblwrap .tcap{padding:16px 22px;border-bottom:1px solid var(--line);font-family:"Fira Mono",monospace;font-size:11px;letter-spacing:.06em;color:var(--dim);text-transform:none}
+.tblscroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table.bench{width:100%;border-collapse:collapse;font-family:"Fira Mono",monospace;font-size:13px}
+table.bench th{text-align:right;font-weight:400;color:var(--faint);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;padding:12px 22px;border-bottom:1px solid var(--line)}
+table.bench th:first-child,table.bench td:first-child{text-align:left}
+table.bench td{padding:11px 22px;border-bottom:1px solid var(--line);color:var(--dim)}
+table.bench tr:last-child td{border-bottom:none}
+table.bench .best{color:var(--ultra);font-weight:500}
+.tblwrap .tfoot{padding:16px 22px;border-top:1px solid var(--line);color:var(--dim);font-size:13px;line-height:1.7;max-width:118ch;text-transform:none;font-family:"Inter",sans-serif;letter-spacing:normal}
+.evidgrid{display:grid;grid-template-columns:1fr 1fr;gap:36px;margin:36px 56px 0;align-items:start}
+.figpanel{border:1px solid var(--line);border-radius:14px;background:var(--panel);overflow:hidden;display:flex;flex-direction:column}
+.figpanel img{width:100%;display:block}
+.figpanel .fcap{padding:16px 20px;color:var(--dim);font-size:13px;line-height:1.65;border-top:1px solid var(--line)}
+.reproblock{border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:22px}
+.reproblock .lab{font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin-bottom:16px}
+.dochips{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px}
+.dochip{border:1px solid var(--line);border-radius:8px;padding:9px 13px;font-family:"Fira Mono",monospace;font-size:12px;color:var(--dim)}
+.dochip b{color:var(--ink);font-weight:500}
+.dochip:hover{border-color:var(--line2);color:var(--ink)}
+pre.codeblock{background:#0A0E13;border:1px solid var(--line);border-radius:10px;padding:16px 18px;font-family:"Fira Mono",monospace;font-size:12.5px;line-height:1.75;color:var(--dim);overflow-x:auto;position:relative}
+pre.codeblock .c{color:var(--faint)}
+pre.codeblock .p{color:var(--ember)}
+
+/* what-it's-not + comparison (S10/S11) */
+.notrows,.cmp{margin:0 56px;border-top:1px solid var(--line)}
+.nrow,.crown{display:flex;justify-content:space-between;gap:48px;padding:22px 4px;border-bottom:1px solid var(--line);align-items:baseline}
+.nrow .claim{font-size:15px;color:var(--ink);max-width:60ch;line-height:1.6}
+.nrow .claim b,.crown .claim b{font-weight:600}
+.nrow .src,.crown .src{font-family:"Fira Mono",monospace;font-size:10.5px;color:var(--faint);letter-spacing:.08em;text-transform:uppercase;white-space:nowrap;padding-top:3px}
+.caveat{margin:20px 56px 0;color:var(--dim);font-size:13.5px;line-height:1.7;max-width:100ch}
+
+/* quick start */
+.qsgrid{display:grid;grid-template-columns:1fr 1fr;gap:36px;padding:0 56px 96px;align-items:start}
+.atlaunch{display:flex;flex-direction:column;gap:12px;margin-top:18px}
+.atchip{border:1px solid var(--line);border-radius:10px;padding:13px 16px;font-family:"Fira Mono",monospace;font-size:12px;color:var(--faint);letter-spacing:.05em;display:flex;justify-content:space-between}
+.atchip i{font-style:normal;color:var(--ember)}
+
+/* cta + footer */
+.cta{text-align:center;padding:96px 56px;border-top:1px solid var(--line)}
+.cta h2{margin:0 auto 18px;max-width:none}
+.cta p{color:var(--dim);max-width:56ch;margin:0 auto 34px;font-size:15.5px}
+.footer{display:grid;grid-template-columns:repeat(4,1fr) minmax(280px,1.4fr);gap:40px;padding:64px 56px;border-top:1px solid var(--line)}
+.footer h5{font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin-bottom:18px}
+.footer ul{list-style:none;display:flex;flex-direction:column;gap:10px;font-size:13.5px}
+.footer a{color:var(--dim)}
+.footer a:hover{color:var(--ink)}
+.footer .ledecol p{color:var(--dim);font-size:13.5px;margin-top:14px;max-width:34ch}
+.footline{display:flex;justify-content:space-between;padding:22px 56px;border-top:1px solid var(--line);font-family:"Fira Mono",monospace;font-size:11px;color:var(--faint);letter-spacing:.08em}
+
+/* 3. subpage shell + article/prose --------------------------------------- */
+body.sub{max-width:none}
+.topbar{display:flex;justify-content:space-between;align-items:center;padding:16px 40px;border-bottom:1px solid var(--line);gap:32px;max-width:1440px;margin:0 auto}
+.topbar .brand img{width:26px;height:26px;display:block}
+.topbar nav{display:flex;gap:26px;font-size:13.5px;color:var(--dim);align-items:center;flex-wrap:wrap}
+.topbar nav a:hover{color:var(--ink)}
+.topbar nav a.cta{background:var(--ember);color:#170B04;font-weight:600;padding:7px 15px;border-radius:7px}
+.wrap{max-width:1080px;margin:0 auto;padding:0 40px}
+main{padding:72px 0 96px}
+.crumb{font-family:"Fira Mono",monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin-bottom:26px}
+.crumb a:hover{color:var(--dim)}
+.crumb span{color:var(--line2);margin:0 8px}
+body.sub h1{font-size:46px;line-height:1.1;letter-spacing:-.03em;margin-bottom:20px;max-width:26ch}
+body.sub .lede{font-size:16.5px;max-width:62ch;margin-bottom:18px}
+.byline{font-size:12px;letter-spacing:.06em;color:var(--faint);font-family:"Fira Mono",monospace;text-transform:uppercase;margin-bottom:44px}
+.byline a{border-bottom:1px solid var(--line2)}
+.prose{max-width:74ch}
+.prose h2{font-size:26px;font-weight:400;margin:52px 0 16px;padding-top:18px;border-top:1px solid var(--line)}
+.prose h2:first-child{margin-top:0;padding-top:0;border-top:none}
+.prose h3{font-weight:600;font-size:16.5px;letter-spacing:-.01em;margin:32px 0 10px}
+.prose p{color:var(--dim);margin-bottom:18px}
+.prose strong{color:var(--ink);font-weight:600}
+.prose a{color:var(--ink);border-bottom:1px solid var(--line2)}
+.prose a:hover{border-bottom-color:var(--ember)}
+.prose ul,.prose ol{color:var(--dim);margin:0 0 20px 22px}
+.prose li{margin-bottom:9px}
+.prose li::marker{color:var(--faint)}
+.prose code{font-family:"Fira Mono",monospace;font-size:.86em;background:#0D1219;border:1px solid var(--line);border-radius:5px;padding:1.5px 5px;color:var(--ink)}
+.prose pre{background:#0A0E13;border:1px solid var(--line);border-radius:10px;padding:18px 20px;overflow-x:auto;margin:0 0 22px}
+.prose pre code{background:none;border:none;padding:0;font-size:12.5px;line-height:1.6}
+.prose blockquote{background:var(--panel);border:1px solid var(--line);border-left:2px solid var(--ember);border-radius:8px;padding:18px 22px;margin:0 0 26px}
+.prose blockquote p{color:var(--dim);margin-bottom:10px}
+.prose blockquote p:last-child{margin-bottom:0}
+.prose blockquote ul{margin-bottom:0}
+.prose hr{border:0;border-top:1px solid var(--line);margin:40px 0}
+.prose table{width:100%;border-collapse:collapse;font-size:13.5px;margin:0 0 26px}
+.prose th{font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);text-align:left;padding:10px 12px;border-bottom:1px solid var(--line2);font-weight:400}
+.prose td{padding:9px 12px;border-bottom:1px solid var(--line);color:var(--dim)}
+.prose th.num,.prose td.num{text-align:right;font-variant-numeric:tabular-nums}
+.prose tr:last-child td{border-bottom:none}
+.prose td b,.prose td strong{color:var(--ink)}
+.todo{border:1px dashed var(--line2);border-radius:10px;padding:22px;color:var(--faint);font-family:"Fira Mono",monospace;font-size:12px;letter-spacing:.06em}
+.cards{display:grid;grid-template-columns:repeat(2,1fr);gap:18px;margin:34px 0 0;max-width:74ch}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px 24px;display:block}
+.card:hover{border-color:var(--line2)}
+.card .k{font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--ember);margin-bottom:8px}
+.card h3{font-weight:600;font-size:15.5px;margin-bottom:6px}
+.card p{color:var(--dim);font-size:13.5px;line-height:1.6}
+.chiprow{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 28px}
+.chip{font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);border:1px solid var(--line);border-radius:6px;padding:5px 10px}
+.postlist{list-style:none;margin:40px 0 0;max-width:74ch}
+.postlist li{border-top:1px solid var(--line);padding:26px 0}
+.postlist li:last-child{border-bottom:1px solid var(--line)}
+.postlist .date{font-family:"Fira Mono",monospace;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);margin-bottom:8px}
+.postlist h2{font-size:22px;font-weight:400;letter-spacing:-.015em;margin-bottom:8px;border-top:none;padding-top:0}
+.postlist a:hover h2{color:var(--ultra)}
+.postlist p{color:var(--dim);font-size:14px;max-width:66ch}
+.subfooter{border-top:1px solid var(--line);padding:48px 0 40px;display:grid;grid-template-columns:repeat(3,1fr);gap:36px;max-width:1080px;margin:0 auto}
+.subfooter h5{font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin-bottom:14px;font-weight:400}
+.subfooter ul{list-style:none;display:flex;flex-direction:column;gap:9px;font-size:13.5px}
+.subfooter a{color:var(--dim)}
+.subfooter a:hover{color:var(--ink)}
+.subfootline{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;max-width:1080px;margin:0 auto;padding:20px 0 40px;border-top:1px solid var(--line);font-family:"Fira Mono",monospace;font-size:11px;color:var(--faint);letter-spacing:.08em}
+.copybtn{background:none;border:1px solid var(--line2);color:var(--dim);font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;padding:7px 12px;border-radius:6px;cursor:pointer}
+.copybtn:hover{color:var(--ink);border-color:var(--ember)}
+
+/* grid items with long code/tables default to min-width:auto, which lets a
+   wide <pre> expand the whole grid past the viewport. */
+.hero>*,.loop>*,.band>*,.split>*,.evidgrid>*,.qsgrid>*,.figrow>*,.explain .grid2>*,.rail>*,.stages>*,.footer>*{min-width:0}
+
+/* 4. responsive ---------------------------------------------------------- */
+@media (max-width:1100px){
+  .hero{grid-template-columns:1fr;gap:40px;padding:64px 32px 56px}
+  .loop,.band,.explain .grid2{grid-template-columns:1fr;gap:32px;padding-left:32px;padding-right:32px}
+  .band{padding-bottom:64px}
+  .stages{grid-template-columns:repeat(2,1fr)}
+  .rail{grid-template-columns:repeat(2,1fr)}
+  .rail .cell:nth-child(2){border-right:none}
+  .figrow{grid-template-columns:1fr;margin-left:32px;margin-right:32px}
+  .sechead{padding:64px 32px 32px;gap:32px}
+  .stage{min-height:0}
+  .tblwrap,.notrows,.cmp{margin-left:32px;margin-right:32px}
+  .caveat{margin-left:32px;margin-right:32px}
+  .evidgrid{margin-left:32px;margin-right:32px}
+}
+@media (max-width:860px){
+  .strip{flex-wrap:wrap;gap:8px;padding:12px 24px}
+  .strip nav a{margin-left:14px}
+  .nav{flex-wrap:wrap;gap:14px;padding:14px 24px}
+  .nav .links{gap:18px;flex-wrap:wrap;font-size:13px}
+  .split,.qsgrid,.evidgrid{grid-template-columns:1fr;gap:24px}
+  .tblwrap,.notrows,.cmp,.figrow,.caveat,.evidgrid{margin-left:24px;margin-right:24px}
+  .sechead,.footer{align-items:flex-start}
+  .sechead .side{text-align:left;max-width:none}
+  .footer{grid-template-columns:1fr 1fr;padding:44px 24px;gap:28px}
+  .footline{padding:18px 24px;flex-wrap:wrap;gap:8px}
+  .cta{padding:72px 24px}
+  .topbar{padding:14px 24px;flex-wrap:wrap}
+  .topbar nav{gap:16px;font-size:13px}
+  .wrap,.subfooter,.subfootline{padding-left:24px;padding-right:24px}
+  body.sub h1{font-size:36px}
+  .cards{grid-template-columns:1fr}
+  .subfooter{grid-template-columns:1fr 1fr;gap:24px}
+  table.bench{min-width:560px}
+  .prose table{display:block;overflow-x:auto}
+}
+@media (max-width:620px){
+  body{font-size:14px}
+  h1{font-size:32px}
+  h2{font-size:25px}
+  body.sub h1{font-size:30px}
+  .prose h2{font-size:22px}
+  .hero{padding:44px 20px 40px;gap:28px}
+  .strip{padding:10px 20px;font-size:11.5px}
+  .nav{padding:12px 20px}
+  .nav .links{gap:14px;font-size:12.5px}
+  .rail{grid-template-columns:1fr}
+  .rail .cell{border-right:none;border-bottom:1px solid var(--line)}
+  .rail .cell:last-child{border-bottom:none}
+  .stages{grid-template-columns:1fr}
+  .sechead{padding:48px 20px 24px}
+  .sechead .side{text-align:left;max-width:none}
+  .loop,.band,.explain .grid2{padding-left:20px;padding-right:20px}
+  .tblwrap,.notrows,.cmp,.caveat,.evidgrid,.figrow,.split,.qsgrid{margin-left:20px;margin-right:20px}
+  .split,.qsgrid{padding-left:0;padding-right:0}
+  .footer{grid-template-columns:1fr;padding:36px 20px}
+  .footline{padding:16px 20px}
+  .cta{padding:64px 20px}
+  .nrow,.crown{flex-direction:column;gap:10px}
+  .copy{flex-wrap:wrap;font-size:12px;gap:8px}
+  .hero .meta{gap:12px}
+  .topbar,.wrap,.subfooter,.subfootline{padding-left:20px;padding-right:20px}
+  .subfooter{grid-template-columns:1fr}
+  .prose{max-width:none}
+  .prose pre{font-size:11.5px}
+  main{padding:44px 0 64px}
+}
