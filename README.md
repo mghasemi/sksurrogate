@@ -3,7 +3,7 @@
 Static site for [SKSurrogate](https://github.com/mghasemi/sksurrogate), served from the `gh-pages`
 branch at the branch root by GitHub Pages.
 
-- **Canonical origin:** `https://mghasemi.github.io/sksurrogate` (the single `SITE` constant in
+- **Canonical origin:** `https://sksurrogate.com` (the single `SITE` constant in
   `scripts/build_site.py` and `scripts/site_audit.py`). `sksurrogate.com` does not resolve yet; when
   it does, change that constant, add a root `CNAME`, and re-run the build + audit.
 - **No build step at deploy time.** Pages are committed HTML. `scripts/build_site.py` is an

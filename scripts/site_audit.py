@@ -24,7 +24,7 @@ import urllib.parse
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SITE = "https://mghasemi.github.io/sksurrogate"
+SITE = "https://sksurrogate.com"
 # Some hosts (Read the Docs, Zenodo behind doi.org) 403 the default python-urllib
 # User-Agent while serving the same URL to a browser, so a live check needs one.
 UA = "Mozilla/5.0 (X11; Linux x86_64) sksurrogate-site-audit/1.0"
@@ -153,9 +153,10 @@ def main():
     check("absolute SITE_URLs resolve to files", not bad_abs, "; ".join(bad_abs[:5]))
     legacy = []
     for p in all_pages:
-        if "sksurrogate.com" in open(p).read():
+        if "mghasemi.github.io" in open(p).read():
             legacy.append(url_path(p))
-    check("no dead sksurrogate.com references", not legacy, ", ".join(legacy))
+    check("no legacy github.io references after the custom-domain switch",
+          not legacy, ", ".join(legacy))
 
     # ---- 3b. every relative href/src resolves -------------------------
     broken = []

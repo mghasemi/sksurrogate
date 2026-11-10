@@ -17,7 +17,7 @@ Run:  python scripts/build_site.py
 import os
 import re
 
-SITE = "https://mghasemi.github.io/sksurrogate"
+SITE = "https://sksurrogate.com"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 NAV = [

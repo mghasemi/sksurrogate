@@ -32,4 +32,4 @@ Allow: /
 User-agent: Bytespider
 Allow: /
 
-Sitemap: https://mghasemi.github.io/sksurrogate/sitemap.xml
+Sitemap: https://sksurrogate.com/sitemap.xml

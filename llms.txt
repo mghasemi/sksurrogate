@@ -8,15 +8,15 @@
 - [Control plane / API / UI](https://sksurrogate.readthedocs.io/en/latest/controlplane.html)
 - [Preprocessing](https://sksurrogate.readthedocs.io/en/latest/dataproc.html)
 - [Monitoring and drift](https://sksurrogate.readthedocs.io/en/latest/monitoring.html)
-- [Full site text](https://mghasemi.github.io/sksurrogate/llms-full.txt)
+- [Full site text](https://sksurrogate.com/llms-full.txt)
 
 ## Site
-- [Product page](https://mghasemi.github.io/sksurrogate/)
-- [Quickstart](https://mghasemi.github.io/sksurrogate/quickstart/)
-- [Honest benchmark](https://mghasemi.github.io/sksurrogate/benchmarks/)
-- [Benchmark post](https://mghasemi.github.io/sksurrogate/blog/honest-benchmark/)
-- [Citation](https://mghasemi.github.io/sksurrogate/cite/)
-- [About](https://mghasemi.github.io/sksurrogate/about/)
+- [Product page](https://sksurrogate.com/)
+- [Quickstart](https://sksurrogate.com/quickstart/)
+- [Honest benchmark](https://sksurrogate.com/benchmarks/)
+- [Benchmark post](https://sksurrogate.com/blog/honest-benchmark/)
+- [Citation](https://sksurrogate.com/cite/)
+- [About](https://sksurrogate.com/about/)
 - [Source](https://github.com/mghasemi/sksurrogate)
 
 ## Install
