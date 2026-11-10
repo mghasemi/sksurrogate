@@ -3,9 +3,12 @@
 Static site for [SKSurrogate](https://github.com/mghasemi/sksurrogate), served from the `gh-pages`
 branch at the branch root by GitHub Pages.
 
-- **Canonical origin:** `https://sksurrogate.com` (the single `SITE` constant in
-  `scripts/build_site.py` and `scripts/site_audit.py`). `sksurrogate.com` does not resolve yet; when
-  it does, change that constant, add a root `CNAME`, and re-run the build + audit.
+- **Canonical origin:** `https://sksurrogate.com` — live since 2026-11-10. The host appears once as
+  `SITE` in `scripts/build_site.py` and `scripts/site_audit.py`; `CNAME` at the branch root pins the
+  GitHub Pages custom domain. `www.sksurrogate.com` and the old
+  `mghasemi.github.io/sksurrogate/` both 301 to the apex; the certificate is Let's Encrypt, covers
+  apex + www, renews automatically, and HTTPS is enforced in repo settings.
+  To move hosts again: change `SITE`, swap the `CNAME` contents, re-run the build, audit, push.
 - **No build step at deploy time.** Pages are committed HTML. `scripts/build_site.py` is an
   authoring tool that emits the shared head/nav/footer so the pages cannot drift apart.
 
@@ -89,3 +92,22 @@ Two checks need a rendering engine and are done in a browser instead:
 1. `python scripts/build_site.py && python scripts/make_llms_full.py`
 2. `python scripts/site_audit.py` — must be 0 failed
 3. Commit, push `gh-pages`, wait for Pages `status: built`, then `--live` audit.
+
+## Post-launch checklist (outside this repo)
+
+Verified by the 2026-11-10 checks: apex + www serve over HTTPS (Let's Encrypt, SAN covers both,
+expiry 2027-02-08), HTTP→HTTPS 301, `www`→apex 301, legacy `mghasemi.github.io/sksurrogate/`→apex
+301, all 11 pages 200, sitemap/robots/llms.txt live on the apex.
+
+Still owner-side, because they need accounts this repo does not hold:
+
+1. **Google Search Console + Bing Webmaster Tools** — add `sksurrogate.com`, verify by DNS TXT,
+   submit `https://sksurrogate.com/sitemap.xml`.
+2. **Repo metadata** — set the GitHub "Website" field to `https://sksurrogate.com` (it currently
+   points at Read the Docs), so the sidebar and search results carry the product URL.
+3. **PyPI** — `setup.py`'s `url` and `project_urls` point at GitHub; they only change with a release.
+4. **External mentions** — anything written before the domain existed still points at the github.io
+   URL; it now 301s, so links keep working, but the canonical reference should be updated when those
+   pages are next touched.
+5. **HSTS** — GitHub Pages sends no `Strict-Transport-Security`. Adding it requires putting
+   Cloudflare in front (proxy on) or accepting the gap; `https_enforced` is already on.
