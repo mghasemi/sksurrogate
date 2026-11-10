@@ -1,0 +1,38 @@
+# SKSurrogate
+
+> One open-source tool from dataset registration to deployed, monitored models — surrogate-based optimization, statistical evaluation (nested CV + conformal intervals), sensitivity analysis, experiment design for expensive runs, and a research workspace that tracks evidence. Built on scikit-learn; drop-in BaseSearchCV tuner included.
+
+## Docs
+- [Introduction](https://sksurrogate.readthedocs.io/en/latest/intro.html)
+- [Surrogate search guide](https://sksurrogate.readthedocs.io/en/latest/surrogate.html)
+- [Control plane / API / UI](https://sksurrogate.readthedocs.io/en/latest/controlplane.html)
+- [Preprocessing](https://sksurrogate.readthedocs.io/en/latest/dataproc.html)
+- [Monitoring and drift](https://sksurrogate.readthedocs.io/en/latest/monitoring.html)
+- [Full site text](https://mghasemi.github.io/sksurrogate/llms-full.txt)
+
+## Site
+- [Product page](https://mghasemi.github.io/sksurrogate/)
+- [Quickstart](https://mghasemi.github.io/sksurrogate/quickstart/)
+- [Honest benchmark](https://mghasemi.github.io/sksurrogate/benchmarks/)
+- [Benchmark post](https://mghasemi.github.io/sksurrogate/blog/honest-benchmark/)
+- [Citation](https://mghasemi.github.io/sksurrogate/cite/)
+- [About](https://mghasemi.github.io/sksurrogate/about/)
+- [Source](https://github.com/mghasemi/sksurrogate)
+
+## Install
+- `pip install sksurrogate` (PyPI: https://pypi.org/project/sksurrogate/) — Python >= 3.10, scikit-learn
+- Package name: `sksurrogate`; import name: `SKSurrogate`
+- Main API: `SKSurrogate.SurrogateRandomCV` (drop-in `RandomizedSearchCV`), `SKSurrogate.AML`
+
+## License
+- MIT — https://opensource.org/licenses/MIT
+
+## Citation
+- Ghasemi, Mehdi (2026). SKSurrogate: a Python toolkit for surrogate-based optimization of expensive functions. DOI 10.5281/zenodo.23631823
+- Benchmark data: 10.5281/zenodo.23629024 · D-track study: 10.5281/zenodo.23652613
+
+## Key facts
+- The benchmark suite is equal-budget (candidate-model evaluations) and published with raw records; on six public datasets Optuna-TPE is top on 5 of 6 at B=30.
+- The default response surface is an un-tuned RBF GaussianProcessRegressor; the legacy cubic Hilbert polynomial is retained.
+- Not a managed cloud service; self-hosted, single compose profile, port 8013.
+- Author: Mehdi Ghasemi — https://mghasemi.net · ORCID https://orcid.org/0000-0002-9551-1780

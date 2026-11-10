@@ -1,0 +1,269 @@
+sksurrogate v0.3.0 · MIT licence · Python ≥ 3.10 · scikit-learn-native
+
+Scientific MLOps · open source
+
+# From raw dataset to deployed, drift‑monitored model — in one scikit‑learn‑native environment.
+
+Learn the surface before you spend another experiment. SKSurrogate searches hyperparameters and pipeline structure with a surrogate response surface — then proves the result: nested cross-validation, conformal intervals, Sobol and Morris sensitivity. From dataset registration to monitored deployment, every run keeps its data identity and evaluation record.
+
+$ pip install scikit-learn sksurrogate
+
+$ docker compose --profile prod up -d
+
+Get started Read the docs ↗
+
+MIT licence BaseSearchCV drop-in scikit-learn 1.x v0.3.0
+
+posterior mean acquisition · converged contraction 0.90 search budget B = 30
+
+Search
+
+Surrogate-guided + evolutionary pipeline search with every evaluation recorded.
+
+Prove
+
+Nested CV, paired comparisons, split-conformal intervals and coverage checks.
+
+Explain
+
+PDP, ALE, permutation importance, row-level contributions; Sobol / Morris sensitivity.
+
+Operate
+
+Fingerprinted data identity, drift-aware model versions, retrain triggers.
+
+## Two layers, one loop: explore the structure, then refine locally.
+
+The surrogate layer explores pipeline structure and hyperparameter ranges jointly; the tuner layer refines within a local neighborhood of that proposal. Both record every evaluation, so the search itself is an auditable artifact.
+
+## One workspace, four stages.
+
+The control plane's sidebar has exactly these areas — the tour mirrors the product one-to-one, CSV in to monitored model out. (Content-plan S5; stage cells per docs/walkthrough.rst steps 1–13.)
+
+01
+
+### Data
+
+- 
+Datasetsschema · fingerprint
+
+- 
+Feature analysissobol · morris · δ
+
+- 
+Experiment designLHS · GP-LCB
+
+02
+
+### Model
+
+- 
+ExperimentsEOA + surrogate
+
+- 
+Evaluationnested CV · conformal
+
+- 
+ExplainPDP · ALE · row-level
+
+- 
+Bundlesversioned · fingerprinted
+
+03
+
+### Release
+
+- 
+Quality gatesmetrics vs thresholds
+
+- 
+Registrycandidate → prod
+
+- 
+Deploymentdocker · :8013
+
+04
+
+### Operate
+
+- 
+Inferencealias or version
+
+- 
+MonitoringPSI drift
+
+- 
+Retrainingon trigger
+
+- 
+Jobsqueue · resume
+
+## Research questions, with receipts.
+
+A project ties data partitions, model bundles and jobs to the question they answer — so evidence travels with each claim.
+
+control plane · projects
+
+#### Projects that keep receipts
+
+A project groups data partitions, model bundles and jobs around its research question. Partitions carry schema and fingerprint; hypotheses move through a status lifecycle — proposed, under investigation, supported, contradicted or inconclusive — with an append-only history. Evidence records snapshot the state of each artifact beside the claim it supports.
+
+control plane · experiment design
+
+#### Design the next run, not just fit the last one
+
+For expensive experiments — lab or physical runs where you choose what to sample rather than score existing data — SKSurrogate proposes where to evaluate next: a space-filling Latin-hypercube plan plus GP-lower-confidence-bound acquisition over past results. Export the plan as CSV and run it.
+
+## Know what the model depends on — not just where the search stopped.
+
+Permutation importance, partial dependence and ALE for a stored model bundle say which features drive its predictions globally; an exact row-level explanation reconstructs one prediction from its baseline as ordered feature contributions. Variance-based sensitivity — Sobol, Morris, moment-independent δ — says which inputs dominate the output variance, so an expensive model can be pruned or trusted on evidence.
+
+descriptive · model-attributive — not causal
+
+permutation importance · diabetes bundle
+
+bmi s5 bp
+
+partial dependence · rises with bmi
+
+split-conformal · 90 % interval± 88 · widest fold
+
+## The control plane runs it.
+
+control plane · dashboard
+
+- 
+01 Drift-aware by constructionThe tuner records the identity of the data it optimized, so drift is detectable before inference rather than after a bad prediction.
+
+- 
+02 Quality gates before releaseMetrics are checked against declared thresholds; a bundle reaches the registry only when its evidence passes.
+
+- 
+03 No framework lock-inEstimators, pipelines and cross-validators are stock scikit-learn — nothing to migrate away from later.
+
+- 
+04 Runs where you doLocal API or a single Docker Compose profile on one port (8013); the API key is optional.
+
+## Claims are cheap. Benchmarks are not.
+
+Equal-budget comparison against published baselines — raw results archived with DOIs, protocol and seed-level tables in the post.
+
+Mean final CV accuracy, B = 30 evaluations · identical estimator (StandardScaler → RandomForestClassifier(50)) over one shared 224-configuration discrete space · stratified 5-fold CV inside every search · seven seeds per cell — bold = best per row
+
+| dataset | SRS + RBF-GP | no surrogate | random | Optuna-TPE |
+| --- | --- | --- | --- | --- |
+| arrhythmia | 0.7020 | 0.6910 | 0.6941 | 0.7036 |
+| credit-g | 0.7423 | 0.7391 | 0.7405 | 0.7436 |
+| galaxy3 | 0.6473 | 0.6448 | 0.6484 | 0.6507 |
+| ionosphere | 0.9352 | 0.9347 | 0.9347 | 0.9337 |
+| optdigits | 0.9403 | 0.9392 | 0.9380 | 0.9405 |
+| spambase | 0.9280 | 0.9269 | 0.9272 | 0.9286 |
+
+TPE is top on five of six datasets, and the whole table spans roughly half a point — a RandomForest(50) over three parameters is a flat landscape where no search method separates. Where the data does separate things is inside SRS itself: at B = 60 the RBF-GP surface is top mean CV on all six datasets and matches or raises final accuracy against the no-surrogate arm everywhere, while an un-tuned KernelRidge sits below doing nothing on all six.
+
+Contour of mean CV accuracy over the joint (max_depth × min_samples_leaf) space for RandomForest on credit-g, B = 30. The optimum is broad rather than needle-like: small changes in either parameter move accuracy little.
+
+Reproducibility
+
+raw benchmark records · 462 runs ↗ D-track raw data + report ↗ software archive · 0.2.0 ↗
+
+$
+ pip install sksurrogate
+# v0.2.0, PyPI (v0.3.0 at launch)
+
+$
+ python -m benchmarks.run --dataset all --budget 30
+# full five-method suite (~1–3 h laptop-scale)
+
+$
+ python -m benchmarks.dtrack.d2_compare
+# the regime-map study
+
+Honest benchmark post ↗ Protocol contract (benchmarks/DESIGN.md) ↗
+
+D-track controlled synthetic study · 2,160 archived runs — winning cells (of 18 per objective family across the dimension × sample size × noise grid) by response-surface family
+
+| objective family | Hilbert poly | RBF-GP | Random forest |
+| --- | --- | --- | --- |
+| polynomial (in-span) | 14/18 | 2 | 2 |
+| Gaussian bump | 2 | 10 | 6 |
+| rational | 3 | 5 | 10 |
+| trigonometric | 0 | 1 | 17 |
+
+Drop-in
+
+SurrogateRandomCV is a BaseSearchCV subclass — it slots into any scikit-learn pipeline and estimator without changing your code.
+
+Self-hosted · MIT
+
+Fully self-hosted: one compose profile, no external service required; the API key is optional. MIT-licensed, free to use.
+
+Archived raw results
+
+Benchmark inputs and outputs carry DOIs — what you cite is exactly what we ran.
+
+## What SKSurrogate is not.
+
+Scope kept deliberately narrow. The roadmap below is dated and gated — claims are only allowed to say "coming" with a link, never "it does that today". (LAUNCH_PLAN §9 / risk register; AI_LAYER_ROADMAP D2.)
+
+Not a managed cloud service. Self-hosted and single-machine by design — local API or one compose profile. If you need multi-node training or GPU fleets, that is a different category of tool. launch plan · positioning
+
+No LLM magic in the box. The shipped tooling is deterministic. A bounded, opt-in cited-note synthesis (your endpoint, aggregate facts only, enforced citations) already runs inside it; a conversational research assistant is roadmap, not this release. AI layer roadmap · D2
+
+Not a black-box AutoML zoo. The search space is your pipeline plus the ranges you declare, and every evaluation is recorded — results are auditable artifacts, not opaque picks from a fixed model zoo. readme · surrogate-search guide
+
+## Roadmap
+
+Quantile / conformal-interval diagnostics in the UI and API — the Python split-conformal protocol already ships; the calibration-data contract for serving them is the next step. next
+
+LLM-assisted synthesis beyond bounded cited notes — toward a human-gated, citation-enforced research assistant. Shipped only with its gates intact. later
+
+## Where it sits.
+
+A stable plateau, not a brittle peak. The surrogate response surface makes the neighborhood of the optimum inspectable — broad plateaus and needle-like peaks are visible at a glance before you commit a run. figure above ↑
+
+Statistical evaluation, not a single score. Repeated nested cross-validation, paired comparison protocol checks, and split-conformal intervals with coverage diagnostics — the "90 % interval" is a number you can check, not an adjective. docs ↗
+
+A research workspace with receipts. Projects, hypotheses with a status lifecycle, evidence records that snapshot artifacts — plus LHS + GP-LCB experiment design for expensive physical experiments. section above ↑
+
+Surrogate hybrid search, honestly benchmarked. Equal-budget comparison against TPE, random and no-surrogate arms — published with the raw data DOI and a plain statement of where the surrogate loses. benchmarks ↑
+
+A drop-in, not a rewrite. SurrogateRandomCV is a BaseSearchCV subclass — the same call shape as RandomizedSearchCV, so adopting it changes one import, not your codebase. readme ↗
+
+Yours to run. One compose profile on a single port (8013), optional API key, MIT licence — no external service in the loop and nothing to migrate away from later. control plane docs ↗
+
+The honest caveat, from the benchmark post itself: these are small-budget results — seven seeds per cell, budgets of 30–60 evaluations, and a fixed-pipeline suite only three parameters wide. TPE remains competitive on flat landscapes at laptop budgets; SKSurrogate's edge is in stability, surface quality and evidence, not a universal accuracy crown.
+
+## Five minutes to a model you can defend.
+
+$
+ pip install scikit-learn sksurrogate
+# Python — drop-in for RandomizedSearchCV (readme quick start, verbatim)
+
+from sklearn.svm import SVC
+from SKSurrogate import SurrogateRandomCV
+
+search = SurrogateRandomCV(
+    SVC(),
+    param_distributions={"C": (1e-3, 10.0), "kernel": ["poly", "rbf"], "degree": (1, 4)},
+    n_iter=30,
+).fit(X, y)
+search.best_params_, search.best_score_
+
+$
+ docker compose --profile prod up -d
+# control-plane UI + API on http://localhost:8013 — API key optional
+
+Colab notebook at launch
+
+2-minute demo video at launch
+
+Read the docs ↗ Manual ↗
+
+## Bring your data in with its identity.
+
+MIT-licensed, scikit-learn-native, and built so the evaluation record travels with every model. Start with the drop-in tuner; keep the receipts when you ship it.
+
+Get started GitHub ↗
+
+© 2019–2026 Mehdi Ghasemi · MIT licence sksurrogate v0.3.0 · scikit-learn-native
