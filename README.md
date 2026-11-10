@@ -25,7 +25,11 @@ branch at the branch root by GitHub Pages.
 | `about/` | What it is / what it is not / maintainer / licence (no affiliations, by owner request) | yes |
 | `roadmap/` | Next / later / not on the roadmap | yes |
 | `contact/` | Email, issue tracker, security disclosure, site privacy | yes |
-| `faq/` | **Shell, `noindex`** — 8–12 question headings and answers pending from the advisor | yes |
+| `concepts/` | Concept hub: surrogate optimization, conformal intervals, nested CV | yes |
+| `concepts/surrogate-optimization/` | What surrogate-based optimization is, when it pays, the measured evidence | yes |
+| `concepts/conformal-intervals/` | Split-conformal procedure, marginal-coverage assumptions, diagnostics | yes |
+| `concepts/nested-cross-validation/` | Selection vs estimation, what the API does and does not do | yes |
+| `faq/` | 12 answered questions + `FAQPage` JSON-LD generated from the same list the page renders | yes |
 | `vs-optuna/` | **Shell, `noindex`** — comparison copy pending; reuses the `#compare` rows | yes |
 | `404.html` | Not-found page (`noindex`, absolute paths — see note below) | no |
 
@@ -80,7 +84,9 @@ Two checks need a rendering engine and are done in a browser instead:
 
 ## Known gaps (owner/advisor input needed)
 
-- `faq/` and `vs-optuna/` are `noindex` shells: question headings and comparison copy are pending.
+- `vs-optuna/` is a `noindex` shell: the head-to-head copy is still pending.
+- Concept-page copy was drafted from `readme.rst`, `docs/surrogate.rst`, `docs/mltrace.rst` and the
+  benchmark post, then reviewed by the owner before it shipped; new claims need the same treatment.
 - Read the Docs currently publishes only `intro`, `surrogate`, `dataproc`, `mltrace`, `controlplane`,
   `ui-manual`, `monitoring`, `benchmarks`, `blog-honest-benchmark`; the readme links to
   `walkthrough.html`, `experiment-design.html` and `research-projects.html`, which 404 on the
