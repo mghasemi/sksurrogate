@@ -75,7 +75,7 @@ h1 em{font-style:normal;color:var(--ultra)}
 
 /* section head */
 .sechead{display:flex;justify-content:space-between;align-items:flex-end;padding:96px 56px 40px;gap:60px}
-h2{font-family:"Inter Display","Inter",sans-serif;font-weight:300;font-size:38px;line-height:1.15;letter-spacing:-.02em;max-width:24ch}
+h2{font-family:"Inter Display","Inter",sans-serif;font-weight:300;font-size:38px;line-height:1.15;letter-spacing:-.02em}
 h2 em{font-style:normal;color:var(--ultra)}
 .sechead .side{color:var(--dim);font-size:14px;max-width:36ch;text-align:right;padding-bottom:6px}
 
@@ -104,18 +104,15 @@ h2 em{font-style:normal;color:var(--ultra)}
 
 /* explainability charts */
 .explain .grid2{display:grid;grid-template-columns:minmax(0,480px) 1fr;gap:70px;padding:0 56px;align-items:center}
-.figrow{display:grid;grid-template-columns:repeat(3,1fr);gap:26px;margin-top:44px}
+.figrow{display:grid;grid-template-columns:repeat(3,1fr);gap:26px;margin:44px 56px 0}
 .fig{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px 20px 16px}
 .fig .cap{font-family:"Fira Mono",monospace;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);margin-bottom:16px;display:flex;justify-content:space-between;align-items:center}
-.bars{display:flex;gap:14%;height:92px;align-items:flex-end;padding:0 8%}
-.bar{width:17%;background:#1B2430;border-radius:5px 5px 0 0;position:relative;display:flex;justify-content:center}
-.bar i{display:block;width:62%;border-radius:4px 4px 0 0;background:#33415A}
-.bar.hi i{background:var(--ember)}
-.blabel{font-family:"Fira Mono",monospace;font-size:10.5px;color:var(--dim);margin-top:9px;text-align:center;letter-spacing:.06em}
-.bandrow{display:flex;flex-direction:column;gap:7px;height:92px;justify-content:center;position:relative}
-.band{height:8px;border-radius:3px;background:#2A3548;display:flex;align-items:center}
-.band i{height:100%;border-radius:3px;background:#55648A;width:var(--w)}
-.flag{font-family:"Fira Mono",monospace;font-size:9.5px;color:var(--ember);letter-spacing:.08em;position:absolute;right:-4px;top:-2px}
+.blabels{display:flex;gap:14%;padding:0 8%;margin-top:9px}
+.blabel{font-family:"Fira Mono",monospace;font-size:10.5px;color:var(--dim);letter-spacing:.06em}
+.bandrow{display:flex;flex-direction:column;gap:7px;height:92px;justify-content:center}
+.ivl{height:9px;border-radius:4px;background:#2A3548}
+.ivl.wide{background:#3D4E70;box-shadow:inset 0 0 0 1px rgba(224,122,60,.55)}
+.flagchip{font-family:"Fira Mono",monospace;font-size:9.5px;color:var(--ember);letter-spacing:.08em;text-transform:none}
 
 /* product band */
 .band{display:grid;grid-template-columns:minmax(0,640px) 1fr;gap:70px;padding:0 56px 96px;align-items:center}
@@ -365,21 +362,23 @@ pre.codeblock .p{color:var(--ember)}
        Bar heights encode the documented dominance ranking only (no numeric values claimed). -->
   <div class="figrow">
     <div class="fig"><div class="cap">permutation importance · diabetes bundle</div>
-      <div><div class="bars">
-        <div style="display:flex;flex-direction:column;height:100%;justify-content:flex-end;width:17%"><div class="bar" style="height:84%;width:auto;border-radius:5px 5px 0 0"><i style="background:#E07A3C"></i></div></div>
-        <div style="display:flex;flex-direction:column;height:100%;justify-content:flex-end;width:17%"><div class="bar" style="height:68%;width:auto;border-radius:5px 5px 0 0"><i></i></div></div>
-        <div style="display:flex;flex-direction:column;height:100%;justify-content:flex-end;width:17%"><div class="bar" style="height:54%;width:auto;border-radius:5px 5px 0 0"><i></i></div></div>
-      </div><div style="display:flex;gap:14%;padding:0 8%"><div class="blabel">bmi</div><div class="blabel">s5</div><div class="blabel">bp</div></div></div>
+      <!-- Bars bottom-anchored in SVG; heights encode the documented dominance ranking only (bmi > s5 > bp) -->
+      <svg width="100%" height="92" viewBox="0 0 300 92"><line x1="8" y1="84.5" x2="292" y2="84.5" stroke="#2A3548"/><rect x="36" y="20" width="52" height="64" rx="3" fill="#E07A3C"/><rect x="124" y="37" width="52" height="47" rx="3" fill="#55648A"/><rect x="212" y="50" width="52" height="34" rx="3" fill="#55648A"/></svg>
+      <div class="blabels"><span class="blabel">bmi</span><span class="blabel">s5</span><span class="blabel">bp</span></div>
     </div>
     <!-- Chart 2: walkthrough.rst L267 — PDP rises with bmi (likewise s5, bp) across the feature range -->
     <div class="fig"><div class="cap">partial dependence · rises with bmi</div>
       <svg width="100%" height="92" viewBox="0 0 300 92" preserveAspectRatio="none"><path d="M8 74 C 60 72, 95 66, 130 52 S 210 22, 292 14" stroke="#4FB3BF" stroke-width="2.2" fill="none"/><path d="M8 74 C 60 72, 95 66, 130 52 S 210 22, 292 14 L 292 84 L 8 84 Z" fill="#4FB3BF" opacity=".08"/><circle cx="130" cy="52" r="3.6" fill="#E7ECF4"/></svg>
     </div>
-    <!-- Chart 3: walkthrough.rst L293-296 — "Prediction ± 88" is a 90 % split-conformal interval on this model -->
-    <div class="fig"><div class="cap">split-conformal · 90 % interval</div>
+    <!-- Chart 3: walkthrough.rst L293-296 — "Prediction ± 88" is a 90 % split-conformal interval on this model.
+         Fold spans are schematic; documented facts only: 90 % level and ± 88 = widest fold -->
+    <div class="fig"><div class="cap">split-conformal · 90 % interval<span class="flagchip">± 88 · widest fold</span></div>
       <div class="bandrow">
-        <span class="flag">± 88 (widest fold)</span>
-        <div class="band" style="--w:56%"></div><div class="band" style="--w:74%;outline:1px solid rgba(224,122,60,.5)"><i></i></div><div class="band" style="--w:58%"></div><div class="band" style="--w:81%"><i></i></div><div class="band" style="--w:63%"></div>
+        <div class="ivl" style="width:58%"></div>
+        <div class="ivl" style="width:71%"></div>
+        <div class="ivl wide" style="width:84%"></div>
+        <div class="ivl" style="width:63%"></div>
+        <div class="ivl" style="width:75%"></div>
       </div>
     </div>
   </div>
@@ -478,7 +477,7 @@ pre.codeblock .p{color:var(--ember)}
   </div>
 
   <!-- Contract chips: BaseSearchCV (readme), MIT + self-hosted single port (controlplane.rst; content-plan S9 ⚠ softened "self-hosted"), DOI-archived results -->
-  <div class="rail" style="margin-top:36px">
+  <div class="rail" style="grid-template-columns:repeat(3,1fr);margin-top:36px">
     <div class="cell"><div class="k">Drop-in</div><p>SurrogateRandomCV is a BaseSearchCV subclass — it slots into any scikit-learn pipeline and estimator without changing your code.</p></div>
     <div class="cell"><div class="k">Self-hosted · MIT</div><p>Fully self-hosted: one compose profile, no external service required; the API key is optional. MIT-licensed, free to use.</p></div>
     <div class="cell"><div class="k">Archived raw results</div><p>Benchmark inputs and outputs carry DOIs — what you cite is exactly what we ran.</p></div>
