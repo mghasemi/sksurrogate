@@ -125,11 +125,13 @@ sitemap/robots/llms.txt live on the apex, HSTS + `X-Content-Type-Options` presen
 Done:
 - GitHub "Website" field → `https://sksurrogate.com` (was Read the Docs).
 - HSTS + strict TLS at the edge (see above).
+- Google Search Console (**Domain** property) verified by DNS TXT at `@` — the record is live and
+  unproxied; Bing imported it from Search Console. Sitemap submitted to both.
 
 Still owner-side, because they need accounts this repo does not hold:
 
-1. **Google Search Console + Bing Webmaster Tools** — add `sksurrogate.com`, verify by DNS TXT
-   (add the TXT in Cloudflare, DNS-only), submit `https://sksurrogate.com/sitemap.xml`.
+1. **Index monitoring** — first indexing of a new domain takes days to weeks. Watch Search Console
+   → Pages and Bing's Site Explorer; expect "Discovered – currently not indexed" before "Indexed".
 2. **PyPI** — `setup.py`'s `url` and `project_urls` point at GitHub; they only change with a release.
 3. **External mentions** — anything written before the domain existed still points at the github.io
    URL; it now 301s, so links keep working, but the canonical reference should be updated when those
