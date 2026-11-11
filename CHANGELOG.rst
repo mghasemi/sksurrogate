@@ -22,6 +22,33 @@ API authentication
   WebSocket handshake policy, ``/api/health`` exemption, SPA fallback) and the
   startup validation, including fresh-interpreter import pins.
 
+Security
+~~~~~~~~
+
+* Caller-supplied task names, model versions, dataset partitions, request IDs
+  and job IDs are validated before use as filesystem path segments: values
+  containing path separators, control characters or ``..`` are rejected with
+  HTTP 400, and bundle and partition joins are resolved and proven to stay
+  inside the storage root. Previously a keyed caller could read arbitrary
+  ``*.csv`` files through a traversal ``partition`` and load any ``*.bundle``
+  file on the host (``joblib``) through a traversal ``model_version``.
+* With ``SKSURROGATE_API_KEY`` configured, ``/openapi.json``, ``/docs`` and
+  ``/redoc`` now require the key as well; previously the full API schema was
+  public even on a keyed server.
+* The shared key is compared in constant time (``hmac.compare_digest``), and
+  rejected requests are logged at ``WARNING`` with method, path and client
+  host — never the supplied value.
+
+Fixes
+~~~~~
+
+* EOA checkpoints are resumed only when compatible: a checkpoint written for a
+  different gene set is ignored instead of replaying incompatible parents, and
+  a recorded checkpoint directory that no longer exists no longer replaces the
+  caller's directory. Previously a stale checkpoint could crash the next save
+  or the first evaluation — e.g. after a Docker run had recorded an absolute
+  ``/src/...`` path.
+
 Logging and telemetry
 ~~~~~~~~~~~~~~~~~~~~~
 
