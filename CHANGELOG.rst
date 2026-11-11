@@ -4,6 +4,19 @@ Changelog
 [Unreleased]
 ------------
 
+Experiment design: suggest-next validation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* "Suggest the next experiment" answered HTTP 422 when the pasted results held a
+  single run (``samples``/``values`` need two observations) and could also send
+  ``null`` bounds when a numeric field was mid-edit, whose error surfaced as a
+  raw pydantic detail array. The page now validates the population of runs,
+  variable names and bounds itself and names the offending variable; the API
+  contract (422 below two observations, 400 for count/arity/bound problems) is
+  pinned in ``tests/test_design_endpoints.py``.
+* The web client renders FastAPI validation errors as ``field: message`` pairs
+  instead of a JSON dump, which applies to every endpoint, not just this one.
+
 Stored weightings and the consensus ranking
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

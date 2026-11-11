@@ -47,6 +47,14 @@ The returned dictionary contains the proposed point, surrogate mean and
 standard deviation, acquisition value, observation and candidate-pool counts,
 kernel name and length scales, seed, direction, and a limitation statement. At
 most 500 observations, 100 dimensions, and 10,000 candidates are accepted.
+
+At least **two** observations are required: a GP fitted to a single point has no
+residual information, so the API rejects one-row payloads with HTTP 422 and the
+UI asks for a second run before sending anything. Sample and value counts must
+agree (HTTP 400 otherwise), every sample row must carry one value per variable,
+variable names must be unique, and each bound must be finite with
+``low < high`` — the web page checks the same conditions and states which
+variable is wrong.
 Candidate selection is not an objective evaluation; the caller decides whether
 and how to measure a proposed point.
 

@@ -95,8 +95,24 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     let detail = res.statusText;
     try {
       const data = (await res.json()) as { detail?: unknown };
-      if (typeof data.detail === "string") detail = data.detail;
-      else if (data.detail !== undefined) detail = JSON.stringify(data.detail);
+      if (typeof data.detail === "string") {
+        detail = data.detail;
+      } else if (Array.isArray(data.detail)) {
+        // FastAPI/pydantic validation errors arrive as a list of
+        // {loc, msg, type}; JSON-dumping that into an error note is unreadable
+        // and hides which field was wrong, so render "field: message" pairs.
+        detail = data.detail
+          .map((item) => {
+            const entry = item as { loc?: unknown[]; msg?: string };
+            const field = Array.isArray(entry.loc)
+              ? entry.loc.filter((part) => part !== "body").join(".")
+              : "";
+            return `${field || "request"}: ${entry.msg ?? JSON.stringify(item)}`;
+          })
+          .join("; ");
+      } else if (data.detail !== undefined) {
+        detail = JSON.stringify(data.detail);
+      }
     } catch {
       /* non-JSON error body */
     }

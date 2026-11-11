@@ -28,6 +28,11 @@ function parseObservations(text: string, dims: number): { samples: number[][]; v
   if (rows.some((r) => r.length !== dims + 1 || r.some((v) => !Number.isFinite(v)))) {
     throw new Error(`Each row needs ${dims} input value(s) followed by the measured result, all numeric.`);
   }
+  // The surrogate is fitted on observations, so one run cannot be extrapolated
+  // from. Say so here instead of letting the API answer 422.
+  if (rows.length < 2) {
+    throw new Error("Enter at least two runs — the surrogate needs two observations to suggest the next point.");
+  }
   return { samples: rows.map((r) => r.slice(0, dims)), values: rows.map((r) => r[dims]) };
 }
 
@@ -44,10 +49,27 @@ export default function DesignPage() {
     setVariables((v) => v.map((row, idx) => (idx === i ? { ...row, ...patch } : row)));
 
   const lhsMut = useMutation({ mutationFn: () => latinHypercube({ variables, n_samples: n }) });
+  const validateDesign = () => {
+    // Catch what pydantic would reject with a 422, in the page's own words.
+    const names = variables.map((v) => v.name.trim());
+    if (names.some((n) => !n)) throw new Error("Every variable needs a name.");
+    if (new Set(names).size !== names.length) throw new Error("Variable names must be unique.");
+    variables.forEach((v, i) => {
+      if (!Number.isFinite(v.low) || !Number.isFinite(v.high)) {
+        throw new Error(`Variable ${names[i] || i + 1} has a non-numeric bound.`);
+      }
+      if (!(v.low < v.high)) {
+        throw new Error(`Variable ${names[i] || i + 1}: low must be smaller than high.`);
+      }
+    });
+    return variables.map((v, i) => ({ name: names[i], low: v.low, high: v.high }));
+  };
+
   const nextMut = useMutation({
     mutationFn: () => {
-      const { samples, values } = parseObservations(observations, variables.length);
-      return suggestNextPoint({ variables, samples, values });
+      const checked = validateDesign();
+      const { samples, values } = parseObservations(observations, checked.length);
+      return suggestNextPoint({ variables: checked, samples, values });
     },
   });
 
@@ -70,11 +92,19 @@ export default function DesignPage() {
               </div>
               <div className="field">
                 <label>Low</label>
-                <input type="number" value={v.low} onChange={(e) => update(i, { low: Number(e.target.value) })} />
+                <input
+                  type="number"
+                  value={Number.isFinite(v.low) ? v.low : ""}
+                  onChange={(e) => update(i, { low: Number(e.target.value) })}
+                />
               </div>
               <div className="field">
                 <label>High</label>
-                <input type="number" value={v.high} onChange={(e) => update(i, { high: Number(e.target.value) })} />
+                <input
+                  type="number"
+                  value={Number.isFinite(v.high) ? v.high : ""}
+                  onChange={(e) => update(i, { high: Number(e.target.value) })}
+                />
               </div>
               <button
                 className="btn"
