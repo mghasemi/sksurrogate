@@ -14,6 +14,15 @@ Experiments on mixed-type partitions
   fold-local preprocessor only for a ``DataFrame``, so every candidate met raw
   strings. ``fit_experiment_bundle`` and ``optimize_pipeline`` now pass the
   frame, keeping the encoder inside each CV fold.
+* The *Advanced* tab (a caller-supplied search space) failed the same way: AML
+  installs an encoder only when ``cat_cols`` names the categorical columns.
+  ``fit_experiment_bundle`` and ``optimize_pipeline`` now detect them (still a
+  pipeline step, so fold-local) and record the choice as
+  ``configuration.cat_cols``.
+* Reproducibility records named every pipeline step ``builtins.tuple``, because
+  ``Pipeline.steps`` yields ``(name, estimator)`` pairs and the recorder
+  stringified the pair. Experiments now record the step classes they actually
+  fitted.
 * New ``SKSurrogate.DataProcess.ArrayAsFrame`` and ``frame_tolerant``: a
   DataFrame-first pipeline is prefixed with an adapter so partial dependence,
   accumulated local effects, learning curves and legacy trackers can still

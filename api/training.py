@@ -437,6 +437,27 @@ def _new_bundle(model, metrics, task_name, schema, run_record, owner, run_id):
     )
 
 
+def categorical_feature_columns(frame, feature_columns):
+    """Non-numeric feature columns of ``frame``.
+
+    A preset search installs ``FoldLocalDataPreprocessor`` and encodes whatever
+    it finds. An explicit search space does not: ``AML`` only adds an encoder
+    when ``cat_cols`` is given, so a config-based run on a dataset with a text
+    column failed with ``could not convert string to float``. These are the
+    columns to hand to ``cat_cols``.
+    """
+    return [column for column in feature_columns if not pd.api.types.is_numeric_dtype(frame[column])]
+
+
+def _transformation_entry(step):
+    """Describe one pipeline step for the reproducibility record.
+
+    ``Pipeline.steps`` yields ``(name, estimator)`` pairs; recording the pair
+    itself wrote ``builtins.tuple`` for every step of every experiment bundle.
+    """
+    return {"class": "%s.%s" % (step.__class__.__module__, step.__class__.__qualname__)}
+
+
 def build_search_param(spec):
     """Convert a JSON param spec (``{"type": "real"|"integer"|"categorical", ...}``) into a structsearch range.
 
@@ -597,12 +618,17 @@ def fit_experiment_bundle(
     conditional = build_conditional_map(config)
     forbidden_rules = build_forbidden_rules(forbidden)
 
+    # A preset encodes mixed-type data itself (fold-locally, see
+    # _new_bundle); an explicit search space needs the columns named or every
+    # candidate dies on the first string value.
+    cat_cols = categorical_feature_columns(frame, feature_columns) if preset is None else []
     cv_spec = get_stored_cv_spec(task_name)
     cv = get_stored_cv(task_name)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     aml = AML(
         config=parsed_config if preset is None else None,
         preset=preset,
+        cat_cols=cat_cols or None,
         resume=resume,
         length=length,
         scoring=scoring,
@@ -650,6 +676,7 @@ def fit_experiment_bundle(
         configuration={
             "kind": "automl_experiment",
             "preset": preset,
+            "cat_cols": cat_cols or None,
             "strategy": strategy,
             "search_space": requested_config,
             "length": length,
@@ -662,12 +689,7 @@ def fit_experiment_bundle(
             "conditional": conditional,
             "stacking": stacking or None,
         },
-        transformations=[
-            {
-                "class": "%s.%s" % (step.__class__.__module__, step.__class__.__qualname__)
-            }
-            for step in getattr(best_estimator, "steps", [])
-        ],
+        transformations=[_transformation_entry(step) for _, step in getattr(best_estimator, "steps", [])],
         evaluation_protocol={
             "scoring": scoring,
             "cv": cv_spec if cv_spec is not None else {"folds": 3, "source": "default"},
@@ -767,6 +789,7 @@ def fit_pipeline_bundle(
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     aml = AML(
         config=parsed_config,
+        cat_cols=categorical_feature_columns(frame, feature_columns) or None,
         length=len(seq),
         scoring=scoring,
         check_point=str(checkpoint_dir) + "/",
@@ -818,12 +841,7 @@ def fit_pipeline_bundle(
             },
             "stacking": stacking or None,
         },
-        transformations=[
-            {
-                "class": "%s.%s" % (step.__class__.__module__, step.__class__.__qualname__)
-            }
-            for step in getattr(pipeline, "steps", [])
-        ],
+        transformations=[_transformation_entry(step) for _, step in getattr(pipeline, "steps", [])],
         evaluation_protocol={
             "scoring": scoring,
             "cv": cv_spec if cv_spec is not None else {"folds": 3, "source": "default"},

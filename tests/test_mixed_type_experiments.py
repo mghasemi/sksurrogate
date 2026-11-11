@@ -151,3 +151,46 @@ def test_experiment_with_a_text_column_completes_and_serves(client):
     )
     assert response.status_code == 200, response.text
     assert len(response.json()["predictions"]) == 3
+
+
+def test_advanced_search_space_encodes_text_columns(client):
+    """An explicit config has no preset preprocessing, so AML needs cat_cols.
+
+    This is the Advanced tab: the search space is supplied by the caller and
+    AML only installs an encoder when it is told which columns are categorical.
+    """
+    frame = _register_mixed(client, "advanced")
+    body = {
+        "config": {
+            "sklearn.tree.DecisionTreeClassifier": {
+                "min_samples_split": {"type": "integer", "low": 2, "high": 6},
+                "min_samples_leaf": {"type": "integer", "low": 1, "high": 4},
+            },
+            "sklearn.linear_model.LogisticRegression": {
+                "C": {"type": "real", "low": 0.1, "high": 5.0},
+            },
+        },
+        # The surrogate engine exercises the same pipeline construction as EOA
+        # without EOA's per-generation Gaussian-process fits, which dominate the
+        # runtime regardless of dataset size (388 s on 90 rows for one
+        # generation). The contract under test is the encoding, not the search.
+        "strategy": "surrogate",
+        "surrogate_mode": True,
+        "surrogate_itrs": 4,
+        "length": 1,
+        "scoring": "accuracy",
+        "random_state": 0,
+    }
+    job = client.post("/api/experiments/advanced/run", json=body).json()["job_id"]
+    record = _wait(client, job)
+    assert record["status"] == "completed", record.get("error")
+
+    result = record["result"]
+    bundle = load_bundle(settings.task_bundles_dir("advanced") / (result["model_version"] + ".bundle"))
+    # The reproducibility record lives with the bundle, not in the job payload.
+    record_metadata = bundle.metadata["reproducibility"]
+    assert record_metadata["configuration"]["cat_cols"] == ["surname"]
+    steps = [entry["class"] for entry in record_metadata["transformations"]]
+    assert any(step.endswith("OneHotEncoder") for step in steps)
+    features = frame[[column for column in frame.columns if column != "y"]]
+    assert np.array_equal(bundle.model.predict(features), bundle.model.predict(features.to_numpy()))

@@ -61,6 +61,29 @@ keeps both contracts:
     [name for name, _ in bundle.model.steps]
     # ['as_frame', 'preprocess', 'stp_0']
 
+Caller-supplied search spaces and ``cat_cols``
+----------------------------------------------
+
+A preset search encodes mixed-type data by itself. A search space supplied by
+the caller does not: ``AML`` only installs an encoder when it is told which
+columns are categorical, so a config-based run on a dataset with a text column
+used to fail with ``could not convert string to float``. ``fit_experiment_bundle``
+and ``optimize_pipeline`` therefore detect the non-numeric feature columns and
+pass them as ``cat_cols``; that encoder is a pipeline step, so it is still fitted
+inside each cross-validation fold. The choice is recorded in the bundle's
+reproducibility metadata:
+
+.. code:: python
+
+    bundle.metadata["reproducibility"]["configuration"]["cat_cols"]
+    # ['surname']
+    [name for name, _ in bundle.model.steps]
+    # ['categorical_encoder', 'stp_0']
+
+Note that a free-text identifier (a surname, a customer id) becomes one dummy
+column per distinct value. Drop such columns from a search rather than encoding
+them, and prefer the ``StringDtype`` TF-IDF path for genuinely free text.
+
 Currently, the DataProcess module identifies the following data types
 automatically:
 
