@@ -165,36 +165,65 @@ class EOA(object):
         fl.close()
 
     def __load(self):
-        """Restore a matching checkpoint when one exists."""
+        """Restore a matching checkpoint when one exists.
+
+        A checkpoint is adopted only when it is compatible with this run: the
+        recorded genes must be a subset of the genes the current configuration
+        knows about, and a recorded checkpoint directory that no longer exists
+        is ignored in favour of the caller's ``check_point``. Replaying a
+        checkpoint from a different configuration (or from another machine,
+        whose absolute paths do not exist here) would otherwise fail on the
+        first evaluation or on the next save.
+        """
+        from os.path import isdir
         from pickle import loads
 
         try:
             fl = open(self.check_point + self.task_name + ".eoa", "rb")
             info = loads(fl.read())
             fl.close()
-            if info.get("checkpoint_version", self.CHECKPOINT_VERSION) != self.CHECKPOINT_VERSION:
-                raise ValueError("Unsupported EOA checkpoint version")
-            self.population_size = info["population_size"]
-            self.parents_porp = info["parents_porp"]
-            self.num_parents = info["num_parents"]
-            self.elits_porp = info["elits_porp"]
-            self.num_elites = info["num_elites"]
-            self.mutation_prob = info["mutation_prob"]
-            self.max_generations = info["max_generations"]
-            self.generation_num = info["generation_num"]
-            self.genes = info["genes"]
-            self.init_genes = info["init_genes"]
-            self.term_genes = info["term_genes"]
-            self.task_name = info["task_name"]
-            self.check_point = info["check_point"]
-            self.random_state = info.get("random_state", self.random_state)
-            if "rng_state" in info:
-                self.rng.setstate(info["rng_state"])
-            self.evals = info["evals"]
-            self.parents = info["parents"]
-            self.children = info["children"]
         except FileNotFoundError:
-            pass
+            return
+        if info.get("checkpoint_version", self.CHECKPOINT_VERSION) != self.CHECKPOINT_VERSION:
+            raise ValueError("Unsupported EOA checkpoint version")
+        known = set(self.genes)
+        recorded = set(info.get("genes", []))
+        for sequence in list(info.get("parents", {})) + list(info.get("children", {})):
+            recorded.update(sequence)
+        if recorded - known:
+            emit(
+                logging.INFO,
+                "Ignoring EOA checkpoint %r: it was written for a different gene set"
+                % self.task_name,
+            )
+            return
+        stored_check_point = info.get("check_point")
+        if stored_check_point and isdir(stored_check_point):
+            self.check_point = stored_check_point
+        elif stored_check_point:
+            emit(
+                logging.INFO,
+                "Ignoring EOA checkpoint directory %r (missing); using %r"
+                % (stored_check_point, self.check_point),
+            )
+        self.population_size = info["population_size"]
+        self.parents_porp = info["parents_porp"]
+        self.num_parents = info["num_parents"]
+        self.elits_porp = info["elits_porp"]
+        self.num_elites = info["num_elites"]
+        self.mutation_prob = info["mutation_prob"]
+        self.max_generations = info["max_generations"]
+        self.generation_num = info["generation_num"]
+        self.genes = info["genes"]
+        self.init_genes = info["init_genes"]
+        self.term_genes = info["term_genes"]
+        self.task_name = info["task_name"]
+        self.random_state = info.get("random_state", self.random_state)
+        if "rng_state" in info:
+            self.rng.setstate(info["rng_state"])
+        self.evals = info["evals"]
+        self.parents = info["parents"]
+        self.children = info["children"]
 
     def __call__(self, *args, **kwargs):
         """Run generations until the configured termination operator returns true.
