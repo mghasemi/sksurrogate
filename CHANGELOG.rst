@@ -4,6 +4,22 @@ Changelog
 [Unreleased]
 ------------
 
+Experiments on mixed-type partitions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Starting an experiment on a dataset with a free-text column (a surname, an
+  address) failed with ``All candidate pipelines failed to produce a finite CV
+  score: ValueError: could not convert string to float: 'MacDonald'``. The API
+  handed ``AML`` an object array (``X.values``), and AML installs its
+  fold-local preprocessor only for a ``DataFrame``, so every candidate met raw
+  strings. ``fit_experiment_bundle`` and ``optimize_pipeline`` now pass the
+  frame, keeping the encoder inside each CV fold.
+* New ``SKSurrogate.DataProcess.ArrayAsFrame`` and ``frame_tolerant``: a
+  DataFrame-first pipeline is prefixed with an adapter so partial dependence,
+  accumulated local effects, learning curves and legacy trackers can still
+  predict from positional arrays. ``_new_bundle`` applies it, so bundles accept
+  frames and arrays alike (both verified against the served model).
+
 Experiment design: suggest-next validation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

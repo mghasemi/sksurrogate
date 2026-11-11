@@ -306,6 +306,92 @@ class FoldLocalDataPreprocessor(TransformerMixin, BaseEstimator):
         return self.transformer_.get_feature_names_out()
 
 
+class ArrayAsFrame(TransformerMixin, BaseEstimator):
+    """Rebuild a DataFrame from positional rows for a DataFrame-first pipeline.
+
+    :class:`FoldLocalDataPreprocessor` needs column names and dtypes, so a
+    pipeline that starts with it only accepts DataFrames. Several consumers
+    legitimately hold positional arrays instead — partial dependence and
+    accumulated local effects vary one column of a value matrix, learning-curve
+    helpers and legacy trackers predict from ``X.to_numpy()`` — and used to
+    fail with ``TypeError: FoldLocalDataPreprocessor requires a pandas
+    DataFrame`` once experiments were fitted on mixed-type data.
+
+    Prefixing such a pipeline with this transformer restores the array contract:
+    DataFrames pass through untouched, arrays are labelled with the fitted
+    column names in the order the preprocessor expects.
+
+    :param columns: Feature names, in training order. When omitted the names of
+        a DataFrame seen in :meth:`fit` are used.
+    """
+
+    def __init__(self, columns=None):
+        self.columns = columns
+
+    def fit(self, X, y=None):
+        if self.columns is not None:
+            self.columns_ = list(self.columns)
+        elif isinstance(X, pandas.DataFrame):
+            self.columns_ = list(X.columns)
+        else:
+            self.columns_ = ["x%d" % index for index in range(np.asarray(X).shape[1])]
+        self.n_features_in_ = len(self.columns_)
+        return self
+
+    def _column_names(self):
+        names = getattr(self, "columns_", None)
+        if names is None and self.columns is not None:
+            names = list(self.columns)
+        if names is None:
+            raise RuntimeError(
+                "ArrayAsFrame has no column names; pass columns= or fit it on a DataFrame"
+            )
+        return names
+
+    def transform(self, X):
+        if isinstance(X, pandas.DataFrame):
+            return X
+        names = self._column_names()
+        array = numpy.asarray(X)
+        if array.ndim == 1:
+            array = array.reshape(1, -1)
+        if array.ndim != 2 or array.shape[1] != len(names):
+            raise ValueError(
+                "ArrayAsFrame expected %d feature column(s); got shape %r"
+                % (len(names), array.shape)
+            )
+        return pandas.DataFrame(array, columns=pandas.Index(names))
+
+
+def frame_tolerant(estimator, columns=None):
+    """Make a DataFrame-first pipeline accept positional arrays as well.
+
+    Returns ``estimator`` unchanged unless its first step is a
+    :class:`FoldLocalDataPreprocessor`, in which case the pipeline is prefixed
+    with :class:`ArrayAsFrame`. Wrapping is idempotent: a pipeline whose first
+    step is already an ``ArrayAsFrame`` is returned as-is.
+
+    :param estimator: A fitted sklearn pipeline, or anything else (returned
+        unchanged).
+    :param columns: Feature names in training order; defaults to the names the
+        preprocessor recorded.
+    """
+    steps = getattr(estimator, "steps", None)
+    if not steps:
+        return estimator
+    _, first_step = steps[0]
+    if isinstance(first_step, ArrayAsFrame):
+        return estimator
+    if not isinstance(first_step, FoldLocalDataPreprocessor):
+        return estimator
+    if columns is None:
+        columns = getattr(first_step, "_input_columns", None)
+        if columns is None:
+            feature_names = getattr(first_step, "feature_names_in_", None)
+            columns = None if feature_names is None else list(feature_names)
+    return Pipeline([("as_frame", ArrayAsFrame(columns)), *steps])
+
+
 class DataPreprocess(object):
     """
     This class performs a few reprocessing task on the input DataFrame to provide a ML ready dataset.

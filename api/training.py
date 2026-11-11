@@ -10,6 +10,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.utils.validation import check_is_fitted
 
 from SKSurrogate import AML, Categorical, Integer, ModelBundle, Real
+from SKSurrogate.DataProcess import frame_tolerant
 
 from . import logs
 from .config import settings
@@ -416,9 +417,16 @@ def fit_baseline_bundle(
 
 
 def _new_bundle(model, metrics, task_name, schema, run_record, owner, run_id):
-    """Create a ``ModelBundle`` carrying the reproducibility record shared by all training entry points."""
+    """Create a ``ModelBundle`` carrying the reproducibility record shared by all training entry points.
+
+    Bundles are frame-tolerant: an experiment fitted on a mixed-type partition
+    starts with ``FoldLocalDataPreprocessor``, which only accepts DataFrames, so
+    the pipeline is prefixed with ``ArrayAsFrame`` to keep the pre-existing
+    contract that explanations, learning curves and legacy trackers can predict
+    from positional arrays.
+    """
     return ModelBundle(
-        model,
+        frame_tolerant(model, columns=list(schema)),
         task_name=task_name,
         schema=schema,
         metrics=metrics,
@@ -565,7 +573,12 @@ def fit_experiment_bundle(
     target, metadata = get_registered_target(task_name)
     frame = load_partition(task_name, train_partition)
     feature_columns = [column for column in frame.columns if column != target]
-    X = frame[feature_columns].values
+    # AML installs FoldLocalDataPreprocessor only when it is given a DataFrame,
+    # and that is what makes a mixed-type partition searchable: the encoder is
+    # then fitted inside every CV fold instead of leaking across the split.
+    # Handing it `X.values` (an object array) skipped preprocessing entirely and
+    # every candidate died on the first categorical value.
+    X = frame[feature_columns]
     y = frame[target].values
 
     if preset is not None and config:
@@ -739,7 +752,8 @@ def fit_pipeline_bundle(
     target, metadata = get_registered_target(task_name)
     frame = load_partition(task_name, train_partition)
     feature_columns = [column for column in frame.columns if column != target]
-    X = frame[feature_columns].values
+    # Same reason as fit_experiment_bundle: pass the frame, not `.values`.
+    X = frame[feature_columns]
     y = frame[target].values
 
     config, stacking = extract_stacking(config)
