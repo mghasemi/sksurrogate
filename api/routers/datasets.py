@@ -27,6 +27,7 @@ from SKSurrogate import (
 )
 
 from ..config import settings
+from ..safety import safe_segment
 from ..deps import bad_request, finite_or_none as _finite, not_found, open_tracker, unprocessable
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"])
@@ -231,7 +232,7 @@ async def register_dataset(task_name: str, target: str = Form(...), partition: s
     )
     dataset_dir = settings.task_dataset_dir(task_name)
     dataset_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = dataset_dir / (partition + ".csv")
+    csv_path = dataset_dir / (safe_segment(partition, "partition") + ".csv")
 
     with open_tracker(task_name) as tracker:
         tracker.RegisterData(frame, target, partition=partition)
@@ -299,7 +300,7 @@ async def validate_dataset(
             raise bad_request("Could not parse the uploaded CSV: %s" % exc)
         source = "upload"
     elif partition is not None:
-        csv_path = settings.task_dataset_dir(task_name) / (partition + ".csv")
+        csv_path = settings.task_dataset_dir(task_name) / (safe_segment(partition, "partition") + ".csv")
         if not csv_path.exists():
             raise not_found("No dataset partition %r stored for task %r" % (partition, task_name))
         frame = pd.read_csv(csv_path)
@@ -341,7 +342,7 @@ def get_dataset_metadata(task_name: str):
 @router.get("/{task_name}/{partition}/preview")
 def preview_dataset(task_name: str, partition: str, limit: int = 20):
     """Return the first ``limit`` rows of a previously uploaded partition."""
-    csv_path = settings.task_dataset_dir(task_name) / (partition + ".csv")
+    csv_path = settings.task_dataset_dir(task_name) / (safe_segment(partition, "partition") + ".csv")
     if not csv_path.exists():
         raise not_found("No dataset partition %r stored for task %r" % (partition, task_name))
     frame = pd.read_csv(csv_path, nrows=max(limit, 0))

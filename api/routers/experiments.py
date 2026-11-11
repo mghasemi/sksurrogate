@@ -14,6 +14,7 @@ from pydantic import AliasChoices, BaseModel, Field, model_validator
 from SKSurrogate import save_bundle
 
 from ..config import settings
+from ..safety import safe_segment
 from ..deps import bad_request
 from ..jobs import dask_available, job_manager
 from ..training import fit_experiment_bundle, fit_pipeline_bundle, standard_scoring_options
@@ -156,7 +157,7 @@ def submit_experiment(task_name, body, *, checkpoint_job_id=None, run_id=None):
             )
             bundles_dir = settings.task_bundles_dir(task_name)
             bundles_dir.mkdir(parents=True, exist_ok=True)
-            bundle_path = save_bundle(bundle, bundles_dir / (bundle.model_version + ".bundle"))
+            bundle_path = save_bundle(bundle, bundles_dir / (safe_segment(bundle.model_version, "model version") + ".bundle"))
             return {
                 "model_version": bundle.model_version,
                 "bundle_path": str(bundle_path),
@@ -240,7 +241,7 @@ def optimize_pipeline(task_name: str, body: OptimizePipelineRequest):
             )
             bundles_dir = settings.task_bundles_dir(task_name)
             bundles_dir.mkdir(parents=True, exist_ok=True)
-            bundle_path = save_bundle(bundle, bundles_dir / (bundle.model_version + ".bundle"))
+            bundle_path = save_bundle(bundle, bundles_dir / (safe_segment(bundle.model_version, "model version") + ".bundle"))
             return {
                 "model_version": bundle.model_version,
                 "bundle_path": str(bundle_path),

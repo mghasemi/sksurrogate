@@ -22,6 +22,7 @@ from fastapi import HTTPException
 from SKSurrogate import dataset_profile, load_bundle
 
 from .config import settings
+from .safety import safe_segment
 from .deps import open_tracker
 from .jobs import job_manager
 from .routers.explain import (
@@ -168,7 +169,7 @@ def run_fact(task_name: str, job_id: str) -> dict:
 
 def bundle_fact(task_name: str, model_version: str) -> dict:
     """Bundle-level metadata: metrics, schema shape, fingerprint prefix."""
-    path = settings.task_bundles_dir(task_name) / (model_version + ".bundle")
+    path = settings.task_bundles_dir(task_name) / (safe_segment(model_version, "model version") + ".bundle")
     if not path.is_file():
         raise HTTPException(
             status_code=404,

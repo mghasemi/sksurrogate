@@ -13,6 +13,7 @@ from SKSurrogate import AML, Categorical, Integer, ModelBundle, Real
 
 from . import logs
 from .config import settings
+from .safety import safe_segment
 from .deps import bad_request, finite_or_none, not_found, open_tracker
 
 BASELINE_ESTIMATORS = {
@@ -246,7 +247,7 @@ def compute_learning_curve(
 
 
 def load_partition(task_name, partition):
-    csv_path = settings.task_dataset_dir(task_name) / (partition + ".csv")
+    csv_path = settings.task_dataset_dir(task_name) / (safe_segment(partition, "partition") + ".csv")
     if not csv_path.exists():
         raise not_found("No dataset partition %r stored for task %r" % (partition, task_name))
     return pd.read_csv(csv_path)
@@ -363,7 +364,7 @@ def fit_baseline_bundle(
 
     metrics = {}
     if validation_partition:
-        validation_csv = settings.task_dataset_dir(task_name) / (validation_partition + ".csv")
+        validation_csv = settings.task_dataset_dir(task_name) / (safe_segment(validation_partition, "partition") + ".csv")
         if validation_csv.exists():
             validation_frame = pd.read_csv(validation_csv)
             validation_X = validation_frame.drop(columns=[target])

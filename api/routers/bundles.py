@@ -25,6 +25,7 @@ from starlette.responses import FileResponse, Response
 from SKSurrogate import ModelBundle, export_mlflow, load_bundle, save_bundle
 
 from ..config import settings
+from ..safety import safe_segment
 from ..deps import bad_request, bundle_summary, finite_or_none, not_found, open_tracker
 from ..training import fit_baseline_bundle, get_registered_target, load_partition
 
@@ -52,7 +53,7 @@ def train_baseline(task_name: str, body: TrainBaselineRequest):
     )
     bundles_dir = settings.task_bundles_dir(task_name)
     bundles_dir.mkdir(parents=True, exist_ok=True)
-    bundle_path = save_bundle(bundle, bundles_dir / (bundle.model_version + ".bundle"))
+    bundle_path = save_bundle(bundle, bundles_dir / (safe_segment(bundle.model_version, "model version") + ".bundle"))
 
     return {
         "task_name": task_name,
@@ -81,8 +82,8 @@ def list_bundles(task_name: str):
 def _bundle_file(task_name: str, model_version: str):
     """Locate a task's bundle file (unregistered folder first, then registry)."""
     for candidate in (
-        settings.task_bundles_dir(task_name) / (model_version + ".bundle"),
-        settings.registry_dir / task_name / (model_version + ".bundle"),
+        settings.task_bundles_dir(task_name) / (safe_segment(model_version, "model version") + ".bundle"),
+        settings.registry_dir / task_name / (safe_segment(model_version, "model version") + ".bundle"),
     ):
         if candidate.exists():
             return candidate
@@ -202,7 +203,7 @@ def recover_model(task_name: str, body: RecoverRequest):
     )
     bundles_dir = settings.task_bundles_dir(task_name)
     bundles_dir.mkdir(parents=True, exist_ok=True)
-    save_bundle(bundle, bundles_dir / (bundle.model_version + ".bundle"))
+    save_bundle(bundle, bundles_dir / (safe_segment(bundle.model_version, "model version") + ".bundle"))
 
     return {
         "task_name": task_name,
@@ -512,7 +513,7 @@ def export_run_report(task_name: str, model_version: str):
 @router.get("/{task_name}/{model_version}")
 def get_bundle(task_name: str, model_version: str):
     """Return bundle metadata (schema, metrics, dependencies, audit trail) without the model object."""
-    bundle_path = settings.task_bundles_dir(task_name) / (model_version + ".bundle")
+    bundle_path = settings.task_bundles_dir(task_name) / (safe_segment(model_version, "model version") + ".bundle")
     if not bundle_path.exists():
         raise not_found("No bundle %r found for task %r" % (model_version, task_name))
     bundle = load_bundle(bundle_path, strict_dependencies=False)

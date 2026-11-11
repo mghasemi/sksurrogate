@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from SKSurrogate import ModelRegistry, load_bundle, mltrack
 
 from .config import settings
+from .safety import contained_path, safe_segment
 
 
 @contextmanager
@@ -50,7 +51,14 @@ def unprocessable(message):
 
 
 def resolve_bundle(task_name, *, model_version=None, alias=None, strict_dependencies=False):
-    """Load a bundle either from a lifecycle alias in the registry or an unregistered bundle file."""
+    """Load a bundle either from a lifecycle alias in the registry or an unregistered bundle file.
+
+    Both the task name and the model version are caller-supplied path segments:
+    they are validated (and the resolved path proven to stay inside the task's
+    bundle directory) so a request can never load a bundle from elsewhere on
+    the host.
+    """
+    task_name = safe_segment(task_name, "task name")
     if alias is not None:
         try:
             return ModelRegistry(settings.registry_dir).load(
@@ -59,7 +67,12 @@ def resolve_bundle(task_name, *, model_version=None, alias=None, strict_dependen
         except KeyError as exc:
             raise not_found(str(exc))
     if model_version is not None:
-        bundle_path = settings.task_bundles_dir(task_name) / (model_version + ".bundle")
+        bundle_path = contained_path(
+            settings.task_bundles_dir(task_name),
+            model_version,
+            ".bundle",
+            field="model version",
+        )
         if not bundle_path.exists():
             raise not_found("No bundle %r found for task %r" % (model_version, task_name))
         return load_bundle(bundle_path, strict_dependencies=strict_dependencies)

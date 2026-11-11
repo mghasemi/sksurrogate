@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from SKSurrogate import ModelRegistry, load_bundle
 
 from ..config import settings
+from ..safety import safe_segment
 from ..deps import bundle_summary, load_monitor_records, not_found, open_tracker
 
 router = APIRouter(prefix="/api/lineage", tags=["lineage"])
@@ -20,9 +21,9 @@ def get_lineage(task_name: str, model_version: str):
     """Return the full trail for one model version: dataset -> bundle -> registry -> monitoring."""
     # A bundle may only exist under the unregistered bundles folder, only in the
     # registry (e.g. produced by /api/retraining), or in both.
-    bundle_path = settings.task_bundles_dir(task_name) / (model_version + ".bundle")
+    bundle_path = settings.task_bundles_dir(task_name) / (safe_segment(model_version, "model version") + ".bundle")
     if not bundle_path.exists():
-        bundle_path = settings.registry_dir / task_name / (model_version + ".bundle")
+        bundle_path = settings.registry_dir / task_name / (safe_segment(model_version, "model version") + ".bundle")
     if not bundle_path.exists():
         raise not_found("No bundle %r found for task %r" % (model_version, task_name))
     bundle = load_bundle(bundle_path, strict_dependencies=False)

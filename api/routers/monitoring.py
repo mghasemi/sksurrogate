@@ -32,6 +32,7 @@ from SKSurrogate import (
 )
 
 from ..config import settings
+from ..safety import safe_segment
 from ..deps import append_drift_alerts, bad_request, load_monitor_records, not_found, open_tracker
 
 router = APIRouter(prefix="/api/monitoring", tags=["monitoring"])
@@ -94,7 +95,7 @@ class DriftRequest(BaseModel):
 
 
 def _load_partition(task_name, partition):
-    csv_path = settings.task_dataset_dir(task_name) / (partition + ".csv")
+    csv_path = settings.task_dataset_dir(task_name) / (safe_segment(partition, "partition") + ".csv")
     if not csv_path.exists():
         raise not_found("No dataset partition %r stored for task %r" % (partition, task_name))
     return pd.read_csv(csv_path)
@@ -150,7 +151,7 @@ def _resolve_prediction_series(task_name, model_version, source: PredictionSourc
             )
         return coerce(frame[column]).rename("prediction")
 
-    csv_path = settings.task_predictions_dir(task_name) / model_version / (source.request_id + ".csv")
+    csv_path = settings.task_predictions_dir(task_name) / safe_segment(model_version, "model version") / (safe_segment(source.request_id, "request id") + ".csv")
     if not csv_path.exists():
         raise not_found(
             "No persisted prediction artifact %r for task %r, version %r"

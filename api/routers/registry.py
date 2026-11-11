@@ -16,6 +16,7 @@ from SKSurrogate import (
 )
 
 from ..config import settings
+from ..safety import safe_segment
 from ..deps import bad_request, bundle_summary, not_found, unprocessable
 
 router = APIRouter(prefix="/api/registry", tags=["registry"])
@@ -45,7 +46,7 @@ class RollbackRequest(BaseModel):
 @router.post("/{task_name}/register")
 def register_bundle(task_name: str, body: RegisterRequest):
     """Move a bundle produced by /api/bundles into the registry as a candidate."""
-    bundle_path = settings.task_bundles_dir(task_name) / (body.model_version + ".bundle")
+    bundle_path = settings.task_bundles_dir(task_name) / (safe_segment(body.model_version, "model version") + ".bundle")
     if not bundle_path.exists():
         raise not_found("No bundle %r found for task %r" % (body.model_version, task_name))
     bundle = load_bundle(bundle_path, strict_dependencies=False)
