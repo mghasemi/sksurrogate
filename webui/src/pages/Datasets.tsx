@@ -17,6 +17,7 @@ import {
   registerDataset,
   setDatasetCV,
   validateDataset,
+  ApiError,
 } from "../api/client";
 import type {
   CVParamDef,
@@ -27,7 +28,7 @@ import type {
   RegisterDatasetResponse,
   SensitiveScanReport,
 } from "../api/client";
-import { Card, ErrorNote, Loading, Table, Badge, fmtNum } from "../components/ui";
+import { Card, EmptyState, ErrorNote, Loading, Table, Badge, fmtNum } from "../components/ui";
 import { useTask } from "../lib/task-context";
 
 const DATASET_TYPES = [
@@ -75,15 +76,35 @@ export default function DatasetsPage() {
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // Bumped after a successful registration so every task-keyed query gets a NEW
+  // cache entry and therefore a fresh fetch. `invalidateQueries` alone was not
+  // enough: these queries are created when the task is first selected (before
+  // any dataset exists), answer 404, and — after React StrictMode's
+  // mount/unmount/mount cycle — end up pending with no observer that
+  // invalidation could re-trigger. Measured: no request followed the
+  // invalidation, so the metadata card stayed blank and the CV/target cards
+  // kept showing their pre-registration state.
+  const [dataRevision, setDataRevision] = useState(0);
+
   const metaQ = useQuery({
-    queryKey: ["dataset-meta", task],
-    queryFn: () => getDatasetMetadata(task),
+    queryKey: ["dataset-meta", task, dataRevision],
+    queryFn: async () => {
+      try {
+        return await getDatasetMetadata(task);
+      } catch (err) {
+        // 404 means "this task has no registered dataset yet" — a state, not a
+        // failure. Rendering it as an error made a fresh task look broken.
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
+      }
+    },
     enabled: !!task,
+    retry: false,
   });
 
   const [previewPartition, setPreviewPartition] = useState<string | null>(null);
   const previewQ = useQuery<DatasetPreview>({
-    queryKey: ["dataset-preview", task, previewPartition],
+    queryKey: ["dataset-preview", task, previewPartition, dataRevision],
     queryFn: () => previewDataset(task, previewPartition!),
     enabled: !!task && !!previewPartition,
   });
@@ -126,8 +147,17 @@ export default function DatasetsPage() {
         binarize_label: binarizeLabel,
       }),
     onSuccess: (registered) => {
+      // Every task-keyed query in this page must be invalidated, not just the
+      // metadata: the CV and preview cards mount as soon as a task is selected,
+      // so before the first registration they answer 404 ("No dataset
+      // registered for task ...") — and React Query keeps that cached error
+      // until the query is invalidated. Missing the CV key left a registered
+      // dataset showing a permanent 404 in the cross-validation card.
       qc.invalidateQueries({ queryKey: ["dataset-meta", task] });
       qc.invalidateQueries({ queryKey: ["target-stats", task] });
+      qc.invalidateQueries({ queryKey: ["dataset-cv", task] });
+      qc.invalidateQueries({ queryKey: ["dataset-preview", task] });
+      setDataRevision((revision) => revision + 1);
       if (projectId) {
         linkProjectPartitionMut.mutate({
           taskName: registered.task_name,
@@ -153,10 +183,22 @@ export default function DatasetsPage() {
     setBinarizeLabel(false);
   };
 
+  // A 404 here is a *state*, not a failure: the task exists but has no dataset
+  // registered yet. Treating it as an error left the card either silent (a
+  // StrictMode double-mount cancels the first fetch, so the query can sit in
+  // "pending, not fetching") or stuck on a stale error after registering.
   const cvQ = useQuery({
-    queryKey: ["dataset-cv", task],
-    queryFn: () => getDatasetCV(task),
+    queryKey: ["dataset-cv", task, dataRevision],
+    queryFn: async () => {
+      try {
+        return await getDatasetCV(task);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
+      }
+    },
     enabled: !!task,
+    retry: false,
   });
   const [cvChoice, setCvChoice] = useState<string>("");
   // Editable constructor parameters of the selected splitter (raw input strings).
@@ -164,7 +206,7 @@ export default function DatasetsPage() {
   const setCvMut = useMutation({
     mutationFn: (vars: { spec: CVSpec; params?: Record<string, unknown> }) =>
       setDatasetCV(task, vars.spec, vars.params),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["dataset-cv", task] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["dataset-cv", task, dataRevision] }),
   });
 
   const cvOptions = cvQ.data?.options ?? [];
@@ -400,6 +442,12 @@ export default function DatasetsPage() {
       >
         {cvQ.isLoading && task && <Loading />}
         {cvQ.isError && <ErrorNote error={cvQ.error} />}
+        {cvQ.data === null && (
+          <EmptyState
+            title="No dataset registered for this task yet"
+            hint="Register a partition above; the splitter options appear here as soon as the first partition is stored."
+          />
+        )}
         {cvQ.data && (
           <>
             <div className="row">
@@ -493,6 +541,12 @@ export default function DatasetsPage() {
       <Card title="Registered metadata" sub={metaQ.data?.dataset_fingerprint ?? undefined}>
         {metaQ.isLoading && task && <Loading />}
         {metaQ.isError && <ErrorNote error={metaQ.error} />}
+        {metaQ.data === null && (
+          <EmptyState
+            title="No dataset registered for this task yet"
+            hint="Upload a CSV above and commit it as a partition; the schema, fingerprint and partitions appear here."
+          />
+        )}
         {metaQ.data && (
           <>
             <dl className="kv">
@@ -590,7 +644,7 @@ export default function DatasetsPage() {
       </Card>
 
       <SyntheticDataCard task={task} metadata={metaQ.data} partitions={partitions} />
-      <TargetStatsCard task={task} enabled={partitions.length > 0} />
+      <TargetStatsCard task={task} enabled={partitions.length > 0} revision={dataRevision} />
     </div>
   );
 }
@@ -601,7 +655,7 @@ function SyntheticDataCard({
   partitions,
 }: {
   task: string;
-  metadata?: DatasetMetadata;
+  metadata?: DatasetMetadata | null;
   partitions: string[];
 }) {
   const qc = useQueryClient();
@@ -797,10 +851,17 @@ function SensitiveScanNote({ scan }: { scan?: SensitiveScanReport }) {
 }
 
 /** Descriptive statistics of the registered target column. */
-function TargetStatsCard({ task, enabled }: { task: string; enabled: boolean }) {
+function TargetStatsCard({ task, enabled, revision }: { task: string; enabled: boolean; revision: number }) {
   const statsQ = useQuery({
-    queryKey: ["target-stats", task],
-    queryFn: () => getTargetStats(task),
+    queryKey: ["target-stats", task, revision],
+    queryFn: async () => {
+      try {
+        return await getTargetStats(task);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
+      }
+    },
     enabled: !!task && enabled,
     retry: false,
   });
