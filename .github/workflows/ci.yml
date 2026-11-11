@@ -80,7 +80,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt pytest pygments httpx2
+          pip install -r requirements.txt pytest pygments httpx
           pip install .
       - name: Run test suite
         # `python -m pytest` (not bare `pytest`) so the repo root is on
