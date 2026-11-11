@@ -15,7 +15,8 @@ API authentication
 * The web UI's **Settings / Audit** page now reports the server's
   authentication state: a warning when the server requires an API key this
   browser has not stored, an error note when the stored key is rejected (401),
-  and otherwise a reminder that the server runs without key enforcement.
+  and — when no key is stored at all — a reminder that the server runs without
+  key enforcement.
 * Regression tests for the shared-key middleware (HTTP header styles,
   WebSocket handshake policy, ``/api/health`` exemption, SPA fallback) and the
   startup validation, including fresh-interpreter import pins.

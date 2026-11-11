@@ -569,8 +569,9 @@ this browser, and to review task registry audit events. Connection settings
 are browser-local; registry audit history is task data stored by the API. The
 **API connection** card also reports the server's authentication state when you
 open it: a warning if the server requires an API key that this browser has not
-stored, an error note if the stored key was rejected (401), and otherwise a
-reminder that the server runs without key enforcement.
+stored, an error note if the stored key was rejected (401), and — when no key
+is stored at all — a reminder that the server runs without key enforcement.
+When a stored key is accepted, the card stays quiet.
 
 Use **Logs** to read what a job actually did. The page lists captured entries
 newest first with time, severity badge, job, logger and message. Severity chips

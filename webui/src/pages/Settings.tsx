@@ -15,7 +15,9 @@ function ApiBaseCard() {
   // Does this server enforce a shared API key? /api/health is never gated, so
   // probe with a cheap protected endpoint (see client.ts). The note below only
   // shows when the answer is known; an unreachable server is already reported
-  // by the Server card's health query.
+  // by the Server card's health query. When no key is stored and the probe
+  // succeeds, the server genuinely runs open; when a stored key is accepted we
+  // stay silent — there is nothing to fix in either direction.
   const authQ = useQuery({
     queryKey: ["auth-mode"],
     queryFn: probeAuthMode,
@@ -72,7 +74,7 @@ function ApiBaseCard() {
       {authQ.data === "required" && getApiKey() && (
         <p className="error-note">The stored API key was rejected by this server (401) — check it against the server's SKSURROGATE_API_KEY.</p>
       )}
-      {authQ.data === "open" && (
+      {authQ.data === "open" && !getApiKey() && (
         <p className="muted">
           Server is not enforcing an API key. Fine for localhost; if this port may be reachable beyond a trusted network, set <code>SKSURROGATE_API_KEY</code> on the server side.
         </p>
