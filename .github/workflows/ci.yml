@@ -86,8 +86,9 @@ jobs:
         # `python -m pytest` (not bare `pytest`) so the repo root is on
         # sys.path and the `api.*` package is importable.
         run: python -m pytest tests/ -q
-      - name: "Smoke: examples/example02.py (legacy Travis check)"
-        run: python examples/example02.py
+      - name: "Smoke: bounded AML end-to-end (airfoil subset)"
+        timeout-minutes: 10
+        run: python examples/smoke_aml.py
 
   bench-smoke:
     name: "Benchmark smoke (ionosphere)"

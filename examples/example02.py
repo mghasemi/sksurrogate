@@ -33,8 +33,11 @@ warnings.filterwarnings("ignore", category=Warning)
 checkpoint_dir = Path(__file__).resolve().parents[1] / "example02-checkpoints"
 checkpoint_dir.mkdir(exist_ok=True)
 
+# Bundled copy (1503 rows, UCI Airfoil Self-Noise) so runs and CI smoke tests
+# are offline-deterministic. The original URL download stalled CI for ~25 min.
+data_path = Path(__file__).resolve().parent / "data" / "airfoil_self_noise.dat"
 df = pd.read_csv(
-    "https://archive.ics.uci.edu/ml/machine-learning-databases/00291/airfoil_self_noise.dat",
+    data_path,
     sep="\t",
     names=["Frequency", "Angle", "length", "velocity", "thickness", "level"],
 )
