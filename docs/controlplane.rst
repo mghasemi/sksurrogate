@@ -49,10 +49,14 @@ Docker
 The ``prod`` image serves the built UI and API from one port, runs as a
 non-root user, exposes ``/api/health`` as its healthcheck and stores data in
 the ``sksurrogate-data`` volume (``/data``). The Compose file forwards
-``SKSURROGATE_API_KEY``, ``SKSURROGATE_REQUIRE_AUTH`` and
-``SKSURROGATE_API_CORS_ORIGINS`` into the container: set the key for non-local
-use, and ``SKSURROGATE_REQUIRE_AUTH=1`` to turn a missing key into a startup
-error. Use ``--build-arg EXTRAS="..."`` to add optional packages.
+``SKSURROGATE_API_KEY``, ``SKSURROGATE_REQUIRE_AUTH``,
+``SKSURROGATE_ADMIN_USERNAME``, ``SKSURROGATE_ADMIN_PASSWORD``,
+``SKSURROGATE_SESSION_TTL``, ``SKSURROGATE_SESSION_COOKIE_SECURE`` and
+``SKSURROGATE_API_CORS_ORIGINS`` into the container. Set the key for non-local
+use; set ``SKSURROGATE_REQUIRE_AUTH=1`` to require an identity — a shared key, a
+per-user API key, a browser session, or the one-shot administrator bootstrap —
+and to make a deployment with none of those refuse to start. Use
+``--build-arg EXTRAS="..."`` to add optional packages.
 
 Configuration and storage
 =========================
@@ -198,6 +202,17 @@ themselves are read through the endpoints below.
 
 Unknown severity names are rejected with HTTP 422. Log files are not pruned
 automatically; the API operator owns retention under ``logs/``.
+
+Identity events use a separate store, because they happen outside any job:
+:mod:`api.audit` appends one JSON line per event to
+``<SKSURROGATE_API_HOME>/logs/auth.jsonl`` (``login`` with outcome
+``ok``/``denied``/``throttled``, ``logout``, ``password.change``,
+``api_key.create``, ``api_key.revoke``, ``user.create``, ``user.update``,
+``user.sessions_revoked``). Entries carry the username, client address, key
+prefix and affected target, never a password, session token or full key, so the
+file is safe to inspect or ship. ``GET /api/auth/audit`` returns the most recent
+entries (``limit``, max 500) to administrators; the file itself is append-only
+and never rewritten by the API. See :doc:`auth-and-sharing`.
 
 API and UI coverage
 ===================

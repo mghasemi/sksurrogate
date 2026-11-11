@@ -27,6 +27,16 @@ checkout. They are separate from using ``SKSurrogate`` as a Python library.
 Follow :doc:`controlplane` for dependency installation, service startup, API
 keys, CORS, and storage configuration. In brief:
 
+* **Signing in.** When the server enforces authentication
+  (``SKSURROGATE_REQUIRE_AUTH`` and an account, or a shared
+  ``SKSURROGATE_API_KEY``), the UI shows a sign-in screen instead of the app and
+  no page loads until you authenticate. The first administrator is created with
+  ``python -m api.auth_cli create-admin --username <you>`` or the one-shot
+  ``SKSURROGATE_ADMIN_USERNAME``/``SKSURROGATE_ADMIN_PASSWORD`` variables. With
+  neither switch set the deployment is open and single-user, and no sign-in is
+  asked for. Accounts, roles and sharing are described in
+  :doc:`auth-and-sharing`.
+
 1. From the repository root, install the API dependencies and start the API:
 
    .. code-block:: console
@@ -453,10 +463,10 @@ include candidate, validated, staging, production, and archived.
 .. warning::
 
    Approver names in this UI are free-text entries, not verified user
-   identities. The current v1 control plane does not provide user accounts or
-   role-based authorization. Enabling the optional shared API key protects
-   access to the API but does not turn those names into authenticated
-   approvals.
+   identities. Accounts and task-level roles (``viewer``/``editor``/``owner``,
+   see :doc:`auth-and-sharing`) govern *who may promote at all*, but the
+   approval strings themselves are still typed by the caller and are not checked
+   against the signed-in account. Do not treat them as signed approvals.
 
 9. Run online or batch inference
 --------------------------------
@@ -564,14 +574,30 @@ and retraining can run in the background; their job records remain visible
 after navigation. A failed experiment can expose a resume action when its
 checkpoint is usable.
 
-Use **Settings / Audit** to configure the API base URL and shared API key for
-this browser, and to review task registry audit events. Connection settings
-are browser-local; registry audit history is task data stored by the API. The
-**API connection** card also reports the server's authentication state when you
-open it: a warning if the server requires an API key that this browser has not
-stored, an error note if the stored key was rejected (401), and — when no key
-is stored at all — a reminder that the server runs without key enforcement.
-When a stored key is accepted, the card stays quiet.
+Use **Settings / Audit** to manage your identity and sharing, configure the API
+base URL for this browser, and review task registry audit events. Connection
+settings are browser-local; everything else is server state.
+
+* **Account** — your username and role, plus a password change. Changing the
+  password signs out your other sessions; the current one continues.
+* **API keys** — create a key for scripts and CI. The secret is displayed once
+  and never again: later listings show only its prefix, creation time and last
+  use. Revoking a key takes effect on the next request.
+* **Sharing** — the share list of the task selected in the top bar. Add a
+  username with ``viewer`` (read), ``editor`` (register, train, promote) or
+  ``owner`` (also sharing), or remove a grant. The last owner cannot be removed.
+  An administrator also sees **Adopt unowned tasks as me**, which assigns
+  material that predates accounts (idempotent).
+* **Users** (administrators only) — create accounts, disable them (which revokes
+  their sessions immediately), promote/demote and reset passwords. The last
+  active administrator cannot be disabled or demoted.
+* **API connection** — the API base URL and an optional shared key for
+  non-browser clients. The card reports the server's declared posture: whether
+  authentication is enforced, and whether a key is stored in this browser.
+
+Only when the server runs without authentication do the identity cards show a
+note instead of controls. The contract behind them — endpoints, roles, the
+``404``-for-strangers rule, the audit file — is :doc:`auth-and-sharing`.
 
 Use **Logs** to read what a job actually did. The page lists captured entries
 newest first with time, severity badge, job, logger and message. Severity chips
@@ -602,6 +628,13 @@ contract is documented in :doc:`controlplane` and the level mapping in
 
    Filter captured job logs by severity, job, kind and text, then open an entry
    for its trial metadata or failure traceback.
+
+.. figure:: images/auth-settings.png
+   :alt: Settings page with Account, API keys, Sharing and Users cards
+   :width: 100%
+
+   Signed in as an administrator: password change, one API key, the current
+   task shared read-only with another account, and account management.
 
 .. figure:: images/ui-settings.png
    :alt: Settings page showing API connection and audit log

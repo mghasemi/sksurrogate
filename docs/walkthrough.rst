@@ -349,8 +349,10 @@ Open **Registry & Deployment**.
    apply the custom metric thresholds or bundle-size limit from the Quality
    Gates page. Enforce any required custom policy separately before promoting.
    Each step also needs *N* unique approver names (comma-separated, e.g.
-   ``alice, bob`` with *Required approvals* = 2). Approvers are free text in
-   this version; there is no authentication.
+   ``alice, bob`` with *Required approvals* = 2). Approver names are free text:
+   when the server enforces authentication (:doc:`auth-and-sharing`) a caller
+   needs at least ``editor`` on the task to promote, but the names themselves
+   are not checked against accounts.
 3. The lifecycle strip shows which version holds each alias, with a **Use in
    Inference** shortcut. **Rollback** re-points an alias at an earlier version.
 
