@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { health, getApiKey, getApiBase, getEffectiveApiBase, registryAudit, setApiKey, setApiBase } from "../api/client";
+import { health, getApiKey, getApiBase, getEffectiveApiBase, probeAuthMode, registryAudit, setApiKey, setApiBase } from "../api/client";
 import type { AuditEvent } from "../api/client";
 import { Badge, Card, ErrorNote, Loading, Table, fmtNum } from "../components/ui";
 import { useTask } from "../lib/task-context";
@@ -11,6 +11,17 @@ function ApiBaseCard() {
   const [url, setUrl] = useState(getApiBase());
   const [key, setKey] = useState(getApiKey());
   const [saved, setSaved] = useState(false);
+
+  // Does this server enforce a shared API key? /api/health is never gated, so
+  // probe with a cheap protected endpoint (see client.ts). The note below only
+  // shows when the answer is known; an unreachable server is already reported
+  // by the Server card's health query.
+  const authQ = useQuery({
+    queryKey: ["auth-mode"],
+    queryFn: probeAuthMode,
+    staleTime: 30_000,
+    retry: false,
+  });
 
   const onSave = () => {
     setApiBase(url.trim());
@@ -53,6 +64,19 @@ function ApiBaseCard() {
       <p className="muted" style={{ marginTop: 6 }}>
         Sent as an <code>X-API-Key</code> header on every request (and a query parameter for job streams) when the server requires one. Leave empty for local, keyless use.
       </p>
+      {authQ.data === "required" && !getApiKey() && (
+        <p className="warn-note">
+          This server requires an API key — enter it in the field above and save. Other views will fail until then.
+        </p>
+      )}
+      {authQ.data === "required" && getApiKey() && (
+        <p className="error-note">The stored API key was rejected by this server (401) — check it against the server's SKSURROGATE_API_KEY.</p>
+      )}
+      {authQ.data === "open" && (
+        <p className="muted">
+          Server is not enforcing an API key. Fine for localhost; if this port may be reachable beyond a trusted network, set <code>SKSURROGATE_API_KEY</code> on the server side.
+        </p>
+      )}
       {saved && <p className="success-note">Saved — all views now talk to the new endpoint.</p>}
     </Card>
   );

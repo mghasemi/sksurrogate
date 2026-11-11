@@ -157,6 +157,23 @@ export const health = () => get<{ status: string; version?: string }>("/api/heal
 /** Known task names discovered across the API storage layout. */
 export const listTasks = () => get<{ tasks: string[] }>("/api/tasks");
 
+/**
+ * Probe whether the server enforces the shared API key. `/api/health` is never
+ * gated, so a cheap protected endpoint (`GET /api/tasks`) stands in for it:
+ * 401 means a key is required, any other success means open. Connection errors
+ * are rethrown — we do not guess the auth state of an unreachable server (the
+ * Settings page's health card already surfaces that failure).
+ */
+export async function probeAuthMode(): Promise<"open" | "required"> {
+  try {
+    await listTasks();
+    return "open";
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) return "required";
+    throw err;
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Datasets                                                            */
 /* ------------------------------------------------------------------ */
