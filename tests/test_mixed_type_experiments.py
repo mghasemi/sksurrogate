@@ -33,6 +33,7 @@ from SKSurrogate.DataProcess import (  # noqa: E402
     ArrayAsFrame,
     FoldLocalDataPreprocessor,
     frame_tolerant,
+    preprocesses_frames,
 )
 
 
@@ -194,3 +195,51 @@ def test_advanced_search_space_encodes_text_columns(client):
     assert any(step.endswith("OneHotEncoder") for step in steps)
     features = frame[[column for column in frame.columns if column != "y"]]
     assert np.array_equal(bundle.model.predict(features), bundle.model.predict(features.to_numpy()))
+
+
+def test_preprocesses_frames_detects_existing_encoding():
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    plain = Pipeline([("clf", LogisticRegression())])
+    scaled = Pipeline([("scale", StandardScaler()), ("clf", LogisticRegression())])
+    gated = Pipeline([("preprocess", FoldLocalDataPreprocessor()), ("clf", LogisticRegression())])
+    tolerant = frame_tolerant(gated, columns=["a", "b"])
+
+    assert preprocesses_frames(plain) is False
+    assert preprocesses_frames(scaled) is False
+    assert preprocesses_frames(gated) is True
+    # The adapter sits in front, which must not hide the encoder behind it.
+    assert preprocesses_frames(tolerant) is True
+
+
+def test_nested_cv_accepts_a_bundle_that_already_encodes(client):
+    """Nested CV wrapped a second encoder around preset bundles.
+
+    ``nested_cv_evaluation`` adds its own fold-local preprocessor when the data
+    is mixed-type. A preset bundle already starts with one, so the candidate
+    received an encoded matrix and the inner preprocessor rejected it:
+
+        ValueError: ArrayAsFrame expected 13 feature column(s); got shape ()
+    """
+    _register_mixed(client, "nestedcv")
+    body = {"preset": "classification", "strategy": "surrogate", "surrogate_mode": True,
+            "surrogate_itrs": 4, "length": 1, "scoring": "accuracy", "random_state": 0}
+    job = client.post("/api/experiments/nestedcv/run", json=body).json()["job_id"]
+    experiment = _wait(client, job)
+    assert experiment["status"] == "completed", experiment.get("error")
+    version = experiment["result"]["model_version"]
+
+    bundle = load_bundle(settings.task_bundles_dir("nestedcv") / (version + ".bundle"))
+    assert [name for name, _ in bundle.model.steps][:2] == ["as_frame", "preprocess"]
+
+    job = client.post(
+        "/api/evaluation/nestedcv/nested-cv",
+        json={"model_version": version, "outer_cv": 2, "inner_cv": 2, "repeats": 1},
+    ).json()["job_id"]
+    record = _wait(client, job, attempts=2400)
+    assert record["status"] == "completed", record.get("error")
+    result = record["result"]
+    assert 0.0 <= result["mean_outer_score"] <= 1.0
+    assert len(result["fold_metrics"]) == 2

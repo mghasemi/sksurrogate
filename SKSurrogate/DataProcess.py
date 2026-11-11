@@ -391,6 +391,27 @@ def frame_tolerant(estimator, columns=None):
             columns = None if feature_names is None else list(feature_names)
     return Pipeline([("as_frame", ArrayAsFrame(columns)), *steps])
 
+def preprocesses_frames(estimator):
+    """Whether ``estimator`` already turns a raw frame into model input.
+
+    True when the first step of a pipeline is a
+    :class:`FoldLocalDataPreprocessor`, directly or behind the
+    :class:`ArrayAsFrame` adapter. Nested cross-validation uses this to decide
+    whether a candidate still needs an encoder in front of it: a bundle trained
+    from a preset already carries one, and stacking a second encoder on top fed
+    the pipeline an already-encoded matrix.
+    """
+    steps = getattr(estimator, "steps", None)
+    if not steps:
+        return False
+    first_step = steps[0][1]
+    if isinstance(first_step, ArrayAsFrame):
+        steps = steps[1:]
+        if not steps:
+            return False
+        first_step = steps[0][1]
+    return isinstance(first_step, FoldLocalDataPreprocessor)
+
 
 class DataPreprocess(object):
     """

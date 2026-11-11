@@ -1308,8 +1308,10 @@ class mltrack(object):
         import pandas as pd
         from scipy.stats import norm
         from sklearn.base import clone, is_classifier
-        from sklearn.model_selection import KFold, StratifiedKFold, GroupKFold
         from sklearn.metrics import accuracy_score
+        from sklearn.model_selection import KFold, StratifiedKFold, GroupKFold
+
+        from .DataProcess import preprocesses_frames
 
         if not isinstance(repeats, int) or repeats < 1:
             raise ValueError("repeats must be an integer greater than or equal to 1.")
@@ -1356,7 +1358,7 @@ class mltrack(object):
 
         def clone_for_fit():
             candidate = clone(estimator)
-            if uses_fold_local_preprocessing:
+            if uses_fold_local_preprocessing and not preprocesses_frames(candidate):
                 from sklearn.pipeline import Pipeline
 
                 from .DataProcess import FoldLocalDataPreprocessor

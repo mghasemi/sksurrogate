@@ -19,6 +19,12 @@ Experiments on mixed-type partitions
   ``fit_experiment_bundle`` and ``optimize_pipeline`` now detect them (still a
   pipeline step, so fold-local) and record the choice as
   ``configuration.cat_cols``.
+* Nested CV failed on any bundle trained from a preset
+  (``ArrayAsFrame expected 13 feature column(s); got shape ()``): the routine
+  wrapped its own fold-local preprocessor around an estimator that already
+  carried one, so the candidate was fitted on an encoded matrix. It now checks
+  ``DataProcess.preprocesses_frames`` and leaves such estimators alone — the
+  bundle's own preprocessor is still fitted per fold, so nothing leaks.
 * Reproducibility records named every pipeline step ``builtins.tuple``, because
   ``Pipeline.steps`` yields ``(name, estimator)`` pairs and the recorder
   stringified the pair. Experiments now record the step classes they actually
