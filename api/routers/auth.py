@@ -18,7 +18,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-from .. import auth
+from .. import audit, auth
 from ..auth import SESSION_COOKIE
 from ..config import settings
 from ..deps import bad_request, not_found, require_admin, require_user
@@ -113,14 +113,24 @@ def login(body: LoginRequest, request: Request, response: Response):
     """
     client = (request.client.host if request.client else "unknown") or "unknown"
     if auth.THROTTLE.locked(body.username, client):
+        audit.record("login", outcome="throttled", username=body.username, client=client)
         return _too_many_attempts()
     user = auth.store().authenticate(body.username, body.password)
     if user is None:
         auth.THROTTLE.record_failure(body.username, client)
+        audit.record("login", outcome="denied", username=body.username, client=client)
         return _bad_credentials()
     auth.THROTTLE.reset(body.username, client)
     token = auth.store().create_session(user["user_id"], ttl_seconds=settings.session_ttl_seconds)
     _set_session_cookie(response, token)
+    audit.record(
+        "login",
+        outcome="ok",
+        user_id=user["user_id"],
+        username=user["username"],
+        client=client,
+        session_source="cookie",
+    )
     return {"user": _public_user(user), "expires_in": int(settings.session_ttl_seconds)}
 
 
@@ -140,6 +150,7 @@ def logout(request: Request, response: Response):
     raw = request.cookies.get(SESSION_COOKIE)
     if raw:
         auth.store().delete_session(raw)
+        audit.record("logout", principal=auth.CURRENT_PRINCIPAL.get())
     response.delete_cookie(SESSION_COOKIE, path="/")
     return {"ok": True}
 
@@ -168,6 +179,7 @@ def change_password(body: PasswordChange, request: Request, principal: auth.Prin
     current_token = request.cookies.get(SESSION_COOKIE) or ""
     keep = auth.digest_token(current_token) if current_token else None
     store.set_password(principal.user_id, body.new_password, keep_token_hash=keep)
+    audit.record("password.change", principal=principal)
     return {"ok": True, "sessions_revoked": True}
 
 
@@ -191,6 +203,8 @@ def create_key(body: KeyCreate, principal: auth.Principal = Depends(require_user
     if principal.user_id is None:
         raise bad_request("the shared API key cannot own per-user API keys")
     secret, record = auth.store().create_api_key(principal.user_id, body.name)
+    # Audit the prefix, never the secret.
+    audit.record("api_key.create", principal=principal, prefix=record["prefix"], key_id=record["id"])
     return {"key": secret, "record": record}
 
 
@@ -202,6 +216,7 @@ def revoke_key(key_id: int, principal: auth.Principal = Depends(require_user()))
         record = auth.store().revoke_api_key(key_id, user_id=scope)
     except KeyError as exc:
         raise not_found(str(exc))
+    audit.record("api_key.revoke", principal=principal, prefix=record["prefix"], key_id=record["id"])
     return {"revoked": record}
 
 
@@ -223,6 +238,9 @@ def create_user(body: UserCreate, principal: auth.Principal = Depends(require_ad
         raise HTTPException(status_code=409, detail=str(exc))
     except auth.AuthError as exc:
         raise bad_request(str(exc))
+    audit.record(
+        "user.create", principal=principal, target_user=user["username"], is_admin=user["is_admin"]
+    )
     return {"user": _public_user(user)}
 
 
@@ -245,11 +263,31 @@ def update_user(user_id: int, body: UserPatch, principal: auth.Principal = Depen
     updated = store.get_user(user_id)
     if updated is None:  # deleted concurrently
         raise not_found("no such user: %r" % user_id)
+    audit.record(
+        "user.update",
+        principal=principal,
+        target_user=updated["username"],
+        is_active=updated["is_active"],
+        is_admin=updated["is_admin"],
+        password_reset=body.password is not None,
+    )
     return {"user": _public_user(updated)}
+
+
+@router.get("/audit")
+def auth_audit(limit: int = 200, principal=Depends(require_admin())):
+    """Administrator view of identity events (logins, keys, account changes).
+
+    Newest first, bounded. The file is append-only on disk; this endpoint never
+    mutates it. Secrets are never recorded, so entries are safe to inspect.
+    """
+    events = audit.read(limit)
+    return {"events": events, "count": len(events)}
 
 
 @router.post("/users/{user_id}/logout")
 def logout_user(user_id: int, principal: auth.Principal = Depends(require_admin())):
     """Revoke every session of another account."""
     removed = auth.store().delete_user_sessions(user_id)
+    audit.record("user.sessions_revoked", principal=principal, target_user_id=user_id, count=removed)
     return {"sessions_revoked": removed}

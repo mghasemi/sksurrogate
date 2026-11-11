@@ -31,6 +31,11 @@ Users, sessions and sharing
 * **Compatibility**: with neither ``SKSURROGATE_API_KEY`` nor
   ``SKSURROGATE_REQUIRE_AUTH`` the API stays open and single-user; the shared key
   keeps working as an admin-equivalent break-glass principal.
+* **Audit trail** (``api/audit.py``): identity events (logins including denied and
+  throttled attempts, logouts, password changes, API-key creation/revocation,
+  account changes) are appended to ``logs/auth.jsonl`` and exposed to
+  administrators at ``GET /api/auth/audit``. Entries carry the key prefix and
+  username, never a password, session token or full key.
 * **Docs**: new :doc:`auth-and-sharing` chapter (toctree + control-plane
   cross-link) and a Docker/readme paragraph on the new variables.
 

@@ -20,7 +20,7 @@ import logging
 import pytest
 from fastapi.testclient import TestClient
 
-from api import auth
+from api import audit, auth
 from api.config import settings
 from api.main import app, _check_auth_settings
 
@@ -37,6 +37,7 @@ def store(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "require_auth", False)
     settings.ensure()
     auth.reset_store()
+    audit.clear()
     auth.THROTTLE._failures.clear()
     yield auth.store()
     auth.reset_store()
@@ -440,3 +441,83 @@ def test_open_mode_keeps_anonymous_access(store, monkeypatch):
     assert me["username"] == "anonymous"
     assert me["source"] == "anonymous"
     assert open_client.get("/api/auth/status").json()["auth_enforced"] is False
+
+
+# --------------------------------------------------------------------------- #
+# Audit trail
+# --------------------------------------------------------------------------- #
+
+
+def test_successful_login_is_audited_without_the_password(client, tmp_path):
+    _login(client)
+    events = audit.read()
+    assert events and events[0]["event"] == "login"
+    assert events[0]["outcome"] == "ok"
+    assert events[0]["username"] == ADMIN[0]
+    raw = (tmp_path / "logs" / "auth.jsonl").read_text(encoding="utf-8")
+    assert ADMIN[1] not in raw
+    assert auth.SESSION_COOKIE not in raw
+
+
+def test_denied_login_is_audited_without_the_supplied_secret(client, tmp_path):
+    supplied = "wrong-secret-never-log-1"
+    client.post(
+        "/api/auth/login", json={"username": ADMIN[0], "password": supplied}, headers=ORIGIN
+    )
+    events = audit.read()
+    assert events[0]["event"] == "login" and events[0]["outcome"] == "denied"
+    assert supplied not in (tmp_path / "logs" / "auth.jsonl").read_text(encoding="utf-8")
+
+
+def test_throttled_login_is_audited(client, monkeypatch):
+    monkeypatch.setattr(auth.THROTTLE, "max_failures", 1)
+    bad = {"username": ADMIN[0], "password": "wrong-password"}
+    client.post("/api/auth/login", json=bad, headers=ORIGIN)
+    client.post("/api/auth/login", json=bad, headers=ORIGIN)
+    outcomes = [event["outcome"] for event in audit.read()]
+    assert "throttled" in outcomes
+
+
+def test_key_creation_audits_the_prefix_only(client, tmp_path):
+    _login(client)
+    secret = client.post("/api/auth/keys", json={"name": "ci"}, headers=ORIGIN).json()["key"]
+    event = audit.read()[0]
+    assert event["event"] == "api_key.create"
+    assert event["prefix"] == secret[: len(auth.API_KEY_PREFIX) + 6]
+    assert secret not in (tmp_path / "logs" / "auth.jsonl").read_text(encoding="utf-8")
+
+
+def test_account_changes_are_audited(client):
+    _login(client)
+    client.post(
+        "/api/auth/users", json={"username": ANALYST[0], "password": ANALYST[1]}, headers=ORIGIN
+    )
+    assert audit.read()[0]["event"] == "user.create"
+    assert audit.read()[0]["target_user"] == ANALYST[0]
+
+
+def test_audit_endpoint_is_admin_only(client):
+    _login(client)
+    assert client.get("/api/auth/audit").status_code == 200
+    client.post(
+        "/api/auth/users", json={"username": ANALYST[0], "password": ANALYST[1]}, headers=ORIGIN
+    )
+    client.post("/api/auth/logout", headers=ORIGIN)
+    _login(client, ANALYST)
+    assert client.get("/api/auth/audit").status_code == 403
+
+
+def test_audit_read_is_bounded_and_skips_malformed_lines(store, tmp_path):
+    path = tmp_path / "logs" / "auth.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(
+            ['{"event": "a", "outcome": "ok"}', "not json", '{"event": "b", "outcome": "ok"}']
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    events = audit.read(limit=10)
+    assert [event["event"] for event in events] == ["b", "a"]
+    assert len(audit.read(limit=1)) == 1
+    assert audit.read(limit=0) != []

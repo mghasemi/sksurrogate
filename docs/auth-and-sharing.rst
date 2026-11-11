@@ -117,6 +117,30 @@ Authentication endpoints
        last active administrator cannot be disabled or demoted.
    * - ``POST /api/auth/users/{id}/logout``
      - Admin only: revoke every session of another account.
+   * - ``GET /api/auth/audit``
+     - Admin only: recent identity events (newest first, bounded by ``limit``).
+
+Audit trail
+-----------
+
+Every identity event is appended to ``<API home>/logs/auth.jsonl`` — one JSON
+line per event, never rewritten, readable with ``tail -f`` or shipped as-is:
+
+.. code-block:: json
+
+   {"event": "login", "outcome": "ok", "username": "mehdi", "source": "cookie",
+    "client": "10.0.0.7", "timestamp": "2026-11-11T04:12:31+00:00"}
+
+Recorded events: ``login`` (``ok`` / ``denied`` / ``throttled``), ``logout``,
+``password.change``, ``api_key.create``, ``api_key.revoke``, ``user.create``,
+``user.update`` and ``user.sessions_revoked``. Entries carry the account,
+client address, key **prefix** and affected target — never a password, a session
+token or a full API key, so the file is safe to inspect and to share while
+debugging. Administrators read it through ``GET /api/auth/audit``; the endpoint
+returns the last ``limit`` events (maximum 500) and never mutates the file.
+
+The per-job log store is separate: it only captures records emitted while a
+background job is running, which is why identity events get their own file.
 
 Ownership model
 ---------------
