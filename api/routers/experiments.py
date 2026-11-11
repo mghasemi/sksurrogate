@@ -8,18 +8,18 @@ Fitting logic is shared with the Bundles and Retraining routers via
 
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from SKSurrogate import save_bundle
 
 from ..config import settings
 from ..safety import safe_segment
-from ..deps import bad_request
+from ..deps import bad_request, task_access
 from ..jobs import dask_available, job_manager
 from ..training import fit_experiment_bundle, fit_pipeline_bundle, standard_scoring_options
 
-router = APIRouter(prefix="/api/experiments", tags=["experiments"])
+router = APIRouter(prefix="/api/experiments", tags=["experiments"], dependencies=[Depends(task_access)])
 
 
 class ParamSpec(BaseModel):

@@ -18,7 +18,7 @@ import json
 from datetime import datetime, timezone
 
 import pandas as pd
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel, Field
 
 from SKSurrogate import (
@@ -31,11 +31,12 @@ from SKSurrogate import (
     subgroup_performance_report,
 )
 
+from .. import acl
 from ..config import settings
 from ..safety import safe_segment
-from ..deps import append_drift_alerts, bad_request, load_monitor_records, not_found, open_tracker
+from ..deps import append_drift_alerts, bad_request, load_monitor_records, not_found, open_tracker, task_access
 
-router = APIRouter(prefix="/api/monitoring", tags=["monitoring"])
+router = APIRouter(prefix="/api/monitoring", tags=["monitoring"], dependencies=[Depends(task_access)])
 
 
 @router.get("/alerts")
@@ -48,6 +49,11 @@ def monitoring_alerts(task: str | None = None, limit: int = Query(default=20, ge
         )
     else:
         task_dirs = []
+    # The alert feed aggregates every task directory, so filter it down to the
+    # tasks this caller may see — otherwise it becomes a directory of other
+    # accounts' model names and failure messages.
+    visible = set(acl.visible_ids(acl.TASK, [path.name for path in task_dirs]))
+    task_dirs = [path for path in task_dirs if path.name in visible]
     if task is not None:
         task_dirs = [path for path in task_dirs if path.name == task]
 

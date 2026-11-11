@@ -19,7 +19,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 import numpy as np
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel, Field
 
 from SKSurrogate import build_cv, load_bundle, mltrack, save_bundle
@@ -33,6 +33,7 @@ from ..deps import (
     open_tracker,
     resolve_bundle,
     unprocessable,
+    task_access,
 )
 from ..jobs import job_manager
 from ..training import (
@@ -42,7 +43,7 @@ from ..training import (
     problem_family,
 )
 
-router = APIRouter(prefix="/api/evaluation", tags=["evaluation"])
+router = APIRouter(prefix="/api/evaluation", tags=["evaluation"], dependencies=[Depends(task_access)])
 
 #: Cap on how many bundles are inspected when inferring the task's problem family.
 _FAMILY_PROBE_LIMIT = 5

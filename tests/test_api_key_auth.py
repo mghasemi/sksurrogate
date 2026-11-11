@@ -16,6 +16,7 @@ import logging
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -65,7 +66,8 @@ def test_open_when_no_key_configured(client):
 def test_missing_key_rejected_with_401(client, key):
     res = client.get("/api/tasks")
     assert res.status_code == 401
-    assert res.json()["detail"] == "Invalid or missing API key"
+    assert res.json()["detail"] == "Authentication required"
+    assert res.headers.get("www-authenticate")
 
 
 def test_x_api_key_header_accepted(client, key):
@@ -170,9 +172,16 @@ def test_require_auth_with_key_passes(client, key, monkeypatch):
 def _import_api_main(env_extra: dict) -> subprocess.CompletedProcess:
     """Import ``api.main`` in a fresh interpreter with only the given
     SKSURROGATE_* variables set (host env values are stripped so the test is
-    deterministic)."""
+    deterministic).
+
+    The API home is always redirected to a temporary directory: whether the
+    startup check passes depends on the account table, so inheriting the
+    developer's ``var/sksurrogate-api`` would make this test order-dependent.
+    """
     env = {k: v for k, v in os.environ.items() if not k.startswith("SKSURROGATE_")}
     env.update(env_extra)
+    if "SKSURROGATE_API_HOME" not in env:
+        env["SKSURROGATE_API_HOME"] = tempfile.mkdtemp(prefix="sksurrogate-auth-probe-")
     return subprocess.run(
         [sys.executable, "-c", "import api.main"],
         env=env,
@@ -219,5 +228,5 @@ def test_failed_auth_is_logged_without_the_supplied_secret(client, key, caplog):
         res = client.get("/api/tasks", headers={"X-API-Key": supplied})
     assert res.status_code == 401
     messages = " ".join(record.getMessage() for record in caplog.records)
-    assert "API key rejected" in messages
+    assert "Authentication rejected" in messages
     assert supplied not in messages

@@ -8,10 +8,10 @@ cannot set custom headers on a WS handshake.
 
 import asyncio
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Depends
 
 from ..config import settings
-from ..deps import not_found
+from ..deps import job_access, job_ws_allowed, not_found
 from ..jobs import job_manager
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -19,10 +19,14 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
 @router.get("")
 def list_jobs(task_name: str | None = None):
-    return {"jobs": job_manager.list(task_name)}
+    """List job records the caller may see (optionally restricted to one task)."""
+    jobs = job_manager.list(task_name)
+    names = {record.get("task_name") for record in jobs if isinstance(record.get("task_name"), str)}
+    visible = set(acl.visible_ids(acl.TASK, names))
+    return {"jobs": [record for record in jobs if record.get("task_name") in visible]}
 
 
-@router.get("/{job_id}")
+@router.get("/{job_id}", dependencies=[Depends(job_access)])
 def get_job(job_id: str):
     record = job_manager.get(job_id)
     if record is None:
@@ -30,7 +34,7 @@ def get_job(job_id: str):
     return record
 
 
-@router.post("/{job_id}/resume")
+@router.post("/{job_id}/resume", dependencies=[Depends(job_access)])
 def resume_job(job_id: str):
     record = job_manager.get(job_id)
     if record is None:
@@ -69,6 +73,9 @@ def resume_job(job_id: str):
 @router.websocket("/{job_id}/stream")
 async def stream_job(websocket: WebSocket, job_id: str):
     """Push job status every 500ms until it reaches a terminal state."""
+    if not job_ws_allowed(job_id):
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     try:
         last_status = None

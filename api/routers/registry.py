@@ -5,7 +5,7 @@ No authentication in v1 (see docs/ui-plan.md section 9): ``approvers`` are
 free-text names, not verified identities.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from SKSurrogate import (
@@ -17,9 +17,9 @@ from SKSurrogate import (
 
 from ..config import settings
 from ..safety import safe_segment
-from ..deps import bad_request, bundle_summary, not_found, unprocessable
+from ..deps import bad_request, bundle_summary, not_found, unprocessable, task_access
 
-router = APIRouter(prefix="/api/registry", tags=["registry"])
+router = APIRouter(prefix="/api/registry", tags=["registry"], dependencies=[Depends(task_access)])
 
 
 def _registry():

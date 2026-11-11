@@ -9,14 +9,15 @@ import uuid
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from .. import acl
 from ..config import settings
-from ..deps import bad_request, not_found, open_tracker
+from ..deps import bad_request, not_found, open_tracker, project_access
 from ..jobs import job_manager
 
-router = APIRouter(prefix="/api/projects", tags=["research-projects"])
+router = APIRouter(prefix="/api/projects", tags=["research-projects"], dependencies=[Depends(project_access)])
 _PROJECT_LOCK = threading.RLock()
 _PROJECT_ID_PATTERN = re.compile(r"^[a-f0-9]{32}$")
 _TASK_NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
@@ -414,12 +415,19 @@ def _project_record(
 
 @router.get("")
 def list_projects():
-    """List project metadata without copying linked dataset or run contents."""
+    """List project metadata without copying linked dataset or run contents.
+
+    Filtered to projects the caller can view (owner, shared, or unowned legacy
+    material) — a project listing is not a directory of other people's work.
+    """
+    visible = set(
+        acl.visible_ids(acl.PROJECT, [path.stem for path in settings.projects_dir.glob("*.json")])
+    )
     with _PROJECT_LOCK:
         projects = [
             json.loads(path.read_text(encoding="utf-8"))
             for path in settings.projects_dir.glob("*.json")
-            if path.is_file()
+            if path.is_file() and path.stem in visible
         ]
     for project in projects:
         project.setdefault("records", [])
@@ -433,6 +441,7 @@ def create_project(body: CreateProjectRequest):
     _validate_artifacts(body.artifacts)
     project = _project_record(uuid.uuid4().hex, body)
     _write_project(project)
+    acl.claim(acl.PROJECT, project["project_id"])
     return project
 
 

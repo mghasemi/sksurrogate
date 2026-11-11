@@ -15,10 +15,12 @@ import asyncio
 import json
 import re
 
-from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect, Depends
 
 from .. import logs
+from .. import acl
 from ..config import settings
+from ..deps import job_access, job_ws_allowed
 from ..jobs import job_manager
 
 router = APIRouter(prefix="/api/logs", tags=["logs"])
@@ -66,6 +68,12 @@ def list_logs(
     limit: int = Query(200, ge=1, le=2000),
 ):
     """Browse captured log entries across jobs, filtered by severity, task and project."""
+    # Both filters reach into a specific task's or project's jobs, so they need
+    # the same authorisation as the resource itself (404 for strangers).
+    if project_id:
+        acl.require_view(acl.PROJECT, project_id)
+    if task_name:
+        acl.require_view(acl.TASK, task_name)
     allowed = _resolve_filters(level, levels)
     job_ids = None
     if project_id and not job_id:
@@ -87,10 +95,27 @@ def list_logs(
     if project_id:
         result["project_id"] = project_id
         result["job_count"] = len(job_ids or [])
+
+    # Unfiltered queries scan every job on the host, so a signed-in caller must
+    # not receive entries from tasks they cannot see. Explicit job/project/task
+    # filters were authorised above; the blanket case is filtered here.
+    if settings.auth_enforced:
+        names = {entry.get("task_name") for entry in result["entries"]}
+        visible = set(acl.visible_ids(acl.TASK, [n for n in names if isinstance(n, str)]))
+        kept = [entry for entry in result["entries"] if entry.get("task_name") in visible]
+        if len(kept) != len(result["entries"]):
+            counts = {name: 0 for name in logs.LEVELS}
+            for entry in kept:
+                level_name = entry.get("level")
+                if level_name in counts:
+                    counts[level_name] += 1
+            result["entries"] = kept
+            result["counts"] = counts
+            result["total"] = len(kept)
     return result
 
 
-@router.get("/{job_id}")
+@router.get("/{job_id}", dependencies=[Depends(job_access)])
 def job_logs(
     job_id: str,
     level: str = Query(None, description="Minimum severity"),
@@ -120,6 +145,9 @@ def job_logs(
 @router.websocket("/{job_id}/stream")
 async def stream_job_logs(websocket: WebSocket, job_id: str):
     """Push new log entries for one job until it terminates."""
+    if not job_ws_allowed(job_id):
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     params = websocket.query_params
     try:

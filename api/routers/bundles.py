@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from starlette.responses import FileResponse, Response
 
@@ -26,10 +26,10 @@ from SKSurrogate import ModelBundle, export_mlflow, load_bundle, save_bundle
 
 from ..config import settings
 from ..safety import safe_segment
-from ..deps import bad_request, bundle_summary, finite_or_none, not_found, open_tracker
+from ..deps import bad_request, bundle_summary, finite_or_none, not_found, open_tracker, task_access
 from ..training import fit_baseline_bundle, get_registered_target, load_partition
 
-router = APIRouter(prefix="/api/bundles", tags=["bundles"])
+router = APIRouter(prefix="/api/bundles", tags=["bundles"], dependencies=[Depends(task_access)])
 
 
 class TrainBaselineRequest(BaseModel):

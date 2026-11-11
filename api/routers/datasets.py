@@ -13,7 +13,7 @@ from io import BytesIO
 from typing import Annotated
 
 import pandas as pd
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, File, Form, UploadFile, Depends
 from pydantic import BaseModel, Field
 
 from SKSurrogate import (
@@ -28,9 +28,9 @@ from SKSurrogate import (
 
 from ..config import settings
 from ..safety import safe_segment
-from ..deps import bad_request, finite_or_none as _finite, not_found, open_tracker, unprocessable
+from ..deps import bad_request, finite_or_none as _finite, not_found, open_tracker, unprocessable, task_access
 
-router = APIRouter(prefix="/api/datasets", tags=["datasets"])
+router = APIRouter(prefix="/api/datasets", tags=["datasets"], dependencies=[Depends(task_access)])
 
 
 def _validate_partition_name(partition):

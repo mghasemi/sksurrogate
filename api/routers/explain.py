@@ -16,7 +16,7 @@ from typing import Literal
 
 import numpy as np
 import pandas as pd
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from SKSurrogate.mltrace import (
@@ -24,7 +24,7 @@ from SKSurrogate.mltrace import (
     split_conformal_regression_interval,
 )
 
-from ..deps import bad_request, finite_or_none, unprocessable
+from ..deps import bad_request, finite_or_none, unprocessable, task_access
 from ..explanations import (
     DEFAULT_MIN_BIN_FRACTION,
     accumulated_local_effects,
@@ -39,7 +39,7 @@ from ..explanations import (
 from ..training import get_registered_target, load_partition, problem_family
 from .evaluation import _load_bundle
 
-router = APIRouter(prefix="/api/evaluation", tags=["explanations"])
+router = APIRouter(prefix="/api/evaluation", tags=["explanations"], dependencies=[Depends(task_access)])
 
 _MAX_ROWS = 1000
 _PREVIEW_POINTS = 200

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Annotated
 
 import pandas as pd
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Depends
 from pydantic import BaseModel
 from starlette.exceptions import HTTPException
 from starlette.responses import FileResponse
@@ -24,9 +24,9 @@ from SKSurrogate import DataPreprocess, ModelRegistry, SynthData
 
 from ..config import settings
 from ..safety import safe_segment
-from ..deps import bad_request, not_found, open_tracker
+from ..deps import bad_request, not_found, open_tracker, task_access
 
-router = APIRouter(prefix="/api/datasets", tags=["synthetic-data"])
+router = APIRouter(prefix="/api/datasets", tags=["synthetic-data"], dependencies=[Depends(task_access)])
 
 _SYNTH_TYPES = {"bin", "int", "real", "cat", "date"}
 

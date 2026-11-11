@@ -9,16 +9,16 @@ import uuid
 from time import perf_counter
 
 import pandas as pd
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from SKSurrogate import ModelRegistry, SchemaValidationError, predict_batch
 
 from ..config import settings
 from ..safety import safe_segment
-from ..deps import append_monitor_record, bad_request, not_found, open_tracker, resolve_bundle
+from ..deps import append_monitor_record, bad_request, not_found, open_tracker, resolve_bundle, task_access
 
-router = APIRouter(prefix="/api/inference", tags=["inference"])
+router = APIRouter(prefix="/api/inference", tags=["inference"], dependencies=[Depends(task_access)])
 
 
 class PredictRequest(BaseModel):

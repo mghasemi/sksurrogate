@@ -4,12 +4,142 @@ import json
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 
 from SKSurrogate import ModelRegistry, load_bundle, mltrack
 
+from . import acl, auth
 from .config import settings
 from .safety import contained_path, safe_segment
+
+
+def current_principal() -> auth.Principal:
+    """The identity behind the request being handled (see ``AuthMiddleware``)."""
+    return auth.CURRENT_PRINCIPAL.get()
+
+
+def require_user():
+    """FastAPI dependency: an authenticated caller, or HTTP 401.
+
+    While authentication is not enforced (no shared key, no
+    ``SKSURROGATE_REQUIRE_AUTH``) every caller is the anonymous principal and the
+    dependency passes it through — the open-API behaviour of v1 is preserved, so
+    the auth endpoints themselves stay usable in local single-user mode.
+    """
+
+    def dependency() -> auth.Principal:
+        principal = auth.CURRENT_PRINCIPAL.get()
+        if not principal.authenticated and settings.auth_enforced:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        return principal
+
+    return dependency
+
+
+def require_admin():
+    """FastAPI dependency: an administrator principal, or 401/403."""
+
+    def dependency() -> auth.Principal:
+        principal = auth.CURRENT_PRINCIPAL.get()
+        if not settings.auth_enforced:
+            return principal
+        if not principal.authenticated:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        if not principal.is_admin:
+            raise HTTPException(status_code=403, detail="Administrator privileges required")
+        return principal
+
+    return dependency
+
+
+# --------------------------------------------------------------------------- #
+# Ownership/sharing enforcement
+# --------------------------------------------------------------------------- #
+# Router-level dependencies: every task-scoped router declares
+# ``dependencies=[Depends(task_access)]`` once, which covers all of its routes
+# (including future ones) instead of a per-endpoint audit. The dependency
+# resolves the identifier from the matched path and derives the required role
+# from the HTTP method: reads need ``viewer``, anything that mutates state needs
+# ``editor``. Sharing, deletion and registry promotion stay in the endpoints
+# that own those semantics.
+
+_EDIT_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def _minimum_role(request: Request) -> str:
+    return "editor" if request.method.upper() in _EDIT_METHODS else "viewer"
+
+
+def task_access(request: Request) -> None:
+    """Require view/edit access to the ``task_name`` in the request path.
+
+    A successful *write* by an authenticated user on a task that has no owner
+    yet claims it. That single rule replaces per-endpoint bookkeeping: whichever
+    authenticated user first creates data under a task name owns it, and later
+    writers need an editor grant.
+    """
+    task_name = request.path_params.get("task_name")
+    if task_name is None:
+        return
+    minimum = _minimum_role(request)
+    acl.require_role(acl.TASK, str(task_name), minimum)
+    if minimum == "editor":
+        acl.claim(acl.TASK, str(task_name))
+
+
+def project_access(request: Request) -> None:
+    """Require view/edit access to the ``project_id`` in the request path."""
+    project_id = request.path_params.get("project_id")
+    if project_id is None:
+        return
+    minimum = _minimum_role(request)
+    acl.require_role(acl.PROJECT, str(project_id), minimum)
+    if minimum == "editor":
+        acl.claim(acl.PROJECT, str(project_id))
+
+
+def leg_for_job(job_id: str):
+    """The task or project a job belongs to, as ``(kind, resource_id)``.
+
+    Jobs are task-scoped by construction (``job_manager.list(task_name)``); the
+    project link, when present, is recorded as an artifact *after* the job
+    finishes, so the task is the authorization source of truth.
+    """
+    import json
+
+    path = settings.job_record_path(job_id)
+    if not path.exists():
+        return None
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict):
+        return None
+    task_name = record.get("task_name")
+    if isinstance(task_name, str) and task_name:
+        return (acl.TASK, task_name)
+    return None
+
+
+def job_ws_allowed(job_id: str, minimum: str = "viewer") -> bool:
+    """WebSocket-safe job authorization check (no ``Request`` object there)."""
+    leg = leg_for_job(job_id)
+    if leg is None:
+        return True  # unknown job: the handler reports "job not found"
+    return acl.has_role(leg[0], leg[1], minimum)
+
+
+def job_access(request: Request) -> None:
+    """Require view/edit access to the task owning the ``job_id`` in the path."""
+    job_id = request.path_params.get("job_id")
+    if job_id is None:
+        return
+    leg = leg_for_job(str(job_id))
+    if leg is None:
+        # Unknown job: let the endpoint answer 404 (no existence leak either way).
+        return
+    acl.require_role(leg[0], leg[1], _minimum_role(request))
 
 
 @contextmanager

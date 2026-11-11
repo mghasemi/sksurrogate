@@ -7,17 +7,17 @@ weights table, rendered client-side by the web UI.
 """
 
 import pandas as pd
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from SKSurrogate import CorrelationThreshold, SensAprx
 
 from ..config import settings
 from ..safety import safe_segment
-from ..deps import bad_request, finite_or_none as _finite, not_found, open_tracker
+from ..deps import bad_request, finite_or_none as _finite, not_found, open_tracker, task_access
 from ..jobs import job_manager
 
-router = APIRouter(prefix="/api/sensitivity", tags=["sensitivity"])
+router = APIRouter(prefix="/api/sensitivity", tags=["sensitivity"], dependencies=[Depends(task_access)])
 
 
 class SensitivityRequest(BaseModel):
