@@ -952,6 +952,17 @@ export interface SensitivityJobResult {
   top_feature_names: string[];
   /** One weight per entry of `feature_columns`; null where the value was not finite. */
   weights: Array<number | null>;
+  /** Which SALib estimator produced the weights (delta-mmnt only). */
+  estimator?: string | null;
+  evaluation_protocol?: {
+    train_partition: string;
+    train_fingerprint: string | null;
+    row_count: number;
+    feature_columns: string[];
+    /** Non-numeric columns excluded from the analysis. */
+    excluded_columns?: Array<{ column: string; dtype: string }>;
+    rows_dropped?: number;
+  };
   interpretation?: {
     category: "input_sensitivity";
     measure: string;
@@ -974,6 +985,8 @@ export function asSensitivityResult(result: unknown): SensitivityJobResult | nul
     top_feature_names: r.top_feature_names ?? [],
     weights: r.weights,
     interpretation: r.interpretation,
+    estimator: r.estimator ?? null,
+    evaluation_protocol: r.evaluation_protocol,
   };
 }
 
@@ -982,6 +995,9 @@ export interface CorrelationThresholdResult {
   feature_columns: string[];
   kept_feature_names: string[];
   dropped_feature_names: string[];
+  /** Non-numeric columns: Pearson correlation is undefined for them. */
+  excluded_feature_names?: string[];
+  rows_dropped?: number;
 }
 
 export const runCorrelationThreshold = (task: string, threshold = 0.7, trainPartition = "train") =>

@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from SKSurrogate import CorrelationThreshold, SensAprx
 
 from ..config import settings
+from ..features import NumericFeatureError, numeric_train_xy
 from ..safety import safe_segment
 from ..deps import bad_request, finite_or_none as _finite, not_found, open_tracker, task_access
 from ..jobs import job_manager
@@ -43,6 +44,16 @@ def _heatmap_payload(frame: pd.DataFrame, index_col: str | None, max_features: i
 
 
 def _load_train_xy(task_name, train_partition):
+    """Load a partition and project it onto its numeric feature columns.
+
+    Returns ``(projection, fingerprint)`` where ``projection`` is an
+    :class:`api.features.NumericTrainData`. The projection is not optional:
+    sensitivity (SALib + surrogate regressor) and Pearson-correlation pruning are
+    numeric procedures, and a mixed-type partition previously crashed inside
+    sklearn with ``could not convert string to float``. Non-numeric columns are
+    excluded and reported, and an empty projection is a 400 — not a job that
+    fails later with a traceback.
+    """
     with open_tracker(task_name) as tracker:
         metadata = tracker.GetMetadata()
         partition_history = tracker.dataset_splits()
@@ -53,14 +64,12 @@ def _load_train_xy(task_name, train_partition):
     if not csv_path.exists():
         raise not_found("No dataset partition %r stored for task %r" % (train_partition, task_name))
     frame = pd.read_csv(csv_path)
-    feature_columns = [column for column in frame.columns if column != target]
+    try:
+        projection = numeric_train_xy(frame, target)
+    except NumericFeatureError as exc:
+        raise bad_request(str(exc))
     partition_metadata = partition_history.get(train_partition, {})
-    return (
-        feature_columns,
-        frame[feature_columns].values,
-        frame[target].values,
-        partition_metadata.get("fingerprint"),
-    )
+    return projection, partition_metadata.get("fingerprint")
 
 
 @router.post("/{task_name}/run")
@@ -68,9 +77,8 @@ def run_sensitivity(task_name: str, body: SensitivityRequest):
     """Submit a sensitivity-analysis job and return its job id immediately (202-style)."""
     if body.method not in {"sobol", "morris", "delta-mmnt"}:
         raise bad_request("method must be one of sobol, morris, delta-mmnt")
-    feature_columns, X, y, train_fingerprint = _load_train_xy(
-        task_name, body.train_partition
-    )
+    projection, train_fingerprint = _load_train_xy(task_name, body.train_partition)
+    feature_columns, X, y = projection.columns, projection.X, projection.y
 
     def _task():
         analyzer = SensAprx(n_features_to_select=body.n_features_to_select, method=body.method)
@@ -81,6 +89,9 @@ def run_sensitivity(task_name: str, body: SensitivityRequest):
         weights = [_finite(value) for value in analyzer.weights_]
         return {
             "method": body.method,
+            # For delta-mmnt: which SALib estimator produced these weights
+            # ("delta" on SALib<=1.5; "delta_balanced" and friends on >=1.6).
+            "estimator": getattr(analyzer, "delta_estimator_", None),
             "n_features_to_select": body.n_features_to_select,
             "feature_columns": feature_columns,
             "top_feature_indices": top_indices,
@@ -91,6 +102,8 @@ def run_sensitivity(task_name: str, body: SensitivityRequest):
                 "train_fingerprint": train_fingerprint,
                 "row_count": len(X),
                 "feature_columns": feature_columns,
+                "excluded_columns": projection.excluded,
+                "rows_dropped": projection.dropped_rows,
             },
             "interpretation": {
                 "category": "input_sensitivity",
@@ -99,7 +112,8 @@ def run_sensitivity(task_name: str, body: SensitivityRequest):
                 "causal_effect": False,
                 "limitations": [
                     "Sensitivity describes the fitted surrogate's response over method-generated independent input ranges based on observed feature bounds plus a margin.",
-                    "Correlated or categorical features may produce unrealistic perturbations; these indices are not causal effects.",
+                    "Only numeric feature columns participate: non-numeric columns are excluded (see evaluation_protocol.excluded_columns) because the sampling procedure and its surrogate regressor are numeric.",
+                    "Correlated features, and numeric columns that are identifiers rather than measurements, may produce unrealistic perturbations; these indices are not causal effects.",
                 ],
             },
         }
@@ -116,7 +130,8 @@ def run_sensitivity(task_name: str, body: SensitivityRequest):
 @router.post("/{task_name}/correlation-threshold")
 def run_correlation_threshold(task_name: str, threshold: float = 0.7, train_partition: str = "train"):
     """Fast, synchronous correlation-based feature pruning (no job needed)."""
-    feature_columns, X, _, _ = _load_train_xy(task_name, train_partition)
+    projection, _ = _load_train_xy(task_name, train_partition)
+    feature_columns, X = projection.columns, projection.X
     selector = CorrelationThreshold(threshold=threshold)
     selector.fit(X)
     dropped_indices = sorted(set(range(len(feature_columns))) - set(selector.indices))
@@ -125,13 +140,20 @@ def run_correlation_threshold(task_name: str, threshold: float = 0.7, train_part
         "feature_columns": feature_columns,
         "kept_feature_names": [feature_columns[index] for index in selector.indices],
         "dropped_feature_names": [feature_columns[index] for index in dropped_indices],
+        "excluded_feature_names": projection.excluded_names,
+        "excluded_columns": projection.excluded,
+        "rows_dropped": projection.dropped_rows,
+        "interpretation": {
+            "category": "numeric_only",
+            "note": "Pearson correlation is undefined for non-numeric columns; they are excluded from pruning and reported separately.",
+        },
     }
 
 @router.get("/{task_name}/correlation-matrix")
 def get_correlation_matrix(task_name: str, train_partition: str = "train", max_features: int = 60):
     """Pearson correlation matrix of the features — the data behind ``mltrack.heatmap``."""
-    feature_columns, X, _, _ = _load_train_xy(task_name, train_partition)
-    frame = pd.DataFrame(X, columns=feature_columns).corr()
+    projection, _ = _load_train_xy(task_name, train_partition)
+    frame = pd.DataFrame(projection.X, columns=projection.columns).corr()
     return {
         "task_name": task_name,
         "partition": train_partition,
@@ -140,6 +162,8 @@ def get_correlation_matrix(task_name: str, train_partition: str = "train", max_f
             "category": "descriptive_association",
             "measure": "Pearson correlation",
             "causal_effect": False,
+            "excluded_columns": projection.excluded,
+            "rows_dropped": projection.dropped_rows,
         },
         **_heatmap_payload(frame, None, max_features),
     }
@@ -165,18 +189,25 @@ def get_weights_heatmap(task_name: str, train_partition: str = "train", max_feat
         payload = _heatmap_payload(weights_df, "feature", max_features)
         return {"task_name": task_name, "kind": "weights", "available": True, "source": "stored", **payload}
 
-    feature_columns, X, y, _ = _load_train_xy(task_name, train_partition)
-    frame = pd.DataFrame(X, columns=feature_columns)
-    frame["__target__"] = y
+    projection, _ = _load_train_xy(task_name, train_partition)
+    frame = pd.DataFrame(projection.X, columns=projection.columns)
+    frame["__target__"] = projection.y
     weights_df = pd.DataFrame(
         {
-            "feature": feature_columns,
-            "pearson": [frame[column].corr(frame["__target__"]) for column in feature_columns],
-            "variance": [frame[column].var() for column in feature_columns],
+            "feature": projection.columns,
+            "pearson": [frame[column].corr(frame["__target__"]) for column in projection.columns],
+            "variance": [frame[column].var() for column in projection.columns],
         }
     )
     payload = _heatmap_payload(weights_df, "feature", max_features)
-    return {"task_name": task_name, "kind": "weights", "available": True, "source": "computed", **payload}
+    return {
+        "task_name": task_name,
+        "kind": "weights",
+        "available": True,
+        "source": "computed",
+        "excluded_columns": projection.excluded,
+        **payload,
+    }
 
 
 @router.get("/{task_name}/top-features")

@@ -4,6 +4,24 @@ Changelog
 [Unreleased]
 ------------
 
+Sensitivity analysis on mixed-type datasets
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Sensitivity runs (Sobol, Morris, delta) and correlation pruning no longer
+  crash on registered partitions with text columns — a churn CSV produced
+  ``ValueError: could not convert string to float: 'Hargrave'`` from the SVR
+  inside ``SensAprx``, and the equivalent numpy error from ``corrcoef`` for
+  pruning. ``api.features.numeric_train_xy`` projects a partition onto its
+  numeric columns, drops rows with non-finite values (reporting
+  ``rows_dropped``), and the results list the excluded columns; a partition with
+  no numeric feature answers HTTP 400 instead of failing as a background job.
+* ``SensAprx`` resolves the delta index across SALib versions: 1.6 replaced
+  ``delta`` with ``delta_balanced`` / ``delta_raw`` / ``delta_step``, so
+  docker-built containers raised ``KeyError: 'delta'`` while a 1.5 dev venv
+  worked. The estimator used is reported as ``estimator`` in the job result.
+* The Feature Analysis page labels the ranking as numeric-only, names the
+  excluded columns, and shows the same note under correlation pruning.
+
 Users, sessions and sharing
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

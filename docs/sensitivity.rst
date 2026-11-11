@@ -85,10 +85,32 @@ feature ranges based on each observed minimum and maximum plus a margin of 0.2
 in each feature's units. These indices
 describe the fitted surrogate's response to input perturbations under that
 design; they are not Pearson feature-target associations, model-score
-attributions, or causal effects. Correlated and categorical features can
-produce unrealistic combinations in the generated design, so interpret the
-results cautiously and consider the method assumptions and generated ranges
-before using rankings to narrow a search.
+attributions, or causal effects. Correlated features, and numeric columns that
+are identifiers rather than measurements, can produce unrealistic combinations
+in the generated design, so interpret the results cautiously and consider the
+method assumptions and generated ranges before using rankings to narrow a
+search.
+
+**Numeric features only.** The sampled design and its surrogate regressor are
+numeric procedures, and both Pearson correlation and the delta index are defined
+through means and variances, so non-numeric columns are excluded rather than
+silently coerced. A registered partition that mixes types — the Telco churn CSV
+carries ``Surname``, ``Geography`` and ``Gender`` as text — is projected onto its
+numeric columns; the API reports the exclusion (``excluded_columns`` /
+``excluded_feature_names`` in the result, and a note above the ranking in the
+web UI) and answers HTTP 400 when a partition has no numeric feature column at
+all. Rows with a non-finite value in the numeric block are dropped as a complete
+case and the count is reported as ``rows_dropped``. To analyse a text column,
+encode it (for example one-hot) and re-register the partition: an ordinal code
+would be perturbed as if it were a quantity, which the index cannot justify.
+
+**SALib versions and the delta estimator.** The delta moment-independent index
+changed shape in SALib 1.6: ``delta.analyze`` now returns ``delta_balanced``,
+``delta_raw`` and ``delta_step`` instead of a single ``delta``. ``SensAprx``
+resolves whichever key the installed version provides and records it as
+``estimator`` in the API result (``delta`` on SALib ≤ 1.5, ``delta_balanced`` on
+≥ 1.6) — the three are different statistics, so compare runs from different
+environments by that field rather than by method name alone.
 
 
 ================================================

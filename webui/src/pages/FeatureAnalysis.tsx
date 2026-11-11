@@ -209,6 +209,13 @@ export default function FeatureAnalysisPage() {
                   </span>
                 ))}
               </div>
+              {(corrResult.excluded_feature_names?.length ?? 0) > 0 && (
+                <p className="muted">
+                  Not considered (non-numeric, so Pearson correlation is undefined):{" "}
+                  <span className="mono">{corrResult.excluded_feature_names!.join(", ")}</span>.
+                  Encode or drop them to include them in pruning.
+                </p>
+              )}
             </>
           )}
         </Card>
@@ -373,12 +380,20 @@ function SensitivityHeatmap({ result }: { result: SensitivityJobResult }) {
         ? "Morris μ*"
         : "delta moment-independent measure";
 
+  const excluded = result.evaluation_protocol?.excluded_columns ?? [];
+
   return (
     <>
       <p className="muted">
-        Weights for all {fmtNum(result.feature_columns.length)} features, strongest first; the top{" "}
+        Weights for all {fmtNum(result.feature_columns.length)} numeric features, strongest first; the top{" "}
         {fmtNum(result.n_features_to_select)} are marked with ★.
       </p>
+      {excluded.length > 0 && (
+        <p className="muted">
+          Not considered (non-numeric columns cannot be sampled or regressed):{" "}
+          <span className="mono">{excluded.map((entry) => entry.column).join(", ")}</span>.
+        </p>
+      )}
       <Heatmap
         mode="sequential"
         data={{

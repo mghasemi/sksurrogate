@@ -58,6 +58,10 @@ class SensAprx(BaseEstimator, TransformerMixin):
         self.probs = probs
         self.weights_ = None
         self.top_features_ = []
+        #: Which SALib estimator produced ``weights_`` for ``delta-mmnt`` —
+        #: ``delta`` on SALib <= 1.5, ``delta_balanced`` (or another variant) on
+        #: >= 1.6, where that single index was split into three.
+        self.delta_estimator_ = None
 
     def _avg_fucn(self, X, y):
         from numpy import bincount, unique
@@ -127,14 +131,36 @@ class SensAprx(BaseEstimator, TransformerMixin):
 
             param_values = latin.sample(problem, self.num_smpl)
             y_ = self.regressor.predict(param_values)
-            res = delta.analyze(
-                problem, param_values, y_, num_resamples=self.num_resmpl
-            )["delta"]
+            res = self._delta_index(
+                delta.analyze(problem, param_values, y_, num_resamples=self.num_resmpl)
+            )
             self.weights_ = res
         self.top_features_ = argpartition(res, -self.n_features_to_select)[
             -self.n_features_to_select:
         ]
         return self
+
+    #: Delta estimator keys in order of preference. SALib <= 1.5 returns a single
+    #: ``delta``; SALib >= 1.6 splits it into ``delta_balanced`` (its default
+    #: configuration), ``delta_raw`` and ``delta_step`` and no longer provides
+    #: ``delta`` at all, so a hard-coded ``["delta"]`` raised ``KeyError``.
+    _DELTA_KEYS = ("delta", "delta_balanced", "delta_raw", "delta_step")
+
+    def _delta_index(self, analysis):
+        """Return the delta index from a SALib result, across SALib versions.
+
+        Records the estimator actually used on ``self.delta_estimator_`` so a
+        result produced under one SALib version is comparable with another —
+        ``balanced``, ``raw`` and ``step`` are different statistics, not aliases.
+        """
+        for key in self._DELTA_KEYS:
+            if key in analysis:
+                self.delta_estimator_ = key
+                return analysis[key]
+        raise RuntimeError(
+            "SALib delta.analyze returned no delta index; available keys: %s"
+            % ", ".join(sorted(analysis))
+        )
 
     def transform(self, X):
         return X[:, self.top_features_[: self.n_features_to_select]]
