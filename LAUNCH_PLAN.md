@@ -11,7 +11,7 @@ status and the progress log as work lands.
 **Status:** Draft v1, 2026-11-07. No launch tasks started yet. Pending three
 decisions from the maintainer (Section 9).
 
-## Verified starting point (audited 2026-11-07)
+## Verified starting point (audited 2026-11-07; LLM row re-verified 2026-11-10)
 
 | Asset | State |
 | --- | --- |
@@ -23,19 +23,21 @@ decisions from the maintainer (Section 9).
 | Benchmarks | Equal-budget benchmark suite published with raw-results DOI `10.5281/zenodo.23629024` |
 | Packaging extras | Dockerfile, docker-compose.yml (`--profile prod` single port), CITATION.cff |
 | README (`readme.rst`) | Positions the package as a "drop-in replacement for BayesSearchCV" and explicitly keeps UI/API "out of the headline" — **contradicts the new end-to-end positioning** |
-| LLM features in code | **None.** Phase 7 (LLM-assisted research, row-level explanations, document extraction) is not started per `AI_LAYER02_FOLLOWUP_PLAN.md` |
+| LLM features in code | **Shipped, opt-in.** Bounded cited-note synthesis in `api/synthesis.py` + `api/routers/synthesis.py` (re-verified 2026-11-10): disabled unless `SKSURROGATE_LLM_BASE_URL` and `SKSURROGATE_LLM_MODEL` are set; receives computed aggregates only, never raw dataset rows; stateless (SKSurrogate stores no prompt and no draft); every claim must cite `[S1]…[Sn]` or the draft is rejected. Row-level explanations and ALE also shipped. Document-to-table extraction and acquisition extensions remain unimplemented. Authority is `AI_LAYER02_REMAINING_PLAN.md`; the `AI_LAYER02_FOLLOWUP_PLAN.md` line "Phase 7 is not started" is stale. |
 | Repo hygiene issues | Stray artifacts at root: `optim_task.pkl`, `sklearn.linear_model.LogisticRegression.pkl`; internal review docs (`ailayer.md`, `ai_layer02.md`, the two plans) tracked in a public repo; `HANDOFF.md` public |
 
 ## 1. Positioning — the single most important decision
 
-**The problem with "equipped with AI" as written.** No LLM feature exists in
-the shipped code today (verified). Announcing "AI-equipped" and having a
-reviewer find no LLM surface invites exactly the credibility damage the
-honest-benchmark post worked to prevent. The product's *actual* intelligence:
+**The problem with "equipped with AI" as written.** Not that no LLM surface
+exists — one ships — but that "equipped with AI" implies an autonomous
+assistant, while what ships is a *bounded, opt-in citation generator*.
+Overstating it invites exactly the credibility damage the honest-benchmark post
+worked to prevent. The product's *actual* intelligence:
 
 - surrogate-based optimization (GP response surface, trust-region contraction) — that is ML driving search;
 - sensitivity analysis (Sobol/Morris/δ-index), conformal prediction intervals, experiment design with GP-LCB active learning;
-- a deterministic-first foundation explicitly built for an LLM layer (run-config + report.md endpoints, project evidence records) that the follow-up plan defers to Phase 7.
+- opt-in LLM-assisted project synthesis: an OpenAI-compatible endpoint the user supplies, fed only computed aggregates, stateless on the SKSurrogate side, with every claim required to cite `[S1]…[Sn]` or the draft is rejected;
+- a deterministic-first foundation (run-config + report.md endpoints, project evidence records) that keeps every plot, table and heuristic working with the LLM disabled.
 
 **Recommended positioning (Option A — verifiable):**
 
@@ -47,17 +49,23 @@ honest-benchmark post worked to prevent. The product's *actual* intelligence:
 > `BaseSearchCV` tuner included.
 
 This is 100% backed by shipped code and the manual. "AI" appears as a *feature*
-("surrogate-driven optimization", "active learning for experiment design"), not
-as a vague banner, and the LLM layer becomes the most credible thing in the
-announcement: **"the deterministic foundation for an AI research assistant is
-already in place — here's the roadmap."**
+("surrogate-driven optimization", "active learning for experiment design",
+"opt-in cited synthesis"), never as a banner. The most credible line in the
+announcement is the transparency one: **"bring your own model endpoint; only
+computed aggregates leave the machine; every generated claim must cite a source
+or it is rejected; and with no endpoint configured the tool is fully
+air-gapped."** Note the precise scope: SKSurrogate itself stores no prompt and
+no draft, but retention at the *model provider* is whatever the user's chosen
+provider does — which is exactly why the endpoint is user-supplied.
 
-**Option B (only if he insists on "AI-equipped" in the headline):** ship one
-bounded, demoable LLM feature before launch — e.g. `POST /api/projects/{id}/synthesize`
-that combines dataset profile + run-config + explanation summaries into cited
-project notes using a user-supplied model endpoint. That is Phase 7 item 1 and
-is explicitly gated on the deterministic APIs (which are now stable). Cost: one
-focused build + tests cycle before launch.
+**Option B — RESOLVED 2026-11-08; no longer a decision.** The bounded feature it
+proposed — dataset profile + run-config + explanation summaries into cited
+project notes against a user-supplied model endpoint — shipped in Stage D2 as
+`POST /api/synthesis/projects/{project_id}` (plus `GET /api/synthesis/status`),
+implemented in `api/synthesis.py` + `api/routers/synthesis.py` and covered by
+`tests/test_api_synthesis.py`. It stays off by default and stays a *feature*, not
+a headline: the launch claim is opt-in, provider-agnostic, aggregate-only
+synthesis, never "AI-equipped".
 
 **Target audience (primary):** scientists and technical teams whose workflow
 includes expensive or iterative experiments — pharma/bio, materials, energy,
@@ -195,8 +203,11 @@ Outline (mirrors the honesty that already won credibility):
      expensive physical experiments;
    - surrogate hybrid search — equal-budget benchmark vs Optuna/FLAML/random,
      published with raw data DOI and an honest read of where it loses.
-4. **What it is not:** no LLM magic yet — the deterministic foundation for an AI
-   research assistant is in place; here's the bounded roadmap (cite Phase 7).
+4. **What it is not:** not an autonomous AI assistant. What ships is opt-in,
+   provider-agnostic synthesis — your endpoint, computed aggregates only,
+   stateless on our side, citations enforced, nothing persisted without an
+   explicit action. With no endpoint configured the tool still works,
+   air-gapped.
 5. **Quick start** (Python snippet + docker compose line + demo video link).
 6. **Roadmap & call to action:** issue tracker, docs, "tell us what your
    workflow looks like."
@@ -261,7 +272,7 @@ press outreach (no angle yet; revisit after 1 month of downloads).
 
 | Risk | Likelihood | Mitigation |
 | --- | --- | --- |
-| "AI-equipped" claim challenged because no LLM feature ships | High if Option B skipped without repositioning | Ship Option A positioning; present LLM layer as roadmap with the Phase 7 doc linked |
+| "AI-equipped" claim challenged because the shipped synthesis is bounded, off by default and provider-dependent | Medium | Never say "AI-equipped". Say opt-in cited synthesis with the transparency framing (BYO endpoint, aggregate-only, air-gapped mode) and link `AI_LAYER02_D2_LLM_SYNTHESIS_SCOPE.md` |
 | Quick start broken for a reader (env, port, deps) | Medium | §2.1 clean-verify gate: pip install + docker compose both verified on the exact version being announced |
 | HN thread goes quiet or turns skeptical about benchmarks | Medium | FAQ sheet pre-written; honesty framing already established by the published benchmark post; respond with links, not opinions |
 | 32 unpushed commits drift further before release | High if launch slips >1 week | Cut v0.3.0 in Phase 0 immediately; do not let announcement scope wait on Phase 4/5 completion (the documented features are already in master) |
@@ -438,3 +449,30 @@ the new landing page once live, with RTD as the docs link throughout.
   Phase 1. `AI_LAYER02_REMAINING_PLAN.md` launch references updated to match. Dated entries above
   are historical records and were not rewritten.
 
+- 2026-11-09: **Product website deployed (Phases 1–5 of the website build).** Single static site
+  built from the Atelier design (`/home/mehdi/Code/Atelier/designs/sksurrogate`): graphite /
+  ultramarine / ember, S1–S13 per `content-plan.md`. Copy is verbatim where mandated — headline +
+  positioning (LAUNCH_PLAN §1), benchmark table + caption reproduced from the blog "Finding 1"
+  with the verified claim **"TPE is top on five of six datasets"** (owner-confirmed: TPE stays 5 of
+  6, evidence supports it), D-track regime map from Finding 2, stability-figure caption verbatim
+  from `make_stability_contour.py`, quick-start snippet verbatim from the readme, DOIs + repro
+  commands verbatim. Version strip is **v0.3.0** (owner decision; in progress). All figures/numbers
+  carry inline source comments; no links to ailayer-only docs until the v0.3.0 cut lands them on
+  master/RTD — D-track uses the durable Zenodo DOI instead. Deployed on an orphan `gh-pages`
+  branch (site files at root only, commit `a92c58a`) → live at the default URL
+  https://mghasemi.github.io/sksurrogate/ . Pre-release QA all green: every local asset and remote
+  link 200; canonical + og:url point at **sksurrogate.com** (apex) per content-plan S1 — that
+  domain is still pending the Cloudflare purchase, so CNAME + apex DNS stay in the launch-day
+  switchover and the default URL must not be shared until then. Custom 404 page verified live.
+  Remaining at launch: PyPI upload of v0.3.0 (artifacts ready per entry above), first GitHub
+  Release, domain purchase + DNS flip; if v0.3.0 slips past launch day the strip is a one-line bump.
+
+
+- 2026-11-10: **A2 applied — the "no LLM" claims were stale and are corrected.** Stage D2 shipped
+  bounded opt-in synthesis, so the verified-state row, the positioning analysis, the Option B block,
+  the blog outline item 4 and the risk-register row were rewritten around what actually ships:
+  provider-agnostic, aggregate-only, stateless on the SKSurrogate side, citation-enforced, off by
+  default, air-gapped with no endpoint. Deliberately did **not** claim provider-side zero retention —
+  the endpoint is user-supplied, so retention is the user's provider's policy, and that distinction is
+  now stated explicitly. `AI_LAYER02_FOLLOWUP_PLAN.md` still carries "Phase 7 is not started" at
+  line 11 and remains the one stale source; `AI_LAYER02_REMAINING_PLAN.md` is authoritative.
