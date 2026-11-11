@@ -49,3 +49,25 @@ HANDOFF.md
 
 # Benchmark raw results (aggregates in docs/benchmarks are committed; raw data goes to Zenodo)
 benchmarks/results/
+
+# Generated documentation builds and scratch outputs
+/SKSurrogate-documentation.pdf
+/docs/*.pdf
+*.tsbuildinfo
+/docs/*.eoa
+/docs/*.pkl
+playwright-report/
+
+# Internal working documents and plans (kept out of the public repo; see P2.2)
+# Documents referenced from tracked/shipped files are committed instead, each
+# carrying an "Internal working document." banner in its header.
+/AI_LAYER_ROADMAP.md
+/AI_LAYER02_FOLLOWUP_PLAN.md
+/API_SIMPLIFICATION_PLAN.md
+/HANDOFF-logging-telemetry.md
+/ai_layer02.md
+/ailayer.md
+/IDEA.md
+/logging.md
+/LOGGING_TELEMETRY_PLAN.md
+/UI_DOCKER_UPGRADE_PLAN.md

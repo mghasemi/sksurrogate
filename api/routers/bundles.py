@@ -10,15 +10,17 @@ Phase 3 (docs/ui-gap-implementation-plan.md) adds model preservation
 and raw bundle download.
 """
 
+import json
 import shutil
 import tempfile
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter
 from pydantic import BaseModel
-from starlette.responses import FileResponse
+from starlette.responses import FileResponse, Response
 
 from SKSurrogate import ModelBundle, export_mlflow, load_bundle, save_bundle
 
@@ -353,6 +355,149 @@ def download_bundle(task_name: str, model_version: str):
         path=str(bundle_path),
         media_type="application/octet-stream",
         filename=model_version + ".bundle",
+    )
+
+
+def run_configuration(task_name: str, model_version: str):
+    """Return the versioned run configuration and evaluation provenance."""
+    bundle = load_bundle(_bundle_file(task_name, model_version), strict_dependencies=False)
+    bundle_metadata = bundle.metadata if isinstance(bundle.metadata, dict) else {}
+    reproducibility = bundle_metadata.get("reproducibility") or {}
+    if not isinstance(reproducibility, dict):
+        reproducibility = {}
+    evaluations = bundle_metadata.get("evaluations", [])
+    if not isinstance(evaluations, list):
+        evaluations = []
+    return {
+        "schema": "sksurrogate.run-configuration.v1",
+        "task_name": task_name,
+        "model_version": bundle.model_version,
+        "created_at": bundle.created_at,
+        "run_id": bundle.run_id,
+        "lineage": {
+            "dataset_fingerprint": bundle.dataset_fingerprint,
+            "train_partition_fingerprint": reproducibility.get("data", {}).get(
+                "train_fingerprint"
+            ),
+        },
+        "run": reproducibility,
+        "metrics": bundle.metrics,
+        "evaluations": evaluations,
+        "dependencies": bundle.dependencies,
+    }
+
+
+@router.get("/{task_name}/{model_version}/run-config")
+def export_run_configuration(task_name: str, model_version: str):
+    """Export machine-readable model, dataset, training, and evaluation provenance."""
+    return run_configuration(task_name, model_version)
+
+
+@router.get("/{task_name}/{model_version}/report.md")
+def export_run_report(task_name: str, model_version: str):
+    """Export a concise Markdown summary of methodology, metrics, uncertainty, and lineage."""
+    record = run_configuration(task_name, model_version)
+    run = record["run"]
+    data = run.get("data", {})
+    protocol = run.get("evaluation_protocol", {})
+    evaluations = record["evaluations"]
+    task_path = quote(task_name, safe="")
+    version_path = quote(model_version, safe="")
+
+    def inline(value):
+        return json.dumps(value, sort_keys=True, default=str).replace("`", "\\`")
+
+    lines = [
+        "# Run report: %s" % record["model_version"],
+        "",
+        "## Methodology",
+        "",
+        "- Run ID: %s" % inline(record["run_id"]),
+        "- Training partition: %s" % inline(data.get("train_partition")),
+        "- Rows used: %s" % inline(data.get("rows_used")),
+        "- Target: %s" % inline(data.get("target", {}).get("column")),
+        "- Evaluation protocol: %s" % inline(protocol),
+        "- Configuration: %s" % inline(run.get("configuration", {})),
+        "- Transformations: %s" % inline(run.get("transformations", [])),
+        "",
+        "## Assumptions and scope",
+        "",
+        "- Target handling: %s" % inline(data.get("target", {}).get("construction", "not recorded")),
+        "- Observation exclusions: %s" % inline(data.get("excluded_observations", "not recorded")),
+        "- Metric scope: %s" % inline(protocol.get("metric_scope", "not recorded")),
+        "- Evaluation protocol details: %s" % inline(protocol or "not recorded"),
+        "",
+        "## Metrics",
+        "",
+    ]
+    if record["metrics"]:
+        lines.extend(
+            "- %s: %s" % (inline(name), inline(value))
+            for name, value in sorted(record["metrics"].items())
+        )
+    else:
+        lines.append("- No metrics are stored on this bundle.")
+    lines.extend(["", "## Uncertainty", ""])
+    if evaluations:
+        for index, evaluation in enumerate(evaluations, start=1):
+            uncertainty = evaluation.get("uncertainty", {})
+            interval = uncertainty.get("confidence_interval")
+            lines.append(
+                "- Evaluation %d: %s; repeated outer scores=%s; confidence interval=%s%s"
+                % (
+                    index,
+                    uncertainty.get("method", "uncertainty method not recorded"),
+                    inline(uncertainty.get("repeated_outer_scores", [])),
+                    inline(interval),
+                    ""
+                    if uncertainty.get("informative", True)
+                    else " (not informative with one repeat)",
+                )
+            )
+    else:
+        lines.append(
+            "- No repeated-CV uncertainty estimate is stored; bundle metrics are point estimates."
+        )
+    lines.extend(
+        [
+            "",
+            "## Limitations",
+            "",
+        ]
+    )
+    for limitation in run.get(
+        "known_gaps",
+        [
+            "This bundle predates run-provenance snapshots; training settings may be incomplete.",
+            "No uncertainty estimate is available unless repeated-CV evaluation was saved.",
+        ],
+    ):
+        lines.append("- %s" % limitation)
+    lines.extend(
+        [
+            "",
+            "## Lineage",
+            "",
+            "- Dataset fingerprint: %s" % inline(record["lineage"]["dataset_fingerprint"]),
+            "- Training partition fingerprint: %s"
+            % inline(record["lineage"]["train_partition_fingerprint"]),
+            "- Model version: %s" % inline(record["model_version"]),
+            "- Created at: %s" % inline(record["created_at"]),
+            "- Runtime dependencies: %s" % inline(record["dependencies"]),
+            "",
+            "## Source artifacts",
+            "",
+            "- [Registered dataset metadata](/api/datasets/%s)" % task_path,
+            "- [Machine-readable run configuration](/api/bundles/%s/%s/run-config)"
+            % (task_path, version_path),
+            "- [Model bundle](/api/bundles/%s/%s/download)" % (task_path, version_path),
+            "",
+        ]
+    )
+    return Response(
+        content="\n".join(lines),
+        media_type="text/markdown",
+        headers={"Content-Disposition": 'attachment; filename="run-report.md"'},
     )
 
 

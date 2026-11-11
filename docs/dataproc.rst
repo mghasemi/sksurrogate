@@ -7,6 +7,33 @@ type detection, and missing data imputation. SKSurrogate covers the later
 two stapes automatically and allows for customization as well.
 This is done via the ``DataProcess`` module.
 
+For model selection and cross-validation, prefer
+``FoldLocalDataPreprocessor`` inside an sklearn ``Pipeline``. Unlike the eager
+``DataPreprocess.encode()`` workflow below, it learns imputations, categorical
+levels, and text vocabularies during each pipeline fit. This keeps validation
+folds out of preprocessing fits::
+
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.model_selection import cross_val_score
+    from sklearn.pipeline import Pipeline
+    from SKSurrogate import FoldLocalDataPreprocessor
+
+    pipeline = Pipeline([
+        ("preprocess", FoldLocalDataPreprocessor(scale_numeric=True)),
+        ("model", LogisticRegression(max_iter=500)),
+    ])
+    scores = cross_val_score(pipeline, X_dataframe, y, cv=5)
+
+The fold-local transformer uses median imputation for numeric and datetime
+columns, one-hot encoding for boolean and categorical columns, and per-column
+TF-IDF for pandas ``StringDtype`` columns. Scaling is optional and applies to
+numeric and datetime features. Object/string columns are treated as
+categorical; cast free-form text columns to ``pd.StringDtype()`` to select the
+TF-IDF path. The transformer's input must remain a DataFrame with the same
+columns at fit and prediction time. ``DataPreprocess`` remains available for
+eager, whole-frame transformations and should not be run before a held-out
+split when its fitted state could see validation or test rows.
+
 Currently, the DataProcess module identifies the following data types
 automatically:
 
@@ -18,6 +45,7 @@ automatically:
   + Label
   + Text
   + Objects
+
 We note that the Object type could include various types which may have a
 known structure but are not implemented in the module yet.
 

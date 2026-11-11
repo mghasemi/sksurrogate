@@ -188,7 +188,7 @@ class TestPhase4Endpoints(unittest.TestCase):
         body = RunExperimentRequest(
             config={name: {p: ParamSpec(**spec) for p, spec in params.items()} for name, params in TINY_CONFIG.items()},
             length=1,
-            max_generation=1,
+            max_generations=1,
             num_parents=1,
         )
         submitted = experiments_router.run_experiment(TASK, body)
@@ -211,12 +211,25 @@ class TestPhase4Endpoints(unittest.TestCase):
         self.assertTrue(result["pareto"])
         for point in result["pareto"]:
             self.assertEqual(set(point), {"pipeline", "score", "duration"})
+        from SKSurrogate import load_bundle
+
+        bundle = load_bundle(Path(result["bundle_path"]), strict_dependencies=False)
+        provenance = bundle.metadata["reproducibility"]
+        self.assertEqual(provenance["configuration"]["kind"], "automl_experiment")
+        self.assertIn(
+            "sklearn.linear_model.LogisticRegression",
+            provenance["configuration"]["search_space"],
+        )
+        self.assertEqual(provenance["evaluation_protocol"]["scoring"], "accuracy")
+        self.assertEqual(
+            bundle.dataset_fingerprint, provenance["data"]["train_fingerprint"]
+        )
 
     def test_run_experiment_surrogate_mode_records_audit_event(self):
         body = RunExperimentRequest(
             config={name: {p: ParamSpec(**spec) for p, spec in params.items()} for name, params in TINY_CONFIG.items()},
             length=1,
-            max_generation=1,
+            max_generations=1,
             num_parents=1,
             surrogate_mode=True,
             surrogate_itrs=5,
@@ -245,7 +258,7 @@ class TestPhase4Endpoints(unittest.TestCase):
         body = RunExperimentRequest(
             config={name: {p: ParamSpec(**spec) for p, spec in params.items()} for name, params in config.items()},
             length=1,
-            max_generation=1,
+            max_generations=1,
             num_parents=1,
             forbidden=[["l1_ratio", 1.0]],
             # The search RNG is unseeded by default; with a single parent the run
@@ -280,7 +293,7 @@ class TestPhase4Endpoints(unittest.TestCase):
         body = RunExperimentRequest(
             config={name: {p: ParamSpec(**spec) for p, spec in params.items()} for name, params in config.items()},
             length=1,
-            max_generation=1,
+            max_generations=1,
             num_parents=1,
             forbidden=[["l1_ratio", 1.0]],
         )
@@ -304,7 +317,7 @@ class TestPhase4Endpoints(unittest.TestCase):
         body = RunExperimentRequest(
             config={name: {p: ParamSpec(**spec) for p, spec in params.items()} for name, params in config.items()},
             length=1,
-            max_generation=1,
+            max_generations=1,
             num_parents=1,
         )
         submitted = experiments_router.run_experiment(TASK, body)
@@ -325,7 +338,7 @@ class TestPhase4Endpoints(unittest.TestCase):
                 }
             },
             length=1,
-            max_generation=1,
+            max_generations=1,
             num_parents=1,
             forbidden=[["max_depth", 1]],
         )
@@ -343,7 +356,7 @@ class TestPhase4Endpoints(unittest.TestCase):
         body = RunExperimentRequest(
             config={name: {p: ParamSpec(**spec) for p, spec in params.items()} for name, params in TINY_CONFIG.items()},
             length=1,
-            max_generation=1,
+            max_generations=1,
             num_parents=1,
             forbidden=[["penalty"]],
         )
@@ -367,7 +380,7 @@ class TestPhase4Endpoints(unittest.TestCase):
             "sklearn.linear_model.LogisticRegression": {"C": ParamSpec(type="real", low=0.1, high=1.0)},
             "stacking": {"res": False, "probs": True, "decision": False, "cv": 2, "n_jobs": 1},
         }
-        body = RunExperimentRequest(config=config, length=1, max_generation=1, num_parents=1)
+        body = RunExperimentRequest(config=config, length=1, max_generations=1, num_parents=1)
         submitted = experiments_router.run_experiment(TASK, body)
         record = _wait_for_job(submitted["job_id"])
         self.assertEqual(record["status"], "completed", record["error"])

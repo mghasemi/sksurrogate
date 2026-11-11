@@ -46,14 +46,22 @@ Let us make up a sample classification task and trace the models via `mltrace`.
     # initialize the tracker with a task called 'sample'
     MLTr = mltrack('sample', db_name="sample.db")
     # register the data
-    MLTr.RegisterData(df, 'target')
+    MLTr.register_data(df, 'target')
     # inspect the recorded Python and dependency versions
-    print(MLTr.GetMetadata())
+    print(MLTr.get_metadata())
     # add dataset or experiment metadata
-    MLTr.UpdateMetadata({'dataset_version': 'sample-v1', 'seed': 7})
+    MLTr.update_metadata({'dataset_version': 'sample-v1', 'seed': 7})
     # modify the description of the task
-    MLTr.UpdateTask({'description': "This is a sample task to demonstrate\\
+    MLTr.update_task({'description': "This is a sample task to demonstrate\\
             capabilities of the mltrace."})
+
+The tracker also provides snake_case names for the common model and data
+operations: ``register_data``, ``log_model``, ``feature_weights``,
+``top_features``, ``all_models``, and ``get_best``. The original method names
+remain supported for compatibility; no removal release is scheduled. Matching
+snake_case aliases are also available for task/model updates, metadata, CV
+configuration, model preservation/recovery, metric logging, plots, weights,
+and summary access.
 
 Dataset registration records a deterministic fingerprint and a serializable schema.
 The schema includes feature names, dtypes, nullability, row and unique-value counts,
@@ -81,7 +89,7 @@ split handling.
     rgs = RandomizedSearchCV(KernelRidge(),
             param_distributions=param_grid_kr, n_iter=10, cv=2)
     # ask for specific weights to be calculated and recorded
-    MLTr.FeatureWeights(regressor=rgs,
+    MLTr.feature_weights(regressor=rgs,
             weights=('pearson', 'sobol', 'morris', 'delta-mmnt'))
     # visualise
     plt1 = MLTr.heatmap(sort_by='pearson')
@@ -106,13 +114,50 @@ split handling.
     # init classifier
     clf = RandomForestClassifier(n_estimators=50)
     # log the classifier
-    clf = MLTr.LogModel(clf, "RandomForestClassifier(50)")
+    clf = MLTr.log_model(clf, "RandomForestClassifier(50)")
     # find the average metrics
-    print(MLTr.LogMetrics(clf, cv=ShuffleSplit(5, .25)))
+    print(MLTr.log_metrics(clf, cv=ShuffleSplit(5, .25)))
     # {'accuracy': 0.8816, 'auc': 0.9504791437613562, 'precision': 0.9029848807772192,
     # 'f1': 0.8782525829634803, 'recall': 0.8554950898148654, 'mcc': 0.7640884799286114,
     # 'logloss': 4.089427586800243, 'variance': None, 'max_error': None, 'mse': None,
     # 'mae': None, 'r2': None}
+
+For a bounded starting point, ``AML`` also provides explicit scikit-learn-only
+presets. The classification preset uses accuracy; the regression preset uses
+negative root mean squared error. Both search random forests and extremely
+randomized trees in one-estimator pipelines, with a default budget of 20
+evaluations per candidate. Users can override the candidate count, wall-clock
+limit, scoring method, and pipeline length. With a pandas DataFrame and no
+``cat_cols``, the preset automatically applies ``FoldLocalDataPreprocessor``
+inside each CV fold, including numeric imputation, categorical encoding, and
+per-column TF-IDF for ``StringDtype`` columns. Array-like input should already
+be numeric. Supplying ``cat_cols`` selects the explicit categorical-encoding
+path instead::
+
+    from SKSurrogate import AML
+
+    classifier = AML(preset="classification", time_limit=300, random_state=7)
+    classifier.fit(X, y)
+
+    regressor = AML(preset="regression", max_evals=30, random_state=7)
+    regressor.fit(X_reg, y_reg)
+
+These are deliberately small baseline searches, not quality guarantees.
+``max_evals`` and ``time_limit`` apply per candidate pipeline; overall work
+also depends on cross-validation folds and the number of candidates. Passing
+``config=...`` continues to use the fully customizable search and cannot be
+combined with ``preset``. Omitting both preserves the existing legacy default
+search space.
+
+By default, each ``AML.fit`` starts a fresh search rather than resuming a
+checkpoint left by an earlier fit. Set ``AML(resume=True)`` only when you
+intend to continue surrogate searches from their saved checkpoints.
+
+``AML.fit`` accepts a pandas DataFrame directly; estimators that preserve their
+input representation receive the original feature names. For categorical
+columns, pass DataFrame column names or array column indices through
+``cat_cols``. Categorical encoding is learned inside each CV training fold and
+intentionally converts the encoded matrix to an array before estimator fitting.
 
 **Step 4.** Search for best (in terms of accuracy) classifier as a combination of
 ``naive_bayes.GaussianNB``, ``linear_model.LogisticRegression``, ``lightgbm.LGBMClassifier``,
@@ -150,23 +195,79 @@ split handling.
     }
     # initiate and perform the search
     A = AML(config=config, length=3, check_point='./sample/', verbose=1)
-    A.eoa_fit(X, y, max_generation=15, num_parents=20)
+    A.eoa_fit(X, y, max_generations=15, num_parents=20)
     # retrieve and log the best
     eoa_clf = A.best_estimator_
-    eoa_clf = MLTr.LogModel(eoa_clf, "Best of EOA Surrogate Search")
-    print(MLTr.LogMetrics(eoa_clf, cv=ShuffleSplit(5, .25)))
-    MLTr.PreserveModel(eoa_clf)
+    eoa_clf = MLTr.log_model(eoa_clf, "Best of EOA Surrogate Search")
+    print(MLTr.log_metrics(eoa_clf, cv=ShuffleSplit(5, .25)))
+    MLTr.preserve_model(eoa_clf)
     # {'accuracy': 0.8824, 'auc': 0.9207884992789751, 'precision': 0.8930688738450767,
     # 'f1': 0.8789651291713657, 'recall': 0.8664344690110679, 'mcc': 0.7657250436230718,
     # 'logloss': 4.061801043429923, 'variance': None, 'max_error': None, 'mse': None,
     # 'mae': None, 'r2': None}
 
 For model selection that must remain separate from final evaluation,
-``nested_cv_evaluation`` uses the training partition for inner selection and outer
-fold estimates, then evaluates the selected model once on the untouched validation
-partition. It stores fold-level predictions and metrics, mean outer scores, repeated-CV
-confidence intervals, and the final validation score in task metadata. Group-aware
-splitters preserve group labels through the evaluation path.
+``nested_cv_evaluation`` computes inner-CV scores and outer-fold estimates for
+the supplied estimator, then evaluates it on the untouched validation partition.
+It does not search among estimators or tune hyperparameters. Mixed-type
+DataFrame features are preprocessed inside each training fold; unseen categories
+are ignored at scoring time rather than being used to build the fold's category
+vocabulary. Numeric DataFrames and arrays retain their direct numeric path. The
+result identifies its preprocessing path and stores fold-level predictions and
+metrics, mean outer scores, repeated-CV confidence intervals, and the final
+validation score in task metadata. Group-aware splitters preserve group labels
+through the evaluation path.
+
+For ordered observations, callers can use ``TimeSeriesSplit`` for both
+``inner_cv`` and ``outer_cv``. Keep rows in chronological order before
+registering the partitions; SKSurrogate does not infer timestamps or sort rows.
+Choose ``gap`` to exclude observations between each training and test window,
+and construct lag, rolling, or forecast-horizon features without future-data
+leakage before registration. Supply an explicit scikit-learn scorer when the
+evaluation metric should differ from the estimator's default ``score`` method::
+
+    from sklearn.metrics import get_scorer
+    from sklearn.model_selection import TimeSeriesSplit
+
+    result = tracker.nested_cv_evaluation(
+        estimator,
+        inner_cv=TimeSeriesSplit(n_splits=3, gap=2),
+        outer_cv=TimeSeriesSplit(n_splits=4, gap=2),
+        scoring=get_scorer("neg_mean_absolute_error"),
+    )
+
+The nested-CV API accepts these splitters as serialized specs, for example
+``{"type": "TimeSeriesSplit", "n_splits": 4, "gap": 2}``, as well as integer
+fold counts. This is splitter-level support: forecast target construction,
+horizon-specific scoring, and time-aware feature engineering remain the
+caller's responsibility.
+
+The generic Python estimator path also works with scikit-learn's
+``QuantileRegressor``. To evaluate the selected quantile, pass a matching
+pinball-loss scorer; the scorer's ``alpha`` must match the estimator's
+``quantile``::
+
+    from sklearn.metrics import make_scorer, mean_pinball_loss
+    from sklearn.linear_model import QuantileRegressor
+
+    quantile = 0.8
+    result = tracker.nested_cv_evaluation(
+        QuantileRegressor(quantile=quantile),
+        scoring=make_scorer(
+            mean_pinball_loss,
+            alpha=quantile,
+            greater_is_better=False,
+        ),
+    )
+
+For nested-CV API requests, set ``scoring`` to
+``"neg_mean_pinball_loss"`` and provide ``pinball_alpha`` in the open interval
+``(0, 1)``. The API requires this value explicitly so it can match the
+estimator's ``quantile`` setting. Custom callable scorers remain available in
+the Python API. The Evaluation page also offers pinball-loss learning curves
+with an explicit quantile level and reports the loss in its natural positive
+scale. Quantile-interval diagnostics are not integrated into the API or UI;
+the Python interval helpers are documented below.
 
 **Step 5.** Plot learning curves for accuracy, :math:`F_1`, area under ROC, calibration lift and
  cumulative curves for the two models::
@@ -185,6 +286,341 @@ splitters preserve group labels through the evaluation path.
     MLTr.plot_calibration_curve(clf, "Random Forest")
     MLTr.plot_cumulative_gain(clf, title="Random Forest: Cumulative Gains Curve")
     MLTr.plot_lift_curve(clf, title="Random Forest: Lift Curve")
+
+Regression diagnostics
+======================
+For a single-target regressor, ``mltrack`` can report held-out summary
+metrics and save a four-panel diagnostic plot. Both methods reuse the same
+cached 75/25 split used by the other model plots::
+
+    summary = MLTr.regression_diagnostics(regressor)
+    print(summary)
+    MLTr.plot_regression_diagnostics(regressor, title="Material strength")
+
+The summary includes sample count, mean absolute error, root mean squared
+error, :math:`R^2`, and residual mean and sample standard deviation. The plot
+shows predicted versus actual values, residuals versus predictions, a residual
+histogram, and a normal Q-Q plot. These are descriptive diagnostics on one
+held-out split; they do not provide confidence intervals or prove that
+residuals are normally distributed. Multi-output regression is not currently
+supported. For model comparison and uncertainty across repeated evaluations,
+use ``nested_cv_evaluation`` rather than treating a single split as definitive.
+
+For paired comparisons, evaluate both estimators with the same repeated-CV
+protocol and compare their result dictionaries::
+
+    comparison = MLTr.compare_repeated_cv_results(
+        reference_results, candidate_results, random_state=7
+    )
+
+The result reports the candidate-minus-reference mean and median repeat-score
+difference, a percentile bootstrap interval, and paired Cohen's :math:`d_z`.
+At least two aligned repeat scores are required. Results from
+``nested_cv_evaluation`` include an evaluation protocol with registered
+partition fingerprints, CV splitter specifications, repeat seed policy,
+preprocessing path, scoring identity, and validation-set use. When both inputs
+carry that protocol, known mismatches are rejected and the result reports
+whether alignment could be verified. Default estimator scoring, opaque custom
+scorers, missing partition fingerprints, and older result dictionaries remain
+explicitly unverified; the caller must verify those cases. Since repeated CV
+repeats reuse observations and training sets, the interval summarizes variation
+across repeats; it is not an independent-sample significance test.
+
+The current comparison contract is deliberately descriptive: the resampling
+unit is a paired, complete repeat-level score difference, not an individual
+fold. The paired Cohen's :math:`d_z` and percentile interval summarize the
+observed repeat differences; the interval must not be interpreted as a
+nominal-coverage confidence interval for the population performance
+difference, and excluding zero is not a significance claim. A seeded
+simulation checks percentile-bootstrap coverage for independent paired score
+draws only; it does not establish coverage under repeated-CV dependence.
+
+BCa intervals do not resolve dependence between CV repeats, and a paired
+permutation test would need a defensible exchangeability or randomized
+assignment design. Cliff's delta targets an ordinal probability effect rather
+than the mean score difference. Multiplicity correction also requires an
+explicit family of pre-specified comparisons. These methods are not currently
+reported. For confirmatory comparisons, define the independent unit and
+comparison family in advance and use an evaluation design that supports the
+intended inferential claim; do not treat folds or repeated-CV runs as
+independent subjects.
+
+For uncertainty-aware single-target regression, use split conformal prediction
+with disjoint training and calibration partitions::
+
+    interval = split_conformal_regression_interval(
+        regressor,
+        X_train, y_train,
+        X_calibration, y_calibration,
+        X_test,
+        alpha=0.1,
+    )
+    lower, upper = interval["lower"], interval["upper"]
+
+The estimator is cloned and fitted only on the training data. Absolute
+calibration residuals determine the finite-sample corrected interval width;
+test labels are not accepted. The marginal coverage guarantee assumes the
+calibration and future examples are exchangeable and that the fitted model was
+chosen independently of the calibration set. Use a separate untouched test
+set to measure empirical coverage; coverage is not guaranteed under
+distribution shift.
+
+To summarize intervals after collecting held-out labels, use
+``prediction_interval_diagnostics``::
+
+    diagnostics = prediction_interval_diagnostics(
+        y_holdout,
+        lower,
+        upper,
+        alpha=0.1,
+        confidence_level=0.95,
+        groups=holdout_groups,
+        max_groups=20,
+    )
+
+It reports nominal and empirical coverage, a Wilson score interval for the
+empirical coverage, mean and median width, and the mean Winkler score for a
+central two-sided interval. The Wilson interval assumes independent held-out
+coverage indicators; it describes finite-sample uncertainty and is not the
+split-conformal guarantee. Unbounded intervals are retained in the coverage
+calculation, but mean width and interval score are ``None`` if any interval is
+unbounded.
+Optional ``groups`` adds bounded per-group coverage counts and Wilson
+intervals; missing group labels are excluded and categories beyond
+``max_groups`` are combined. Small-group estimates can be highly uncertain,
+and marginal conformal coverage does not imply conditional or subgroup
+coverage. The registered bundle-interval endpoint accepts ``group_by`` to
+request the same diagnostic on a holdout feature.
+
+For two trained-on-training-partition quantile estimators, conformalized
+quantile regression adjusts interval width using a disjoint calibration
+partition::
+
+    interval = split_conformal_quantile_interval(
+        lower_quantile_estimator, upper_quantile_estimator,
+        X_train, y_train,
+        X_calibration, y_calibration,
+        X_test,
+        alpha=0.1,
+    )
+    lower, upper = interval["lower"], interval["upper"]
+
+The estimators should represent lower and upper conditional quantiles
+(commonly ``alpha / 2`` and ``1 - alpha / 2``). Predicted bounds are ordered
+before calibration and application. The finite-sample corrected score can
+expand or contract the base interval; a negative correction can make a
+prediction set empty when the corrected lower bound exceeds the upper bound.
+The result includes ``empty_interval_mask`` so callers can identify these
+cases without changing the conformal prediction set. The correction is
+infinite when the requested rank exceeds the calibration size. As with split conformal regression, the
+marginal coverage claim assumes exchangeable calibration/future examples and
+estimators selected independently of the calibration set. It does not imply
+conditional coverage or protect against distribution shift.
+
+Model explanations
+==================
+``permutation_importance`` provides a global model-attribution diagnostic
+using the estimator's score by default (or an explicit scikit-learn scorer) and
+returns the score drops, repeat-level values, and reference-set metadata::
+
+    importance = MLTr.permutation_importance(
+        regressor,
+        features=["temperature", "pressure"],
+        n_repeats=8,
+        max_samples=1000,
+        random_state=7,
+    )
+    print(importance["importances"])
+    MLTr.plot_permutation_importance(regressor, features=["temperature", "pressure"])
+
+The default reference is the cached 25% holdout created by
+``mltrack.split_train``; that split is reused per logged model and is not
+seeded by this API. Set ``reference_partition`` to use a separately registered
+partition such as ``"test"``. At most 1,000 rows are used by default; any
+additional row sampling is without replacement and controlled by
+``random_state``. The result records the reference source, partition, row
+counts, sampling limit, and seed. Wide datasets are not silently truncated:
+the default limit is 100 features, and larger inputs require an explicit
+``features`` selection. ``max_features`` can adjust this computational bound.
+
+``plot_partial_dependence`` uses scikit-learn's partial-dependence display for
+explicitly selected one- or two-feature profiles::
+
+    MLTr.plot_partial_dependence(
+        regressor,
+        ["temperature", "pressure"],
+        kind="both",
+        max_samples=1000,
+        ice_samples=100,
+        random_state=7,
+    )
+    MLTr.plot_partial_dependence(
+        regressor, [("temperature", "pressure")], kind="average"
+    )
+
+The reference and row-sampling defaults match permutation importance. At most
+six profiles are plotted per call, and ICE curves are capped at 100 per
+one-dimensional feature by default. Two-feature interactions show average
+partial dependence only, so request ``kind="average"`` when selecting a pair.
+Registered non-numeric columns are treated as categorical features. Both
+explanation methods save their plots in the tracker. Permutation importance
+attributes changes in the chosen model score to shuffling a feature; it is not
+predictive association measured directly from the data. Partial dependence is
+a fitted-model response profile, not an estimate of an intervention or causal
+effect. Feature dependence, the selected reference population, and sampling
+can all change the apparent attribution or profile. The API explanation
+endpoint can optionally repeat permutation importance over two to five
+independently sampled reference subsets (without replacement) when the source
+partition has more rows than the per-sample cap. It reports per-feature mean
+importance, sample standard deviation, and top-rank frequency across those
+subsets. These summaries are descriptive sensitivity diagnostics, not
+confidence intervals or guarantees of robustness; the default single-sample
+request does not estimate cross-sample stability.
+
+The same bounded reference-set policy extends to the average
+partial-dependence curves exposed by the control-plane explanation endpoint.
+When two to five distinct subsamples are requested, the response carries a
+``partial_dependence_stability`` block: each primary curve's grid is
+re-evaluated on every subset with direct model calls, and the block reports the
+per-grid descriptive mean, sample standard deviation, minimum, and maximum of
+those curves plus each subset's mean curve value. The spread describes
+reference-sample sensitivity only; it is not a confidence band, it does not
+generalize across datasets, and the primary curve itself may differ marginally
+from the subset curves when the estimator supports scikit-learn's recursion
+shortcut. Individual ICE curves remain a plotting feature of
+``plot_partial_dependence`` rather than part of the explanation API contract,
+so no ICE stability summary is estimated there.
+
+Accumulated local effects (ALE) are a *supplement* to partial dependence, not a
+replacement. Where marginal partial dependence average predictions over
+feature values far outside the joint reference distribution, ALE varies each
+feature only between adjacent observed intervals and accumulates the resulting
+local model-response differences; its accumulated curve then depends on the
+reference bins rather than on grid points that may never co-occur. ALE still
+describes the fitted model rather than causality, and it does not solve
+sparse-support or conditional-explanation problems automatically.
+
+The control-plane endpoint
+``POST /api/evaluation/{task}/{version}/ale`` implements the following
+contract. Read it before comparing ALE curves with anything else:
+
+* **Numeric features only.** Accumulation requires an ordering of the feature's
+  values; a nominal categorical feature has no canonical order, so its ALE
+  curve would depend on an arbitrary level ordering. Such features — and
+  features with fewer than two distinct quantile edges, such as constants —
+  are reported under ``skipped`` with a machine-readable ``reason`` and a
+  human-readable ``detail`` instead of being drawn. Partial dependence remains
+  available for them.
+* **Quantile bins with duplicate-edge collapse.** Bin edges are equal-frequency
+  quantiles of the reference rows. Repeated quantiles caused by heavy ties
+  collapse to one edge, so no empty bin can occur; rows whose feature value is
+  non-finite are excluded from that curve and counted in ``excluded_rows``.
+* **Sparse bins merged deterministically.** Bins holding fewer than
+  ``min_bin_fraction`` (default 0.01, reported in the response) of the
+  reference rows are merged with the smaller adjacent bin — the left bin on a
+  tie — until every bin clears the floor or only two bins remain. Each curve
+  reports its final ``counts`` per bin and its ``grid`` (bin boundaries), so
+  the binning is visible rather than implied.
+* **One scalar response, labelled.** Regression curves use ``predict``. Binary
+  classification curves use the positive-class probability
+  (``predict_proba[:, 1]``), falling back to ``decision_function`` when the
+  estimator has no probabilities; the response field in each payload names the
+  scalar used. Multiclass bundles are rejected with an explicit error because a
+  single curve would have to choose a class arbitrarily. Curves on different
+  scalar outputs (probability versus decision value) are not comparable.
+* **Stability under the bounded reference-set policy.** When
+  ``stability_samples`` is 2–5, the same distinct-subsample policy used for
+  permutation importance is applied, and every subset is accumulated on the
+  *primary* reference sample's bin edges. Each curve reports the descriptive
+  per-bin mean, sample standard deviation, minimum and maximum across subsets.
+  Subsets are centered with their own bin weights, so the spread includes
+  centering variation; it is a sample-sensitivity summary, not a confidence
+  band, and it is not estimated for the default single-sample request.
+* **Non-causal labels.** The response carries
+  ``interpretation.accumulated_local_effects.category =
+  "fitted_model_response_profile"`` and ``causal_effect: false``, and lists the
+  limitations next to the curves. ALE does not isolate variable importance:
+  correlated features can still make one feature's local differences reflect
+  another feature's distribution.
+
+For example, comparing ALE with partial dependence on the same bundle::
+
+    POST /api/evaluation/diabetes/<version>/ale
+    {"partition": "train", "features": ["bmi", "bp"], "n_bins": 20,
+     "max_rows": 500, "stability_samples": 3, "random_state": 0}
+
+Omitting ``features`` selects the ``top_k`` features by permutation importance
+computed on the same reference sample; ``features`` overrides that selection
+and accepts at most six numeric names.
+
+Row-level explanations
+~~~~~~~~~~~~~~~~~~~~~~
+
+Global profiles answer "how does this model respond on average"; a row-level
+explanation answers "why does *this* prediction differ from a stated baseline".
+The control-plane endpoint
+``POST /api/evaluation/{task}/{version}/explain/row`` implements exactly one
+deterministic method — **ordered-occlusion chain decomposition** — with this
+contract:
+
+.. math::
+
+    f(x)-f(b)=\sum_{j=1}^{n}\Bigl[f\bigl(x_{\pi_{\le j}}\cup b_{\pi_{>j}}\bigr)
+    -f\bigl(x_{\pi_{<j}}\cup b_{\pi_{>j}}\bigr)\Bigr].
+
+Starting from the baseline row :math:`b`, features are restored from the
+observed row :math:`x` one at a time in a stated order :math:`\pi`, and each
+model-response change is credited to that feature. The chain telescopes, so the
+contributions reconstruct :math:`f(x)-f(b)` **exactly for any estimator**; the
+response reports the residual (floating-point noise, not unexplained variance)
+and its tolerance. This is not a sampling approximation: no LIME/SHAP-style
+surrogate is fitted.
+
+* **Baseline.** ``baseline="reference_mean"`` (default) uses the finite mean of
+  each numeric feature and the most frequent level of each non-numeric feature
+  over a bounded, seeded subsample of the reference partition (at most 1,000
+  rows). ``baseline="row"`` uses an explicitly chosen stored row. The response
+  records the baseline mode, partition, row, per-feature value sources, and the
+  baseline prediction, because every contribution is relative to that point.
+* **Order dependence.** With interactions or correlated features, different
+  orders split the same total differently. ``orders`` in 1–10 draws distinct
+  seeded permutations and reports per-feature mean, sample standard deviation,
+  minimum, and maximum. The standard deviation measures order-dependence; it is
+  not a confidence interval. The order-averaged value equals the symmetric
+  Shapley value only when all :math:`n!` orders are enumerated, which the API
+  does not claim.
+* **Subset scope.** ``features`` selects at most 24 columns. A strict subset
+  explains the *hybrid* row (listed features at their observed values, the rest
+  at baseline) and reports ``explanation_scope = "subset_hybrid"``; it is never
+  presented as a decomposition of the full prediction. If more orders are
+  requested than distinct permutations exist, the request is rejected with the
+  exact bound.
+* **Scalar response.** Identical to ALE: regression uses ``predict``; binary
+  classification uses the labelled positive-class probability (or decision
+  value) and multiclass bundles are rejected. Contributions on different
+  response scales are not comparable.
+* **No causal or importance language.** The payload carries
+  ``category: "model_attribution"``, ``method: "ordered_occlusion_chain"`` and
+  ``causal_effect: false``. A single row's contributions are not "feature
+  importance", and an ICE difference is never labelled an attribution: ICE
+  remains a response-profile object.
+
+For example, explaining row 12 of a stored partition against the reference mean::
+
+    POST /api/evaluation/diabetes/<version>/explain/row
+    {"row_index": 12, "orders": 5, "baseline": "reference_mean",
+     "baseline_partition": "train", "random_state": 0}
+
+The stage contract — method alternatives, baseline semantics, error surface,
+and test plan — is recorded in ``AI_LAYER02_D3_ROW_LEVEL_CONTRACT.md`` at the
+repository root.
+
+``plot_roc_curve`` supports multiclass classifiers with one-vs-rest curves for
+each class and a micro-average curve. ``plot_calibration_curve`` similarly
+reports one-vs-rest curves and probability distributions for each class; both
+require the held-out split to contain examples from every fitted class.
+Cumulative-gain and lift charts remain binary-only because they require a
+single positive-class ranking.
 
 *The Best of EOA*
 
@@ -275,7 +711,7 @@ quick ``SKSurrogate`` search over ``SGDClassifier``, ``Nystroem`` and ``RBFSampl
 
 
     A_svm = AML(config=config, length=3, check_point='./svm/', verbose=1)
-    A_svm.eoa_fit(X, y, max_generation=10, num_parents=10)
+    A_svm.eoa_fit(X, y, max_generations=10, num_parents=10)
     print(A_svm.get_top(4))
 
 Which results in::

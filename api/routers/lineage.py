@@ -32,10 +32,15 @@ def get_lineage(task_name: str, model_version: str):
     if settings.mltrace_db_path(task_name).exists():
         with open_tracker(task_name) as tracker:
             metadata = tracker.GetMetadata()
+            partitions = tracker.dataset_splits()
         dataset = {
-            "dataset_fingerprint": metadata.get("dataset_fingerprint"),
+            "dataset_fingerprint": bundle.dataset_fingerprint,
+            "registered_dataset_fingerprint": metadata.get("dataset_fingerprint"),
             "target_name": metadata.get("target_name"),
-            "partitions": tracker.dataset_splits(),
+            "partitions": partitions,
+            "training": (
+                (bundle.metadata or {}).get("reproducibility") or {}
+            ).get("data"),
         }
 
     registry_state = None

@@ -101,12 +101,12 @@ walks the metadata graph server-side.
 
 | UI Section | FastAPI router | Wraps | Notes |
 |---|---|---|---|
-| Datasets | `/api/datasets` | `DataProcess.DataPreprocess`, `mltrace.mltrack.RegisterData/validate_data` | Upload CSV → server infers types (`deduce_types`), returns editable schema preview before commit; register returns `dataset_fingerprint` + JSON schema |
+| Datasets | `/api/datasets` | `DataProcess.DataPreprocess`, `mltrace.mltrack.register_data/validate_data` | Upload CSV → server infers types (`deduce_types`), returns editable schema preview before commit; register returns `dataset_fingerprint` + JSON schema |
 | Feature Analysis | `/api/sensitivity` | `sensapprx.SensAprx`, `CorrelationThreshold` | Submitted as a job (Sobol/Morris can be slow); returns ranked feature importances + suggested `n_features_to_select`; result reusable by Experiments stage |
 | Experiments | `/api/experiments` | `aml.AML.eoa_fit/aml_fit`, `eoa.EOA`, `structsearch.SurrogateSearch/SurrogateRandomCV` | Async job; live progress via WebSocket streaming `evaluation_history_`/generation stats; supports resume from checkpoint dir; config editor for pipeline search space (`config` dict) as a form/JSON editor |
 | Evaluation | `/api/evaluation` | `mltrace.mltrack.nested_cv_evaluation`, `.LogMetrics` | Compare candidate models side by side; charts for outer/inner fold scores |
 | Model Bundles | `/api/bundles` | `modelbundle.ModelBundle`, `save_bundle/load_bundle`, `export_mlflow` | Create bundle from a finished experiment run; view schema contract, dependency pins, audit events; download/export |
-| Quality Gates | `/api/quality-gates` | `ci.check_bundle_quality/assert_bundle_quality` | Configurable metric thresholds per task; gate result required before promotion is allowed in UI |
+| Quality Gates | `/api/quality-gates` | `ci.check_bundle_quality/assert_bundle_quality` | Request-specific metric thresholds and optional size limit; normal promotion reruns only the default bundle check and does not inherit these thresholds |
 | Registry & Deployment | `/api/registry` | `modelbundle.ModelRegistry`, `deployment.DeploymentApprovalGate` | Visual lifecycle graph (candidate→validated→staging→production→archived); promote requires N approver clicks (RBAC-gated); rollback button with confirmation |
 | Inference | `/api/inference` | `inference.predict_batch`, `create_app`/`serve` semantics reused as internal call, not by spawning the WSGI server | Batch: upload CSV or point to a dataset → job → downloadable predictions + `inference_metrics`; Online test console: single-row JSON form calls same code path |
 | Monitoring | `/api/monitoring` | `monitoring.drift_report/fairness_report/delayed_label_performance/InferenceMonitor` | Dashboards with PSI/drift charts, fairness gap bars, latency/throughput; alerts feed into Dashboard |
@@ -236,3 +236,10 @@ exist yet).
   service is the control plane (management, UI, batch jobs) and calls the
   same underlying `predict_batch`/`ModelBundle.predict` code directly for its
   own "online test console" rather than proxying to the WSGI server.
+
+## Update: Docker and workflow-oriented UI
+
+The sidebar is grouped by stage (Data, Model, Release, Operate). Added pages:
+Projects, Explain, Experiment Design; Experiments gained a Quick start tab.
+The production Docker image serves the UI and API from one port. See
+`UI_DOCKER_UPGRADE_PLAN.md` and `docs/ui-manual.rst`.

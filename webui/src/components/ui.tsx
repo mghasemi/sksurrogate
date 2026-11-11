@@ -187,6 +187,14 @@ export function fmtNum(v: number | null | undefined): string {
   return v.toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
 }
 
+export function fmtSci(v: number | null | undefined): string {
+  if (v === null || v === undefined || Number.isNaN(v)) return "—";
+  if (v === 0) return "0";
+  const magnitude = Math.abs(v);
+  if (magnitude >= 1e-3 && magnitude < 1e6) return fmtNum(v);
+  return v.toExponential(2);
+}
+
 export function fmtPct(v: number | null | undefined): string {
   if (v === null || v === undefined || Number.isNaN(v)) return "—";
   return `${(v * 100).toFixed(2)}%`;

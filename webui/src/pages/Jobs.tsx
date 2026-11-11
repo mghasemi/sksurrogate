@@ -1,19 +1,23 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { listJobs, resumeJob } from "../api/client";
 import type { JobRecord } from "../api/client";
 import { Card, ErrorNote, Loading, StatusBadge, Table } from "../components/ui";
 import { JobTracker } from "../components/JobTracker";
 
-const KINDS = ["sensitivity", "experiment", "retraining"] as const;
+const KINDS = ["sensitivity", "nested-cv", "experiment", "optimize_pipeline", "retraining", "project-synthesis"] as const;
 const STATUSES = ["queued", "running", "completed", "failed"] as const;
 
 export default function JobsPage() {
   const qc = useQueryClient();
+  const [searchParams] = useSearchParams();
   const [kindFilter, setKindFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(
+    () => searchParams.get("job_id"),
+  );
   const resumeMut = useMutation({
     mutationFn: resumeJob,
     onSuccess: (res) => {
@@ -51,7 +55,7 @@ export default function JobsPage() {
     <div className="stack">
       <div className="page-head">
         <h1>Jobs</h1>
-        <span className="desc">All background jobs across tasks — sensitivity, experiments and retraining. Refreshes every 3 s.</span>
+        <span className="desc">All background jobs across tasks — sensitivity, nested-CV, experiments, pipeline optimization and retraining. Refreshes every 3 s.</span>
       </div>
 
       {jobsQ.isError && <ErrorNote error={jobsQ.error} />}
@@ -109,6 +113,13 @@ export default function JobsPage() {
               <td key="c" className="mono">{new Date(j.created_at).toLocaleString()}</td>,
               <td key="u" className="mono">{new Date(j.updated_at).toLocaleString()}</td>,
               <td key="a">
+                <Link
+                  className="btn"
+                  to={`/logs?job=${j.job_id}`}
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  Logs
+                </Link>
                 {j.kind === "experiment" && j.status === "failed" && (
                   <button
                     className="btn"

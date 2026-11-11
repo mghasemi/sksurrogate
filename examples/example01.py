@@ -75,5 +75,5 @@ X, y = genetic_data.drop("target", axis=1).values, genetic_data["target"].values
 checkpoint_dir = Path(__file__).resolve().parents[1] / "example01-checkpoints"
 checkpoint_dir.mkdir(exist_ok=True)
 A = AML(config=config, length=3, check_point=str(checkpoint_dir) + "/", verbose=2)
-A.eoa_fit(X, y, max_generation=10, num_parents=10)
+A.eoa_fit(X, y, max_generations=10, num_parents=10)
 print(A.get_top(5))

@@ -119,6 +119,15 @@ class ModelBundle:
             "audit_events": self.audit_events,
         }
 
+    def save(self, path):
+        """Atomically write this bundle; same as :func:`save_bundle`."""
+        return save_bundle(self, path)
+
+    @classmethod
+    def load(cls, path, **kwargs):
+        """Load a bundle from ``path``; same as :func:`load_bundle`."""
+        return load_bundle(path, **kwargs)
+
     @classmethod
     def from_record(cls, record):
         if record.get("format_version") != BUNDLE_FORMAT_VERSION:
@@ -558,6 +567,17 @@ class ModelRegistry:
             raise KeyError("Unknown model alias %r for task %r" % (alias, task_name))
         version = task["aliases"][alias]
         return load_bundle(self.root / task["versions"][version]["path"], **kwargs)
+
+    def load_version(self, task_name, model_version, **kwargs):
+        """Load an exact registered version without resolving a lifecycle alias."""
+        index = self._read_index()
+        task = index["models"].get(task_name)
+        if task is None or model_version not in task["versions"]:
+            raise KeyError(
+                "Unknown model version %r for task %r" % (model_version, task_name)
+            )
+        path = self.root / task["versions"][model_version]["path"]
+        return load_bundle(path, **kwargs)
 
     def history(self, task_name):
         index = self._read_index()

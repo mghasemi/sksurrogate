@@ -52,7 +52,12 @@ def _check_preflight(task_name, frame, bundle, enabled):
     if error is not None:
         latency_ms = (perf_counter() - started) * 1000
         append_monitor_record(
-            task_name, bundle.model_version, latency_ms, len(frame), success=False, error=error
+            task_name,
+            bundle.model_version,
+            latency_ms,
+            len(frame),
+            success=False,
+            error="Pre-flight validation failed",
         )
         raise bad_request("Pre-flight validation failed: %s" % error)
 
@@ -95,7 +100,12 @@ def predict(task_name: str, body: PredictRequest):
     except SchemaValidationError as exc:
         latency_ms = (perf_counter() - started) * 1000
         append_monitor_record(
-            task_name, bundle.model_version, latency_ms, len(frame), success=False, error=exc
+            task_name,
+            bundle.model_version,
+            latency_ms,
+            len(frame),
+            success=False,
+            error="Schema validation failed",
         )
         raise bad_request("; ".join(exc.errors))
     metrics = result.attrs["inference_metrics"]
@@ -125,7 +135,12 @@ def predict_batch_endpoint(task_name: str, body: PredictRequest):
     except SchemaValidationError as exc:
         latency_ms = (perf_counter() - started) * 1000
         append_monitor_record(
-            task_name, bundle.model_version, latency_ms, len(frame), success=False, error=exc
+            task_name,
+            bundle.model_version,
+            latency_ms,
+            len(frame),
+            success=False,
+            error="Schema validation failed",
         )
         raise bad_request("; ".join(exc.errors))
     metrics = result.attrs["inference_metrics"]

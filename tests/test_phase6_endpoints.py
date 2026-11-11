@@ -4,19 +4,31 @@ import tempfile
 import time
 import unittest
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi import HTTPException
+import numpy as np
+import pandas as pd
+from pydantic import ValidationError
+from sklearn.dummy import DummyClassifier
 
+from SKSurrogate import ModelBundle, ModelRegistry, mltrack
 from api.config import settings
 from api.jobs import JobManager, job_manager
 from api.routers import experiments as experiments_router
 from api.routers import jobs as jobs_router
 from api.routers import retraining as retraining_router
 from api.routers.experiments import RunExperimentRequest
-from api.routers.retraining import BaselineTrainerConfig, RunRetrainingRequest
+from api.routers.retraining import (
+    BaselineTrainerConfig,
+    ExperimentTrainerConfig,
+    RunRetrainingRequest,
+    TriggerRetrainingRequest,
+)
 
 
 def _wait_for_job(job_id, timeout=10, manager=job_manager):
@@ -39,6 +51,44 @@ class TestPhase6JobEndpoints(unittest.TestCase):
     def tearDown(self):
         settings.root = self._original_root
         self._tmp.cleanup()
+
+    def test_experiment_generation_field_accepts_legacy_and_canonical_names(self):
+        experiment_schema = RunExperimentRequest.model_json_schema(mode="validation")
+        trainer_schema = ExperimentTrainerConfig.model_json_schema(mode="validation")
+        self.assertIn("max_generations", experiment_schema["properties"])
+        self.assertNotIn("max_generation", experiment_schema["properties"])
+        self.assertIn("max_generations", trainer_schema["properties"])
+        self.assertNotIn("max_generation", trainer_schema["properties"])
+
+        experiment = RunExperimentRequest(config={}, max_generations=5)
+        legacy_experiment = RunExperimentRequest(config={}, max_generation=6)
+        trainer = ExperimentTrainerConfig(config={}, max_generations=7)
+        legacy_trainer = ExperimentTrainerConfig(config={}, max_generation=8)
+        retraining = RunRetrainingRequest(
+            trainer={
+                "kind": "experiment",
+                "config": {},
+                "max_generation": 9,
+            }
+        )
+        self.assertEqual(experiment.max_generations, 5)
+        self.assertEqual(legacy_experiment.max_generations, 6)
+        self.assertEqual(trainer.max_generations, 7)
+        self.assertEqual(legacy_trainer.max_generations, 8)
+        self.assertEqual(retraining.trainer.max_generations, 9)
+
+        with self.assertRaises(ValidationError):
+            RunExperimentRequest(
+                config={},
+                max_generations=5,
+                max_generation=6,
+            )
+        with self.assertRaises(ValidationError):
+            ExperimentTrainerConfig(
+                config={},
+                max_generations=5,
+                max_generation=6,
+            )
 
     def test_failed_experiment_resumes_with_original_checkpoint_and_run_id(self):
         body = RunExperimentRequest(config={}, run_id=None)
@@ -161,6 +211,172 @@ class TestPhase6JobEndpoints(unittest.TestCase):
             with self.assertRaises(HTTPException) as ctx:
                 retraining_router.run_retraining("resume-task", retraining)
         self.assertEqual(ctx.exception.status_code, 503)
+
+    def test_external_retraining_trigger_is_idempotent_and_quality_gated(self):
+        model = DummyClassifier(strategy="most_frequent").fit(
+            np.array([[0.0], [1.0]]), np.array([0, 1])
+        )
+        body = TriggerRetrainingRequest(
+            trainer=BaselineTrainerConfig(kind="baseline"),
+            trigger="scheduled",
+            event_id="nightly-2026-11-05",
+            occurred_at=datetime.now(timezone.utc),
+            metric_thresholds={"accuracy": 0.8},
+        )
+
+        with patch.object(
+            retraining_router,
+            "_make_trainer",
+            return_value=lambda context: ModelBundle(
+                model, metrics={"accuracy": 0.9}
+            ),
+        ):
+            submitted = retraining_router.trigger_retraining("trigger-task", body)
+            duplicate = retraining_router.trigger_retraining("trigger-task", body)
+            completed = _wait_for_job(submitted["job_id"])
+
+        self.assertTrue(submitted["duplicate"] is False)
+        self.assertTrue(duplicate["duplicate"])
+        self.assertEqual(duplicate["job_id"], submitted["job_id"])
+        self.assertEqual(completed["status"], "completed", completed["error"])
+        self.assertTrue(completed["result"]["quality_report"]["passed"])
+        self.assertEqual(
+            completed["trigger_event"]["event_id"], "nightly-2026-11-05"
+        )
+        audit = ModelRegistry(settings.registry_dir).audit_log("trigger-task")
+        self.assertTrue(any(event.get("to") == "staging" for event in audit))
+
+        conflicting = body.model_copy(update={"metric_thresholds": {"accuracy": 0.95}})
+        with self.assertRaises(HTTPException) as ctx:
+            retraining_router.trigger_retraining("trigger-task", conflicting)
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_job_manager_deduplicates_concurrent_trigger_submissions(self):
+        manager = JobManager()
+
+        def submit(_):
+            return manager.submit_idempotent(
+                "concurrent-trigger-task",
+                "retraining",
+                "data:train:fingerprint",
+                "request-fingerprint",
+                lambda job_id: lambda: {"job_id": job_id},
+                metadata_factory=lambda job_id: {"trigger_event": {"event_id": "upload-1"}},
+            )
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            results = list(executor.map(submit, range(16)))
+
+        job_ids = {job_id for job_id, _ in results}
+        created_count = sum(created for _, created in results)
+        self.assertEqual(len(job_ids), 1)
+        self.assertEqual(created_count, 1)
+        completed = _wait_for_job(next(iter(job_ids)), manager=manager)
+        self.assertEqual(completed["status"], "completed", completed["error"])
+
+    def test_external_scheduled_trigger_records_not_due_without_training(self):
+        body = TriggerRetrainingRequest(
+            trainer=BaselineTrainerConfig(kind="baseline"),
+            trigger="scheduled",
+            event_id="not-due-2026-11-05",
+            occurred_at=datetime.now(timezone.utc),
+            due=False,
+            metric_thresholds={"accuracy": 0.8},
+        )
+        trainer_calls = []
+
+        def make_trainer(*args):
+            _ = args
+            return lambda context: trainer_calls.append(context)
+
+        with patch.object(retraining_router, "_make_trainer", side_effect=make_trainer):
+            submitted = retraining_router.trigger_retraining("not-due-task", body)
+            completed = _wait_for_job(submitted["job_id"])
+
+        self.assertEqual(completed["status"], "completed", completed["error"])
+        self.assertEqual(completed["result"]["status"], "skipped")
+        self.assertEqual(completed["result"]["reason"], "trigger_not_satisfied")
+        self.assertEqual(trainer_calls, [])
+
+    def test_external_data_trigger_requires_fresh_registered_partition_identity(self):
+        frame = pd.DataFrame(
+            {"feature": np.arange(8, dtype=float), "target": np.arange(8, dtype=float)}
+        )
+        tracker = mltrack(
+            "data-trigger-task",
+            db_name=str(settings.mltrace_db_path("data-trigger-task")),
+        )
+        try:
+            tracker.RegisterData(frame, "target", partition="train")
+            fingerprint = tracker.dataset_splits()["train"]["fingerprint"]
+        finally:
+            tracker.close()
+
+        body = TriggerRetrainingRequest(
+            trainer=BaselineTrainerConfig(kind="baseline"),
+            trigger="on_data",
+            event_id="dataset-upload-8",
+            occurred_at=datetime.now(timezone.utc),
+            data_partition="train",
+            data_fingerprint=fingerprint,
+            metric_thresholds={"r2": 0.0},
+        )
+        with patch.object(
+            retraining_router,
+            "_make_trainer",
+            return_value=lambda context: {"unexpected": True},
+        ):
+            wrong_fingerprint = body.model_copy(
+                update={"data_fingerprint": "stale-fingerprint"}
+            )
+            with self.assertRaises(HTTPException) as mismatch:
+                retraining_router.trigger_retraining(
+                    "data-trigger-task", wrong_fingerprint
+                )
+            self.assertEqual(mismatch.exception.status_code, 409)
+
+            old_event = body.model_copy(
+                update={"occurred_at": datetime.now(timezone.utc) - timedelta(minutes=11)}
+            )
+            with self.assertRaises(HTTPException) as stale:
+                retraining_router.trigger_retraining("data-trigger-task", old_event)
+            self.assertEqual(stale.exception.status_code, 409)
+
+        with self.assertRaises(ValidationError):
+            TriggerRetrainingRequest(
+                trainer=BaselineTrainerConfig(kind="baseline"),
+                trigger="on_data",
+                event_id="unsafe-production",
+                occurred_at=datetime.now(timezone.utc),
+                data_partition="train",
+                data_fingerprint=fingerprint,
+                promotion_state="production",
+                metric_thresholds={"r2": 0.0},
+            )
+
+        model = DummyClassifier(strategy="most_frequent").fit(
+            np.array([[0.0], [1.0]]), np.array([0, 1])
+        )
+        with patch.object(
+            retraining_router,
+            "_make_trainer",
+            return_value=lambda context: ModelBundle(
+                model, metrics={"r2": 0.5}
+            ),
+        ):
+            submitted = retraining_router.trigger_retraining("data-trigger-task", body)
+            retry = body.model_copy(update={"event_id": "upload-retry"})
+            duplicate = retraining_router.trigger_retraining(
+                "data-trigger-task", retry
+            )
+            completed = _wait_for_job(submitted["job_id"])
+
+        self.assertTrue(duplicate["duplicate"])
+        self.assertEqual(duplicate["job_id"], submitted["job_id"])
+        self.assertEqual(completed["status"], "completed", completed["error"])
+        self.assertEqual(
+            completed["result"]["context"]["data_fingerprint"], fingerprint
+        )
 
     def test_scoring_options_report_available_backends(self):
         with patch.object(experiments_router, "dask_available", return_value=False):

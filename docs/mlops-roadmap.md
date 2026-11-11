@@ -1,3 +1,7 @@
+---
+orphan: true  # working roadmap doc, intentionally not in the public toctree
+---
+
 # SKSurrogate MLOps Roadmap
 
 Status: complete

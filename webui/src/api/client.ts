@@ -148,7 +148,7 @@ export interface PartitionInfo {
 /* Health                                                              */
 /* ------------------------------------------------------------------ */
 
-export const health = () => get<{ status: string }>("/api/health");
+export const health = () => get<{ status: string; version?: string }>("/api/health");
 
 /* ------------------------------------------------------------------ */
 /* Tasks                                                               */
@@ -156,6 +156,23 @@ export const health = () => get<{ status: string }>("/api/health");
 
 /** Known task names discovered across the API storage layout. */
 export const listTasks = () => get<{ tasks: string[] }>("/api/tasks");
+
+/**
+ * Probe whether the server enforces the shared API key. `/api/health` is never
+ * gated, so a cheap protected endpoint (`GET /api/tasks`) stands in for it:
+ * 401 means a key is required, any other success means open. Connection errors
+ * are rethrown — we do not guess the auth state of an unreachable server (the
+ * Settings page's health card already surfaces that failure).
+ */
+export async function probeAuthMode(): Promise<"open" | "required"> {
+  try {
+    await listTasks();
+    return "open";
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401) return "required";
+    throw err;
+  }
+}
 
 /* ------------------------------------------------------------------ */
 /* Datasets                                                            */
@@ -932,6 +949,13 @@ export interface SensitivityJobResult {
   top_feature_names: string[];
   /** One weight per entry of `feature_columns`; null where the value was not finite. */
   weights: Array<number | null>;
+  interpretation?: {
+    category: "input_sensitivity";
+    measure: string;
+    train_partition: string;
+    causal_effect: false;
+    limitations: string[];
+  };
 }
 
 /** Narrow an unknown job result to a sensitivity result, or return null. */
@@ -946,6 +970,7 @@ export function asSensitivityResult(result: unknown): SensitivityJobResult | nul
     top_feature_indices: r.top_feature_indices ?? [],
     top_feature_names: r.top_feature_names ?? [],
     weights: r.weights,
+    interpretation: r.interpretation,
   };
 }
 
@@ -972,6 +997,11 @@ export interface CorrelationMatrixResult extends HeatmapData {
   task_name: string;
   partition: string;
   kind: "correlation";
+  interpretation: {
+    category: "descriptive_association";
+    measure: "Pearson correlation";
+    causal_effect: false;
+  };
 }
 
 export const getCorrelationMatrix = (task: string, trainPartition = "train", maxFeatures = 60) =>
@@ -1021,6 +1051,8 @@ export interface LearningCurveMetric {
   label: string;
   /** False for error metrics such as RMSE — the curve then decreases with more data. */
   higher_is_better: boolean;
+  /** The metric requires an explicit quantile level. */
+  requires_alpha?: boolean;
 }
 
 export interface LearningCurveMetricsResponse {
@@ -1047,6 +1079,7 @@ export interface LearningCurveSeries {
 export interface LearningCurvesResponse {
   task_name: string;
   scoring: string;
+  pinball_alpha: number | null;
   scoring_label: string;
   train_partition: string;
   n_points: number;
@@ -1064,9 +1097,16 @@ export const getLearningCurveMetrics = (task: string, modelVersion?: string) =>
 /** Cross-validated learning curves for every (or the given) bundle under one metric. */
 export function getLearningCurves(
   task: string,
-  opts: { scoring: string; trainPartition?: string; nPoints?: number; modelVersions?: string[] },
+  opts: {
+    scoring: string;
+    pinballAlpha?: number;
+    trainPartition?: string;
+    nPoints?: number;
+    modelVersions?: string[];
+  },
 ): Promise<LearningCurvesResponse> {
   const params = new URLSearchParams({ scoring: opts.scoring });
+  if (opts.pinballAlpha !== undefined) params.set("pinball_alpha", String(opts.pinballAlpha));
   if (opts.trainPartition) params.set("train_partition", opts.trainPartition);
   if (opts.nPoints) params.set("n_points", String(opts.nPoints));
   if (opts.modelVersions?.length) params.set("model_versions", opts.modelVersions.join(","));
@@ -1198,9 +1238,14 @@ export const STACKING_COMPONENT = {
 };
 
 export interface RunExperimentRequest {
-  config: SearchSpace;
+  /** Omit when `preset` is given. */
+  config?: SearchSpace;
+  /** Quick-start preset (bounded search space); mutually exclusive with `config`. */
+  preset?: "classification" | "regression";
+  /** `eoa` (evolutionary, default) or `surrogate` (surrogate search only). */
+  strategy?: "eoa" | "surrogate";
   length?: number;
-  max_generation?: number;
+  max_generations?: number;
   num_parents?: number;
   train_partition?: string;
   scoring?: string;
@@ -1348,6 +1393,137 @@ export function subscribeToJob(
 }
 
 /* ------------------------------------------------------------------ */
+/* Logs                                                                */
+/* ------------------------------------------------------------------ */
+
+/** Severity vocabulary, matching the standard library's ordering. */
+export const LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] as const;
+export type LogLevel = (typeof LOG_LEVELS)[number];
+
+export interface LogEntry {
+  seq: number;
+  ts: string;
+  level: LogLevel;
+  logger: string;
+  message: string;
+  job_id: string;
+  task_name?: string | null;
+  kind?: string | null;
+  /** Zero-based trial index, present on per-trial telemetry entries. */
+  trial?: number | null;
+  /** Sampling phase of the trial: init | explore | surrogate_exploit. */
+  phase?: string | null;
+  status?: string | null;
+  /** Full traceback, present on error entries raised from a job. */
+  detail?: string;
+}
+
+export interface LogCounts {
+  DEBUG: number;
+  INFO: number;
+  WARNING: number;
+  ERROR: number;
+  CRITICAL: number;
+}
+
+export interface LogQueryResponse {
+  entries: LogEntry[];
+  counts: LogCounts;
+  total: number;
+  levels?: LogLevel[];
+  job_id?: string;
+  /** Present when the query was scoped to a research project. */
+  project_id?: string;
+  /** Number of project-linked jobs the query scanned. */
+  job_count?: number;
+}
+
+export interface LogQuery {
+  job_id?: string;
+  /** Minimum severity; `WARNING` means WARNING and above. */
+  level?: LogLevel;
+  /** Explicit subset of severities (wins over `level`). */
+  levels?: LogLevel[];
+  kind?: string;
+  /** Restrict to one dataset/task. */
+  task_name?: string;
+  /** Restrict to the jobs linked as artifacts of this research project. */
+  project_id?: string;
+  q?: string;
+  limit?: number;
+  since_seq?: number;
+}
+
+function logQueryString(query: LogQuery): string {
+  const params = new URLSearchParams();
+  if (query.job_id) params.set("job_id", query.job_id);
+  if (query.level) params.set("level", query.level);
+  if (query.levels && query.levels.length) params.set("levels", query.levels.join(","));
+  if (query.kind) params.set("kind", query.kind);
+  if (query.task_name) params.set("task_name", query.task_name);
+  if (query.project_id) params.set("project_id", query.project_id);
+  if (query.q) params.set("q", query.q);
+  if (query.limit) params.set("limit", String(query.limit));
+  if (query.since_seq !== undefined) params.set("since_seq", String(query.since_seq));
+  const text = params.toString();
+  return text ? `?${text}` : "";
+}
+
+/** Browse captured log entries across jobs. */
+export function listLogs(query: LogQuery = {}): Promise<LogQueryResponse> {
+  return get<LogQueryResponse>(`/api/logs${logQueryString(query)}`);
+}
+
+/** Tail one job's captured entries. */
+export function jobLogs(jobId: string, query: LogQuery = {}): Promise<LogQueryResponse> {
+  return get<LogQueryResponse>(`/api/logs/${encodeURIComponent(jobId)}${logQueryString(query)}`);
+}
+
+/**
+ * Subscribe to a job's log stream. Frames look like
+ * `{entries: LogEntry[], since_seq: number, status: "running"}`; `done` fires
+ * once the job reached a terminal state and no further entries arrive.
+ */
+export function subscribeToJobLogs(
+  jobId: string,
+  options: { level?: LogLevel; levels?: LogLevel[]; since_seq?: number },
+  onBatch: (frame: { entries: LogEntry[]; since_seq: number; status?: string }) => void,
+  onDone?: () => void,
+): () => void {
+  const wsBase = getEffectiveApiBase().replace(/^http/, "ws");
+  const params = new URLSearchParams();
+  if (options.level) params.set("level", options.level);
+  if (options.levels && options.levels.length) params.set("levels", options.levels.join(","));
+  if (options.since_seq) params.set("since_seq", String(options.since_seq));
+  const key = getApiKey();
+  if (key) params.set("api_key", key);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const ws = new WebSocket(
+    `${wsBase}/api/logs/${encodeURIComponent(jobId)}/stream${suffix}`,
+  );
+  ws.onmessage = (event) => {
+    try {
+      const frame = JSON.parse(event.data as string) as {
+        entries?: LogEntry[];
+        since_seq?: number;
+        status?: string;
+        error?: string;
+      };
+      if (frame.error) return;
+      onBatch({
+        entries: frame.entries ?? [],
+        since_seq: frame.since_seq ?? options.since_seq ?? 0,
+        status: frame.status,
+      });
+    } catch {
+      /* ignore malformed frames */
+    }
+  };
+  ws.onclose = () => onDone?.();
+  return () => ws.close();
+}
+
+/* ------------------------------------------------------------------ */
 /* Retraining                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -1362,7 +1538,7 @@ export interface ExperimentTrainerConfig {
   kind: "experiment";
   config: SearchSpace;
   length?: number;
-  max_generation?: number;
+  max_generations?: number;
   num_parents?: number;
   train_partition?: string;
   scoring?: string;
@@ -1417,3 +1593,540 @@ export interface LineageRecord {
 
 export const getLineage = (task: string, modelVersion: string) =>
   get<LineageRecord>(`/api/lineage/${encodeURIComponent(task)}/${encodeURIComponent(modelVersion)}`);
+
+/* ------------------------------------------------------------------ */
+/* Quick-start presets                                                 */
+/* ------------------------------------------------------------------ */
+
+export interface ExperimentPreset {
+  value: "classification" | "regression";
+  label: string;
+  description: string;
+  default_scoring: string;
+}
+
+export const getPresets = () => get<{ presets: ExperimentPreset[] }>("/api/experiments/presets");
+
+/* ------------------------------------------------------------------ */
+/* Explanations and prediction intervals                               */
+/* ------------------------------------------------------------------ */
+
+export interface CurveStability {
+  feature: string;
+  grid: Array<number | null>;
+  mean: Array<number | null>;
+  sample_std: Array<number | null>;
+  min: Array<number | null>;
+  max: Array<number | null>;
+  sample_means: Array<number | null>;
+}
+
+export interface PdpStability {
+  sample_count?: number;
+  sample_size?: number;
+  sampling?: "random_without_replacement";
+  grid_source?: "primary_curve_grid";
+  response?: { family: string; output: string; causal_effect: false };
+  curves?: CurveStability[];
+  skipped_reason?: string;
+  note?: string;
+}
+
+export interface ExplainResult {
+  model_version: string;
+  partition: string;
+  rows: number;
+  reference_sample: {
+    partition: string;
+    source_rows: number;
+    used_rows: number;
+    sampling: "all_rows" | "random_without_replacement";
+  };
+  settings: {
+    max_rows: number;
+    n_repeats: number;
+    top_k: number;
+    stability_samples: number;
+    random_state: number;
+  };
+  importance: Array<{ feature: string; mean: number | null; std: number | null }>;
+  reference_sample_stability: {
+    sample_count: number;
+    sample_size: number;
+    permutation_repeats_per_sample: number;
+    sampling: "random_without_replacement";
+    summary: Array<{
+      feature: string;
+      mean_importance: number | null;
+      sample_std: number | null;
+      top_rank_frequency: number;
+    }>;
+  } | null;
+  partial_dependence: Array<{ feature: string; grid: Array<number | null>; average: Array<number | null> }>;
+  partial_dependence_stability: PdpStability | null;
+  errors: Array<{ feature: string; detail: string }>;
+  interpretation: {
+    importance: {
+      category: "model_attribution";
+      method: string;
+      score: string;
+      causal_effect: false;
+    };
+    partial_dependence: {
+      category: "fitted_model_response_profile";
+      reference_partition: string;
+      causal_effect: false;
+    };
+    limitations: string[];
+  };
+}
+
+export const explainBundle = (
+  task: string,
+  version: string,
+  body: {
+    partition?: string;
+    max_rows?: number;
+    n_repeats?: number;
+    top_k?: number;
+    stability_samples?: number;
+  } = {},
+) =>
+  post<ExplainResult>(
+    `/api/evaluation/${encodeURIComponent(task)}/${encodeURIComponent(version)}/explain`,
+    body,
+  );
+
+export interface AleCurve {
+  feature: string;
+  kind: "numeric";
+  grid: Array<number | null>;
+  accumulated: Array<number | null>;
+  counts: number[];
+  excluded_rows: number;
+  min_bin_fraction: number;
+  stability?: {
+    sample_count: number;
+    sample_size: number;
+    sampling: "random_without_replacement";
+    mean: Array<number | null>;
+    sample_std: Array<number | null>;
+    min: Array<number | null>;
+    max: Array<number | null>;
+    note: string;
+  };
+}
+
+export interface AleResult {
+  model_version: string;
+  partition: string;
+  response: {
+    family: "Regression" | "Classification";
+    output: string;
+    positive_class?: number | string;
+    causal_effect: false;
+  };
+  reference_sample: {
+    partition: string;
+    source_rows: number;
+    used_rows: number;
+    sampling: "all_rows" | "random_without_replacement";
+  };
+  feature_selection: "explicit" | "permutation_importance_top_k";
+  settings: {
+    max_rows: number;
+    n_bins: number;
+    top_k: number;
+    features: string[] | null;
+    stability_samples: number;
+    random_state: number;
+    min_bin_fraction: number;
+  };
+  curves: AleCurve[];
+  skipped: Array<{ feature: string; reason: string; detail: string }>;
+  errors: Array<{ feature: string; detail: string }>;
+  interpretation: {
+    accumulated_local_effects: {
+      category: "fitted_model_response_profile";
+      method: string;
+      reference_partition: string;
+      response_output: string;
+      causal_effect: false;
+    };
+    limitations: string[];
+  };
+}
+
+export const computeAle = (
+  task: string,
+  version: string,
+  body: {
+    partition?: string;
+    max_rows?: number;
+    n_bins?: number;
+    top_k?: number;
+    features?: string[];
+    stability_samples?: number;
+    random_state?: number;
+  } = {},
+) =>
+  post<AleResult>(
+    `/api/evaluation/${encodeURIComponent(task)}/${encodeURIComponent(version)}/ale`,
+    body,
+  );
+
+export interface RowContribution {
+  feature: string;
+  mean: number | null;
+  sample_std: number | null;
+  min: number | null;
+  max: number | null;
+}
+
+export interface RowExplainResult {
+  model_version: string;
+  partition: string;
+  row_index: number;
+  row_count: number;
+  response: {
+    family: "Regression" | "Classification";
+    output: string;
+    positive_class?: number | string;
+    causal_effect: false;
+  };
+  reference_sample: {
+    partition: string;
+    source_rows: number;
+    used_rows: number;
+    sampling: "all_rows" | "random_without_replacement" | "explicit_row";
+  };
+  baseline: {
+    mode: "reference_mean" | "row";
+    partition: string;
+    row_index: number | null;
+    prediction: number | null;
+    values: Record<string, number | string | null>;
+    value_sources: Record<string, string>;
+  };
+  prediction: number | null;
+  explained_prediction: number | null;
+  explanation_scope: "full_row" | "subset_hybrid";
+  explained_features: string[];
+  settings: { orders: number; reference_max_rows: number; random_state: number };
+  orders: { count: number; distinct: boolean; note: string };
+  contributions: RowContribution[];
+  reconstruction: {
+    baseline_prediction: number | null;
+    explained_prediction: number | null;
+    sum_contributions: number | null;
+    target_change: number | null;
+    max_abs_residual: number | null;
+    tolerance: number | null;
+    exact_by_construction: true;
+  };
+  interpretation: {
+    category: "model_attribution";
+    method: "ordered_occlusion_chain";
+    causal_effect: false;
+    baseline_mode: string;
+    limitations: string[];
+  };
+}
+
+export const explainRow = (
+  task: string,
+  version: string,
+  body: {
+    partition?: string;
+    row_index?: number;
+    features?: string[];
+    baseline?: "reference_mean" | "row";
+    baseline_partition?: string;
+    baseline_row_index?: number;
+    orders?: number;
+    reference_max_rows?: number;
+    random_state?: number;
+  } = {},
+) =>
+  post<RowExplainResult>(
+    `/api/evaluation/${encodeURIComponent(task)}/${encodeURIComponent(version)}/explain/row`,
+    body,
+  );
+
+export interface IntervalResult {
+  model_version: string;
+  method: string;
+  coverage_assumption: string;
+  alpha: number;
+  nominal_coverage: number;
+  half_width: number | null;
+  calibration_size: number;
+  training_partition: string;
+  fit_rows: number;
+  calibration_source_partition: string;
+  holdout_partition: string;
+  random_state: number;
+  holdout_rows: number;
+  empirical_coverage: number | null;
+  coverage_interval: {
+    method: string;
+    confidence_level: number;
+    lower: number;
+    upper: number;
+  };
+  mean_interval_width: number | null;
+  median_interval_width: number | null;
+  finite_interval_count: number;
+  unbounded_interval_count: number;
+  mean_interval_score: number | null;
+  interval_score_method: string;
+  diagnostic_assumption: string;
+  group_by: string | null;
+  subgroup_coverage: {
+    group_limit: number;
+    missing_group_count: number;
+    other_group_count: number;
+    groups: Array<{
+      group: string;
+      row_count: number;
+      sample_size: number;
+      covered_count: number;
+      empirical_coverage: number;
+      coverage_interval: { method: string; confidence_level: number; lower: number; upper: number };
+    }>;
+    interpretation: string;
+  } | null;
+  points: Array<{ actual: number | null; prediction: number | null; lower: number | null; upper: number | null }>;
+}
+
+export const getIntervals = (
+  task: string,
+  version: string,
+  body: {
+    alpha?: number;
+    train_partition?: string;
+    holdout_partition?: string | null;
+    group_by?: string;
+    max_groups?: number;
+  } = {},
+) =>
+  post<IntervalResult>(
+    `/api/evaluation/${encodeURIComponent(task)}/${encodeURIComponent(version)}/intervals`,
+    body,
+  );
+
+/* ------------------------------------------------------------------ */
+/* Experiment design                                                   */
+/* ------------------------------------------------------------------ */
+
+export interface DesignVariable {
+  name: string;
+  low: number;
+  high: number;
+}
+
+export const latinHypercube = (body: { variables: DesignVariable[]; n_samples: number; random_state?: number }) =>
+  post<{ columns: string[]; points: number[][] }>("/api/design/latin-hypercube", body);
+
+export const suggestNextPoint = (body: {
+  variables: DesignVariable[];
+  samples: number[][];
+  values: number[];
+  n_candidates?: number;
+  beta?: number;
+}) => post<{ columns: string[]; result: Record<string, unknown> }>("/api/design/suggest-next", body);
+
+/* ------------------------------------------------------------------ */
+/* Research projects                                                   */
+/* ------------------------------------------------------------------ */
+
+export interface ProjectArtifact {
+  kind: "dataset_partition" | "model_bundle" | "job" | "reference";
+  task_name?: string | null;
+  artifact_id?: string | null;
+  url?: string | null;
+  title?: string | null;
+  doi?: string | null;
+  label?: string | null;
+  snapshot?: {
+    schema: string;
+    captured_at: string;
+    fingerprint: string;
+    identity: { kind: string; task_name?: string; artifact_id?: string; url?: string };
+    details: Record<string, unknown>;
+  };
+}
+
+export interface ProjectResearchRecord {
+  record_id: string;
+  kind: "hypothesis" | "analysis" | "finding" | "conclusion";
+  title: string;
+  text: string;
+  research_question?: string;
+  status?: "proposed" | "under_investigation" | "supported" | "contradicted" | "inconclusive";
+  status_history?: Array<{
+    status: "proposed" | "under_investigation" | "supported" | "contradicted" | "inconclusive";
+    changed_at: string;
+  }>;
+  evidence: Array<{
+    relation: "supports" | "contradicts";
+    artifact: ProjectArtifact;
+  }>;
+  created_at: string;
+}
+
+export interface SynthesisSource {
+  id: string;
+  kind: string;
+  label: string;
+}
+
+export interface SynthesisFact extends SynthesisSource {
+  data: Record<string, unknown>;
+}
+
+export interface ProjectNote {
+  note_id: string;
+  text: string;
+  created_at: string;
+  source?: "human" | "generated";
+  model?: string | null;
+  citations?: string[];
+  sources?: SynthesisSource[];
+  computed_facts?: SynthesisFact[];
+  synthesis_job_id?: string | null;
+}
+
+export interface Project {
+  project_id: string;
+  name: string;
+  description: string;
+  research_questions: string[];
+  artifacts: ProjectArtifact[];
+  records: ProjectResearchRecord[];
+  notes: ProjectNote[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectSummary {
+  project_id: string;
+  artifacts: Array<
+    ProjectArtifact & {
+      exists: boolean;
+      status: string | null;
+      snapshot_status: "current" | "changed" | "missing" | "unverified";
+    }
+  >;
+  stages: Array<{ stage: string; label: string; done: boolean }>;
+}
+
+export interface SynthesisStatus {
+  enabled: boolean;
+  provider: {
+    configured: boolean;
+    model: string | null;
+    host: string | null;
+    timeout_seconds: number;
+    max_tokens: number;
+    protocol: string;
+  };
+  instructions: Record<string, string>;
+}
+
+export interface SynthesisResult {
+  project_id: string;
+  task_name: string;
+  model_version: string | null;
+  source_job_id: string | null;
+  draft: { text: string; citations: string[]; word_count: number };
+  sources: SynthesisSource[];
+  computed_facts: SynthesisFact[];
+  provider: SynthesisStatus["provider"];
+  interpretation: {
+    category: "generated_interpretation";
+    generated_by: string;
+    causal_effect: false;
+    limitations: string[];
+  };
+}
+
+export const getSynthesisStatus = () => get<SynthesisStatus>("/api/synthesis/status");
+
+export const submitSynthesis = (
+  projectId: string,
+  body: {
+    task_name: string;
+    model_version?: string | null;
+    job_id?: string | null;
+    partition?: string;
+    include_explanations?: boolean;
+    include_drift?: boolean;
+    instruction?: string | null;
+  },
+) =>
+  post<{ job_id: string; status: string; provider: SynthesisStatus["provider"] }>(
+    `/api/synthesis/projects/${encodeURIComponent(projectId)}`,
+    body,
+  );
+
+export const addGeneratedProjectNote = (
+  projectId: string,
+  body: {
+    text: string;
+    model: string;
+    citations: string[];
+    sources: SynthesisSource[];
+    computed_facts: SynthesisFact[];
+    synthesis_job_id?: string | null;
+  },
+) =>
+  post<Project>(`/api/projects/${encodeURIComponent(projectId)}/notes`, {
+    ...body,
+    source: "generated",
+  });
+
+export const listProjects = () => get<{ projects: Project[] }>("/api/projects");
+export const getProject = (id: string) => get<Project>(`/api/projects/${encodeURIComponent(id)}`);
+export const getProjectSummary = (id: string) => get<ProjectSummary>(`/api/projects/${encodeURIComponent(id)}/summary`);
+export const addProjectArtifact = (id: string, artifact: ProjectArtifact) =>
+  post<Project>(`/api/projects/${encodeURIComponent(id)}/artifacts`, artifact);
+export const createProject = (body: {
+  name: string;
+  description?: string;
+  research_questions?: string[];
+  artifacts?: ProjectArtifact[];
+}) => post<Project>("/api/projects", body);
+
+export const updateProject = (
+  id: string,
+  body: { name: string; description?: string; research_questions?: string[]; artifacts?: ProjectArtifact[] },
+) => request<Project>("PUT", `/api/projects/${encodeURIComponent(id)}`, body);
+
+export const addProjectNote = (id: string, text: string) =>
+  post<Project>(`/api/projects/${encodeURIComponent(id)}/notes`, { text });
+
+export const addProjectRecord = (
+  id: string,
+  body: Omit<ProjectResearchRecord, "record_id" | "created_at">,
+) => post<Project>(`/api/projects/${encodeURIComponent(id)}/records`, body);
+
+export const addProjectRecordEvidence = (
+  projectId: string,
+  recordId: string,
+  evidence: ProjectResearchRecord["evidence"][number],
+) =>
+  post<Project>(
+    `/api/projects/${encodeURIComponent(projectId)}/records/${encodeURIComponent(recordId)}/evidence`,
+    evidence,
+  );
+
+export const updateProjectHypothesisStatus = (
+  projectId: string,
+  recordId: string,
+  status: NonNullable<ProjectResearchRecord["status"]>,
+) =>
+  post<Project>(
+    `/api/projects/${encodeURIComponent(projectId)}/records/${encodeURIComponent(recordId)}/status`,
+    { status },
+  );

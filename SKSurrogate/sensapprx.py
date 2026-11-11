@@ -139,19 +139,6 @@ class SensAprx(BaseEstimator, TransformerMixin):
     def transform(self, X):
         return X[:, self.top_features_[: self.n_features_to_select]]
 
-    def fit_transform(self, X, y=None, **fit_params):
-        """
-        Fit to data, then transform it.
-
-        Fits transformer to X and y with optional parameters fit_params and returns a transformed version of X.
-
-        :param X: numpy array of shape [n_samples, n_features]; Training set.
-        :param y: numpy array of shape [n_samples]; Target values.
-        :return: Transformed array
-        """
-        self.fit(X, y)
-        return self.transform(X)
-
 
 class CorrelationThreshold(BaseEstimator, TransformerMixin):
     """
@@ -235,16 +222,3 @@ class CorrelationThreshold(BaseEstimator, TransformerMixin):
 
     def transform(self, X):
         return X[:, self.indices]
-
-    def fit_transform(self, X, y=None, **fit_params):
-        """
-        Fit to data, then transform it.
-
-        Fits transformer to X and y with optional parameters fit_params and returns a transformed version of X.
-
-        :param X: numpy array of shape [n_samples, n_features]; Training set.
-        :param y: numpy array of shape [n_samples]; Target values.
-        :return: Transformed array
-        """
-        self.fit(X, y)
-        return self.transform(X)

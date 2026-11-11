@@ -83,3 +83,39 @@ object. Unknown routes return HTTP 404. The adapter uses only the Python standar
 library in addition to the existing bundle and pandas dependencies.
 
 Latency and throughput measurements are collected for every batch and online request.
+
+Control-plane inference
+=======================
+
+Inside the SKSurrogate control plane the same ``predict_batch`` path is exposed
+over HTTP and recorded in monitoring. Resolve a registered model either by an
+exact ``model_version`` or by a lifecycle ``alias`` (for example
+``production``); exactly one is required, and alias resolution goes through
+``ModelRegistry``:
+
+.. code-block:: console
+
+   curl -s -X POST http://127.0.0.1:8013/api/inference/customer-churn/predict \
+     -H "Content-Type: application/json" \
+     -d '{"alias": "production", "rows": [{"tenure": 24, "monthly": 71.3}]}'
+
+``POST /api/inference/{task_name}/predict`` returns predictions as JSON
+together with the model version, request ID, latency/throughput metrics, and
+``ignored_columns``. ``POST /api/inference/{task_name}/predict-batch`` writes a
+CSV under the task's predictions directory, returns its ``output_path``, and
+best-effort registers it as a prediction artifact so lineage stays complete.
+
+Input is either inline ``rows`` — the serving payload, validated exactly as
+sent — or a stored ``partition``, which is registered training data and is
+therefore projected onto the bundle schema first (the target and other
+non-feature columns are dropped and reported as ``ignored_columns``). Set
+``"preflight": true`` to validate the frame against the task's registered
+dataset schema and receive the schema-difference message instead of a raw
+prediction failure.
+
+Every request appends a monitoring record (latency, rows, success or error)
+keyed to the model version, which the Monitoring page summarizes. Note the
+dependency-check asymmetry: the control plane loads bundles with
+``strict_dependencies=False`` and leaves compatibility to the deployment
+environment, while the library, CLI, and WSGI adapter default to strict
+checks.

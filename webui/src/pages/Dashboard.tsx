@@ -5,14 +5,25 @@ import type { JobRecord, MonitoringAlert } from "../api/client";
 import { Badge, Card, Stat, StatusBadge, Table, ErrorNote, Loading, fmtNum } from "../components/ui";
 
 const STAGES: Array<{ to: string; title: string; desc: string }> = [
-  { to: "/datasets", title: "Datasets", desc: "Register data, inspect schema & fingerprint" },
+  { to: "/projects", title: "Projects", desc: "Group an investigation and track its progress" },
+  { to: "/datasets", title: "1. Datasets", desc: "Register data, inspect schema & fingerprint" },
   { to: "/features", title: "Feature Analysis", desc: "Sobol / Morris sensitivity, correlation pruning" },
-  { to: "/experiments", title: "Experiments", desc: "AML/EOA pipeline search with live progress" },
+  { to: "/design", title: "Experiment Design", desc: "Plan the next experiments, suggest the next point" },
+  { to: "/experiments", title: "2. Experiments", desc: "Quick start presets or full AML/EOA search" },
+  { to: "/explain", title: "Explain", desc: "Feature importance, partial dependence, prediction intervals" },
   { to: "/bundles", title: "Model Bundles", desc: "Train baselines, inspect schema & metrics" },
-  { to: "/quality-gates", title: "Quality Gates", desc: "CI checks before promotion" },
+  { to: "/quality-gates", title: "3. Quality Gates", desc: "CI checks before promotion" },
   { to: "/registry", title: "Registry & Deployment", desc: "Lifecycle, approvals, rollback" },
-  { to: "/inference", title: "Inference", desc: "Predict console & batch runs" },
+  { to: "/inference", title: "4. Inference", desc: "Predict console & batch runs" },
   { to: "/monitoring", title: "Monitoring", desc: "Drift, fairness, latency" },
+  { to: "/retraining", title: "Retraining", desc: "Triggered refresh with promotion checks" },
+];
+
+const FIRST_STEPS: Array<{ to: string; text: string }> = [
+  { to: "/datasets", text: "Pick a task name in the top bar, then upload a CSV on Datasets." },
+  { to: "/experiments", text: "Open Experiments and press “Find best model” (Quick start)." },
+  { to: "/explain", text: "Check what the model learned on Explain." },
+  { to: "/quality-gates", text: "Run a quality gate, then promote the model from Registry." },
 ];
 
 export default function DashboardPage() {
@@ -36,6 +47,18 @@ export default function DashboardPage() {
         <Stat label="Completed" value={fmtNum(jobsQ.data?.jobs.filter((j) => j.status === "completed").length)} />
         <Stat label="Failed" value={fmtNum(jobsQ.data?.jobs.filter((j) => j.status === "failed").length)} />
       </div>
+
+      {jobsQ.data && jobsQ.data.jobs.length === 0 && (
+        <Card title="Getting started" sub="Four steps from a CSV to a served model.">
+          <ol>
+            {FIRST_STEPS.map((step) => (
+              <li key={step.to}>
+                <Link to={step.to}>{step.text}</Link>
+              </li>
+            ))}
+          </ol>
+        </Card>
+      )}
 
       <Card title="Recent monitoring alerts" sub="Latest drift findings and inference failures across tasks.">
         {alertsQ.isLoading && <Loading />}

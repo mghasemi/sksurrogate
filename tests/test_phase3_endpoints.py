@@ -13,6 +13,7 @@ as ``train`` / ``validation`` partitions — matching the phase 1 test pattern.
 """
 
 import io
+import json
 import tempfile
 import unittest
 import zipfile
@@ -32,6 +33,8 @@ from SKSurrogate import ModelBundle, ModelRegistry, save_bundle
 from api.config import settings
 from api.deps import open_tracker
 from api.routers import bundles as bundles_router
+from api.routers import lineage as lineage_router
+from api.routers.registry import PromoteRequest, RegisterRequest
 from api.routers import registry as registry_router
 
 #: Small binary-classification dataset shipped with the repo (1600 rows, 21 columns).
@@ -117,6 +120,45 @@ class TestPhase3Endpoints(unittest.TestCase):
         self.assertEqual(payload["model_version"], GOOD_VERSION)
         self.assertAlmostEqual(payload["value"], 0.91, places=6)
 
+    def test_promote_requires_server_computed_quality_report(self):
+        registry_router.register_bundle(TASK, RegisterRequest(model_version=GOOD_VERSION))
+
+        payload = registry_router.promote_bundle(
+            TASK,
+            PromoteRequest(
+                model_version=GOOD_VERSION,
+                state="validated",
+                approvers=["reviewer"],
+            ),
+        )
+
+        self.assertEqual(payload["status"], "promoted")
+        self.assertTrue(payload["quality_report"]["passed"])
+        self.assertTrue(
+            any(
+                check["name"] == "schema_compatibility" and check["passed"]
+                for check in payload["quality_report"]["checks"]
+            )
+        )
+
+    def test_promote_rejects_a_failed_submitted_quality_report(self):
+        registry_router.register_bundle(TASK, RegisterRequest(model_version=GOOD_VERSION))
+
+        with self.assertRaises(HTTPException) as ctx:
+            registry_router.promote_bundle(
+                TASK,
+                PromoteRequest(
+                    model_version=GOOD_VERSION,
+                    state="validated",
+                    approvers=["reviewer"],
+                    quality_report={"passed": False},
+                ),
+            )
+
+        self.assertEqual(ctx.exception.status_code, 400)
+        registry = ModelRegistry(settings.registry_dir)
+        self.assertEqual(registry.version_state(TASK, GOOD_VERSION), "candidate")
+
     def test_best_prefers_the_first_metric_that_ranks_anything(self):
         estimator = self._bundle_model(WEAK_VERSION)
         self._save_bundle(estimator, "weak-v2", score=None, train_score=0.99)
@@ -148,6 +190,64 @@ class TestPhase3Endpoints(unittest.TestCase):
             bundles_router.best_bundle(TASK, metric="train_score")
 
         self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_run_configuration_and_markdown_report_export(self):
+        response = bundles_router.train_baseline(
+            TASK,
+            bundles_router.TrainBaselineRequest(
+                estimator="logistic_regression",
+                run_id="baseline-run-1",
+            ),
+        )
+
+        config = bundles_router.export_run_configuration(TASK, response["model_version"])
+        report = bundles_router.export_run_report(TASK, response["model_version"])
+        with open_tracker(TASK) as tracker:
+            partitions = tracker.dataset_splits()
+            train_fingerprint = partitions["train"]["fingerprint"]
+        lineage = lineage_router.get_lineage(TASK, response["model_version"])
+
+        self.assertEqual(config["schema"], "sksurrogate.run-configuration.v1")
+        self.assertEqual(config["run_id"], "baseline-run-1")
+        self.assertEqual(config["run"]["data"]["train_partition"], "train")
+        self.assertEqual(config["run"]["data"]["train_fingerprint"], train_fingerprint)
+        self.assertEqual(config["lineage"]["dataset_fingerprint"], train_fingerprint)
+        self.assertEqual(
+            config["run"]["configuration"]["validation_partition_fingerprint"],
+            partitions["validation"]["fingerprint"],
+        )
+        self.assertEqual(
+            lineage["dataset"]["dataset_fingerprint"], train_fingerprint
+        )
+        self.assertEqual(
+            lineage["dataset"]["training"]["train_partition"], "train"
+        )
+        self.assertIn("StandardScaler", config["run"]["transformations"][0]["class"])
+        self.assertTrue(config["metrics"])
+        self.assertEqual(report.media_type, "text/markdown")
+        self.assertIn("## Methodology", report.body.decode("utf-8"))
+        self.assertIn("## Assumptions and scope", report.body.decode("utf-8"))
+        self.assertIn("Target handling:", report.body.decode("utf-8"))
+        self.assertIn("Observation exclusions:", report.body.decode("utf-8"))
+        self.assertIn("Metric scope:", report.body.decode("utf-8"))
+        self.assertIn("## Uncertainty", report.body.decode("utf-8"))
+        self.assertIn("point estimates", report.body.decode("utf-8"))
+        self.assertIn("## Lineage", report.body.decode("utf-8"))
+        self.assertIn("## Source artifacts", report.body.decode("utf-8"))
+        self.assertIn(
+            "[Registered dataset metadata](/api/datasets/%s)" % TASK,
+            report.body.decode("utf-8"),
+        )
+        self.assertIn(
+            "[Machine-readable run configuration](/api/bundles/%s/%s/run-config)"
+            % (TASK, response["model_version"]),
+            report.body.decode("utf-8"),
+        )
+        self.assertIn(
+            "[Model bundle](/api/bundles/%s/%s/download)" % (TASK, response["model_version"]),
+            report.body.decode("utf-8"),
+        )
+        json.dumps(config)
 
     # ------------------------------------------------------------ 3.1 preserve
 

@@ -77,6 +77,19 @@ where :math:`g_{x_i}(x_i)` is the distribution of the values of :math:`x_i`.
           prefers using scikit-learn's wrapper, then the function should be modified to resemble
           a scikit-learn regressor which simply ignores training data.
 
+**Interpretation and implementation limits.**
+
+The API fits the sensitivity surrogate to the selected training partition,
+then evaluates it on method-generated samples over independent rectangular
+feature ranges based on each observed minimum and maximum plus a margin of 0.2
+in each feature's units. These indices
+describe the fitted surrogate's response to input perturbations under that
+design; they are not Pearson feature-target associations, model-score
+attributions, or causal effects. Correlated and categorical features can
+produce unrealistic combinations in the generated design, so interpret the
+results cautiously and consider the method assumptions and generated ranges
+before using rankings to narrow a search.
+
 
 ================================================
 Eliminate features based on Pearson correlation
@@ -112,7 +125,7 @@ The above procedure selects those features which has high (positive or negative)
 other features and omits the other features. Repeats this process until no more pair with high correlation remains.
 
 Heatmaps
---------
+========
 
 ``SKSurrogate.mltrace.mltrack.heatmap`` renders any :class:`pandas.DataFrame`
 as a labelled matrix (``imshow`` with row/column ticks), which is how the
@@ -136,3 +149,12 @@ and accept ``train_partition`` and ``max_features`` (default ``60``) query
 parameters. Requests for wider datasets are rejected with HTTP ``400`` so that
 an oversized matrix is never shipped to the client; prune the feature set first
 or raise the limit.
+
+These analyses complement Explain's permutation importance and partial
+dependence. Pearson feature correlation describes observed pairwise association;
+target correlation is a marginal data association; Sobol, Morris, and delta
+indices describe surrogate responses over generated inputs; permutation
+importance measures a score drop on a selected reference partition. Their
+quantities and input contracts differ, so numerical disagreement is expected
+and raw values are not a common ranking or causal evidence. The UI links these
+pages to encourage interpretation side by side without conflating the measures.

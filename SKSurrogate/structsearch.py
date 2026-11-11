@@ -33,6 +33,12 @@ There are various ways for sampling a random point in feasible space which affec
 volume of the box or sphere that the sample is selected from too.
 """
 
+import logging
+
+from ._logutil import emit, get_logger
+
+logger = get_logger(__name__)
+
 
 class BaseSample(object):
     """
@@ -183,6 +189,23 @@ class SphereSample(BaseSample):
         return candid
 
 
+def _resolve_continue_flag(legacy, canonical):
+    if canonical is not None and legacy is not False and legacy != canonical:
+        raise ValueError("Continue and continue_ cannot specify conflicting values")
+    return legacy if canonical is None else canonical
+
+
+def resolve_sampling(sampling):
+    """Return a sampler class from a class or one of ``"box"``, ``"sphere"``, ``"compact"``."""
+    if isinstance(sampling, str):
+        registry = {"box": BoxSample, "sphere": SphereSample, "compact": CompactSample}
+        try:
+            return registry[sampling.lower()]
+        except KeyError:
+            raise ValueError("sampling must be one of %s or a sampler class" % sorted(registry))
+    return sampling
+
+
 class SurrogateSearch(object):
     """
     An implementation of the Surrogate Random Search (SRS).
@@ -207,7 +230,8 @@ class SurrogateSearch(object):
     :param scipy_solver: `str` the scipy solver ('COBYLA' or 'SLSQP') to solve the local optimization problem at each
         iteration (default: 'COBYLA')
     :param max_itr_no_prog: `int` maximum number of iterations with no progress (default: infinity)
-    :param Continue: `boolean` continues the progress from where it has been interrupted (default: False)
+    :param continue_: `boolean` continues progress from where it was interrupted (default: False)
+    :param Continue: legacy spelling for `continue_`; retained for compatibility
     :param warm_start: `boolean` use data from the previous attempts, but starts from the first iteration
         (default: False)
     :param cpu_limit: Optional cap on the parallelism consumed by any internal worker pool.
@@ -233,7 +257,7 @@ class SurrogateSearch(object):
         self.min_partial_folds = kwargs.pop("min_partial_folds", 1)
         self.radius = kwargs.pop("radius", 2.0)
         self.contraction = kwargs.pop("contraction", 0.9)
-        sampling = kwargs.pop("sampling", SphereSample)
+        sampling = resolve_sampling(kwargs.pop("sampling", SphereSample))
         self.Sampling = sampling(
             init_radius=self.radius,
             contraction=self.contraction,
@@ -247,16 +271,22 @@ class SurrogateSearch(object):
         self.NumIterNoProg = 0
         self.x0 = kwargs.pop("x0", None)
         self.evaluated = []
+        self.sampling_sources_ = []
+        self._next_eval_phase = None
         self.NumFailedLocOptim = 0
         # init data storing protocol
         self.TaskName = kwargs.pop("task_name", "optim_task")
-        self.Continue = kwargs.pop("Continue", False)
+        legacy_continue = kwargs.pop("Continue", False)
+        canonical_continue = kwargs.pop("continue_", None)
+        self.Continue = _resolve_continue_flag(legacy_continue, canonical_continue)
         self.warm_start = kwargs.pop("warm_start", False)
         self.optimizer = kwargs.get("optimizer", "scipy")
         self.__load()
         if self.x0 is not None:
+            self._next_eval_phase = "init"
             val = self.objective(self.x0)
             self.evaluated.append([self.x0, val])
+            self.sampling_sources_.append("init")
             self.current = self.x0
             self.current_val = val
             n_ = len(self.x0)
@@ -265,7 +295,9 @@ class SurrogateSearch(object):
         self.search_sphere = kwargs.pop("search_sphere", False)
         poly_deg = kwargs.pop("deg", 3)
         self.MinEvals = kwargs.pop("min_evals", binom(n_ + poly_deg, n_))
-        self.regressor = kwargs.pop("regressor", None)
+        requested_regressor = kwargs.pop("regressor", None)
+        self.regressor = requested_regressor
+        regressor_source = "user" if requested_regressor is not None else "default"
         self.scipy_solver = kwargs.get("scipy_solver", "COBYLA")
         self.termination_reason = None
         self.summary_ = {}
@@ -283,6 +315,19 @@ class SurrogateSearch(object):
             new_n_evals = binom(n_ + 3, n_)
             if self.MinEvals < new_n_evals:
                 self.MinEvals = new_n_evals
+        regressor_type = type(self.regressor)
+        self.surrogate_info_ = {
+            "regressor": "%s.%s" % (regressor_type.__module__, regressor_type.__qualname__),
+            "source": regressor_source,
+            "min_evals": int(self.MinEvals),
+            "automatic_fallback": None,
+            "fit_attempts": 0,
+            "fit_failures": 0,
+            "prediction_failures": 0,
+            "local_optimization_failures": 0,
+            "fit_history": [],
+        }
+        self.surrogate_fit_history_ = self.surrogate_info_["fit_history"]
         self.other = kwargs
 
     def __save(self):
@@ -298,6 +343,7 @@ class SurrogateSearch(object):
             evaluated=self.evaluated,
             current=self.current,
             current_val=self.current_val,
+            sampling_sources=self.sampling_sources_,
         )
         fl.write(dumps(data2store))
         fl.close()
@@ -340,6 +386,14 @@ class SurrogateSearch(object):
         if self.warm_start:
             if "evaluated" in restored_data:
                 self.evaluated = restored_data["evaluated"]
+        # Sampling provenance is only restored when it aligns one-to-one with the
+        # restored evaluations; checkpoints written before this key existed carry
+        # no provenance, and inventing tags for them would be a false record.
+        restored_sources = restored_data.get("sampling_sources", [])
+        if isinstance(restored_sources, list) and len(restored_sources) == len(self.evaluated):
+            self.sampling_sources_ = list(restored_sources)
+        else:
+            self.sampling_sources_ = []
 
     def __round_optim(self, obj, x0, cns):
         """
@@ -404,12 +458,71 @@ class SurrogateSearch(object):
 
         if n_close_points >= self.MinEvals:
             if self.verbose > 1:
-                print(
+                emit(
+                    logging.DEBUG,
                     "Found enough number of points (%d) for approximation."
-                    % n_close_points
+                    % n_close_points,
                 )
-            self.regressor.fit(array(X), array(y))
-            apprx = lambda x: self.regressor.predict(array([x]))[0]
+            fit_record = {
+                "iteration": int(self.iteration),
+                "training_points": int(n_close_points),
+                "fit_status": "started",
+                "optimization_status": "not_run",
+            }
+            self.surrogate_fit_history_.append(fit_record)
+            self.surrogate_info_["fit_attempts"] += 1
+            try:
+                self.regressor.fit(array(X), array(y))
+            except Exception as exc:
+                fit_record.update(
+                    fit_status="failed",
+                    failure_stage="fit",
+                    failure_type=type(exc).__name__,
+                )
+                self.surrogate_info_["fit_failures"] += 1
+                emit(
+                    logging.WARNING,
+                    "Surrogate fit failed at iteration %d: %s: %s"
+                    % (self.iteration, type(exc).__name__, exc),
+                )
+                raise
+            fit_record["fit_status"] = "complete"
+            # In-sample fidelity of the surrogate itself (Commit B1). Records how
+            # well the response surface explains the observed scores so far; a new
+            # key only, existing fit_record keys are left untouched.
+            surrogate_scorer = getattr(self.regressor, "score", None)
+            fit_score = None
+            if callable(surrogate_scorer):
+                try:
+                    candidate_fit_score = float(surrogate_scorer(array(X), array(y)))
+                except Exception:
+                    candidate_fit_score = None
+                if candidate_fit_score is not None and isfinite(candidate_fit_score):
+                    fit_score = candidate_fit_score
+            fit_record["fit_score"] = fit_score
+
+            def apprx(x):
+                try:
+                    prediction = array(self.regressor.predict(array([x])))
+                    if prediction.size != 1 or not isfinite(float(prediction.reshape(-1)[0])):
+                        raise ValueError(
+                            "Surrogate predictions must contain exactly one finite value"
+                        )
+                except Exception as exc:
+                    fit_record.update(
+                        status="failed",
+                        failure_stage="predict",
+                        failure_type=type(exc).__name__,
+                    )
+                    self.surrogate_info_["prediction_failures"] += 1
+                    emit(
+                        logging.ERROR,
+                        "Surrogate prediction failed at iteration %d: %s: %s"
+                        % (self.iteration, type(exc).__name__, exc),
+                    )
+                    raise
+                return float(prediction.reshape(-1)[0])
+
             cns = []
             if self.search_sphere:
                 r = self.radius * (self.contraction ** int(self.NumFailedLocOptim / 2))
@@ -419,23 +532,36 @@ class SurrogateSearch(object):
                 cns = [{"type": "ineq", "fun": cns_f}]
             for inq in self.ineqs:
                 cns.append({"type": "ineq", "fun": inq})
-            min_res = self.__round_optim(apprx, x0, cns)
+            try:
+                min_res = self.__round_optim(apprx, x0, cns)
+            except Exception as exc:
+                if "failure_stage" not in fit_record:
+                    fit_record.update(
+                        status="failed",
+                        failure_stage="local_optimization",
+                        failure_type=type(exc).__name__,
+                    )
+                raise
             x_0 = min_res.x
             if min_res.success:
+                fit_record["optimization_status"] = "success"
                 self.NumFailedLocOptim = 0
                 try:
+                    self._next_eval_phase = "surrogate_exploit"
                     val = self.objective(x_0)
                     self.evaluated.append([x_0, val])
+                    self.sampling_sources_.append("surrogate_exploit")
                     if self.verbose > 1:
-                        print(
-                            """Minimum point of the approximation: %s;\nThe objective's value: %f;\nThe surrogate\\
+                        emit(
+                            logging.DEBUG,
+                            """Minimum point of the approximation: %s;\nThe objective's value: %f;\nThe surrogate\
                              value %f"""
-                            % (str(x_0), val, min_res.fun)
+                            % (str(x_0), val, min_res.fun),
                         )
                     if val < self.current_val:
                         self.NumIterNoProg = 0
                         if self.verbose > 0:
-                            print("NEW CANDIDATE")
+                            emit(logging.INFO, "NEW CANDIDATE")
                         self.current = x_0
                         self.current_val = val
                     else:
@@ -444,30 +570,36 @@ class SurrogateSearch(object):
                     self.NumIterNoProg += 1
                     self.NumFailedLocOptim += 1
                     if self.verbose > 1:
-                        print("""Error in function evaluation.""")
+                        emit(logging.DEBUG, """Error in function evaluation.""")
                     return
             else:
+                fit_record["optimization_status"] = "failed"
+                fit_record["optimizer_status"] = getattr(min_res, "status", None)
+                self.surrogate_info_["local_optimization_failures"] += 1
                 self.NumFailedLocOptim += 1
                 if self.verbose > 1:
-                    print("The local optimization was not successful.")
+                    emit(logging.DEBUG, "The local optimization was not successful.")
         else:
+            self._next_eval_phase = "explore"
             val = self.objective(x0)
             self.evaluated.append([x0, val])
+            self.sampling_sources_.append("explore")
             if self.verbose > 1:
-                print(
+                emit(
+                    logging.DEBUG,
                     """New point sampled: %s;\nThe objective's value: %f"""
-                    % (str(x0), val)
+                    % (str(x0), val),
                 )
             if val < self.current_val:
                 self.NumIterNoProg = 0
                 if self.verbose > 0:
-                    print("NEW CANDIDATE")
+                    emit(logging.INFO, "NEW CANDIDATE")
                 self.current = x0
                 self.current_val = val
             else:
                 self.NumIterNoProg += 1
         if self.verbose > 1:
-            print("==========" * 8)
+            emit(logging.DEBUG, "==========" * 8)
         self.iteration += 1
 
     def __call__(self, *args, **kwargs):
@@ -490,7 +622,9 @@ class SurrogateSearch(object):
         if self.verbose > 0:
             # pbar = tqdm(total=self.MaxIter)
             # pbar.update(self.iteration)
-            print("Iteration {m} / {n}".format(m=self.iteration, n=self.MaxIter))
+            emit(
+                logging.INFO, "Iteration {m} / {n}".format(m=self.iteration, n=self.MaxIter)
+            )
         self.__optim_param()
         while self.iteration <= self.MaxIter:
             if self.time_limit is not None and monotonic() - started >= self.time_limit:
@@ -500,8 +634,8 @@ class SurrogateSearch(object):
                 self.termination_reason = "max_evals"
                 break
             if self.verbose > 1:
-                print("Iteration # %d" % self.iteration)
-                print("----------" * 8)
+                emit(logging.DEBUG, "Iteration # %d" % self.iteration)
+                emit(logging.DEBUG, "----------" * 8)
             new_point = self.Sampling.sample(
                 self.current,
                 cntrctn=self.contraction
@@ -509,13 +643,16 @@ class SurrogateSearch(object):
             )
             self.__iterate(new_point)
             if self.NumIterNoProg > self.MaxIterNoProg:
-                if self.verbose > 1:
-                    print("No progress in %d iterations." % self.NumIterNoProg)
+                emit(
+                    logging.WARNING,
+                    "Search stopped after %d iterations without improvement."
+                    % self.NumIterNoProg,
+                )
                 self.termination_reason = "max_iter_no_progress"
                 break
             # if tqdm is not None:
             if self.verbose > 0:
-                print("End of iteration.")
+                emit(logging.INFO, "End of iteration.")
                 # pbar.update(1)  # update the progressbar
             self.__save()  # save the progress
         if self.termination_reason is None:
@@ -534,7 +671,28 @@ class SurrogateSearch(object):
                 "evaluations": len(self.evaluated),
             },
             "current_value": getattr(self, "current_val", None),
+            "surrogate": self.surrogate_info_,
         }
+        fit_failures = int(self.surrogate_info_.get("fit_failures", 0))
+        prediction_failures = int(self.surrogate_info_.get("prediction_failures", 0))
+        local_optimization_failures = int(
+            self.surrogate_info_.get("local_optimization_failures", 0)
+        )
+        if fit_failures or prediction_failures or local_optimization_failures:
+            # One aggregated line instead of one per event: the per-event detail
+            # already lives in surrogate_fit_history_, so warning on every failure
+            # would flood a long run without adding information.
+            emit(
+                logging.WARNING,
+                "Surrogate diagnostics: %d fit failure(s), %d prediction failure(s), "
+                "%d local-optimization failure(s) across %d fit attempt(s)."
+                % (
+                    fit_failures,
+                    prediction_failures,
+                    local_optimization_failures,
+                    int(self.surrogate_info_.get("fit_attempts", 0)),
+                ),
+            )
         return self.current, self.current_val
 
     def progress(self):
@@ -661,6 +819,28 @@ except ModuleNotFoundError:
     delayed = type("delayed", (object,), dict())
 
 
+def as_space(value):
+    """Coerce shorthand into a search-space object.
+
+    ``(a, b)`` tuples become ``Integer`` (both ints) or ``Real``; any other list
+    or tuple becomes ``Categorical``. Existing space objects pass through.
+    """
+    from numpy import floating, integer
+
+    if getattr(value, "VType", None) is not None:
+        return value
+    if isinstance(value, tuple) and len(value) == 2 and all(
+        isinstance(v, (int, float, integer, floating)) and not isinstance(v, bool)
+        for v in value
+    ):
+        if all(isinstance(v, (int, integer)) for v in value):
+            return Integer(*value)
+        return Real(*value)
+    if isinstance(value, (list, tuple, set)):
+        return Categorical(list(value))
+    return value
+
+
 class SurrogateRandomCV(BaseSearchCV):
     """
     Surrogate Random Search optimization over hyperparameters.
@@ -676,6 +856,8 @@ class SurrogateRandomCV(BaseSearchCV):
     :param estimator: estimator object. An object of that type is instantiated for each search point. This object is
         assumed to implement the scikit-learn estimator api. Either estimator needs to provide a ``score`` function,
         or ``scoring`` must be passed.
+    :param param_distributions: dict Scikit-learn style name for ``params``; either may be given.
+    :param n_iter: int Scikit-learn style name for ``max_iter``; either may be given.
     :param params: dict Dictionary with parameters names (string) as keys and domains as lists of parameter ranges
         to try. Domains are either lists of categorical (string) values or 2 element lists specifying a min and max
         for integer or float parameters
@@ -731,12 +913,19 @@ class SurrogateRandomCV(BaseSearchCV):
         this RandomizedSearchCV instance after fitting.
     :param verbose: int, default=0
         Prints internal information about the progress of each iteration.
+    :param callbacks: callable or iterable of callables, default=None
+        Called with one event dictionary per evaluated candidate: the trial record
+        plus a zero-based ``trial`` index and the optimizer's ``phase``
+        (``init`` / ``explore`` / ``surrogate_exploit``, or ``None`` when unknown).
+        A callback that raises is logged and skipped; it never aborts the search.
+        See :doc:`telemetry` for the event contract and ``to_audit_dict`` for the
+        end-of-run bundle.
     """
 
     def __init__(
             self,
             estimator,
-            params,
+            params=None,
             scoring=None,
             fit_params=None,
             n_jobs=-1,
@@ -770,7 +959,22 @@ class SurrogateRandomCV(BaseSearchCV):
             min_partial_folds=1,
             forbidden=(),
             conditional=(),
+            continue_=None,
+            param_distributions=None,
+            n_iter=None,
+            callbacks=None,
     ):
+        resolved_continue = _resolve_continue_flag(Continue, continue_)
+        if param_distributions is not None and params is not None and params != param_distributions:
+            raise ValueError("params and param_distributions cannot both be given")
+        space = param_distributions if param_distributions is not None else params
+        if space is None:
+            raise ValueError("param_distributions (or its alias params) is required")
+        if n_iter is not None and max_iter != 50 and max_iter != n_iter:
+            raise ValueError("max_iter and n_iter cannot specify conflicting values")
+        self.param_space_ = {name: as_space(v) for name, v in space.items()}
+        self.param_distributions = param_distributions
+        self.n_iter = n_iter
         super(SurrogateRandomCV, self).__init__(
             estimator=estimator,
             scoring=scoring,
@@ -784,8 +988,9 @@ class SurrogateRandomCV(BaseSearchCV):
         )
         self.params = params
         self.fit_params = fit_params
-        self.params_list = list(params.keys())
+        self.params_list = list(space.keys())
         self.max_iter = max_iter
+        self.max_iter_ = n_iter if n_iter is not None else max_iter
         self.min_evals = min_evals
         self.radius = radius
         self.contraction = contraction
@@ -796,7 +1001,7 @@ class SurrogateRandomCV(BaseSearchCV):
         self.scipy_solver = scipy_solver
         self.task_name = task_name
         self.warm_start = warm_start
-        self.Continue = Continue
+        self.Continue = resolved_continue
         self.max_itr_no_prog = max_itr_no_prog
         self.time_limit = time_limit
         self.max_evals = max_evals
@@ -805,8 +1010,9 @@ class SurrogateRandomCV(BaseSearchCV):
         self.prune_threshold = prune_threshold
         self.min_partial_folds = min_partial_folds
         self.forbidden = tuple(forbidden)
-        self.conditional = dict(conditional)
+        self.conditional = conditional if isinstance(conditional, dict) else dict(conditional)
         self.random_state = random_state
+        self.callbacks = callbacks
         self.bounds = []
         if self.cpu_limit is not None:
             limit = int(self.cpu_limit)
@@ -821,12 +1027,21 @@ class SurrogateRandomCV(BaseSearchCV):
         self.x0 = ()
         self.best_estimator_ = None
         self.best_estimator_score = 0.0
-        self.best_score_ = 0.
+        self.best_score_ = float("-inf")
         self.evaluation_history_ = []
         self.cv_results_ = {}
         self.termination_reason = None
         self.summary_ = {}
         self.failure_summary_ = {}
+        self.surrogate_info_ = {}
+
+    @property
+    def continue_(self):
+        return self.Continue
+
+    @continue_.setter
+    def continue_(self, value):
+        self.Continue = value
 
     def _validate_search_space(self):
         """Validate parameter definitions before starting model evaluation."""
@@ -841,7 +1056,7 @@ class SurrogateRandomCV(BaseSearchCV):
                     "Unknown search parameter %r for %s"
                     % (name, self.estimator.__class__.__name__)
                 )
-            parameter = self.params[name]
+            parameter = self.param_space_[name]
             value_type = getattr(parameter, "VType", None)
             if value_type == "categorical":
                 if not parameter.items:
@@ -900,12 +1115,27 @@ class SurrogateRandomCV(BaseSearchCV):
             return exp(value)
         return value
 
+    @staticmethod
+    def _rule_value_matches(actual, expected):
+        """Compare a candidate's parameter value against a rule's expected value.
+
+        A scalar is compared with equality; a list/tuple/set of values matches
+        when the actual value is any one of them (the ``depends_on`` contract:
+        "allowed values").
+        """
+        if isinstance(expected, (list, tuple, set)):
+            return any(actual == item for item in expected)
+        return actual == expected
+
     def _forbidden_reason(self, parameters):
         for rule in self.forbidden:
             if callable(rule):
                 matched = rule(parameters)
             elif isinstance(rule, dict):
-                matched = all(parameters.get(name) == value for name, value in rule.items())
+                matched = all(
+                    self._rule_value_matches(parameters.get(name), value)
+                    for name, value in rule.items()
+                )
             else:
                 raise ValueError("Forbidden rules must be callables or parameter mappings")
             if matched:
@@ -917,7 +1147,10 @@ class SurrogateRandomCV(BaseSearchCV):
         if callable(rule):
             return bool(rule(parameters))
         if isinstance(rule, dict):
-            return all(parameters.get(name) == value for name, value in rule.items())
+            return all(
+                SurrogateRandomCV._rule_value_matches(parameters.get(name), value)
+                for name, value in rule.items()
+            )
         raise ValueError("Conditional rules must be callables or parameter mappings")
 
     def _apply_conditional_parameters(self, parameters):
@@ -1003,6 +1236,13 @@ class SurrogateRandomCV(BaseSearchCV):
 
         self._validate_search_space()
         self._validate_pipeline_structure()
+        callbacks = self.callbacks
+        if callbacks is None:
+            callbacks = []
+        elif callable(callbacks):
+            callbacks = [callbacks]
+        else:
+            callbacks = list(callbacks)
         # from lightgbm.sklearn import LightGBMError
         radius_list = []
         self.scorer_ = check_scoring(self.estimator, scoring=self.scoring)
@@ -1016,7 +1256,7 @@ class SurrogateRandomCV(BaseSearchCV):
         x0_ = []
         self.bounds = list(self.bounds)
         for param in self.params_list:
-            param_num_range = self.params[param]
+            param_num_range = self.param_space_[param]
             if param_num_range.VType != "hdreal":
                 lower, upper = self._encoded_bounds(param_num_range)
                 radius_list.append(
@@ -1061,6 +1301,24 @@ class SurrogateRandomCV(BaseSearchCV):
         self.bounds = tuple(self.bounds)
         cv_dat = list(cv.split(X, y, groups))
 
+        def _notify_trial(record):
+            """Deliver one per-trial event to every registered callback.
+
+            ``trial`` is the record's zero-based position in
+            ``evaluation_history_``; ``phase`` is the optimizer's sampling tag
+            for this objective call (``None`` when unavailable). A callback that
+            raises is logged and skipped so a broken callback can never abort a
+            search.
+            """
+            event = dict(record)
+            event["trial"] = len(self.evaluation_history_) - 1
+            event["phase"] = getattr(self.OPTIM, "_next_eval_phase", None)
+            for callback in callbacks:
+                try:
+                    callback(event)
+                except Exception:
+                    logger.error("SurrogateRandomCV trial callback failed", exc_info=True)
+
         def obj(x):
             from time import perf_counter
 
@@ -1068,7 +1326,7 @@ class SurrogateRandomCV(BaseSearchCV):
             cand_params = {}
             _idx = 0
             for _param in self.params_list:
-                _param_num_range = self.params[_param]
+                _param_num_range = self.param_space_[_param]
                 if _param_num_range.VType != "hdreal":
                     if _param_num_range.VType == "integer":
                         cand_params[_param] = int(round(self._decode_value(_param_num_range, x[_idx])))
@@ -1094,49 +1352,49 @@ class SurrogateRandomCV(BaseSearchCV):
             cand_params = self._apply_conditional_parameters(cand_params)
             forbidden_reason = self._forbidden_reason(cand_params)
             if forbidden_reason is not None:
-                self.evaluation_history_.append(
-                    {
-                        "params": cand_params.copy(),
-                        "score": None,
-                        "status": "invalid",
-                        "duration": perf_counter() - started,
-                        "fold_duration": 0.0,
-                        "error": forbidden_reason,
-                        "partial_folds": 0,
-                        "failure_records": [
-                            {
-                                "fold": None,
-                                "type": "ForbiddenParameterCombination",
-                                "message": forbidden_reason,
-                                "traceback": None,
-                                "parameters": cand_params.copy(),
-                            }
-                        ],
-                    }
-                )
+                record = {
+                    "params": cand_params.copy(),
+                    "score": None,
+                    "status": "invalid",
+                    "duration": perf_counter() - started,
+                    "fold_duration": 0.0,
+                    "error": forbidden_reason,
+                    "partial_folds": 0,
+                    "failure_records": [
+                        {
+                            "fold": None,
+                            "type": "ForbiddenParameterCombination",
+                            "message": forbidden_reason,
+                            "traceback": None,
+                            "parameters": cand_params.copy(),
+                        }
+                    ],
+                }
+                self.evaluation_history_.append(record)
+                _notify_trial(record)
                 return float("inf")
             zero_feature_reason = self._zero_feature_reason(cand_params, X, y)
             if zero_feature_reason is not None:
-                self.evaluation_history_.append(
-                    {
-                        "params": cand_params.copy(),
-                        "score": None,
-                        "status": "invalid",
-                        "duration": perf_counter() - started,
-                        "fold_duration": 0.0,
-                        "error": zero_feature_reason,
-                        "partial_folds": 0,
-                        "failure_records": [
-                            {
-                                "fold": None,
-                                "type": "ZeroFeaturePipeline",
-                                "message": zero_feature_reason,
-                                "traceback": None,
-                                "parameters": cand_params.copy(),
-                            }
-                        ],
-                    }
-                )
+                record = {
+                    "params": cand_params.copy(),
+                    "score": None,
+                    "status": "invalid",
+                    "duration": perf_counter() - started,
+                    "fold_duration": 0.0,
+                    "error": zero_feature_reason,
+                    "partial_folds": 0,
+                    "failure_records": [
+                        {
+                            "fold": None,
+                            "type": "ZeroFeaturePipeline",
+                            "message": zero_feature_reason,
+                            "traceback": None,
+                            "parameters": cand_params.copy(),
+                        }
+                    ],
+                }
+                self.evaluation_history_.append(record)
+                _notify_trial(record)
                 return float("inf")
 
             def parallel_fit_score(
@@ -1182,7 +1440,7 @@ class SurrogateRandomCV(BaseSearchCV):
                     import traceback
 
                     if self.verbose > 1:
-                        print("Model evaluation error")
+                        emit(logging.DEBUG, "Model evaluation error")
                     return {
                         "score": None,
                         "error": repr(exc),
@@ -1244,37 +1502,37 @@ class SurrogateRandomCV(BaseSearchCV):
                     and n_test >= self.min_partial_folds
                     and score <= self.prune_threshold
             ):
-                self.evaluation_history_.append(
-                    {
-                        "params": cand_params.copy(),
-                        "score": None,
-                        "status": "pruned",
-                        "duration": perf_counter() - started,
-                        "fold_duration": sum(durations),
-                        "error": "; ".join(errors) if errors else None,
-                        "partial_folds": n_test,
-                        "failure_records": failure_records,
-                    }
-                )
-                return float("inf")
-            self.evaluation_history_.append(
-                {
+                record = {
                     "params": cand_params.copy(),
-                    "score": -score if n_test else None,
-                    "status": "complete" if n_test else "failed",
+                    "score": None,
+                    "status": "pruned",
                     "duration": perf_counter() - started,
                     "fold_duration": sum(durations),
                     "error": "; ".join(errors) if errors else None,
                     "partial_folds": n_test,
                     "failure_records": failure_records,
                 }
-            )
+                self.evaluation_history_.append(record)
+                _notify_trial(record)
+                return float("inf")
+            record = {
+                "params": cand_params.copy(),
+                "score": -score if n_test else None,
+                "status": "complete" if n_test else "failed",
+                "duration": perf_counter() - started,
+                "fold_duration": sum(durations),
+                "error": "; ".join(errors) if errors else None,
+                "partial_folds": n_test,
+                "failure_records": failure_records,
+            }
+            self.evaluation_history_.append(record)
+            _notify_trial(record)
             return -score
 
         self.OPTIM = SurrogateSearch(
             obj,
             x0=self.x0,
-            max_iter=self.max_iter,
+            max_iter=self.max_iter_,
             min_evals=self.min_evals,
             ineqs=self.ineqs,
             bounds=self.bounds,
@@ -1298,11 +1556,12 @@ class SurrogateRandomCV(BaseSearchCV):
             prune_threshold=self.prune_threshold,
             min_partial_folds=self.min_partial_folds,
         )
+        self.surrogate_info_ = self.OPTIM.surrogate_info_
         x, scr = self.OPTIM()
         best_params_ = {}
         idx = 0
         for param in self.params_list:
-            param_num_range = self.params[param]
+            param_num_range = self.param_space_[param]
             if param_num_range.VType != "hdreal":
                 if param_num_range.VType == "integer":
                     best_params_[param] = int(round(x[idx]))
@@ -1320,6 +1579,11 @@ class SurrogateRandomCV(BaseSearchCV):
                     cls_dict[target_classes[i]] = x[idx]
                     idx += 1
                 best_params_[param] = cls_dict
+        # Mirror the trial-level conditioning so set_params/refit use exactly the
+        # parameters CV actually scored; conditionally-inactive parameters were
+        # dropped from every trial, so decoding them back would refit a model the
+        # reported score never saw.
+        best_params_ = self._apply_conditional_parameters(best_params_)
         # The optimizer's solution can land inside a region every trial rejected
         # (a forbidden combination, or a candidate whose folds all failed).
         # Refitting those settings either raises (e.g. an invalid
@@ -1335,8 +1599,9 @@ class SurrogateRandomCV(BaseSearchCV):
         ]
         if not feasible:
             self.best_estimator_ = clone(self.estimator)
+            self.best_params_ = {}
             self.best_estimator_score = float("inf")
-            self.best_score_ = float("inf")
+            self.best_score_ = float("-inf")
         else:
             if not isfinite(scr) or self._forbidden_reason(best_params_) is not None:
                 best_trial = min(feasible, key=lambda item: item["score"])
@@ -1347,19 +1612,33 @@ class SurrogateRandomCV(BaseSearchCV):
                 }
                 scr = best_trial["score"]
             self.best_estimator_ = clone(self.estimator).set_params(**best_params_)
+            self.best_params_ = dict(best_params_)
             if self.refit is not False:
                 # Refit the best estimator on the full dataset so it can be used for
                 # prediction/scoring (mirrors sklearn's BaseSearchCV refit behavior;
                 # uses the same fit_params as the CV folds above).
                 refit_kwargs = dict(self.fit_params or {})
                 self.best_estimator_.fit(X, y, **refit_kwargs)
+            # best_estimator_score is the minimized loss; best_score_ follows the
+            # scikit-learn convention (higher is better).
             self.best_estimator_score = scr
-            self.best_score_ = scr
+            self.best_score_ = -scr
         self.termination_reason = getattr(self.OPTIM, "termination_reason", None)
         self.summary_ = getattr(self.OPTIM, "summary_", {})
+        losses = [item["score"] for item in self.evaluation_history_]
+        test_scores = [-v if v is not None and isfinite(v) else float("nan") for v in losses]
+        ranked = sorted(
+            (i for i, v in enumerate(test_scores) if isfinite(v)), key=lambda i: -test_scores[i]
+        )
+        ranks = [len(ranked) + 1] * len(test_scores)
+        for position, index in enumerate(ranked, start=1):
+            ranks[index] = position
+        self.best_index_ = ranked[0] if ranked else None
         self.cv_results_ = {
             "params": [item["params"] for item in self.evaluation_history_],
-            "mean_test_score": [item["score"] for item in self.evaluation_history_],
+            "mean_test_score": test_scores,
+            "rank_test_score": ranks,
+            "loss": losses,
             "status": [item["status"] for item in self.evaluation_history_],
             "duration": [item["duration"] for item in self.evaluation_history_],
             "error": [item["error"] for item in self.evaluation_history_],
@@ -1425,3 +1704,100 @@ class SurrogateRandomCV(BaseSearchCV):
             if not dominated:
                 frontier.append(candidate.copy())
         return frontier
+
+    @staticmethod
+    def _json_safe(value):
+        """Coerce ``value`` into JSON-native data (dict/list/str/float/None)."""
+        from math import isfinite
+
+        if value is None or isinstance(value, (bool, int, str)):
+            return value
+        if isinstance(value, float):
+            return value if isfinite(value) else None
+        if isinstance(value, dict):
+            return {
+                str(key): SurrogateRandomCV._json_safe(item) for key, item in value.items()
+            }
+        if isinstance(value, (list, tuple)):
+            return [SurrogateRandomCV._json_safe(item) for item in value]
+        # numpy scalars and other 0-d wrappers expose ``item``; fall back to str.
+        converter = getattr(value, "item", None)
+        if callable(converter):
+            try:
+                return SurrogateRandomCV._json_safe(converter())
+            except Exception:
+                pass
+        return str(value)
+
+    def _encoded_search_space(self):
+        """Per-parameter search-space encoding used by :meth:`to_audit_dict`."""
+        space = {}
+        for name in self.params_list:
+            parameter = self.param_space_[name]
+            value_type = getattr(parameter, "VType", None)
+            if value_type == "categorical":
+                space[name] = {
+                    "type": "categorical",
+                    "items": self._json_safe(list(getattr(parameter, "items", []))),
+                }
+            elif value_type == "hdreal":
+                space[name] = {
+                    "type": "hdreal",
+                    "bounds": self._json_safe(list(parameter.bound_tuple)),
+                }
+            else:
+                lower, upper = self._encoded_bounds(parameter)
+                space[name] = {
+                    "type": value_type,
+                    "bounds": [float(lower), float(upper)],
+                    "scale": getattr(parameter, "scale", "linear"),
+                }
+        return space
+
+    def to_audit_dict(self):
+        """Return a JSON-safe audit bundle describing the search and its trials.
+
+        The bundle is the contract between this MIT-licensed core and any
+        consumer (control plane, notebook, archive): it carries the estimator and
+        its parameters, the encoded search space, the scoring/CV summary, the
+        budget and termination state, every trial record with its zero-based
+        ``trial`` index, the surrogate diagnostics, and the sampling provenance.
+
+        ``json.dumps(search.to_audit_dict())`` succeeds without a custom
+        encoder; values that are not JSON-native (estimator objects, numpy
+        scalars, splitters) are coerced to their string form or ``None``. Works
+        before ``fit`` as well, with empty evaluation lists.
+        """
+        estimator_type = self.estimator.__class__
+        summary = self.summary_ or {}
+        budget = summary.get("budget")
+        if not isinstance(budget, dict):
+            budget = {}
+        evaluations = []
+        for index, item in enumerate(self.evaluation_history_):
+            record = dict(item)
+            record["trial"] = index
+            evaluations.append(self._json_safe(record))
+        optimizer = getattr(self, "OPTIM", None)
+        sampling_sources = getattr(optimizer, "sampling_sources_", None)
+        return {
+            "schema_version": 1,
+            "estimator": {
+                "class": "%s.%s" % (estimator_type.__module__, estimator_type.__qualname__),
+                "params": self._json_safe(self.get_params(deep=False)),
+            },
+            "search_space": self._encoded_search_space(),
+            "scoring": self._json_safe(self.scoring),
+            "cv": self._json_safe(self.cv),
+            "n_iter": self._json_safe(self.n_iter),
+            "max_iter": self._json_safe(self.max_iter),
+            "random_state": self._json_safe(self.random_state),
+            "budget": self._json_safe(budget),
+            "termination": {
+                "termination_reason": self._json_safe(summary.get("termination_reason")),
+                "status": self._json_safe(summary.get("status")),
+            },
+            "evaluations": evaluations,
+            "surrogate": self._json_safe(self.surrogate_info_),
+            "sampling_sources": self._json_safe(list(sampling_sources or [])),
+        }

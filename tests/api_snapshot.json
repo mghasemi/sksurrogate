@@ -1,0 +1,880 @@
+{
+ "AML": {
+  "members": [
+   "add_surrogate",
+   "eoa_fit",
+   "fit",
+   "get_metadata_routing",
+   "get_params",
+   "get_top",
+   "optimize_pipeline",
+   "pareto_frontier",
+   "predict",
+   "predict_proba",
+   "score",
+   "set_fit_request",
+   "set_params",
+   "types"
+  ],
+  "params": [
+   "config",
+   "length",
+   "scoring",
+   "cat_cols",
+   "surrogates",
+   "min_random_evals",
+   "cv",
+   "check_point",
+   "stack_res",
+   "stack_probs",
+   "stack_decision",
+   "stack_cv",
+   "stack_n_jobs",
+   "stacking",
+   "verbose",
+   "n_jobs",
+   "random_state",
+   "time_limit",
+   "max_evals",
+   "cpu_limit",
+   "memory_limit",
+   "forbidden",
+   "conditional",
+   "preset",
+   "resume"
+  ]
+ },
+ "BoxSample": {
+  "members": [
+   "check_constraints",
+   "sample"
+  ],
+  "params": [
+   "kwargs"
+  ]
+ },
+ "BundleQualityGateError": {
+  "members": [
+   "add_note",
+   "args",
+   "with_traceback"
+  ],
+  "params": [
+   "args",
+   "kwargs"
+  ]
+ },
+ "Categorical": {
+  "members": [
+   "VType"
+  ],
+  "params": [
+   "items",
+   "kwargs"
+  ]
+ },
+ "CorrelationThreshold": {
+  "members": [
+   "fit",
+   "fit_transform",
+   "get_metadata_routing",
+   "get_params",
+   "set_output",
+   "set_params",
+   "transform"
+  ],
+  "params": [
+   "threshold"
+  ]
+ },
+ "DaskExecutionBackend": {
+  "members": [
+   "claim_next_trial",
+   "claim_trial",
+   "execute_pending",
+   "get_trial",
+   "list_pending",
+   "list_results",
+   "list_trials",
+   "mark_completed",
+   "mark_failed",
+   "mark_running",
+   "resume_incomplete_trials",
+   "submit_trial"
+  ],
+  "params": [
+   "root",
+   "task_name",
+   "client",
+   "address"
+  ]
+ },
+ "DataPreprocess": {
+  "members": [
+   "deduce_types",
+   "encode",
+   "is_bin",
+   "is_categorical",
+   "is_datetime",
+   "is_float",
+   "is_int",
+   "is_label",
+   "is_numeric_string",
+   "is_object",
+   "is_obsolete",
+   "is_text",
+   "numeric",
+   "set_type",
+   "transform_label_bin"
+  ],
+  "params": [
+   "df",
+   "bin_threshold",
+   "cat_threshold",
+   "force_threshold",
+   "imputer",
+   "force_impute",
+   "text_processor"
+  ]
+ },
+ "DeploymentApprovalGate": {
+  "members": [
+   "promote",
+   "rollback"
+  ],
+  "params": [
+   "registry",
+   "required_approvals"
+  ]
+ },
+ "EOA": {
+  "members": [
+   "CHECKPOINT_VERSION",
+   "find_genes"
+  ],
+  "params": [
+   "population",
+   "fitness",
+   "parents_prop",
+   "elites_prop",
+   "max_generations",
+   "kwargs"
+  ]
+ },
+ "Elites": {
+  "members": [],
+  "params": [
+   "kwargs"
+  ]
+ },
+ "ExecutionBackend": {
+  "members": [
+   "claim_next_trial",
+   "claim_trial",
+   "execute_pending",
+   "get_trial",
+   "list_pending",
+   "list_results",
+   "mark_completed",
+   "mark_failed",
+   "mark_running",
+   "resume_incomplete_trials",
+   "submit_trial"
+  ],
+  "params": [
+   "args",
+   "kwargs"
+  ]
+ },
+ "FoldLocalDataPreprocessor": {
+  "members": [
+   "fit",
+   "fit_transform",
+   "get_feature_names_out",
+   "get_metadata_routing",
+   "get_params",
+   "set_output",
+   "set_params",
+   "transform"
+  ],
+  "params": [
+   "scale_numeric"
+  ]
+ },
+ "FunctionBasis": {
+  "members": [
+   "Fourier",
+   "Poly"
+  ],
+  "params": []
+ },
+ "FunctionSpace": {
+  "members": [
+   "FormBasis",
+   "GramMat",
+   "Series",
+   "dim",
+   "inner",
+   "minor",
+   "minor_gram",
+   "project"
+  ],
+  "params": [
+   "dim",
+   "measure",
+   "basis"
+  ]
+ },
+ "HDReal": {
+  "members": [
+   "VType"
+  ],
+  "params": [
+   "a",
+   "b",
+   "kwargs"
+  ]
+ },
+ "HilbertRegressor": {
+  "members": [
+   "fit",
+   "get_metadata_routing",
+   "get_params",
+   "predict",
+   "score",
+   "set_params",
+   "set_score_request"
+  ],
+  "params": [
+   "deg",
+   "base",
+   "meas",
+   "fspace"
+  ]
+ },
+ "InferenceMonitor": {
+  "members": [
+   "record",
+   "summary"
+  ],
+  "params": [
+   "model_version"
+  ]
+ },
+ "Infinitesimal": {
+  "members": [],
+  "params": []
+ },
+ "Integer": {
+  "members": [
+   "VType"
+  ],
+  "params": [
+   "a",
+   "b",
+   "kwargs"
+  ]
+ },
+ "LocalProcessExecutionBackend": {
+  "members": [
+   "claim_next_trial",
+   "claim_trial",
+   "execute_pending",
+   "get_trial",
+   "list_pending",
+   "list_results",
+   "list_trials",
+   "mark_completed",
+   "mark_failed",
+   "mark_running",
+   "resume_incomplete_trials",
+   "submit_trial"
+  ],
+  "params": [
+   "root",
+   "task_name"
+  ]
+ },
+ "MaxGenTermination": {
+  "members": [],
+  "params": [
+   "kwargs"
+  ]
+ },
+ "Measure": {
+  "members": [
+   "integral",
+   "norm"
+  ],
+  "params": [
+   "density",
+   "domain"
+  ]
+ },
+ "ModelBundle": {
+  "members": [
+   "from_record",
+   "load",
+   "predict",
+   "record_audit_event",
+   "save",
+   "to_record"
+  ],
+  "params": [
+   "model",
+   "task_name",
+   "schema",
+   "preprocessing",
+   "metadata",
+   "metrics",
+   "dataset_fingerprint",
+   "config_version",
+   "model_version",
+   "dependencies",
+   "owner",
+   "run_id",
+   "sensitive_features",
+   "audit_events"
+  ]
+ },
+ "ModelRegistry": {
+  "members": [
+   "artifacts",
+   "audit_log",
+   "delete_artifacts",
+   "history",
+   "load",
+   "load_version",
+   "promote",
+   "record_approval",
+   "register",
+   "register_dataset",
+   "register_prediction",
+   "rollback",
+   "summary",
+   "version_state"
+  ],
+  "params": [
+   "root"
+  ]
+ },
+ "Mutation": {
+  "members": [],
+  "params": [
+   "kwargs"
+  ]
+ },
+ "Real": {
+  "members": [
+   "VType"
+  ],
+  "params": [
+   "a",
+   "b",
+   "kwargs"
+  ]
+ },
+ "Regression": {
+  "members": [
+   "SetFuncSpc",
+   "SetMeasure",
+   "fit"
+  ],
+  "params": [
+   "points",
+   "dim"
+  ]
+ },
+ "RetrainingJob": {
+  "members": [
+   "run",
+   "run_on_data",
+   "run_scheduled"
+  ],
+  "params": [
+   "trainer",
+   "registry",
+   "task_name",
+   "promotion_state",
+   "quality_metric_thresholds"
+  ]
+ },
+ "STANDARD_CV_SPLITTERS": {
+  "members": [],
+  "params": []
+ },
+ "SchemaValidationError": {
+  "members": [
+   "add_note",
+   "args",
+   "with_traceback"
+  ],
+  "params": [
+   "errors"
+  ]
+ },
+ "SensAprx": {
+  "members": [
+   "fit",
+   "fit_transform",
+   "get_metadata_routing",
+   "get_params",
+   "set_output",
+   "set_params",
+   "transform"
+  ],
+  "params": [
+   "n_features_to_select",
+   "regressor",
+   "method",
+   "margin",
+   "num_smpl",
+   "num_levels",
+   "grid_jump",
+   "num_resmpl",
+   "reduce",
+   "domain",
+   "probs"
+  ]
+ },
+ "SphereSample": {
+  "members": [
+   "check_constraints",
+   "sample"
+  ],
+  "params": [
+   "kwargs"
+  ]
+ },
+ "StackingEstimator": {
+  "members": [
+   "fit",
+   "fit_transform",
+   "get_metadata_routing",
+   "get_params",
+   "set_output",
+   "set_params",
+   "transform"
+  ],
+  "params": [
+   "estimator",
+   "res",
+   "probs",
+   "decision",
+   "cv",
+   "n_jobs"
+  ]
+ },
+ "SurrogateRandomCV": {
+  "members": [
+   "classes_",
+   "continue_",
+   "decision_function",
+   "fit",
+   "get_metadata_routing",
+   "get_params",
+   "inverse_transform",
+   "n_features_in_",
+   "pareto_frontier",
+   "predict",
+   "predict_log_proba",
+   "predict_proba",
+   "score",
+   "score_samples",
+   "set_callbacks",
+   "set_fit_request",
+   "set_params",
+   "transform"
+  ],
+  "params": [
+   "estimator",
+   "params",
+   "scoring",
+   "fit_params",
+   "n_jobs",
+   "refit",
+   "cv",
+   "verbose",
+   "pre_dispatch",
+   "error_score",
+   "return_train_score",
+   "max_iter",
+   "min_evals",
+   "regressor",
+   "sampling",
+   "radius",
+   "contraction",
+   "search_sphere",
+   "optimizer",
+   "scipy_solver",
+   "task_name",
+   "warm_start",
+   "Continue",
+   "max_itr_no_prog",
+   "ineqs",
+   "init",
+   "time_limit",
+   "max_evals",
+   "random_state",
+   "cpu_limit",
+   "memory_limit",
+   "prune_threshold",
+   "min_partial_folds",
+   "forbidden",
+   "conditional",
+   "continue_",
+   "param_distributions",
+   "n_iter"
+  ]
+ },
+ "SurrogateSearch": {
+  "members": [
+   "progress"
+  ],
+  "params": [
+   "objective",
+   "kwargs"
+  ]
+ },
+ "SynthData": {
+  "members": [
+   "filter",
+   "generate",
+   "sample",
+   "set_type",
+   "transform",
+   "where"
+  ],
+  "params": [
+   "df",
+   "default_rv",
+   "distribution_type",
+   "rv"
+  ]
+ },
+ "UniformCrossover": {
+  "members": [
+   "mate",
+   "pair",
+   "scale",
+   "select_idx"
+  ],
+  "params": [
+   "kwargs"
+  ]
+ },
+ "UniformRand": {
+  "members": [],
+  "params": [
+   "kwargs"
+  ]
+ },
+ "Words": {
+  "members": [
+   "Generate"
+  ],
+  "params": [
+   "letters",
+   "last",
+   "first",
+   "repeat"
+  ]
+ },
+ "assert_bundle_quality": {
+  "members": [],
+  "params": [
+   "bundle_or_path",
+   "expected_schema",
+   "metric_thresholds",
+   "max_bundle_size_bytes"
+  ]
+ },
+ "build_cv": {
+  "members": [],
+  "params": [
+   "spec"
+  ]
+ },
+ "check_bundle_quality": {
+  "members": [],
+  "params": [
+   "bundle_or_path",
+   "expected_schema",
+   "metric_thresholds",
+   "max_bundle_size_bytes"
+  ]
+ },
+ "create_app": {
+  "members": [],
+  "params": [
+   "bundle",
+   "strict_dependencies"
+  ]
+ },
+ "cv_param_defs": {
+  "members": [],
+  "params": [
+   "splitter_name"
+  ]
+ },
+ "cv_to_spec": {
+  "members": [],
+  "params": [
+   "cv"
+  ]
+ },
+ "dataset_profile": {
+  "members": [],
+  "params": [
+   "frame",
+   "target",
+   "features",
+   "max_rows",
+   "max_features",
+   "max_categories",
+   "random_state"
+  ]
+ },
+ "default_cv_spec": {
+  "members": [],
+  "params": []
+ },
+ "delayed_label_performance": {
+  "members": [],
+  "params": [
+   "predictions",
+   "labels",
+   "model_version",
+   "task_type"
+  ]
+ },
+ "drift_report": {
+  "members": [],
+  "params": [
+   "reference",
+   "current",
+   "model_version",
+   "reference_dataset_fingerprint",
+   "current_dataset_fingerprint",
+   "psi_threshold",
+   "categorical_threshold",
+   "missingness_threshold",
+   "range_threshold",
+   "bins"
+  ]
+ },
+ "export_mlflow": {
+  "members": [],
+  "params": [
+   "bundle",
+   "path"
+  ]
+ },
+ "fairness_report": {
+  "members": [],
+  "params": [
+   "y_true",
+   "y_pred",
+   "groups",
+   "positive_label"
+  ]
+ },
+ "latin_hypercube": {
+  "members": [],
+  "params": [
+   "bounds",
+   "n_samples",
+   "random_state"
+  ]
+ },
+ "load_bundle": {
+  "members": [],
+  "params": [
+   "path",
+   "expected_schema",
+   "strict_dependencies"
+  ]
+ },
+ "loss_report": {
+  "members": [],
+  "params": [
+   "y_true",
+   "y_pred",
+   "groups",
+   "positive_label"
+  ]
+ },
+ "mltrack": {
+  "members": [
+   "FeatureWeights",
+   "GetCVSpec",
+   "GetMetadata",
+   "LoadModel",
+   "LoadPlot",
+   "LogMetrics",
+   "LogModel",
+   "PreserveModel",
+   "RecoverModel",
+   "RegisterData",
+   "RetrieveWeights",
+   "SetCV",
+   "Stats",
+   "TopFeatures",
+   "UpdateMetadata",
+   "UpdateModel",
+   "UpdateTask",
+   "allModels",
+   "allPlots",
+   "allPreserved",
+   "allTasks",
+   "all_models",
+   "all_plots",
+   "all_preserved",
+   "all_tasks",
+   "close",
+   "compare_repeated_cv_results",
+   "cumulative_gain_curve",
+   "dataset_splits",
+   "feature_weights",
+   "getBest",
+   "get_best",
+   "get_cv_spec",
+   "get_data",
+   "get_dataframe",
+   "get_metadata",
+   "heatmap",
+   "load_model",
+   "load_plot",
+   "log_metrics",
+   "log_model",
+   "nested_cv_evaluation",
+   "permutation_importance",
+   "plot_calibration_curve",
+   "plot_cumulative_gain",
+   "plot_learning_curve",
+   "plot_lift_curve",
+   "plot_partial_dependence",
+   "plot_permutation_importance",
+   "plot_regression_diagnostics",
+   "plot_roc_curve",
+   "preserve_model",
+   "recover_model",
+   "register_data",
+   "regression_diagnostics",
+   "retrieve_weights",
+   "set_cv",
+   "split_train",
+   "stats",
+   "top_features",
+   "update_metadata",
+   "update_model",
+   "update_task",
+   "validate_data",
+   "validate_prediction_data"
+  ],
+  "params": [
+   "task",
+   "task_id",
+   "db_name",
+   "cv",
+   "encode"
+  ]
+ },
+ "np2df": {
+  "members": [],
+  "params": [
+   "data",
+   "clmns"
+  ]
+ },
+ "predict_batch": {
+  "members": [],
+  "params": [
+   "bundle",
+   "input_data",
+   "output_path",
+   "request_id",
+   "strict_dependencies"
+  ]
+ },
+ "prediction_distribution_report": {
+  "members": [],
+  "params": [
+   "reference_predictions",
+   "current_predictions",
+   "model_version",
+   "threshold",
+   "bins"
+  ]
+ },
+ "save_bundle": {
+  "members": [],
+  "params": [
+   "bundle",
+   "path"
+  ]
+ },
+ "sensitive_feature_report": {
+  "members": [],
+  "params": [
+   "frame",
+   "sensitive_features",
+   "max_scan_rows"
+  ]
+ },
+ "serve": {
+  "members": [],
+  "params": [
+   "bundle",
+   "host",
+   "port",
+   "strict_dependencies"
+  ]
+ },
+ "split_conformal_quantile_interval": {
+  "members": [],
+  "params": [
+   "lower_estimator",
+   "upper_estimator",
+   "X_train",
+   "y_train",
+   "X_calibration",
+   "y_calibration",
+   "X_test",
+   "alpha"
+  ]
+ },
+ "split_conformal_regression_interval": {
+  "members": [],
+  "params": [
+   "estimator",
+   "X_train",
+   "y_train",
+   "X_calibration",
+   "y_calibration",
+   "X_test",
+   "alpha"
+  ]
+ },
+ "subgroup_performance_report": {
+  "members": [],
+  "params": [
+   "y_true",
+   "y_pred",
+   "groups",
+   "metric",
+   "positive_label"
+  ]
+ },
+ "suggest_next_point": {
+  "members": [],
+  "params": [
+   "samples",
+   "values",
+   "bounds",
+   "n_candidates",
+   "beta",
+   "random_state"
+  ]
+ }
+}

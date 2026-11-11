@@ -42,6 +42,86 @@ the previous cubic Hilbert polynomial on the evidence of the equal-budget benchm
 custom regressor based on Hilbert Space techniques is still available (``HilbertRegressor``),
 and all ``scikit-learn`` regressors are accepted for optimization.
 
+Understand what you tuned
+-------------------------
+Once a run has finished, ``SKSurrogate`` explains *what* the fitted model depends on — not just
+*where* the search stopped:
+
+- **Model explanations**: permutation importance, partial dependence, and accumulated local
+  effects for a stored model bundle show which features drive its predictions globally, while
+  an exact row-level explanation reconstructs one prediction from its baseline as ordered
+  feature contributions. Available through the control plane (``explain``, ``ale`` and
+  ``explain/row`` endpoints) and in the web UI; see the
+  `control-plane guide <https://sksurrogate.readthedocs.io/en/latest/controlplane.html>`_ and the
+  `scientific workflow guide <https://sksurrogate.readthedocs.io/en/latest/mltrace.html>`_.
+- **Sensitivity analysis**: Sobol, Morris, and moment-independent δ indices quantify which
+  inputs dominate output variance — useful for pruning expensive models or diagnosing a tuned
+  pipeline. See the `sensitivity analysis guide <https://sksurrogate.readthedocs.io/en/latest/sensitivity.html>`_.
+
+Both are descriptive, model-attributive analyses: they quantify how the learned response depends
+on its inputs, not causal effects.
+
+Observe what a run did
+----------------------
+Search progress goes through the standard library ``logging`` module (``SKSurrogate`` loggers, with
+``WARNING``/``ERROR`` for degraded surrogate fits, stagnation and failures), and the core exposes
+per-trial telemetry: a per-refit ``fit_score``, ``init``/``explore``/``surrogate_exploit`` sampling
+tags, a ``callbacks`` hook that delivers one event per evaluated candidate, and a JSON-safe
+``to_audit_dict()`` export. The control plane captures those records per background job into a
+**Logs** page with severity, dataset/task and research-project filters — see the
+`telemetry contract <https://sksurrogate.readthedocs.io/en/latest/telemetry.html>`_,
+the `log endpoints <https://sksurrogate.readthedocs.io/en/latest/controlplane.html>`_
+and the `UI manual <https://sksurrogate.readthedocs.io/en/latest/ui-manual.html>`_.
+
+Quick start
+-----------
+``SurrogateRandomCV`` is a drop-in for ``RandomizedSearchCV``; ranges can be written as plain
+tuples (integers or floats) and lists (categorical values)::
+
+    from sklearn.svm import SVC
+    from SKSurrogate import SurrogateRandomCV
+
+    search = SurrogateRandomCV(
+        SVC(),
+        param_distributions={"C": (1e-3, 10.0), "kernel": ["poly", "rbf"], "degree": (1, 4)},
+        n_iter=30,
+    ).fit(X, y)
+    search.best_params_, search.best_score_
+
+For automatic pipeline design, ``AML(preset="classification").fit(X, y)`` (or
+``preset="regression"``) needs no search configuration. For pandas DataFrames,
+the preset automatically fits numeric, categorical, datetime, and text
+preprocessing inside each cross-validation fold when ``cat_cols`` is omitted.
+Array-like inputs should already be numeric; ``cat_cols`` retains the explicit
+categorical-encoding path. ``fit(X, y, strategy="eoa")`` selects evolutionary
+search.
+
+More workflows are covered in the
+`surrogate-search guide <https://sksurrogate.readthedocs.io/en/latest/surrogate.html>`_,
+`preprocessing guide <https://sksurrogate.readthedocs.io/en/latest/dataproc.html>`_,
+`scientific workflow guide <https://sksurrogate.readthedocs.io/en/latest/mltrace.html>`_,
+`experiment design guide <https://sksurrogate.readthedocs.io/en/latest/experiment-design.html>`_,
+`research projects guide <https://sksurrogate.readthedocs.io/en/latest/research-projects.html>`_,
+and `monitoring guide <https://sksurrogate.readthedocs.io/en/latest/monitoring.html>`_.
+For the API and UI, see the
+`control-plane guide <https://sksurrogate.readthedocs.io/en/latest/controlplane.html>`_
+`UI manual <https://sksurrogate.readthedocs.io/en/latest/ui-manual.html>`_ and
+`worked example with screenshots <https://sksurrogate.readthedocs.io/en/latest/walkthrough.html>`_.
+
+Run the web UI and API with Docker
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+From a source checkout (Docker with Compose required)::
+
+    docker compose --profile prod up --build -d   # UI and API on http://localhost:8013
+    docker compose --profile dev up --build       # hot reload; UI on http://localhost:5174
+
+Set ``SKSURROGATE_PORT`` to change the port and ``SKSURROGATE_API_KEY`` to
+require an API key; for any published port also set
+``SKSURROGATE_REQUIRE_AUTH=1`` so the container refuses to start without a key.
+Data persists in the ``sksurrogate-data`` volume. See the control-plane guide
+for details.
+
 Benchmarks
 ----------
 The surrogate-guided search is validated against strong HPO/AutoML baselines at **equal
@@ -75,7 +155,7 @@ Median-evaluations-to-target and seed-averaged best-so-far curves are in the ben
 Optimize with confidence: detect drift before inference
 -------------------------------------------------------
 ``SKSurrogate`` records a deterministic dataset fingerprint and a JSON-serializable schema for
-each tracked dataset. Each call to ``mltrack.RegisterData(...)`` stores dataset metadata,
+each tracked dataset. Each call to ``mltrack.register_data(...)`` stores dataset metadata,
 including the target column, row count, column names, dtypes, nullability, and categorical
 values. This lets a run be identified and later compared against a different dataset or a
 refreshed training sample — a differentiator that Optuna, TPOT, and SMAC all lack, because they
@@ -89,7 +169,7 @@ with ``missing_columns='ignore'`` or ``unknown_categories='ignore'``.
 
 The intended workflow is:
 
-1. Register the training dataset with ``mltrack.RegisterData(frame, target)``.
+1. Register the training dataset with ``mltrack.register_data(frame, target)``.
 2. Validate training data before fitting with ``tracker.validate_data(frame, target=...)``.
 3. Validate prediction inputs with ``tracker.validate_prediction_data(frame)`` before calling
    ``predict`` on a model or pipeline.
@@ -138,7 +218,7 @@ This code is distributed under `MIT license <https://en.wikipedia.org/wiki/MIT_L
 MIT License
 ----------------
 
-    Copyright (c) 2019 Mehdi Ghasemi
+    Copyright (c) 2019--2026 Mehdi Ghasemi
 
     Permission is hereby granted, free of charge, to any person obtaining a copy
     of this software and associated documentation files (the "Software"), to deal
@@ -165,4 +245,4 @@ MIT License
     :target: https://sksurrogate.readthedocs.io/en/latest/?badge=latest
     :alt: Documentation Status
 .. |Licence| image:: https://img.shields.io/badge/license-MIT-blue.svg
-   :target: https://github.com/mghasemi/sksurrogate/blob/master/License.txt
+   :target: https://github.com/mghasemi/sksurrogate/blob/master/LICENSE

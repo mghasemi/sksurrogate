@@ -96,7 +96,7 @@ export default function RetrainingPage() {
           kind: "experiment",
           config,
           length,
-          max_generation: maxGeneration,
+          max_generations: maxGeneration,
           num_parents: numParents,
           train_partition: trainPartition,
           scoring,

@@ -17,6 +17,11 @@ class Settings:
     - ``SKSURROGATE_API_KEY``: when set, every endpoint except ``/api/health``
       requires this key (sent as an ``X-API-Key`` header, a Bearer token, or —
       on WebSocket routes only — an ``api_key`` query parameter).
+    - ``SKSURROGATE_REQUIRE_AUTH``: ``1``/``true``/``yes`` makes the API refuse
+      to start when ``SKSURROGATE_API_KEY`` is unset — for deployments whose
+      port may be published (the container entrypoint binds all interfaces).
+      When unset, a missing key only logs a startup warning. Read in
+      ``api.main`` at import time, not here.
     - ``SKSURROGATE_API_CORS_ORIGINS``: comma-separated list of allowed CORS
       origins. When unset, only local dev origins (localhost / 127.0.0.1 on any
       port) are allowed instead of the old wildcard.
@@ -56,8 +61,16 @@ class Settings:
         return self.root / "jobs"
 
     @property
+    def logs_dir(self):
+        return self.root / "logs"
+
+    @property
     def checkpoints_dir(self):
         return self.root / "checkpoints"
+
+    @property
+    def projects_dir(self):
+        return self.root / "projects"
 
     def ensure(self):
         for directory in (
@@ -68,7 +81,9 @@ class Settings:
             self.predictions_dir,
             self.monitoring_dir,
             self.jobs_dir,
+            self.logs_dir,
             self.checkpoints_dir,
+            self.projects_dir,
         ):
             directory.mkdir(parents=True, exist_ok=True)
         return self

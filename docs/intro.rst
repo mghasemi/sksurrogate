@@ -29,7 +29,7 @@ cross-validation. Search results expose trial metadata through
 ``evaluation_history_`` and ``cv_results_``.
 
 In addition, the tracking layer now records dataset identity and schema contracts.
-When ``mltrack.RegisterData(...)`` is called, it stores a deterministic fingerprint,
+When ``mltrack.register_data(...)`` is called, it stores a deterministic fingerprint,
 metadata such as row count and target name, and a JSON schema with dtypes,
 nullability, and categorical value lists. These values are later used for
 ``validate_data(...)`` and ``validate_prediction_data(...)`` checks before training
@@ -39,9 +39,9 @@ where a drifted or reordered dataset can be rejected before the model is fit or 
 The typical workflow is:
 
     tracker = mltrack("my-task", db_name="mltrack.db")
-    tracker.RegisterData(train_df, "target")
+    tracker.register_data(train_df, "target")
     tracker.validate_data(train_df, target="target")
-    model = tracker.LogModel(estimator)
+    model = tracker.log_model(estimator)
     tracker.validate_prediction_data(new_inputs)
 
 Dependencies

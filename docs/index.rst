@@ -12,17 +12,22 @@ Welcome to SKSurrogate's documentation!
 
    intro
    surrogate
+   telemetry
    hilbert
    sensitivity
+   experiment-design
+   research-projects
    eoa
    opd
    dataproc
    mltrace
    modelbundles
+   notebooks
    inference
    monitoring
    controlplane
    ui-manual
+   walkthrough
    phase9
    phase10
    release

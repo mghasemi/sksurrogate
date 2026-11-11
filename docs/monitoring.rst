@@ -67,6 +67,94 @@ drift.
 Governance and fairness checks
 ==============================
 
+Bounded dataset profiling
+=========================
+
+Use ``dataset_profile`` before model search to inspect mixed-type distributions,
+missingness, target associations, and highly associated feature pairs:
+
+.. code-block:: python
+
+    from SKSurrogate import dataset_profile
+
+    report = dataset_profile(
+        frame,
+        target="outcome",
+        max_rows=5000,
+        max_features=50,
+        max_categories=10,
+        random_state=0,
+    )
+
+Numeric columns include finite-value summaries and a separate count of positive
+or negative infinity values, median absolute deviation, standardized skewness
+and excess kurtosis, and IQR-fence outlier counts, rates, and fences. These
+outlier flags are descriptive signals, not evidence that a row is erroneous.
+Other columns include bounded frequency summaries; categorical target
+frequencies can help reveal class balance. Target and feature-pair associations
+use Pearson correlation for numeric pairs, correlation ratio for mixed pairs,
+and Cramer's V for categorical pairs. Pairwise feature associations are sorted
+by strength to help prioritize redundancy checks.
+
+For numeric pairs, ``rank_associations`` additionally reports Spearman and
+Kendall rank coefficients on complete finite pairs, alongside pair counts.
+These describe monotonic rank association and complement (but do not replace)
+Pearson's linear correlation. They are descriptive coefficients, not
+hypothesis tests, and do not detect all forms of nonlinear dependence.
+
+The ``multicollinearity`` section reports per-feature variance inflation
+factors (VIF) and a standardized design-matrix condition number for selected
+numeric features. Both use complete finite rows from the profile sample.
+Constant features are not assigned a VIF, and rank-deficient designs report a
+null condition number with a reason rather than infinity. These are
+diagnostics—not causal evidence or automatic feature-removal recommendations.
+
+The ``data_quality`` section reports constant and all-missing selected
+features, exact duplicate selected features, and duplicate rows. Duplicate-row
+counts apply only to the sampled rows and selected features; duplicate-feature
+checks compare exact values over those same sampled rows. All profile
+statistics are descriptive and, when row sampling is used, apply to that
+deterministic sample rather than the complete dataset.
+
+The ``missingness_patterns`` section counts exact combinations of missing
+selected features, reports the most common patterns up to ``max_categories``,
+and aggregates the remaining rows into ``other_count``. It describes patterns
+in the sampled rows only; it does not test whether missingness is associated
+with observed values or outcomes.
+
+For descriptive numeric distributions across categories, include the
+categorical grouping feature in ``features`` and pass ``group_by``::
+
+    report = dataset_profile(
+        frame,
+        target="outcome",
+        features=["condition", "temperature"],
+        group_by="condition",
+        max_categories=10,
+    )
+
+The ``group_comparisons`` output contains per-group sample sizes, missing and
+non-finite counts, and numeric distribution summaries for the selected numeric
+features and numeric target. Missing group labels are excluded; categories
+beyond the top ``max_categories`` are combined into an ``Other (combined)``
+group. This is descriptive only: it does not run hypothesis tests, estimate
+causal effects, or correct for multiple comparisons. Group summaries share the
+profile's sampled-row scope. The registered-partition profile endpoint accepts
+the same ``group_by`` option.
+
+The helper samples without replacement when the row limit is exceeded. If a
+dataset has more features than ``max_features``, select the features explicitly
+instead of silently truncating them. ``POST /api/datasets/{task_name}/profile``
+profiles a registered partition (``train`` by default), infers the target from
+registration metadata when available, and accepts the same row, feature, and
+category bounds. Its response includes the registered partition fingerprint.
+API limits are at most 10,000 rows, 100 features, and 50 categories.
+
+These are exploratory diagnostics: association does not establish causation,
+leakage, or scientific mechanisms. A strong feature association is a prompt for
+review, not proof of redundancy or a reason to remove a feature automatically.
+Missing values are reported separately from the summarized distributions.
+
 The monitoring module also includes governance checks for model fairness and sensitive
 feature use before training or production serving. Use ``sensitive_feature_report`` to
 highlight PII-like and user-declared sensitive columns before they reach a model:
@@ -77,16 +165,29 @@ highlight PII-like and user-declared sensitive columns before they reach a model
     from SKSurrogate import sensitive_feature_report
 
     frame = pd.DataFrame({
-        "email": ["a@example.com", "b@example.com"],
-        "ssn": ["123", "456"],
+        "contact": ["a@example.com", "b@example.com"],
+        "reference": ["123-45-6789", "not an SSN"],
         "amount": [25.0, 42.0],
     })
-    report = sensitive_feature_report(frame, sensitive_features=["ssn"])
+    report = sensitive_feature_report(
+        frame, sensitive_features=["reference"], max_scan_rows=1000
+    )
 
 The report returns ``pii_columns`` and ``sensitive_columns`` together with a list of
-warning strings, which can be attached to a training run or CI gate before model
-registration. Sensitive keys such as ``api_key``, ``password``, and ``token`` are also
-redacted automatically from bundle audit metadata and registry event payloads.
+warning strings, plus ``value_findings`` containing the column name and counts for
+email, formatted US SSN, and formatted US phone patterns. It scans at most the first
+1,000 rows by default (up to 10,000 when explicitly configured) and reports the row
+limit and whether the frame was truncated. Only text and integer cells are checked.
+Matched cell contents are never returned or included in warnings; the scan is local
+and does not persist data. Pattern matches are indicators, not verified identities,
+and may produce false positives. A lack of matches does not prove that a dataset is
+free of PII. Unnamed columns are still scanned by value. Column-name matching uses
+whole tokens, avoiding false matches such as ``Unnamed: 0`` matching ``name``.
+
+The dataset preview, registration response, and stored-partition sensitive-scan
+endpoint all return the same bounded count-only report. Sensitive keys such as
+``api_key``, ``password``, and ``token`` are also redacted automatically from bundle
+audit metadata and registry event payloads.
 
 Use ``fairness_report`` to compare selection rates and true-positive rates across
 configured groups. This is useful for detecting demographic parity or equal-opportunity

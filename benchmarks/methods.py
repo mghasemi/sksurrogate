@@ -19,9 +19,18 @@ Space design notes:
   wall time is logged with the same semantics as SKSurrogate's built-in
   ``evaluation_history_``.
 
-Per-evaluation records are ``(k, cv_score, wall_s)``; entries without a score
-(invalid/pruned/failed trials) keep their position in the curve with
-``cv_score=None`` so evaluation counting stays honest.
+Per-evaluation records are ``(k, cv_score, wall_s, params)`` since record
+schema v2: ``params`` carries the full candidate configuration (every key of
+:data:`SPACE`) for that evaluation, so archived runs can be re-plotted and used
+for acquisition-function comparisons without rerunning. Entries without a
+score (invalid/pruned/failed trials) keep their position in the curve with
+``cv_score=None`` so evaluation counting stays honest. ``total_wall_s`` records
+the search duration, excluding the final held-out evaluation.
+
+Schema contract (v2, Stage A of ``AI_LAYER02_REMAINING_PLAN.md``): legacy v1
+archives carry no top-level ``schema_version`` and no per-evaluation ``params``;
+readers must treat both as optional (see :func:`eval_params`). New writers
+always emit ``schema_version = RECORD_SCHEMA_VERSION``.
 """
 
 from __future__ import annotations
@@ -50,6 +59,23 @@ SPACE: dict[str, list[Any]] = {
 
 N_CONFIGS = int(np.prod([len(v) for v in SPACE.values()]))
 
+#: Version of the per-run JSON record schema written by :meth:`RunRecord.to_json`.
+#: v2 (Stage A, AI_LAYER02_REMAINING_PLAN.md): every per-evaluation ``records[]``
+#: entry carries the full candidate configuration under ``params``, and this top-level
+#: field is present. Legacy v1 archives carry neither; readers must stay tolerant —
+#: use :func:`eval_params` instead of indexing ``rec["params"]`` directly.
+RECORD_SCHEMA_VERSION = 2
+
+
+def eval_params(record_entry: dict[str, Any]) -> dict[str, Any]:
+    """Per-evaluation candidate configuration for one entry of ``records[]``.
+
+    Returns the full config (every key of :data:`SPACE`) for schema-v2 records and
+    an empty dict for legacy v1 entries that predate per-evaluation logging —
+    so archive readers degrade gracefully instead of raising on old runs.
+    """
+    return record_entry.get("params") or {}
+
 
 def make_pipeline(seed: int, n_estimators: int = 50) -> Pipeline:
     """Pipeline under tuning: StandardScaler + RandomForest (DESIGN.md section 2)."""
@@ -73,14 +99,18 @@ class RunRecord:
     status: str  # "ok" | "error" | "skipped_archived"
     error: Optional[str] = None
     n_evals: int = 0
-    #: list of {"k": int, "cv_score": float|None, "wall_s": float|None} in eval order
+    #: list of {"k": int, "cv_score": float|None, "wall_s": float|None,
+    #: "params": dict} in eval order (``params`` = full candidate config, schema v2)
     records: list[dict[str, Any]] = dataclasses.field(default_factory=list)
     best_params: dict[str, Any] = dataclasses.field(default_factory=dict)
     final_cv_best: Optional[float] = None
     final_test_accuracy: Optional[float] = None
     final_test_balanced: Optional[float] = None
+    #: Search wall time, excluding the final held-out evaluation.
     total_wall_s: Optional[float] = None
     extra: dict[str, Any] = dataclasses.field(default_factory=dict)
+    #: Per-run JSON record schema version (v2 adds per-evaluation ``params``).
+    schema_version: int = RECORD_SCHEMA_VERSION
 
     def to_json(self) -> str:
         return json.dumps(dataclasses.asdict(self), indent=2, sort_keys=True, default=str)
@@ -121,17 +151,25 @@ def _best_completed(records: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
 # --------------------------------------------------------------------------- #
 
 def run_sksurrogate(Xtr, ytr, Xte, yte, budget: int, seed: int, n_estimators: int = 50) -> RunRecord:
-    """Arm B — SKSurrogate surrogate-guided search (primary method).
+    """Arm B — degree-3 Hilbert response surface, retained as the legacy baseline.
 
-    Requests the default engagement ``min_evals = max(5, budget // 5)``, but note the
-    constructor clamp in :class:`SKSurrogate.structsearch.SurrogateSearch`: with the
-    default cubic Hilbert regressor the effective threshold is
-    ``max(requested, C(n_params + 3, n_params))`` — for this 3-parameter space that is
-    **20**, so the surrogate only engages once 20 points have been evaluated (records
-    k >= budget - 10 at the suite budget B = 30; it never engages when budget < 21).
-    See DESIGN.md v1.4 errata.
+    The library default is now a Gaussian process, so this arm supplies Hilbert
+    explicitly to keep it distinct from ``sksurrogate-gp``.
     """
-    return _run_srs(Xtr, ytr, Xte, yte, budget, seed, n_estimators, min_evals=None, task_tag="srs")
+    from SKSurrogate.NpyProximation import HilbertRegressor
+
+    return _run_srs(
+        Xtr,
+        ytr,
+        Xte,
+        yte,
+        budget,
+        seed,
+        n_estimators,
+        min_evals=None,
+        task_tag="srs",
+        regressor_factory=lambda: HilbertRegressor(deg=3),
+    )
 
 
 def run_srs_no_surrogate(Xtr, ytr, Xte, yte, budget: int, seed: int, n_estimators: int = 50) -> RunRecord:
@@ -152,9 +190,8 @@ def run_sksurrogate_gp(Xtr, ytr, Xte, yte, budget: int, seed: int, n_estimators:
     """Arm B with a Gaussian-process response surface (DESIGN.md v1.8).
 
     Identical SRS outer loop and engagement schedule to :func:`run_sksurrogate` —
-    the explicit ``min_evals`` floor mirrors the library's clamp for its default
-    cubic Hilbert regressor, so all surrogate arms engage at identical k (20 in
-    this 3-parameter space) — but the response surface is a stock sklearn
+    all benchmark surrogate arms use the same 20-point floor in this
+    three-parameter space — but the response surface is a stock sklearn
     ``GaussianProcessRegressor`` (RBF kernel, alpha=1e-10 defaults). Kernel
     hyperparameters are deliberately un-tuned: first test of whether a richer
     surface helps under an equal protocol.
@@ -194,11 +231,9 @@ def _run_srs(
     params = {name: Categorical(values) for name, values in SPACE.items()}
     custom_regressor = None
     if regressor_factory is not None:
-        # DESIGN v1.8: the library's MinEvals floor (C(n_params+3, n_params)) applies only when
-        # SurrogateSearch installs its own default cubic HilbertRegressor; a user-supplied
-        # regressor receives the requested min_evals verbatim (v1.4 errata). Apply that same
-        # floor here so every surrogate arm engages at identical k — isolating the response
-        # surface as the only variable under test.
+        # Keep the engagement point identical across response-surface arms. The
+        # benchmark uses the degree-3 Hilbert basis size (20 points for this
+        # three-parameter space), regardless of the library's current default.
         import math
 
         min_evals = max(min_evals, math.comb(len(SPACE) + 3, len(SPACE)))
@@ -223,10 +258,8 @@ def _run_srs(
     # in the CWD after every iteration and silently restores it, which would
     # contaminate independent benchmark runs (verified 2026-10-17).
     # `min_evals` is passed through verbatim: None -> default request (Arm B), budget ->
-    # surrogate never engages within the cap (Arm A; DESIGN.md section 9). NOTE: the
-    # SurrogateSearch constructor clamps the effective threshold up to C(n_params+3, n_params)
-    # for the default cubic Hilbert regressor — 20 in this space (DESIGN.md v1.4 errata), so
-    # Arm B engages only once 20 points are evaluated regardless of the requested value.
+    # surrogate never engages within the cap (Arm A; DESIGN.md section 9). The shared
+    # 20-point engagement floor is applied above for all benchmark surrogate arms.
     task_name = f"{task_tag}_bench_s{seed}_{int(time.time())}"
     search = SurrogateRandomCV(
         estimator=make_pipeline(seed, n_estimators),
@@ -234,7 +267,7 @@ def _run_srs(
         max_iter=4 * budget,  # DESIGN v1.7: safe ceiling; max_evals is the binding cap (see errata above)
         max_evals=budget,
         min_evals=min_evals,
-        regressor=custom_regressor,  # DESIGN v1.8: None -> library default cubic Hilbert; else stock sklearn surface
+        regressor=custom_regressor,  # None selects the library default; benchmark surrogate arms inject a surface.
         scoring=None,
         cv=5,
         refit=False,
@@ -242,7 +275,7 @@ def _run_srs(
         random_state=seed,
         n_jobs=1,
         warm_start=False,
-        Continue=False,
+        continue_=False,
         task_name=task_name,
     )
     # SRS draws its initial point x0 from Python's *module-level* `random`
@@ -279,12 +312,14 @@ def _run_srs(
                 "cv_score": score,
                 "wall_s": float(item.get("duration", 0.0)),
                 "status": item.get("status"),
-                "_params": dict(item.get("params", {})),
+                # Full candidate config for this evaluation (schema v2): kept in the
+                # archive so runs can be re-analyzed without rerunning.
+                "params": dict(item.get("params", {})),
             }
         )
 
     best = _best_completed(records)
-    best_params = dict(best["_params"]) if best is not None else {}
+    best_params = dict(best["params"]) if best is not None else {}
     test_acc, test_bal = _final_test_scores(best_params, Xtr, ytr, Xte, yte, seed, n_estimators)
 
     return RunRecord(
@@ -296,7 +331,7 @@ def _run_srs(
         status="ok" if best is not None else "error",
         error=None if best is not None else "no completed evaluations in history",
         n_evals=len(records),
-        records=[{key: value for key, value in r.items() if key != "_params"} for r in records],
+        records=records,
         best_params=best_params,
         final_cv_best=float(-min(i["score"] for i in search.evaluation_history_ if i.get("score") is not None))
         if any(i.get("score") is not None for i in search.evaluation_history_)
@@ -307,9 +342,8 @@ def _run_srs(
         extra={
             "termination_reason": getattr(search, "termination_reason", None),
             "failure_summary": getattr(search, "failure_summary_", {}),
-            # DESIGN v1.8: which response surface this arm fitted (default cubic Hilbert
-            # unless a custom regressor was injected).
-            "surrogate": type(custom_regressor).__name__ if custom_regressor is not None else "HilbertRegressor(deg=3)",
+            "surrogate": search.surrogate_info_["regressor"],
+            "surrogate_source": search.surrogate_info_["source"],
             # DESIGN v1.7: SRS loop-iteration count vs n_evals exposes no-op
             # iterations (failed local optimizations of the surrogate surface).
             "n_iterations": int(getattr(search.OPTIM, "iteration", 0)) if hasattr(search, "OPTIM") else None,
@@ -321,6 +355,7 @@ def run_random(Xtr, ytr, Xte, yte, budget: int, seed: int, n_estimators: int = 5
     """Uniform random search over the shared space (RandomizedSearchCV-equivalent)."""
     rng = np.random.default_rng(seed)
     records: list[dict[str, Any]] = []
+    search_started = time.perf_counter()
     for k in range(budget):
         params = {name: values[int(rng.integers(len(values)))] for name, values in SPACE.items()}
         started = time.perf_counter()
@@ -331,10 +366,11 @@ def run_random(Xtr, ytr, Xte, yte, budget: int, seed: int, n_estimators: int = 5
             score = None
             status = f"failed: {exc.__class__.__name__}: {exc}"
         wall = time.perf_counter() - started
-        records.append({"k": k, "cv_score": score, "wall_s": wall, "status": status, "_params": params})
+        records.append({"k": k, "cv_score": score, "wall_s": wall, "status": status, "params": params})
 
     best = _best_completed(records)
-    best_params = dict(best.pop("_params")) if best is not None else {}
+    best_params = dict(best["params"]) if best is not None else {}
+    total_wall = time.perf_counter() - search_started
     test_acc, test_bal = _final_test_scores(best_params, Xtr, ytr, Xte, yte, seed, n_estimators)
 
     return RunRecord(
@@ -346,11 +382,12 @@ def run_random(Xtr, ytr, Xte, yte, budget: int, seed: int, n_estimators: int = 5
         status="ok" if best is not None else "error",
         error=None if best is not None else "no completed evaluations",
         n_evals=len(records),
-        records=[{key: value for key, value in r.items() if key != "_params"} for r in records],
+        records=records,
         best_params=best_params,
         final_cv_best=best["cv_score"] if best is not None else None,
         final_test_accuracy=test_acc,
         final_test_balanced=test_bal,
+        total_wall_s=total_wall,
     )
 
 
@@ -393,7 +430,8 @@ def run_optuna_tpe(Xtr, ytr, Xte, yte, budget: int, seed: int, n_estimators: int
         if trial.datetime_start is not None and trial.datetime_complete is not None:
             wall = (trial.datetime_complete - trial.datetime_start).total_seconds()
         score = None if trial.value is None else float(trial.value)
-        records.append({"k": k, "cv_score": score, "wall_s": wall})
+        # Full candidate config for this trial (schema v2).
+        records.append({"k": k, "cv_score": score, "wall_s": wall, "params": dict(trial.params)})
 
     best_trial = study.best_trial
     best_params = dict(best_trial.params) if best_trial is not None and best_trial.value is not None else {}
@@ -468,7 +506,9 @@ def run_skopt(Xtr, ytr, Xte, yte, budget: int, seed: int, n_estimators: int = 50
     records: list[dict[str, Any]] = []
     for k in range(len(search.cv_results_["mean_test_score"])):
         score = float(search.cv_results_["mean_test_score"][k])
-        records.append({"k": k, "cv_score": score, "wall_s": None})
+        # Full candidate config for this evaluation (schema v2), same SPACE keys as every other arm.
+        params_k = {name: search.cv_results_["params"][k][name] for name in SPACE}
+        records.append({"k": k, "cv_score": score, "wall_s": None, "params": params_k})
 
     best_idx = int(search.best_index_)
     best_params = {name: search.cv_results_["params"][best_idx][name] for name in SPACE}

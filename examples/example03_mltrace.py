@@ -30,17 +30,17 @@ with tempfile.TemporaryDirectory(prefix="sksurrogate-mltrace-") as workdir:
         db_name=f"{workdir}/mltrace.db",
         cv=ShuffleSplit(n_splits=3, test_size=0.25, random_state=7),
     )
-    tracker.RegisterData(frame, "target")
-    tracker.UpdateTask(
+    tracker.register_data(frame, "target")
+    tracker.update_task(
         {"description": "A small reproducible mltrace classification workflow."}
     )
 
-    weights = tracker.FeatureWeights(weights=("pearson", "variance"))
-    model = tracker.LogModel(
+    weights = tracker.feature_weights(weights=("pearson", "variance"))
+    model = tracker.log_model(
         RandomForestClassifier(n_estimators=20, random_state=7),
         "Random forest demo",
     )
-    metrics = tracker.LogMetrics(model)
+    metrics = tracker.log_metrics(model)
 
     tracker.plot_learning_curve(
         model,
@@ -53,12 +53,12 @@ with tempfile.TemporaryDirectory(prefix="sksurrogate-mltrace-") as workdir:
     tracker.plot_cumulative_gain(model, title="Random forest cumulative gain")
     tracker.plot_lift_curve(model, title="Random forest lift")
 
-    tracker.PreserveModel(model)
-    recovered = tracker.RecoverModel(model.mltrack_id)
+    tracker.preserve_model(model)
+    recovered = tracker.recover_model(model.mltrack_id)
 
     print("data shape:", tracker.get_dataframe().shape)
     print("metrics:", metrics)
     print("weighted features:", list(weights["feature"]))
-    print("top features:", list(tracker.TopFeatures(3).keys()))
-    print("stored plots:", len(tracker.allPlots(model.mltrack_id)))
+    print("top features:", list(tracker.top_features(3).keys()))
+    print("stored plots:", len(tracker.all_plots(model.mltrack_id)))
     print("recovered model:", type(recovered).__name__)

@@ -53,41 +53,48 @@ def _download_openml(name: str, did: int) -> pd.DataFrame:
     ``(features, target, ignore_flags, attribute_names)`` tuple. The result is
     recombined into one frame with the class column last (the layout
     :func:`load_dataset` expects). Pinned via setup.py extras to openml<0.16.
+
+    The warm cache is checked *before* ``openml`` is imported, so a cached CSV
+    loads in slim environments that do not install the ``[benchmark]`` extra;
+    only a genuine download requires the dependency (Stage A of
+    ``AI_LAYER02_REMAINING_PLAN.md``).
     """
+    csv_path = cache_dir() / f"{name}.csv"
+    if csv_path.exists():
+        return pd.read_csv(csv_path)
+
     try:
-        import openml  # noqa: PLC0415 - optional dependency ([benchmark] extra)
+        # noqa: PLC0415 - optional dependency ([benchmark] extra); lazy on purpose,
+        # the cache hit above must work without it.
+        import openml
     except ImportError as exc:
         raise ImportError(
             f"openml is required to download '{name}' (did={did}). "
             "Install it with `pip install sksurrogate[benchmark]`."
         ) from exc
 
-    csv_path = cache_dir() / f"{name}.csv"
-    if not csv_path.exists():
-        dataset = openml.datasets.get_dataset(did)
-        features, target, _ignore_flags, _names = dataset.get_data(
-            dataset_format="dataframe"
-        )
-        if not isinstance(features, pd.DataFrame):  # pragma: no cover - defensive
-            raise TypeError(f"openml get_data(did={did}) did not return a DataFrame")
+    dataset = openml.datasets.get_dataset(did)
+    features, target, _ignore_flags, _names = dataset.get_data(
+        dataset_format="dataframe"
+    )
+    if not isinstance(features, pd.DataFrame):  # pragma: no cover - defensive
+        raise TypeError(f"openml get_data(did={did}) did not return a DataFrame")
 
-        feats = features.reset_index(drop=True)
-        if target is None:
-            # openml-py leaves the class attribute as the last column of
-            # `features` (the legacy single-frame layout load_dataset expects).
-            df = feats
-        else:
-            t = target.reset_index(drop=True)
-            if isinstance(t, pd.DataFrame):
-                t = t.iloc[:, 0]
-            # The class attribute may also appear inside `features`; drop the dup.
-            t_name = getattr(target, "name", None) or _names[-1]
-            if t_name in feats.columns:
-                feats = feats.drop(columns=[t_name])
-            df = pd.concat([feats, t.rename(t_name)], axis=1)
-        df.to_csv(csv_path, index=False)
+    feats = features.reset_index(drop=True)
+    if target is None:
+        # openml-py leaves the class attribute as the last column of
+        # `features` (the legacy single-frame layout load_dataset expects).
+        df = feats
     else:
-        df = pd.read_csv(csv_path)
+        t = target.reset_index(drop=True)
+        if isinstance(t, pd.DataFrame):
+            t = t.iloc[:, 0]
+        # The class attribute may also appear inside `features`; drop the dup.
+        t_name = getattr(target, "name", None) or _names[-1]
+        if t_name in feats.columns:
+            feats = feats.drop(columns=[t_name])
+        df = pd.concat([feats, t.rename(t_name)], axis=1)
+    df.to_csv(csv_path, index=False)
     return df
 
 

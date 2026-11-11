@@ -242,6 +242,9 @@ function PredictConsole({ task, versions, partitions, initialVersion }: { task: 
       sub="Single request → JSON predictions. Stored partitions are projected onto the bundle's features (the target label is ignored); inline rows are validated exactly as sent."
     >
       <ModelPicker task={task} versions={versions} inputs={inputs} />
+      {inputs.mode === "version" && inputs.modelVersion && !result && (
+        <LineageRail task={task} modelVersion={inputs.modelVersion} />
+      )}
       <InputSource
         partitions={partitions}
         source={source}

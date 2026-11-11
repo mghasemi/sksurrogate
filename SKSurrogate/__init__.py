@@ -27,8 +27,11 @@ from .mltrace import (
     default_cv_spec,
     mltrack,
     np2df,
+    prediction_interval_diagnostics,
+    split_conformal_regression_interval,
+    split_conformal_quantile_interval,
 )
-from .DataProcess import DataPreprocess
+from .DataProcess import DataPreprocess, FoldLocalDataPreprocessor
 from .ci import BundleQualityGateError, assert_bundle_quality, check_bundle_quality
 from .deployment import DeploymentApprovalGate
 from .execution import DaskExecutionBackend, ExecutionBackend, LocalProcessExecutionBackend
@@ -37,6 +40,7 @@ from .inference import SchemaValidationError, create_app, predict_batch, serve
 from .monitoring import (
     InferenceMonitor,
     delayed_label_performance,
+    dataset_profile,
     drift_report,
     fairness_report,
     loss_report,
@@ -46,8 +50,9 @@ from .monitoring import (
 )
 from .retraining import RetrainingJob
 from .synthdat import SynthData
+from .design import latin_hypercube, suggest_next_point
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "AML",
@@ -60,6 +65,7 @@ __all__ = [
     "cv_to_spec",
     "default_cv_spec",
     "DataPreprocess",
+    "FoldLocalDataPreprocessor",
     "DeploymentApprovalGate",
     "DaskExecutionBackend",
     "ExecutionBackend",
@@ -88,6 +94,9 @@ __all__ = [
     "UniformRand",
     "Words",
     "mltrack",
+    "prediction_interval_diagnostics",
+    "split_conformal_regression_interval",
+    "split_conformal_quantile_interval",
     "assert_bundle_quality",
     "check_bundle_quality",
     "ModelBundle",
@@ -97,6 +106,9 @@ __all__ = [
     "SchemaValidationError",
     "create_app",
     "serve",
+    "latin_hypercube",
+    "suggest_next_point",
+    "dataset_profile",
     "drift_report",
     "fairness_report",
     "prediction_distribution_report",

@@ -14,7 +14,7 @@ from typing import Annotated
 
 import pandas as pd
 from fastapi import APIRouter, File, Form, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from SKSurrogate import (
     STANDARD_CV_SPLITTERS,
@@ -22,6 +22,7 @@ from SKSurrogate import (
     ModelRegistry,
     cv_param_defs,
     default_cv_spec,
+    dataset_profile,
     sensitive_feature_report,
 )
 
@@ -81,6 +82,49 @@ class SetCVRequest(BaseModel):
     params: dict[str, object] | None = None
 
 
+class DatasetProfileRequest(BaseModel):
+    partition: str = "train"
+    target: str | None = None
+    features: list[str] | None = None
+    group_by: str | None = None
+    max_rows: int = Field(default=5000, ge=1, le=10000)
+    max_features: int = Field(default=50, ge=1, le=100)
+    max_categories: int = Field(default=10, ge=1, le=50)
+    random_state: int | None = 0
+
+
+@router.post("/{task_name}/profile")
+def profile_registered_dataset(task_name: str, body: DatasetProfileRequest):
+    """Return bounded descriptive statistics and association diagnostics."""
+    if not settings.mltrace_db_path(task_name).exists():
+        raise not_found("No dataset registered for task %r" % task_name)
+    try:
+        with open_tracker(task_name) as tracker:
+            frame = tracker.get_dataframe(partition=body.partition)
+            metadata = tracker.GetMetadata()
+        target = body.target or metadata.get("target_name")
+        report = dataset_profile(
+            frame,
+            target=target,
+            features=body.features,
+            group_by=body.group_by,
+            max_rows=body.max_rows,
+            max_features=body.max_features,
+            max_categories=body.max_categories,
+            random_state=body.random_state,
+        )
+    except ValueError as exc:
+        raise bad_request(str(exc))
+    return {
+        "task_name": task_name,
+        "partition": body.partition,
+        "dataset_fingerprint": metadata.get("dataset_partition_history", {})
+        .get(body.partition, {})
+        .get("fingerprint"),
+        **report,
+    }
+
+
 @router.get("/{task_name}/cv")
 def get_cv(task_name: str):
     """Return the standard splitter options and the task's current CV selection."""
@@ -122,9 +166,9 @@ def set_cv(task_name: str, body: SetCVRequest):
 async def inspect_dataset(task_name: str, file: UploadFile = File(...)):
     """Preview a CSV's deduced schema without persisting anything (Phase 5.1).
 
-    Runs ``DataPreprocess.deduce_types`` and the name-based sensitive-column scan
+    Runs ``DataPreprocess.deduce_types`` and the bounded sensitive-feature scan
     so the UI can show an editable review table before the user commits the upload
-    via ``POST /{task}/register``.
+    via ``POST /{task}/register``. The scan reports pattern counts, not cell values.
     """
     if not (file.filename or "").lower().endswith(".csv"):
         raise bad_request("Only CSV uploads are supported")
@@ -220,7 +264,7 @@ async def register_dataset(task_name: str, target: str = Form(...), partition: s
         "dataset_schema": metadata.get("dataset_schema"),
         "dataset_deduced_types": metadata.get("dataset_deduced_types"),
         "deduced_types": pivot_types,
-        # Name-based PII / sensitive-column scan of the uploaded frame (Phase 2.4).
+        # Return bounded, count-only PII pattern findings for the uploaded frame.
         "sensitive_scan": sensitive_feature_report(frame),
     }
 

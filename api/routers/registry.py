@@ -8,7 +8,12 @@ free-text names, not verified identities.
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from SKSurrogate import DeploymentApprovalGate, ModelRegistry, load_bundle
+from SKSurrogate import (
+    DeploymentApprovalGate,
+    ModelRegistry,
+    check_bundle_quality,
+    load_bundle,
+)
 
 from ..config import settings
 from ..deps import bad_request, bundle_summary, not_found, unprocessable
@@ -50,21 +55,30 @@ def register_bundle(task_name: str, body: RegisterRequest):
 
 @router.post("/{task_name}/promote")
 def promote_bundle(task_name: str, body: PromoteRequest):
-    """Promote a registered model version, requiring N unique named approvers."""
-    gate = DeploymentApprovalGate(_registry(), required_approvals=body.required_approvals)
+    """Quality-check and promote a registered model version."""
+    registry = _registry()
+    gate = DeploymentApprovalGate(registry, required_approvals=body.required_approvals)
     try:
+        if body.quality_report is not None and body.quality_report.get("passed") is not True:
+            raise ValueError("The submitted deployment quality report did not pass")
+        bundle = registry.load_version(
+            task_name,
+            body.model_version,
+            strict_dependencies=False,
+        )
+        quality_report = check_bundle_quality(bundle)
         result = gate.promote(
             task_name,
             body.model_version,
             body.state,
             approvers=body.approvers,
-            quality_report=body.quality_report,
+            quality_report=quality_report,
         )
     except KeyError as exc:
         raise not_found(str(exc))
     except (PermissionError, ValueError) as exc:
         raise bad_request(str(exc))
-    return result
+    return {**result, "quality_report": quality_report}
 
 
 @router.post("/{task_name}/rollback")

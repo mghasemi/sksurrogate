@@ -1,6 +1,6 @@
 # SKSurrogate Benchmark Suite — Design (B1)
 
-Status: **v1.9** (2026-10-24; B=30 and B=60 surrogate-surface comparison results recorded in §12 — the un-tuned RBF-GP surface beats the default cubic Hilbert at both budgets, decisively so at B=60 ($p \approx 10^{-4}$); stock KernelRidge is worse than no surrogate). Datasets and baselines are pinned below; this doc is the
+Status: **v1.18** (2026-11-08; §15 adds the Stage D4 acquisition-readiness harness — analysis-only, no production design code; fixed-dataset contract unchanged). Datasets and baselines are pinned below; this doc is the
 contract for B2 (runner), B3 (ablation), B4 (publication). Changes after B2 starts require a
 version bump here.
 
@@ -135,6 +135,123 @@ v1.9 (2026-10-24; results recorded — §12):
   flat-landscape regime; TPE top in 5/6 datasets at B=30, and convergence speed (primary gap metric) shows no
   method separation at either budget.
 
+v1.10 (2026-11-04; total wall-time coverage and overhead accounting):
+- **Random-search timing gap fixed.** `run_random` now records `total_wall_s` over candidate sampling and evaluation,
+  matching the search-only timing scope used by the SRS and Optuna arms. The field excludes the final held-out
+  evaluation. Per-evaluation `wall_s` continues to capture candidate evaluation time.
+- **Focused budget sweep.** Re-ran the three arms on local Galaxy3 (1,600 rows, 20 features), with 10-tree
+  random forests, seeds 0–2, and budgets 8/30/60. Median SRS overhead (total search time minus summed candidate
+  time, divided by total) rose from 0.7% at B=8 to 7.1% at B=30 and 14.7% at B=60; the no-surrogate arm stayed
+  below 0.7%, and random search was approximately 0%. Median best CV accuracy for SRS vs random was 0.6305 vs
+  0.6305 (B=8), 0.6492 vs 0.6469 (B=30), and 0.6492 vs 0.6469 (B=60). This is one dataset and three seeds,
+  so it is descriptive, not evidence of a general quality or runtime advantage. Reproduce each budget with
+  `python -m benchmarks.run --dataset galaxy3 --methods random,sksurrogate,srs-no-surrogate --budget B --seeds 3 --n-estimators 10`.
+- **Historical overhead estimate.** Existing canonical runs have total wall time for the surrogate and no-surrogate
+  SRS arms, but random-search records predate the added total timer. Using
+  `max(total_wall_s - sum(record.wall_s), 0) / total_wall_s` as the search-overhead fraction, median overhead across
+  six datasets × seven seeds was 9.2% for SRS at B=30 and 27.8% at B=60; the no-surrogate SRS control was 0.1% at
+  both budgets. This is a residual estimate (not a fit-vs-acquisition breakdown) and excludes historical random
+  runs because their total timer was not recorded. No search behavior or defaults are changed from this evidence.
+- **Decision.** No core optimization or default change is justified yet: the residual timer cannot separate
+  surrogate fitting from acquisition, and the focused quality differences are small. Profile those components
+  directly before attempting an optimization.
+
+v1.11 (2026-11-05; noise-aware GP validation on real search objectives; Hilbert comparison superseded by v1.12):
+- **Probe.** Added `benchmarks/dtrack/real_noise_gp_probe.py`, intended to compare Hilbert, stock RBF-GP,
+  RBF+WhiteKernel GP, random-forest surrogate, SRS without a surrogate, and uniform random search on Galaxy3.
+  The probe also supports
+  bundled scikit-learn datasets (`wine`, `breast_cancer`, and `digits`). Every arm uses the same fixed-seed split
+  and candidate budget; machine/package metadata and raw run records are saved as JSON. For each dataset, output
+  is written to a dataset-specific file under `benchmarks/results/dtrack/` by default.
+- **Galaxy3 result.** On 1,600 rows and 20 features, stratified 80/20 splits and 5-fold CV, RF(10) candidates,
+  budget 30, and seeds 0–6 (42 runs), every arm completed exactly 30 evaluations. The arm labelled Hilbert
+  actually used the library's default stock GP, so its score duplicates the stock-GP comparison and must not be
+  cited as a Hilbert result. The paired noise-aware-GP versus stock-GP comparison remains valid: 1 win / 5 ties /
+  1 loss, with mean paired delta +0.00045. Median held-out accuracy was 0.6312 for the two standard-GP arms and
+  0.6219 for noise-aware GP. Two GP optimization convergence warnings were emitted.
+- **Additional checks.** On `wine` (178 rows, 13 features) and `breast_cancer` (569 rows, 30 features), at B=30
+  and seeds 0–2 (18 runs per dataset), every arm again completed its full budget. Noise-aware GP tied stock GP
+  on median CV and test accuracy for both datasets; paired CV results were 0/3/0 and 0/2/1 wins/ties/losses.
+  Reproduce the Galaxy3 run with:
+  `python -m benchmarks.dtrack.real_noise_gp_probe --dataset galaxy3 --budget 30 --seeds 7 --n-estimators 10`.
+  Reproduce the additional checks with:
+  `python -m benchmarks.dtrack.real_noise_gp_probe --dataset wine --budget 30 --seeds 3 --n-estimators 10`
+  and the same command with `--dataset breast_cancer`.
+- **Limitations and decision.** These are three fixed-fold tabular classification workloads, not repeated
+  stochastic evaluations or a broad scientific-task sample; the two additional datasets use only three seeds.
+  The noise-aware GP did not demonstrate a reliable improvement over stock GP, so no default change or
+  automatic fallback is justified. The real-workload Hilbert comparison is invalid and is corrected in v1.12.
+
+v1.12 (2026-11-05; corrected response-surface selection):
+- **Audit finding.** `SurrogateSearch` now defaults to `GaussianProcessRegressor`, but the benchmark's
+  `run_sksurrogate` arm did not pass a regressor and still labelled its output as Hilbert. Thus the v1.11
+  “Hilbert” rows were actually stock-GP rows. The comparison between explicitly supplied stock GP and
+  noise-aware GP was still valid; Hilbert-specific real-workload results were not.
+- **Runner fix.** `run_sksurrogate` now explicitly supplies `HilbertRegressor(deg=3)`, all surface arms use the
+  same 20-point engagement floor, and `RunRecord.extra` records the selected fully qualified class and source
+  from `search.surrogate_info_`. A focused integration test runs the Hilbert arm and checks both its budget and
+  runtime-selected class.
+- **Corrected real-workload results.** Re-ran all 78 runs with the intended six arms, budget 30, RF(10)
+  candidates, and the same fixed splits: Galaxy3 used seven seeds; wine and breast-cancer used three each.
+  Every arm completed its full budget. On Galaxy3, median best CV accuracy was 0.6305 for Hilbert,
+  0.6359 for stock GP and noise-aware GP, 0.6305 for RF and no-surrogate SRS, and 0.6125 for random
+  search. Hilbert versus GP had 0/5/2 CV wins/ties/losses (mean paired delta -0.00324). Noise-aware
+  GP versus stock GP had 1/5/1 (mean +0.00045). Median held-out accuracy was 0.6312 for Hilbert,
+  stock GP, RF, and no-surrogate SRS, and 0.6219 for noise-aware GP.
+- On wine, median CV accuracy was 0.9643 for all methods; median held-out accuracy was 1.0000 for
+  Hilbert and both GP arms, and 0.9722 for RF, no-surrogate SRS, and random search. On breast cancer,
+  median CV accuracy was 0.9560 for Hilbert and both GP arms, 0.9516 for RF/no-surrogate SRS, and
+  0.9582 for random search; median held-out accuracy was 0.9474 for Hilbert, RF, and no-surrogate
+  SRS, 0.9561 for both GP arms, and 0.9386 for random search. Noise-aware-versus-stock GP paired CV
+  results were 0/3/0 on wine and 0/2/1 on breast cancer (mean delta -0.00073 on breast cancer).
+- Median residual overhead fractions (search wall time minus summed candidate-CV time, divided by
+  search wall time) for Hilbert / stock GP / noise-aware GP / RF surrogate / no-surrogate SRS /
+  random were respectively 41.0% / 6.8% / 4.9% / 23.7% / 0.5% / 0.0% on Galaxy3,
+  44.4% / 7.6% / 5.8% / 25.6% / 0.6% / 0.0% on wine, and
+  40.9% / 6.5% / 3.9% / 22.8% / 0.5% / 0.0% on breast cancer. These are small fixed-seed
+  comparisons, not general performance guarantees.
+- **Component profile.** Reproduce with
+  `python -m benchmarks.dtrack.profile_search_overhead --dataset galaxy3 --budget 30 --seed 0 --n-estimators 10`.
+  One cProfile run attributed about 2.37 seconds to candidate CV for Hilbert and stock GP, versus
+  2.30 seconds for no-surrogate SRS. The stock-GP local optimizer and prediction wrapper took 0.093
+  and 0.071 cumulative seconds; the Hilbert arm spent 0.744 cumulative seconds in repeated
+  `HilbertRegressor.fit` work and 0.390 in local optimization. cProfile times overlap by call nesting
+  and are diagnostic rather than unprofiled wall times. On these runs the current default GP has
+  modest overhead relative to candidate evaluation, while optimizing Hilbert's fit path would only
+  benefit callers selecting that legacy surface; no optimization is justified yet.
+- **Decision.** The corrected comparison supports keeping the stock GP default: noise-aware GP did
+  not show a reliable quality gain, while its search overhead was similar. No automatic fallback is
+  added. The reproducible component profiler narrows the legacy Hilbert overhead source, but P1.2
+  remains open pending evidence that optimizing it improves time-to-result for a supported workload.
+
+v1.14 (2026-11-08; per-evaluation candidate configs and record schema v2 — Stage A of `AI_LAYER02_REMAINING_PLAN.md`):
+- **Per-eval records gain `params`.** Every arm (SRS family, random, optuna-tpe, skopt) now logs the full
+  candidate configuration — all keys of `SPACE` — in each per-evaluation entry (`(k, cv_score, wall_s, params)`),
+  so archived runs can be re-plotted and used for acquisition-function comparisons without re-running.
+  Previously only scores were stored; the SRS/random arms captured configs internally but stripped them before
+  serialization (see §5).
+- **Record schema v2.** `RunRecord` carries a top-level `schema_version`; `run_manifest.json` records
+  `record_schema_version`. Archive readers (`plot.py`, `analyze_surrogates.py`) treat both as optional, so legacy
+  v1 archives (no `params`, no stamp) remain fully readable — verified live against the real pre-v2 archive
+  `results/20261018T051214Z` (84 ok-runs re-read through `_load_records`, curves, and target tables). Reader
+  tolerance is pinned by `tests/test_benchmark_archive_readers.py` on fixtures mirroring the real v1 layout.
+- **Dataset cache before dependency.** `_download_openml` now checks the warm CSV cache *before* importing the
+  optional `openml` package, so cached datasets load in slim environments without the `[benchmark]` extra; only a
+  genuine download still requires it (actionable install-hint error unchanged). Regression-tested in
+  `tests/test_benchmark_datasets.py`.
+
+v1.15 additions (2026-11-08):
+- §14 added: Stage D1 controlled synthetic-DGP validation harness (`benchmarks/dgps.py`, report schema `sksurrogate.dgp-validation.v1`). It is a separate capability from the fixed-dataset suite — its "datasets" are process-defined, so §§3–7 pinning does not apply; it inherits only the cross-cutting rules (seeded reproducibility, descriptive-only summaries, versioned JSON records).
+
+v1.16 additions (2026-11-08):
+- §14 gains an ALE ground-truth probe (`_ale_truth_checks`): the Stage C accumulated-local-effects kernel (`api/explanations.py`) is compared against the exact noise-free response of the `correlated` (additive) and `shift` (known `x2**2` term) processes. Because the conditional mean is additive apart from that documented quadratic, the accumulated curve has a closed form from the known coefficients, so the probe is exact (`ale_true_response_max_abs_error` ≈ 1e-15) rather than sampling-noisy. This closes the D1 exit hook for Stage C methods; D1 itself stays open for future Stage B/C methods.
+
+v1.17 additions (2026-11-08):
+- §14 gains a PDP ground-truth probe (`_pdp_truth_checks`): average partial dependence on the exact noise-free response of the `correlated` and `shift` DGPs equals the analytic curve `h_j(g) + C_j` (C_j read from the same function at `x_j = 0`), and every reference subset's curve may differ only by its offset — the probe pins both at floating-point noise. The descriptive subset standard deviation is reported (`pdp_subset_stability_max_std`), not asserted to zero, because subset reference means legitimately shift an additive curve. This closes the D1 exit hook for the landed Stage C methods (ALE + PDP/stability).
+
+v1.18 additions (2026-11-08):
+- §15 added: Stage D4 acquisition-readiness harness (`benchmarks/design_readiness.py`, report schema `sksurrogate.design-readiness.v1`). It is an **analysis-only** comparison of the shipped GP-LCB policy against EI, PI, and a fixed-length-scale noise-aware GP on the existing synthetic DOE objectives; it ships no production acquisition code, makes no significance claim, and does not satisfy D4's real-user exit criterion.
+
 ## 1. Goal
 
 The README claims SKSurrogate performance "validated against benchmarks" with no findable
@@ -246,8 +363,10 @@ pandas StringDtype columns do not satisfy).
 - **Seeds**: S = **7** seeds per (method, dataset) — satisfies ≥5 and avoids even-split KFold
   symmetry artifacts. Seed controls: outer split, estimator `random_state`, sampler/surrogate RNG.
 - **Per-evaluation logging**: every method emits a record after each model evaluation
-  `(k, cv_score, wall_s)` → best-so-far curves are computed from these, not reconstructed
-  afterwards.
+  `(k, cv_score, wall_s, params)` → best-so-far curves are computed from these, not reconstructed
+  afterwards. Since record schema v2 (v1.14), `params` carries the full candidate configuration for that
+  evaluation and each run JSON is stamped with `schema_version`; legacy v1 archives lack both fields and
+  archive readers treat them as optional, so old runs stay re-plottable without re-running.
 
 ## 6. Metrics
 
@@ -439,3 +558,131 @@ optimization proceeds with the best parameters found and no cell failed because 
 **Recommendation.** Make RBF-GP (`GaussianProcessRegressor` with stock RBF kernel) SKSurrogate's recommended
 default surface for `SurrogateRandomCV`: optional via the public `regressor=` kwarg (no library code change needed
 for benchmarks), documented as a v0.2 candidate in an upstream issue with §12 as evidence. Do not ship KernelRidge.
+
+## 13. Bounded post-hoc ensemble probe (P1.8)
+
+**Question.** Does selecting a small equal-weight probability ensemble from
+the top CV-ranked candidates improve held-out accuracy enough to justify
+shipping selection, model-bundle, and inference support?
+
+**Protocol.** Reproduce with:
+
+```bash
+python -m benchmarks.dtrack.posthoc_ensemble_probe --seeds 10
+```
+
+For each fixed seed and bundled `breast_cancer`, `iris`, and `wine` dataset,
+the probe uses stratified 60/20/20 train/calibration/test partitions. Four
+classifiers (standardized logistic regression, random forest, extra trees,
+and histogram gradient boosting) are ranked using training-only stratified
+3-fold CV. The top three candidates are refitted on training data. The
+calibration partition selects among their singletons and all equal-weight
+probability-averaging subsets of up to three; one final comparison is made on
+the untouched test partition against the CV-best individual model. Ties in
+selection prefer fewer members and are then resolved by member name. No test
+labels participate in candidate or ensemble selection.
+
+**Results (10 seeds per dataset).**
+
+| Dataset | Test-accuracy wins/ties/losses vs. CV-best individual | Mean paired delta | Median paired delta | Multi-model selection rate |
+| --- | ---: | ---: | ---: | ---: |
+| breast cancer | 3 / 6 / 1 | +0.00614 | 0.00000 | 10% |
+| iris | 1 / 8 / 1 | +0.00000 | 0.00000 | 0% |
+| wine | 1 / 7 / 2 | -0.00278 | 0.00000 | 10% |
+| **All 30 runs** | **5 / 21 / 4** | **+0.00112** | **0.00000** | **6.7%** |
+
+These are small, finite bundled-dataset probes, not a significance claim or
+generalization guarantee. Calibration selection usually chose one model, and
+the mean gain is small with four paired losses. **Decision:** do not add a
+production ensemble API or change the default single-best model in this
+iteration. Revisit only with representative scientific workloads, repeated
+outer evaluation, and bundle provenance requirements established.
+
+## 14. Controlled synthetic DGP validation harness (Stage D1)
+
+`benchmarks/dgps.py` provides a seeded set of parametric data-generating processes
+with exactly known ground truth, for validating methods against known values — the
+D1 foundation from `AI_LAYER02_REMAINING_PLAN.md` (R6). This is *not* part of the
+fixed-dataset comparison suite: its "datasets" are process-defined, so §§3–7 pinning
+does not apply; it inherits only the cross-cutting rules — seeded reproducibility,
+descriptive-only summaries (no significance claims), and versioned JSON records
+(report schema `sksurrogate.dgp-validation.v1`).
+
+**DGPs** (default p = 6; additive noise σ = 0.5 unless noted):
+
+| DGP | Target / structure | What it probes |
+| --- | --- | --- |
+| `interactions` | $0.5 + 2x_0 - 1.5x_1 + x_2 + 1.5\,x_0 x_1 + \varepsilon$, features $\sim N(0,I)$; 3 of p active | Nonlinearity a linear method cannot represent (plain vs expanded-design RMSE gap) |
+| `correlated` | linear, all named coefficients nonzero; corr(x0,x1) = corr(x3,x4) = 0.9 | Per-coefficient recovery under ill-conditioning while prediction stays easy |
+| `heteroscedastic` | linear + ε with σ(x) = 0.5(1 + 2\|x₂\|) | Squared residuals of a homoscedastic fit track the true variance structure |
+| `shift` | $0.5 + \beta^\top x + x_2^2 + \varepsilon$; train at N(0,I), test shifted by mean +2 on every feature | Model degradation under covariate shift (an iid reference split is always provided for the ratio) |
+
+**Method panel (default):** `ridge` (α = 1), `random-forest` (100 trees, min leaf
+size 2, seeded per fit seed), `kernel-ridge` — instantiated fresh via
+`_make_method(name, seed)` so every draw and fit is reproducible from one seed.
+
+**Harness:** `sample_dgp(name, n_train, n_test, p, seed)` returns a frozen
+train/test/iid sample with the exact truth dict (for `shift`, test rows come from
+the shifted distribution; all splits use fixed per-seed RNG offsets).
+`validate(dgps, methods, n_train, n_test, p, seeds, out_dir)` scores each method on
+each DGP × seed — rmse / r² on the test and iid splits plus
+`degradation_ratio = rmse_test / rmse_iid` — together with per-DGP ground-truth
+probes (interaction-coefficient recovery; coefficient deviations under
+correlation; corr(resid², σ(x)²); and, for the additive/quadratic processes, the
+Stage C ALE probe `ale_true_response_max_abs_error` plus the Stage D1 PDP probe
+`pdp_true_response_max_abs_error` / `pdp_subset_shape_max_deviation`), assembles
+cross-seed means, and writes `dgp_validation.json`. CLI: `python -m benchmarks.dgps --dgps ... --seeds 0 1`.
+
+**Relationship to `SKSurrogate/synthdat.py`:** `synthdat.SynthData` resamples the
+structure of an *existing* dataset (no ground-truth function, unseeded) — it is the
+"dataset-like" half of the synthetic-data family; `dgps.py` is the "known-process"
+half. They coexist and are deliberately not merged.
+
+**Status:** foundation built 2026-11-08 (`tests/test_benchmark_dgps.py`, 17 tests).
+Both landed Stage C methods are validated here against exact known response curves:
+the ALE kernel (`ale_true_response_max_abs_error`) and average PDP plus its
+reference-subset summary (`pdp_true_response_max_abs_error`,
+`pdp_subset_shape_max_deviation`), all at floating-point precision on `correlated`
+and `shift`. The D1 exit criterion is therefore closed for the landed Stage C
+methods; any future explanation or evaluation method is validated here first.
+
+## 15. Acquisition-readiness assessment harness (Stage D4)
+
+`benchmarks/design_readiness.py` is the analysis-only Stage D4 deliverable. It
+compares the **shipped** Gaussian-process LCB policy
+(`SKSurrogate.design.suggest_next_point`, Matern 5/2 with fixed unit length
+scale, `beta=2`) against expected improvement (EI), probability of improvement
+(PI), and a noise-aware variant (`Matern` + `WhiteKernel`, noise level optimized,
+length scale still fixed) on the synthetic 2-D objectives from
+`benchmarks/dtrack/objectives.py` (`trig`, `mixed`, `rational` on `[-1,1]^2`).
+
+**Protocol:** paired seeds; identical seeded Latin-hypercube initial design and
+candidate pool (256 per step) across policies; equal evaluation budgets
+(default: 6 initial + 14 sequential = 20); optional Gaussian observation noise
+(default levels 0 and 0.05); regret measured as best *true* objective value
+evaluated minus the dense-grid optimum. `lcb` exercises the shipped function
+directly, so a regression in that path changes this report.
+
+**Report:** `design_readiness.json`, schema
+`sksurrogate.design-readiness.v1` — protocol, per-evaluation records (`x`,
+`y_true`, `y_observed`, acquisition metadata), per-run summaries (final regret,
+regret AUC), grouped summaries, paired wins/losses/ties versus LCB, wall time,
+and an explicit synthetic-only caveat. CLI:
+`python -m benchmarks.design_readiness --out DIR`.
+
+**Why it is not D4's exit benchmark:** it uses synthetic objectives, synthetic
+Gaussian noise, unit-cost evaluations, a fixed surrogate family, and five default
+seeds. D4's exit criterion — a reproducible equal-budget benchmark in a real
+expensive-experiment regime with an honest read — still requires a real user and
+a representative cost/feasibility model. The harness is the reusable protocol and
+reporting shape for that future run; it deliberately ships no production
+acquisition code.
+
+**Status:** built 2026-11-08; 9 tests in
+`tests/test_benchmark_design_readiness.py`. Decision record and results:
+`AI_LAYER02_D4_READINESS_ASSESSMENT.md` (mean final regret at 20 evaluations:
+LCB 0.0044 clean / 0.0154 noisy; EI 0.0039 / 0.0084; PI 0.0036 / 0.0205;
+noise-aware 0.0537 / 0.0567; random 0.1106). The read: acquisitions are
+second-order on this evidence; EI is the only plausible direction under noise
+and remains unproven at five seeds; the fixed-length-scale noise-aware model is a
+regression. No extension is recommended for shipping yet.

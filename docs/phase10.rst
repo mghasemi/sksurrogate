@@ -51,8 +51,8 @@ existing task, metadata, models, metrics, plots, data, and saved-model rows::
    from SKSurrogate import mltrack
 
    tracker = mltrack("my-task", db_name="mltrack.db")
-   print(tracker.GetMetadata())
-   print(tracker.ListModels())
+   print(tracker.get_metadata())
+   print(tracker.all_models())
    tracker.close()
 
 Use the backup to roll back if the database cannot be opened or if an
@@ -69,7 +69,7 @@ with the same search configuration::
    from SKSurrogate import AML
 
    search = AML(config=config, length=3, check_point="example01-checkpoints/")
-   search.eoa_fit(X, y, max_generation=10, num_parents=10)
+   search.eoa_fit(X, y, max_generations=10, num_parents=10)
 
 If a checkpoint cannot be resumed, restore the backup and start a new search
 in a new directory. Do not overwrite the original checkpoint while diagnosing

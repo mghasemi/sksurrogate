@@ -11,6 +11,7 @@ from sklearn.utils.validation import check_is_fitted
 
 from SKSurrogate import AML, Categorical, Integer, ModelBundle, Real
 
+from . import logs
 from .config import settings
 from .deps import bad_request, finite_or_none, not_found, open_tracker
 
@@ -104,6 +105,13 @@ _LEARNING_CURVE_METRICS = {
         {"value": "r2", "label": "R²", "negate": False, "higher_is_better": True},
         {"value": "neg_root_mean_squared_error", "label": "RMSE", "negate": True, "higher_is_better": False},
         {"value": "neg_mean_absolute_error", "label": "MAE", "negate": True, "higher_is_better": False},
+        {
+            "value": "neg_mean_pinball_loss",
+            "label": "Pinball loss",
+            "negate": True,
+            "higher_is_better": False,
+            "requires_alpha": True,
+        },
         {"value": "explained_variance", "label": "Explained Variance", "negate": False, "higher_is_better": True},
     ],
 }
@@ -125,9 +133,15 @@ def learning_curve_metric_options(family):
     available = set(get_scorer_names())
     entries = _LEARNING_CURVE_METRICS.get(family or "", [])
     metrics = [
-        {key: entry[key] for key in ("value", "label", "higher_is_better")}
+        {
+            **{
+                key: entry[key]
+                for key in ("value", "label", "higher_is_better")
+            },
+            **({"requires_alpha": True} if entry.get("requires_alpha") else {}),
+        }
         for entry in entries
-        if entry["value"] in available
+        if entry["value"] in available or entry.get("requires_alpha")
     ]
     return {
         "family": family,
@@ -136,11 +150,13 @@ def learning_curve_metric_options(family):
     }
 
 
-def learning_curve_metric_label(scoring):
+def learning_curve_metric_label(scoring, pinball_alpha=None):
     """Display label for a metric: the curated label when known, else the derived scorer label."""
     for entries in _LEARNING_CURVE_METRICS.values():
         for entry in entries:
             if entry["value"] == scoring:
+                if entry.get("requires_alpha") and pinball_alpha is not None:
+                    return "%s (q=%g)" % (entry["label"], pinball_alpha)
                 return entry["label"]
     return _scoring_label(scoring)
 
@@ -154,7 +170,15 @@ def _learning_curve_sign(scoring):
     return 1.0
 
 
-def compute_learning_curve(bundle, *, task_name, scoring="accuracy", train_partition="train", n_points=5):
+def compute_learning_curve(
+    bundle,
+    *,
+    task_name,
+    scoring="accuracy",
+    train_partition="train",
+    n_points=5,
+    pinball_alpha=None,
+):
     """Cross-validated learning curve for one bundle under a scikit-learn scorer.
 
     Scores are averaged over the folds of the splitter persisted for the task
@@ -165,8 +189,26 @@ def compute_learning_curve(bundle, *, task_name, scoring="accuracy", train_parti
     import numpy as np
     from sklearn.model_selection import learning_curve
 
-    if scoring not in set(get_scorer_names()):
-        raise bad_request("Unknown scoring metric %r" % (scoring,))
+    if scoring == "neg_mean_pinball_loss":
+        if pinball_alpha is None:
+            raise bad_request(
+                "pinball_alpha is required when scoring is 'neg_mean_pinball_loss'"
+            )
+        from sklearn.metrics import make_scorer, mean_pinball_loss
+
+        scorer = make_scorer(
+            mean_pinball_loss,
+            alpha=pinball_alpha,
+            greater_is_better=False,
+        )
+    else:
+        if pinball_alpha is not None:
+            raise bad_request(
+                "pinball_alpha is only valid when scoring is 'neg_mean_pinball_loss'"
+            )
+        if scoring not in set(get_scorer_names()):
+            raise bad_request("Unknown scoring metric %r" % (scoring,))
+        scorer = scoring
     estimator = getattr(bundle, "model", None)
     if estimator is None or not hasattr(estimator, "fit"):
         raise bad_request("Bundle %r carries no fittable estimator" % bundle.model_version)
@@ -186,13 +228,14 @@ def compute_learning_curve(bundle, *, task_name, scoring="accuracy", train_parti
     train_sizes = np.linspace(0.1, 1.0, n_points)
 
     sizes, train_scores, validation_scores = learning_curve(
-        estimator, X, y, cv=cv, scoring=scoring, train_sizes=train_sizes, n_jobs=1
+        estimator, X, y, cv=cv, scoring=scorer, train_sizes=train_sizes, n_jobs=1
     )[:3]
 
     sign = _learning_curve_sign(scoring)
     n_samples = float(len(y))
     return {
         "model_version": bundle.model_version,
+        "pinball_alpha": pinball_alpha,
         "train_sizes": [int(size) for size in sizes],
         "train_sizes_fraction": [round(float(size) / n_samples, 4) for size in sizes],
         "train_scores_mean": [finite_or_none(sign * float(np.mean(row))) for row in train_scores],
@@ -248,6 +291,56 @@ def get_stored_cv(task_name):
         raise bad_request("Stored CV splitter %r for task %r could not be rebuilt" % (spec, task_name))
 
 
+def _reproducibility_record(
+    task_name,
+    metadata,
+    frame,
+    target,
+    train_partition,
+    *,
+    configuration,
+    evaluation_protocol,
+    transformations,
+):
+    partitions = metadata.get("dataset_partition_history", {})
+    train_data = partitions.get(train_partition, {})
+    environment_keys = (
+        "python_version",
+        "numpy_version",
+        "pandas_version",
+        "scikit_learn_version",
+        "sksurrogate_version",
+    )
+    return {
+        "schema_version": 1,
+        "task_name": task_name,
+        "data": {
+            "train_partition": train_partition,
+            "train_fingerprint": train_data.get("fingerprint"),
+            "rows_used": int(len(frame)),
+            "features": [column for column in frame.columns if column != target],
+            "target": {
+                "column": target,
+                "construction": "not recorded; target is used as registered",
+            },
+            "excluded_observations": {
+                "explicit_api_exclusions": 0,
+                "upstream_exclusions": "not recorded",
+            },
+        },
+        "configuration": configuration,
+        "transformations": transformations,
+        "evaluation_protocol": evaluation_protocol,
+        "environment": {
+            key: metadata[key] for key in environment_keys if key in metadata
+        },
+        "known_gaps": [
+            "Target construction and upstream row exclusions are not recorded.",
+            "Metrics without a repeated-CV evaluation have no uncertainty estimate.",
+        ],
+    }
+
+
 def fit_baseline_bundle(
     task_name,
     *,
@@ -278,17 +371,61 @@ def fit_baseline_bundle(
             metrics["score"] = float(model.score(validation_X, validation_y))
 
     schema = {column: {"dtype": str(train_X[column].dtype)} for column in train_X.columns}
-    bundle = ModelBundle(
+    run_record = _reproducibility_record(
+        task_name,
+        metadata,
+        train_frame,
+        target,
+        train_partition,
+        configuration={
+            "kind": "baseline",
+            "estimator": estimator,
+            "estimator_parameters": BASELINE_ESTIMATORS[estimator]().get_params(
+                deep=False
+            ),
+            "validation_partition": validation_partition if "score" in metrics else None,
+            "validation_partition_fingerprint": (
+                metadata.get("dataset_partition_history", {})
+                .get(validation_partition, {})
+                .get("fingerprint")
+                if "score" in metrics
+                else None
+            ),
+        },
+        transformations=[
+            {"class": "sklearn.preprocessing.StandardScaler", "parameters": {}},
+            {
+                "class": "%s.%s"
+                % (
+                    BASELINE_ESTIMATORS[estimator].__module__,
+                    BASELINE_ESTIMATORS[estimator].__qualname__,
+                ),
+                "parameters": BASELINE_ESTIMATORS[estimator]().get_params(deep=False),
+            },
+        ],
+        evaluation_protocol={
+            "selection": "none; fixed baseline estimator",
+            "metric": "estimator.score",
+            "metric_scope": "validation partition" if "score" in metrics else None,
+        },
+    )
+    bundle = _new_bundle(model, metrics, task_name, schema, run_record, owner, run_id)
+    bundle.record_audit_event("training", estimator=estimator, metrics=metrics)
+    return bundle
+
+
+def _new_bundle(model, metrics, task_name, schema, run_record, owner, run_id):
+    """Create a ``ModelBundle`` carrying the reproducibility record shared by all training entry points."""
+    return ModelBundle(
         model,
         task_name=task_name,
         schema=schema,
         metrics=metrics,
-        dataset_fingerprint=metadata.get("dataset_fingerprint"),
+        metadata={"reproducibility": run_record},
+        dataset_fingerprint=run_record["data"]["train_fingerprint"],
         owner=owner,
         run_id=run_id,
     )
-    bundle.record_audit_event("training", estimator=estimator, metrics=metrics)
-    return bundle
 
 
 def build_search_param(spec):
@@ -414,6 +551,9 @@ def fit_experiment_bundle(
     surrogate_mode=False,
     surrogate_itrs=None,
     forbidden=None,
+    preset=None,
+    strategy="eoa",
+    resume=False,
 ):
     """Run an AML/EOA pipeline search and wrap the best fitted pipeline into a ``ModelBundle``.
 
@@ -427,7 +567,14 @@ def fit_experiment_bundle(
     X = frame[feature_columns].values
     y = frame[target].values
 
-    config, stacking = extract_stacking(config)
+    if preset is not None and config:
+        raise bad_request("Send either a preset or a config, not both")
+    if preset is None and not config:
+        raise bad_request("A search-space config or a preset is required")
+    if strategy not in ("eoa", "surrogate"):
+        raise bad_request("strategy must be 'eoa' or 'surrogate'")
+    requested_config = config
+    config, stacking = extract_stacking(config or {})
     parsed_config = {
         estimator: {name: build_search_param(spec) for name, spec in params.items()}
         for estimator, params in config.items()
@@ -440,7 +587,9 @@ def fit_experiment_bundle(
     cv = get_stored_cv(task_name)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     aml = AML(
-        config=parsed_config,
+        config=parsed_config if preset is None else None,
+        preset=preset,
+        resume=resume,
         length=length,
         scoring=scoring,
         check_point=str(checkpoint_dir) + "/",
@@ -448,13 +597,17 @@ def fit_experiment_bundle(
         cv=cv if cv is not None else 3,
         forbidden=forbidden_rules,
         conditional=conditional,
+        callbacks=[logs.trial_callback],
         **stacking,
     )
     if surrogate_mode:
         # A single lightweight regressor replaces the default KRR+GPR pair; the
         # iteration budget bounds how many candidate points each surrogate pass tries.
         aml.add_surrogate(LinearRegression(), int(surrogate_itrs) if surrogate_itrs else 20)
-    aml.eoa_fit(X, y, max_generation=max_generation, num_parents=num_parents)
+    if strategy == "eoa":
+        aml.fit(X, y, strategy="eoa", max_generations=max_generation, num_parents=num_parents)
+    else:
+        aml.fit(X, y, strategy="surrogate")
     # SurrogateRandomCV refits best_estimator_ on the full dataset (refit=True),
     # so it is ready for scoring/serving without an extra fit here. When every
     # candidate was rejected (e.g. the forbidden rules ban the whole space) it
@@ -474,15 +627,40 @@ def fit_experiment_bundle(
     train_score = float(aml.score(X, y))
 
     schema = {column: {"dtype": str(frame[column].dtype)} for column in feature_columns}
-    bundle = ModelBundle(
-        best_estimator,
-        task_name=task_name,
-        schema=schema,
-        metrics={"train_score": train_score},
-        dataset_fingerprint=metadata.get("dataset_fingerprint"),
-        owner=owner,
-        run_id=run_id,
+    run_record = _reproducibility_record(
+        task_name,
+        metadata,
+        frame,
+        target,
+        train_partition,
+        configuration={
+            "kind": "automl_experiment",
+            "preset": preset,
+            "strategy": strategy,
+            "search_space": requested_config,
+            "length": length,
+            "max_generation": max_generation,
+            "num_parents": num_parents,
+            "random_state": random_state,
+            "surrogate_mode": surrogate_mode,
+            "surrogate_iterations": int(surrogate_itrs) if surrogate_itrs else None,
+            "forbidden": [list(list(rule.items())[0]) for rule in forbidden_rules],
+            "conditional": conditional,
+            "stacking": stacking or None,
+        },
+        transformations=[
+            {
+                "class": "%s.%s" % (step.__class__.__module__, step.__class__.__qualname__)
+            }
+            for step in getattr(best_estimator, "steps", [])
+        ],
+        evaluation_protocol={
+            "scoring": scoring,
+            "cv": cv_spec if cv_spec is not None else {"folds": 3, "source": "default"},
+            "metric_scope": "cross-validation search score; reported train_score is refit training score",
+        },
     )
+    bundle = _new_bundle(best_estimator, {"train_score": train_score}, task_name, schema, run_record, owner, run_id)
     bundle.record_audit_event(
         "experiment",
         scoring=scoring,
@@ -579,6 +757,7 @@ def fit_pipeline_bundle(
         check_point=str(checkpoint_dir) + "/",
         random_state=random_state,
         cv=cv if cv is not None else 3,
+        callbacks=[logs.trial_callback],
         **stacking,
     )
     # optimize_pipeline requires at least one surrogate regressor; a plain
@@ -606,15 +785,37 @@ def fit_pipeline_bundle(
         )
 
     schema = {column: {"dtype": str(frame[column].dtype)} for column in feature_columns}
-    bundle = ModelBundle(
-        pipeline,
-        task_name=task_name,
-        schema=schema,
-        metrics={"train_score": train_score},
-        dataset_fingerprint=metadata.get("dataset_fingerprint"),
-        owner=owner,
-        run_id=run_id,
+    run_record = _reproducibility_record(
+        task_name,
+        metadata,
+        frame,
+        target,
+        train_partition,
+        configuration={
+            "kind": "pipeline_optimization",
+            "pipeline": list(seq),
+            "search_space": config or {},
+            "length": len(seq),
+            "random_state": random_state,
+            "surrogate": {
+                "estimator": "sklearn.linear_model.LinearRegression",
+                "iterations": 10,
+            },
+            "stacking": stacking or None,
+        },
+        transformations=[
+            {
+                "class": "%s.%s" % (step.__class__.__module__, step.__class__.__qualname__)
+            }
+            for step in getattr(pipeline, "steps", [])
+        ],
+        evaluation_protocol={
+            "scoring": scoring,
+            "cv": cv_spec if cv_spec is not None else {"folds": 3, "source": "default"},
+            "metric_scope": "cross-validation search score; reported train_score is refit training score",
+        },
     )
+    bundle = _new_bundle(pipeline, {"train_score": train_score}, task_name, schema, run_record, owner, run_id)
     bundle.record_audit_event(
         "pipeline_optimization",
         pipeline=list(seq),

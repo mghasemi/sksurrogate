@@ -128,8 +128,13 @@ pipeline:
     X, y = genetic_data.drop("class", axis=1).values, genetic_data["class"].values
 
     A = AML(config=config, length=3, check_point="./", verbose=2)
-    A.eoa_fit(X, y, max_generation=10, num_parents=10)
+    A.eoa_fit(X, y, max_generations=10, num_parents=10)
     print(A.get_top(5))
+
+``A.fit(X, y, strategy="eoa", max_generations=10, num_parents=10)`` is an equivalent
+spelling that keeps a single ``fit`` entry point. The automatic stacking wrappers can be
+configured with one dictionary, e.g. ``AML(..., stacking={"cv": 3, "probs": False})``,
+instead of the individual ``stack_*`` arguments.
 
 In order to perform an exhaustive search on all possible pipelines just replace the last line
 with the following::
@@ -191,7 +196,7 @@ We can retrieve the top `n` models via ``A.get_top(n)``.
         verbose=2,
         scoring="neg_mean_squared_error",
     )
-    A.eoa_fit(X, y, max_generation=12, num_parents=12)
+    A.eoa_fit(X, y, max_generations=12, num_parents=12)
     print(A.get_top(5))
 
 Some Technical Notes
@@ -248,7 +253,7 @@ following transformers are considered as feature selectors:
     - `MDS`
     - `SpectralEmbedding`
     - `TSNE`
-    - `sksurrogate.SensAprx`
+    - `SKSurrogate.SensAprx`
     - `skrebate.ReliefF`
     - `skrebate.SURF`
     - `skrebate.SURFstar`

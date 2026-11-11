@@ -2,6 +2,9 @@
 Step-by-Step Web UI User Manual
 =====================================
 
+For a complete worked example on a real dataset, with screenshots and the
+matching REST and Python calls for every step, see :doc:`walkthrough`.
+
 This manual walks through a typical SKSurrogate workflow in the web UI:
 register data, inspect features, search and evaluate models, package and
 approve a model, run inference, and monitor its behavior. Each screen is tied
@@ -42,6 +45,19 @@ keys, CORS, and storage configuration. In brief:
 3. Open the local URL printed by Vite. The UI's development server proxies
    ``/api`` requests and job WebSockets to port ``8013`` by default.
 
+Alternatively, run everything with Docker (see :doc:`controlplane`):
+
+.. code-block:: console
+
+   docker compose --profile prod up --build -d   # UI and API on http://localhost:8013
+   docker compose --profile dev up --build       # hot reload; UI on http://localhost:5174
+
+The production image serves the built UI and the API from one port, runs as a
+non-root user, reports health at ``/api/health``, and keeps data in the named
+volume ``sksurrogate-data`` (``/data``). Set ``SKSURROGATE_API_KEY`` for any
+non-local deployment. Optional Python packages can be added at build time with
+``--build-arg EXTRAS="pkg1 pkg2"``.
+
 For a local walkthrough, download the
 :download:`training CSV <ui-manual-example.csv>` and the separate
 :download:`validation CSV <ui-manual-validation.csv>`. They are small,
@@ -49,10 +65,14 @@ synthetic examples for interface practice, not meaningful model benchmarks.
 
 .. warning::
 
-   The API is open when ``SKSURROGATE_API_KEY`` is unset. Do not expose a
-   keyless service to an untrusted network. If you enable a key, enter it on
-   **Settings / Audit**. The UI stores the API base URL and key in this
-   browser's local storage; use a trusted browser profile.
+   The API is open when ``SKSURROGATE_API_KEY`` is unset — the server logs a
+   startup warning whenever it starts that way. Do not expose a keyless service
+   to an untrusted network; for deployments whose port may be published, set
+   ``SKSURROGATE_REQUIRE_AUTH`` so the API refuses to start without a key. If
+   you enable a key, enter it on **Settings / Audit**, which reports when the
+   server requires one and when a stored key is rejected. The UI stores the
+   API base URL and key in this browser's local storage; use a trusted browser
+   profile.
 
 The workflow at a glance
 ========================
@@ -60,8 +80,15 @@ The workflow at a glance
 The UI is organized around a task, which groups data, runs, bundles, registry
 history, inference records, and monitoring. The usual flow is:
 
-``Task → Datasets → Feature Analysis → Experiments → Evaluation → Model Bundles
-→ Quality Gates → Registry & Deployment → Inference → Monitoring → Retraining``
+``Task → Datasets → Feature Analysis → Experiments → Evaluation → Explain →
+Model Bundles → Quality Gates → Registry & Deployment → Inference → Monitoring
+→ Retraining``
+
+The sidebar groups pages by stage (Data, Model, Release, Operate). **Projects**
+groups the datasets, bundles and jobs of one investigation and shows which
+stages are done; **Experiment Design** plans physical or simulated experiments
+before any data exists. A "Getting started" card on the Dashboard walks a first
+run.
 
 You can also train a baseline directly under **Model Bundles**, skip optional
 feature analysis, or use the API and Python package independently of the UI.
@@ -97,8 +124,9 @@ Open **Datasets**. For each CSV partition:
    descriptive partition name).
 2. Drop the CSV into the upload area or click it to browse.
 3. Click **Inspect CSV**. This previews the row count, columns, inferred data
-   types, possible target columns, and a name-based scan for PII-like or
-   sensitive column names. Inspection does not commit the file.
+   types, possible target columns, and a bounded PII-like value-pattern and
+   sensitive-column scan. The scan reports pattern counts only; it does not
+   expose matched cell contents. Inspection does not commit the file.
 4. Choose the **Target column**. Review the detected type of every column and
    change any incorrect type before committing. If appropriate, enable
    **Binarize / ordinal-encode target labels** to encode target categories.
@@ -112,7 +140,7 @@ training data; do not use a copy of the training rows as a holdout.
 
 If the task already has a registered schema, **Validate upload** checks a new
 CSV against it before you commit. The Python tracking layer is
-``SKSurrogate.mltrace.mltrack``: ``RegisterData`` records dataset metadata,
+``SKSurrogate.mltrace.mltrack``: ``register_data`` records dataset metadata,
 ``validate_data`` checks training data, and ``validate_prediction_data``
 checks inference inputs. The checks catch column, order, dtype, and category
 differences; use the explicit compatibility options in the Python API only
@@ -144,24 +172,39 @@ observations across folds.
 
 Open **Feature Analysis** after registering a training partition.
 
-* **Sensitivity analysis** ranks feature importance with Sobol, Morris, or
-  delta-moment methods. Choose the method, number of top features, and training
-  partition, then click **Run sensitivity analysis**. This runs as a background
-  job. Inspect its ranking and heatmap when complete.
+* **Input sensitivity** measures how the fitted surrogate responds over
+  generated independent feature ranges using Sobol, Morris, or delta-moment
+  methods. Choose the method, number of top features, and training partition,
+  then click **Run sensitivity analysis**. This runs as a background job.
+  Correlated and categorical inputs may produce unrealistic perturbations;
+  these indices are not observed feature associations or causal effects.
 * **Correlation pruning** applies a threshold to the absolute pairwise
   correlation between features. It reports which features would be kept or
   dropped; it does not silently rewrite the registered CSV.
 * **Heatmaps** show sensitivity ranking, Pearson correlation, or feature
-  weights. Weight values can come from stored ``mltrack.FeatureWeights`` data
+  weights. Weight values can come from stored ``mltrack.feature_weights`` data
   or be computed from target correlation and feature variance when appropriate.
 * **Consensus top features** summarizes how often each feature appears in the
   top-ranked sets stored for the task.
 
+These views complement **Explain**, which reports permutation importance,
+partial-dependence profiles, accumulated local effects, and exact row-level
+explanations for a selected fitted bundle. Pearson feature
+correlation describes observed pairwise association; target correlation is a
+marginal data association; input-sensitivity indices describe a fitted
+surrogate over generated ranges; permutation importance measures score change
+under feature shuffling. The methods have different targets, perturbations,
+reference data, and scales, so they need not agree and their raw values should
+not be treated as one combined ranking. Use the links between Feature Analysis
+and Explain to review their interpretations together.
+
 These correspond to ``SKSurrogate.sensapprx.SensAprx``,
 ``CorrelationThreshold``, and the feature-analysis methods on
-``SKSurrogate.mltrace.mltrack`` (including ``heatmap`` and ``TopFeatures``).
-Use the analysis to guide a smaller experiment search space or a domain review;
-do not treat an importance ranking as proof of causality.
+``SKSurrogate.mltrace.mltrack`` (including ``heatmap`` and ``top_features``).
+Use these analyses to guide a smaller experiment search space or domain
+review. Correlations describe observed feature association; sensitivity
+indices describe surrogate responses to generated inputs. Neither is causal
+evidence.
 
 .. figure:: images/ui-features.png
    :alt: Feature Analysis page showing sensitivity and correlation controls
@@ -172,7 +215,14 @@ do not treat an importance ranking as proof of causality.
 4. Search model pipelines
 -------------------------
 
-Open **Experiments**. The page starts with a JSON search-space example. Each
+Open **Experiments**. The **Quick start** tab needs no search space: choose
+*Classification* or *Regression*, a budget (Fast, Balanced, Thorough), and a
+scoring metric (a sensible default is preselected), then click **Find best
+model**. It runs a bounded random-forest / extra-trees search through
+``AML(preset=...)`` with the surrogate strategy. Use the **Advanced** tab for
+full control, described next.
+
+In **Advanced**, the page starts with a JSON search-space example. Each
 top-level key identifies a fully-qualified scikit-learn estimator class;
 parameter definitions specify real, integer, or categorical ranges. Validate
 the JSON and search-space definitions before starting. The **Add stacking
@@ -187,9 +237,12 @@ Then configure the run:
    The selected scorer is the objective the search optimizes.
 3. Choose **Evolutionary (EOA)** or **Surrogate-assisted** search. The latter
    adds surrogate iterations and may take longer per generation.
-4. Keep the **Local** execution backend unless a Dask-enabled API environment
+4. **Search engine** selects ``AML.fit(strategy="eoa")`` (default) or
+   ``strategy="surrogate"`` (surrogate search only; generation and parent
+   settings are ignored).
+5. Keep the **Local** execution backend unless a Dask-enabled API environment
    is available.
-5. Click **Start experiment**, then follow progress on the page or in **Jobs**.
+6. Click **Start experiment**, then follow progress on the page or in **Jobs**.
 
 The API builds an ``SKSurrogate.aml.AML`` search and uses
 ``SKSurrogate.eoa.EOA`` for evolutionary optimization; the surrogate path can
@@ -239,6 +292,71 @@ failure rather than treating it as a score.
 
    Evaluation controls and metric comparison. Charts appear after at least one
    bundle has been created.
+
+Explain a model
+~~~~~~~~~~~~~~~
+
+Open **Explain**, choose a bundle, and click **Explain model** for global model
+attribution by permutation importance (the score drop when a feature is
+shuffled) and fitted-model response profiles from partial-dependence curves.
+The former measures model-score sensitivity, not feature-target association;
+the latter can evaluate implausible combinations when features are dependent.
+Neither estimates causal effects. The explanation response reports its
+reference partition, source and used row counts, whether the rows were
+subsampled, and the row cap, permutation-repeat count, and seed. The seed
+controls both row subsampling (when needed) and permutation-repeat generation;
+this metadata aids repeatability. Optionally select 3 or 5 reference samples
+and a row cap to inspect descriptive variation in permutation importance
+across subsamples; the UI reports per-feature sample standard deviation and
+top-rank frequency. This is not a confidence interval or a guarantee of
+robustness, and it requires more source rows than the selected row cap. With
+the default of one sample, no cross-sample stability summary is estimated.
+The Explain page shows the reference row counts, sampling status, seed when
+sampling occurs, and permutation-repeat count. With 3 or 5 reference samples
+selected, the partial-dependence charts also gain dashed mean ± sample-standard-
+deviation lines computed over the same grid for each distinct subset; like the
+importance summary, this describes reference-sample sensitivity and is not a
+confidence band.
+
+The **Accumulated local effects (ALE)** card supplements partial dependence
+when features are dependent: choose 10, 20 or 30 quantile bins and click
+**Compute ALE**. ALE accumulates model-response differences between adjacent
+observed bins, so each curve reports its bin boundaries, the reference rows per
+bin, and any excluded non-finite rows instead of averaging over feature
+combinations that never occur. The response label names the scalar being
+explained — ``predict`` for regression, the positive-class probability for
+binary classifiers — and nominal categorical features are listed as skipped
+because they have no canonical ordering. ALE still describes the fitted model,
+not a causal effect, and correlated features can make one feature's local
+differences reflect another's distribution.
+
+The **Row-level explanation** card explains one stored row against a stated
+baseline: enter a 0-based row index and choose 1, 5 or 10 feature orders, then
+click **Explain row**. Contributions are ordered-occlusion steps — each feature
+is credited with the model-response change observed when it is restored from the
+baseline in that order — so their sum plus the baseline prediction reconstructs
+the explained prediction exactly; the residual and its tolerance are shown. The
+per-feature spread across orders is displayed as sample standard deviation and
+is order-dependence, not a confidence interval. A single row's contributions
+are a model attribution, not feature importance or a causal effect.
+
+.. figure:: images/ui-explain-explanations.png
+   :alt: Accumulated local effects and row-level explanation cards on the Explain page
+
+   ALE curves report bin boundaries and reference rows per bin; the row-level
+   card reconstructs one prediction exactly from its ordered contributions and
+   shows the spread across feature orders.
+
+For regression bundles, **Compute intervals**
+produces split-conformal prediction intervals at 80/90/95% target coverage and
+reports observed coverage with a Wilson interval, mean and median width, and
+mean interval score on held-out rows. It identifies the fit, calibration, and
+holdout rows/partitions. The conformal guarantee is marginal and assumes
+exchangeable calibration and future data; the Wilson interval separately
+assumes independent held-out coverage indicators. Neither should be read as
+evidence of conditional coverage or protection against distribution shift.
+Optionally enter a feature column to inspect bounded subgroup coverage; these
+small-group estimates are diagnostic and do not imply conditional coverage.
 
 6. Create and inspect model bundles
 ------------------------------------
@@ -296,11 +414,13 @@ does not establish that a model is suitable for deployment.
 
 .. important::
 
-   Treat a passing gate as a release prerequisite, but note that the current
-   UI's **Promote** form does not automatically attach or enforce the gate
-   report. It is a separate step. Enforce the policy in your release process
-   or call the API with the passing ``quality_report`` when promotion must be
-   programmatically blocked on a failed check.
+   The **Promote** form independently reruns the default bundle check, which
+   verifies that the registered bundle can be loaded. It does not carry
+   forward the custom metric thresholds or bundle-size limit from this page.
+   The promotion endpoint recomputes its default report; a report submitted
+   with the request is not used to enforce those custom thresholds. Enforce
+   any required metric or size policy separately in your release process
+   before promotion.
 
 8. Register, approve, and promote a model
 -----------------------------------------
@@ -345,8 +465,8 @@ On **Inference**, explicitly resolve a model by version or registry alias.
 For a quick request, choose a stored partition or enter JSON rows and click
 **Run prediction**. Turn on **Validate before run** to check the input
 against the task's registered data schema before prediction. Review the
-returned predictions, model version, request ID, latency, row count, ignored
-columns, and lineage.
+returned predictions, model version, request ID, latency, row count, and
+ignored columns; batch runs are additionally registered in registry lineage.
 
 For stored partitions, the API projects the data onto the bundle's feature
 schema, which removes the target label and normalizes feature order. Inline
@@ -379,8 +499,10 @@ Open **Monitoring** after scoring data:
 * **Prediction distribution drift** compares two prediction series from
   partitions, persisted batch artifacts, or inline values.
 * **Subgroup performance** compares a selected metric across groups.
-* **PII & sensitive columns** scans column names for PII-like and explicitly
-  sensitive names. This check does not read cell values.
+* **PII & sensitive columns** scans names and up to 1,000 rows per column for
+  common email, formatted US SSN, and formatted US phone patterns. It reports
+  counts only and never includes matched cell contents; pattern matches may
+  be false positives and are not identity validation.
 * **Fairness** compares group-level selection rates and true-positive rates.
   Supply correctly aligned ``y_true``, ``y_pred``, and group arrays.
 * **Delayed-label performance** compares saved predictions with labels that
@@ -419,8 +541,13 @@ Open **Retraining** when you need a new model version:
 The Python workflow maps to ``SKSurrogate.retraining.RetrainingJob`` and the
 execution backends. The trigger choices are evaluated by a submitted run;
 they do not install a recurring scheduler or continuously watch for new data.
-Review the resulting bundle and quality gates before using a new production
-version.
+For automated delivery, an external scheduler or ingestion watcher can call
+``POST /api/retraining/{task_name}/trigger`` with a fresh event ID and
+timestamp. Data-trigger events must reference the registered training
+partition and its current fingerprint; repeated delivery of the same
+partition/fingerprint is deduplicated. Automated promotion requires metric
+thresholds and is limited to **staging**; use the approval workflow for
+production. See :doc:`phase9` for the event contract and operational limits.
 
 .. figure:: images/ui-retraining.png
    :alt: Retraining page with trainer and trigger controls
@@ -439,7 +566,29 @@ checkpoint is usable.
 
 Use **Settings / Audit** to configure the API base URL and shared API key for
 this browser, and to review task registry audit events. Connection settings
-are browser-local; registry audit history is task data stored by the API.
+are browser-local; registry audit history is task data stored by the API. The
+**API connection** card also reports the server's authentication state when you
+open it: a warning if the server requires an API key that this browser has not
+stored, an error note if the stored key was rejected (401), and — when no key
+is stored at all — a reminder that the server runs without key enforcement.
+When a stored key is accepted, the card stays quiet.
+
+Use **Logs** to read what a job actually did. The page lists captured entries
+newest first with time, severity badge, job, logger and message. Severity chips
+filter by level — each chip toggles one level and shows its current count, with
+**Warnings & above** and **All levels** shortcuts; a minimum severity is available
+through the API (``level=WARNING``). Job, **dataset/task**, **project**, kind,
+free-text and row-count filters narrow the list further; a project scope is
+resolved through the jobs linked as that project's artifacts, so it covers runs
+attached to the project at any time. Clicking a row opens the entry detail, including the
+trial/phase of per-trial telemetry and the full traceback of a failure.
+
+Selecting a job (or pressing **Logs** on a job row) scopes the page to that job
+and follows it live while it runs; entries persist as JSONL under the API home,
+so they remain available after a restart. Loggers are the ``SKSurrogate``
+package loggers plus ``sksurrogate.api`` for job lifecycle and trial events; the
+contract is documented in :doc:`controlplane` and the level mapping in
+:doc:`telemetry`.
 
 .. figure:: images/ui-jobs.png
    :alt: Jobs page with kind and status filters
@@ -447,11 +596,55 @@ are browser-local; registry audit history is task data stored by the API.
 
    Filter and inspect asynchronous work from across tasks.
 
+.. figure:: images/ui-logs.png
+   :alt: Logs page filtered to warnings with an entry detail card
+   :width: 100%
+
+   Filter captured job logs by severity, job, kind and text, then open an entry
+   for its trial metadata or failure traceback.
+
 .. figure:: images/ui-settings.png
    :alt: Settings page showing API connection and audit log
    :width: 100%
 
    Configure this browser's API connection and inspect registry audit events.
+
+13. Work in research projects
+=============================
+
+Open **Projects** to group one investigation: create a project with a name, a
+short description, and optional research questions, then link existing dataset
+partitions, model bundles, and jobs. The project page shows a checklist from
+question to conclusion, research records with append-only evidence, and a Notes
+list. Project records and notes reference existing artifacts; they do not copy
+datasets, bundles, or job payloads. See :doc:`research-projects` for the API
+contract, including evidence-snapshot statuses (``current``, ``changed``,
+``missing``, ``unverified``).
+
+Projects also offer an optional **Draft synthesis** card. It is enabled only
+when the API process has an OpenAI-compatible model endpoint configured
+(``SKSURROGATE_LLM_BASE_URL`` and ``SKSURROGATE_LLM_MODEL``; see
+:doc:`controlplane`). The card sends only aggregated computed facts — dataset
+profile summaries, job configuration and scalar metrics, bundle metadata,
+explanation summaries, and optional stored monitoring alerts — never raw dataset
+rows or credentials. The generated draft is labelled **Generated
+interpretation**, must cite its sources (``[S1]``…), and is shown next to the
+exact computed facts that were sent. Nothing is saved until you click **Add as
+note**; generated notes then carry a ``generated`` badge, their citations, the
+provider model id, and collapsible computed facts. Treat the prose as
+model-generated interpretation that can be wrong, and verify it against the
+computed facts.
+
+The **Linked artifacts** card also accepts external citations: enter an
+``http(s)`` URL plus optional title, DOI, and label in **Add external reference**.
+The API never fetches the URL, so the reference's snapshot status is always
+``unverified``; it can then be attached as evidence to a finding or conclusion.
+
+.. figure:: images/ui-project-synthesis.png
+   :alt: Projects page showing a generated cited note and the Draft synthesis card
+
+   A cited generated note with its provenance (top) and the Draft synthesis
+   card with the computed-facts table (bottom).
 
 Feature-to-library reference
 ============================
@@ -463,7 +656,7 @@ additional Python examples, see :doc:`code`, :doc:`mltrace`,
 +----------------------+------------------------------------------------------+
 | UI area              | Main SKSurrogate feature                             |
 +======================+======================================================+
-| Datasets             | ``mltrack.RegisterData``, schema validation, CV      |
+| Datasets             | ``mltrack.register_data``, schema validation, CV     |
 +----------------------+------------------------------------------------------+
 | Feature Analysis     | ``SensAprx``, ``CorrelationThreshold``, ``mltrack``  |
 +----------------------+------------------------------------------------------+
@@ -482,6 +675,8 @@ additional Python examples, see :doc:`code`, :doc:`mltrace`,
 | Monitoring           | Drift, fairness, subgroup, delayed-label reports     |
 +----------------------+------------------------------------------------------+
 | Retraining           | ``RetrainingJob``, execution backends                |
++----------------------+------------------------------------------------------+
+| Projects             | Research metadata, evidence snapshots, cited notes   |
 +----------------------+------------------------------------------------------+
 
 API users can browse the live request and response schemas at

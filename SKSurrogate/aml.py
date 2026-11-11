@@ -3,8 +3,23 @@ Optimized Pipeline Detector
 ===============================
 
 """
+import logging
+import math
+
 from sklearn.base import BaseEstimator, TransformerMixin
 from typing import Any
+
+from ._logutil import emit, get_logger
+
+logger = get_logger(__name__)
+
+
+class _DefaultScoring:
+    def __repr__(self):
+        return "default"
+
+
+_DEFAULT_SCORING = _DefaultScoring()
 
 
 class StackingEstimator(BaseEstimator, TransformerMixin):
@@ -28,23 +43,6 @@ class StackingEstimator(BaseEstimator, TransformerMixin):
         self.decision = decision
         self.cv = cv
         self.n_jobs = n_jobs
-
-    def set_params(self, **params):
-        """
-        Sets the sklearn related parameters for the estimator
-
-        :param params: parameters to be bassed to the estimator
-        :return: `self`
-        """
-        estimator_params = {}
-        for key, value in params.items():
-            if key.startswith("estimator__"):
-                estimator_params[key[len("estimator__"):]] = value
-            elif key in {"estimator", "res", "probs", "decision"}:
-                setattr(self, key, value)
-        if estimator_params:
-            self.estimator.set_params(**estimator_params)
-        return self
 
     def fit(self, X, y=None, **fit_params):
         """
@@ -343,7 +341,7 @@ default_config = {
             "n_components": Integer(10, 100),
         },
         # Sensitivity Analysis
-        "sksurrogate.SensAprx": {
+        "SKSurrogate.SensAprx": {
             "n_features_to_select": Integer(2, 30),
             "method": Categorical(["sobol", "morris", "delta-mmnt"]),
             # 'regressor': Categorical([None, regressor])
@@ -378,18 +376,48 @@ default_config = {
     }
 
 
+def _preset_config(preset):
+    """Build a bounded task-specific search space using only scikit-learn."""
+    estimator_suffix = "Classifier" if preset == "classification" else "Regressor"
+    estimators = ("RandomForest", "ExtraTrees")
+    config = {}
+    for estimator_name in estimators:
+        estimator = "sklearn.ensemble.%s%s" % (estimator_name, estimator_suffix)
+        config[estimator] = {
+            "n_estimators": Integer(50, 150),
+            "min_samples_leaf": Integer(1, 10),
+            "max_features": Categorical(["sqrt", "log2", None]),
+        }
+    return config
 
-class AML(object):
+
+def _preset_surrogates():
+    from sklearn.gaussian_process import GaussianProcessRegressor
+    from .structsearch import BoxSample
+
+    return [(GaussianProcessRegressor(), 50, BoxSample, "L-BFGS-B")]
+
+
+class AML(BaseEstimator):
     """
     A class that accepts a nested dictionary with machine learning libraries as its keys
     and a dictionary of their parameters and their ranges as value of each key and finds
     an optimum combination based on training data.
 
     :param config: A dictionary whose keys are scikit-learn-style objects (as strings) and its corresponding
-        values are dictionaries of the parameters and their acceptable ranges/values
-    :param length: default=5; Maximum number of objects in generated pipelines
-    :param scoring: default='accuracy'; The scoring method to be optimized. Must follow the sklearn scoring signature
-    :param cat_cols: default=None; The list of indices of categorical columns
+        values are dictionaries of the parameters and their acceptable ranges/values. Mutually exclusive with
+        ``preset``.
+    :param preset: Optional ``"classification"`` or ``"regression"`` search preset. Presets use only
+        scikit-learn estimators, one-estimator pipelines, and at most 20 evaluations per candidate by default.
+        For pandas DataFrames with ``cat_cols=None``, preprocessing is fitted within each CV fold.
+    :param length: Maximum number of objects in generated pipelines; defaults to 5 for the legacy
+        configuration and 1 for task-specific presets
+    :param scoring: Scoring method to optimize. Defaults to accuracy for classification, negative RMSE for
+        regression presets, and accuracy for the legacy default configuration.
+    :param cat_cols: default=None; Categorical column names for DataFrames or
+        indices for array-like inputs. When set, one-hot encoding is fitted as
+        part of each candidate pipeline, within each CV training fold; fitted
+        models accept the original unencoded input.
     :param surrogates: default=None; A list of 4-tuples determining surrogates. The first entity of each tuple is
         a scikit-learn regressor and the
         2nd entity is the number of iterations that this surrogate needs to be estimated and optimized.
@@ -404,6 +432,11 @@ class AML(object):
     :param stack_decision: default=True; `StackingEstimator`s `decision`
     :param stack_cv: default=5; cross-validation splitter used to build the out-of-fold
         features of the automatic `StackingEstimator` wrappers
+    :param resume: default=False; when True, each surrogate search resumes from its checkpoint in
+        ``check_point`` (only appropriate for the same data and configuration); otherwise every ``fit``
+        starts fresh and overwrites the checkpoint
+    :param stacking: default=None; optional dict (keys ``res``, ``probs``, ``decision``, ``cv``, ``n_jobs``)
+        that overrides the individual ``stack_*`` arguments
     :param stack_n_jobs: default=None; parallel jobs used for those out-of-fold predictions
     :param verbose: default=1; Level of output details
     :param n_jobs: int, default=-1; number of processes to run in parallel
@@ -414,15 +447,25 @@ class AML(object):
     :param max_evals: Optional maximum objective evaluations for each surrogate search.
     :param forbidden: Iterable of forbidden parameter rules forwarded to every
         ``SurrogateRandomCV`` (dicts mapping param name -> disallowed value, or callables).
+        Parameter names may be bare API-level names (e.g. ``l1_ratio``); each rule is
+        applied against every pipeline step that declares the named parameter, and a
+        candidate is rejected when any of its steps matches. A list value means "any of
+        these values".
     :param conditional: Mapping of param name -> rule describing when the parameter is active;
-        inactive parameters are dropped from each candidate before evaluation.
+        inactive parameters are dropped from each candidate before evaluation. Rules follow
+        the same bare-name convention as ``forbidden`` (a list value means "any of these
+        values").
+    :param callbacks: default=None; a callable or iterable of callables forwarded to every
+        ``SurrogateRandomCV`` stage, receiving one event dictionary per evaluated candidate
+        (the trial record plus zero-based ``trial`` and ``phase``). A raising callback is
+        logged and skipped. See :doc:`telemetry`.
     """
 
     def __init__(
             self,
             config=None,
-            length=5,
-            scoring="accuracy",
+            length=None,
+            scoring=_DEFAULT_SCORING,
             cat_cols=None,
             surrogates=None,
             min_random_evals=15,
@@ -433,6 +476,7 @@ class AML(object):
             stack_decision=True,
             stack_cv=5,
             stack_n_jobs=None,
+            stacking=None,
             verbose=1,
             n_jobs=-1,
             random_state=None,
@@ -442,14 +486,22 @@ class AML(object):
             memory_limit=None,
             forbidden=(),
             conditional=(),
+            preset=None,
+            resume=False,
+            callbacks=None,
     ):
         from collections import OrderedDict
 
-        self.config: dict = {}
-        if config is None:
-            self.config = default_config
+        if preset not in (None, "classification", "regression"):
+            raise ValueError("preset must be None, 'classification', or 'regression'")
+        if preset is not None and config is not None:
+            raise ValueError("config and preset are mutually exclusive")
+        self.preset = preset
+        self._uses_preset_scoring = scoring is _DEFAULT_SCORING
+        if preset is None:
+            self.config: dict = default_config if config is None else config
         else:
-            self.config = config
+            self.config = _preset_config(preset)
         self.config_types = {}
         self.couldBlast = []
         self.couldBfirst = []
@@ -472,7 +524,7 @@ class AML(object):
             "sklearn.manifold.MDS",
             "sklearn.manifold.SpectralEmbedding",
             "sklearn.manifold.TSNE",
-            "sksurrogate.SensAprx",
+            "SKSurrogate.SensAprx",
             "skrebate.ReliefF",
             "skrebate.SURF",
             "skrebate.SURFstar",
@@ -481,10 +533,24 @@ class AML(object):
             "skrebate.TuRF",
         }
         self.letters = self.config_types.keys()
-        self.length = length
-        self.scoring = scoring
+        self._uses_default_length = length is None
+        self.length = length if length is not None else (1 if preset is not None else 5)
+        if scoring is _DEFAULT_SCORING:
+            self.scoring = (
+                "neg_root_mean_squared_error"
+                if preset == "regression"
+                else "accuracy"
+            )
+        else:
+            self.scoring = scoring
         self.cat_cols = cat_cols
-        self.surrogates = surrogates
+        if preset is not None and surrogates is None:
+            self.surrogates = _preset_surrogates()
+            self._uses_preset_surrogates = True
+        else:
+            self.surrogates = surrogates
+            self._uses_preset_surrogates = False
+        self._uses_implicit_surrogates = surrogates is None
         self.check_point = check_point
         self.min_random_evals = min_random_evals
         self.stack_res = stack_res
@@ -492,16 +558,20 @@ class AML(object):
         self.stack_decision = stack_decision
         self.stack_cv = stack_cv
         self.stack_n_jobs = stack_n_jobs
+        self.stacking = stacking
+        self.resume = resume
+        self.callbacks = callbacks
         self.verbose = verbose
-        self.num_features = 2
+        self.num_features_upper_bound = 2
         self.cpu_limit = cpu_limit
         self.memory_limit = memory_limit
         self.forbidden = tuple(forbidden)
-        self.conditional = dict(conditional)
+        self.conditional = conditional if isinstance(conditional, dict) else dict(conditional)
         self.n_jobs = n_jobs
         self.random_state = random_state
         self.time_limit = time_limit
-        self.max_evals = max_evals
+        self._uses_default_max_evals = max_evals is None
+        self.max_evals = 20 if max_evals is None and preset is not None else max_evals
         self._apply_resource_limits()
         if cv is None:
             self.cv = 3
@@ -521,11 +591,29 @@ class AML(object):
         self.words = Words(self.letters, last=self.couldBlast, first=self.couldBfirst)
         self.models = OrderedDict([])
         self.evaluation_history_ = []
+        self.stage_audits_history_ = []
         self.last_candidate_duration_ = None
         self.best_estimator_ = None
+        self._best_sequence_ = None
         self.best_estimator_score = 0.0
         self.termination_reason = None
         self.summary_ = {}
+
+    def _stacking_options(self):
+        """Stacking options: ``stack_*`` arguments overridden by the ``stacking`` dict."""
+        options = {
+            "res": self.stack_res,
+            "probs": self.stack_probs,
+            "decision": self.stack_decision,
+            "cv": self.stack_cv,
+            "n_jobs": self.stack_n_jobs,
+        }
+        extra = dict(self.stacking or {})
+        unknown = sorted(set(extra) - set(options))
+        if unknown:
+            raise ValueError("Unknown stacking options: %s" % ", ".join(unknown))
+        options.update(extra)
+        return options
 
     def _apply_resource_limits(self):
         """Clamp the effective parallelism to the configured CPU budget."""
@@ -536,6 +624,17 @@ class AML(object):
             raise ValueError("cpu_limit must be a positive integer")
         if self.n_jobs == -1 or self.n_jobs > limit:
             self.n_jobs = limit
+
+    def _feature_count_upper_bound(self, X):
+        import numpy as np
+
+        values = np.asarray(X)
+        upper_bound = values.shape[1]
+        if self.cat_cols is not None:
+            # Each encoded categorical column can contribute at most one
+            # output column per input row; use shape only, not held-out values.
+            upper_bound += values.shape[0] * len(self.cat_cols)
+        return upper_bound
 
     def types(self):
         """
@@ -621,6 +720,9 @@ class AML(object):
         """
         if self.surrogates is None:
             self.surrogates = []
+        from .structsearch import resolve_sampling
+
+        sampling = resolve_sampling(sampling)
         if sampling is None:
             from .structsearch import BoxSample
 
@@ -632,7 +734,9 @@ class AML(object):
         Evaluates and optimizes all acceptable combinations of length `n`
 
         :param n: The length of pipelines
-        :param X: Training data
+        :param X: Training data. Preset DataFrames without ``cat_cols`` are
+            preprocessed inside each CV fold. If ``cat_cols`` is set, pass the
+            original, unencoded feature matrix.
         :param y: Observed values
         :return: None
         """
@@ -699,44 +803,85 @@ class AML(object):
                 continue
             best_mdl, best_scr = self.optimize_pipeline(seq, X, y)
             self.models[seq] = (best_mdl, best_scr)
-            self.evaluation_history_.append(
-                {"pipeline": seq, "estimator": best_mdl, "score": best_scr}
+            result = {"pipeline": seq, "estimator": best_mdl, "score": best_scr}
+            if self.last_candidate_errors_:
+                result["errors"] = list(self.last_candidate_errors_)
+            result["rule_rejected"] = getattr(
+                self, "_last_candidate_rule_rejected_", False
             )
+            self.evaluation_history_.append(result)
+            self.stage_audits_history_.append(list(self._last_candidate_stage_audits_))
             if self.verbose > 0:
-                print("score:%f" % best_scr)
-                print(best_mdl)
+                emit(logging.INFO, "score:%f" % best_scr)
+                emit(logging.INFO, best_mdl)
 
-    def fit(self, X: Any, y: Any):
+    def fit(self, X: Any, y: Any, strategy="surrogate", **kwargs):
         """
         Generates and optimizes all legitimate pipelines. The best pipeline can be retrieved from `self.best_estimator_`
 
-        :param X: Training data
+        :param X: Training data. Preset DataFrames without ``cat_cols`` are
+            preprocessed inside each CV fold. If ``cat_cols`` is set, pass the
+            original, unencoded feature matrix.
         :param y: Corresponding observations
+        :param strategy: ``"surrogate"`` (default) or ``"eoa"``; the latter is the same as calling
+            :meth:`eoa_fit` and forwards ``kwargs`` to it.
         :return: `self`
         """
-        import numpy as np
-
+        if strategy == "eoa":
+            return self.eoa_fit(X, y, **kwargs)
+        if strategy != "surrogate":
+            raise ValueError("strategy must be 'surrogate' or 'eoa'")
+        if kwargs:
+            raise TypeError("unexpected fit arguments for strategy='surrogate': %s" % sorted(kwargs))
         self.models.clear()
         self.evaluation_history_.clear()
+        self.stage_audits_history_.clear()
+        self.last_candidate_errors_ = []
         self.termination_reason = None
+        self._best_sequence_ = None
         self.summary_ = {}
-        _X, _y = X, y
-        if self.cat_cols is not None:
-            from category_encoders.one_hot import OneHotEncoder
-
-            enc = OneHotEncoder(
-                cols=self.cat_cols, return_df=False, handle_unknown="ignore"
-            )
-            enc.fit(X)
-            _X = enc.transform(X)
-
-        X_, y_ = _X, _y
-        self.num_features = np.asarray(X_).shape[1]
+        self.num_features_upper_bound = self._feature_count_upper_bound(X)
         for l in range(1, self.length + 1):
-            self._cast(l, X_, y_)
-        self.best_estimator_ = list(self.get_top(1).items())[0][1][0]
-        self.best_estimator_score = list(self.get_top(1).items())[0][1][1]
+            self._cast(l, X, y)
+        self._set_best_candidate()
         return self
+
+    def _set_best_candidate(self):
+        best = self.get_top(1)
+        if not best:
+            raise ValueError("AML generated no candidate pipelines")
+        best_sequence, (best_estimator, best_score) = next(iter(best.items()))
+        if not math.isfinite(best_score):
+            failed_items = [
+                item for item in self.evaluation_history_
+                if not math.isfinite(item.get("score", float("inf")))
+            ]
+            if failed_items and all(bool(item.get("rule_rejected")) for item in failed_items):
+                message = (
+                    "No search candidate could be fitted: every candidate was rejected. "
+                    "Check that the forbidden rules (and any conditional parameters) leave "
+                    "at least one viable configuration."
+                )
+                emit(logging.ERROR, message)
+                raise ValueError(message)
+            errors = next(
+                (
+                    item.get("errors", [])
+                    for item in self.evaluation_history_
+                    if item.get("pipeline") == best_sequence and item.get("errors")
+                ),
+                [],
+            )
+            detail = "; ".join(dict.fromkeys(errors))
+            message = "All candidate pipelines failed to produce a finite CV score"
+            if detail:
+                message += ": " + detail
+            emit(logging.ERROR, message)
+            raise ValueError(message)
+        self.best_estimator_ = best_estimator
+        self.best_estimator_score = best_score
+        self._best_sequence_ = best_sequence
+        return best_estimator
 
     @staticmethod
     def _get_class(library):
@@ -769,30 +914,23 @@ class AML(object):
         """
         Applies evolutionary optimization methods to find an optimum pipeline
 
-        :param X: Training data
+        :param X: Training data. Preset DataFrames without ``cat_cols`` are
+            preprocessed inside each CV fold. If ``cat_cols`` is set, pass the
+            original, unencoded feature matrix.
         :param y: Corresponding observations
         :param kwargs: `EOA` parameters
         :return: `self`
         """
-        import numpy as np
         from .structsearch import BoxSample, CompactSample
         from .eoa import EOA
 
         self.models.clear()
         self.evaluation_history_.clear()
+        self.stage_audits_history_.clear()
         self.termination_reason = None
+        self._best_sequence_ = None
         self.summary_ = {}
-        _X, _y = X, y
-        if self.cat_cols is not None:
-            from category_encoders.one_hot import OneHotEncoder
-
-            enc = OneHotEncoder(
-                cols=self.cat_cols, return_df=False, handle_unknown="ignore"
-            )
-            enc.fit(X)
-            _X = enc.transform(X)
-        X_, y_ = _X, _y
-        self.num_features = np.asarray(X_).shape[1]
+        self.num_features_upper_bound = self._feature_count_upper_bound(X)
         Pop = []
         for l in range(1, self.length + 1):
             candidates = self.words.Generate(l)
@@ -853,29 +991,38 @@ class AML(object):
 
             fitted = OrderedDict([])
             for seq in ppl:
-                best_mdl, best_scr = self.optimize_pipeline(seq, X_, y_)
+                best_mdl, best_scr = self.optimize_pipeline(seq, X, y)
                 if seq not in self.models:
                     self.models[seq] = (best_mdl, best_scr)
-                    self.evaluation_history_.append(
-                        {
-                            "pipeline": seq,
-                            "estimator": best_mdl,
-                            "score": best_scr,
-                            "duration": getattr(self, "last_candidate_duration_", None),
-                        }
+                    result = {
+                        "pipeline": seq,
+                        "estimator": best_mdl,
+                        "score": best_scr,
+                        "duration": getattr(self, "last_candidate_duration_", None),
+                    }
+                    if self.last_candidate_errors_:
+                        result["errors"] = list(self.last_candidate_errors_)
+                    result["rule_rejected"] = getattr(
+                        self, "_last_candidate_rule_rejected_", False
                     )
+                    self.evaluation_history_.append(result)
+                    self.stage_audits_history_.append(list(self._last_candidate_stage_audits_))
                 if self.verbose > 0:
-                    print("score:%f" % best_scr)
-                    print(best_mdl)
+                    emit(logging.INFO, "score:%f" % best_scr)
+                    emit(logging.INFO, best_mdl)
                 fitted[seq] = -best_scr
             return fitted
 
-        num_parents = kwargs.pop("num_parents", 30)
+        num_parents = kwargs.pop("num_parents", None)
+        parent_prop_names = {"parents_prop", "parents_porp"}
+        if num_parents is not None:
+            kwargs["num_parents"] = num_parents
+        elif not parent_prop_names.intersection(kwargs):
+            kwargs["num_parents"] = 30
         mutation_prob = kwargs.pop("mutation_prob", 0.1)
         _eoa = EOA(
             population=Pop,
             fitness=_eval,
-            num_parents=num_parents,
             mutation_prob=mutation_prob,
             term_genes=self.couldBlast,
             init_genes=self.couldBfirst,
@@ -884,7 +1031,7 @@ class AML(object):
             **kwargs
         )
         _eoa()
-        self.best_estimator_ = list(self.get_top(1).items())[0][1][0]
+        self._set_best_candidate()
         return self
 
     def get_top(self, num=5):
@@ -927,6 +1074,105 @@ class AML(object):
         holder = SimpleNamespace(evaluation_history_=records)
         return SurrogateRandomCV.pareto_frontier(holder, score_key=score_key, cost_key=cost_key)
 
+    def to_audit_dict(self):
+        """Return a JSON-safe audit bundle describing the pipeline search.
+
+        Schema version ``2`` of the telemetry contract (:doc:`telemetry`): one
+        top-level bundle for this :class:`AML` instance whose ``candidates``
+        embed, per candidate, the schema-version-1 bundles produced by each of
+        its ``SurrogateRandomCV`` stages — so trial records and sampling
+        provenance are carried without duplicating that contract.
+
+        The bundle is JSON-native: ``json.dumps(aml.to_audit_dict())`` succeeds
+        without a custom encoder. Fitted estimator objects stay out of the
+        bundle (they remain reachable through ``evaluation_history_`` and
+        ``models``), non-finite scores become ``None``, and other values that
+        are not JSON-native are reduced to their string form.
+
+        ``sampling_sources`` aggregates every stage's per-evaluation tags into
+        counts, e.g. ``{"init": 4, "explore": 12, "surrogate_exploit": 20}``;
+        the per-trial detail stays inside each stage bundle. Works before
+        ``fit`` as well, with empty candidate lists.
+        """
+        from .structsearch import SurrogateRandomCV
+
+        safe = SurrogateRandomCV._json_safe
+        history = self.evaluation_history_
+        stage_lists = getattr(self, "stage_audits_history_", None) or []
+        candidates = []
+        source_counts = {}
+        total_evaluations = 0
+        total_elapsed = 0.0
+        for index, item in enumerate(history):
+            stages = list(stage_lists[index]) if index < len(stage_lists) else []
+            errors = [str(error) for error in (item.get("errors") or [])]
+            candidates.append(
+                {
+                    "candidate": index,
+                    "pipeline": safe(list(item.get("pipeline", ()))),
+                    "score": safe(item.get("score")),
+                    "rule_rejected": bool(item.get("rule_rejected", False)),
+                    "errors": errors or None,
+                    "stages": stages,
+                }
+            )
+            for stage in stages:
+                budget = stage.get("budget") or {}
+                evaluations = budget.get("evaluations")
+                if isinstance(evaluations, (int, float)) and not isinstance(
+                    evaluations, bool
+                ):
+                    total_evaluations += int(evaluations)
+                elapsed = budget.get("elapsed_seconds")
+                if isinstance(elapsed, (int, float)) and not isinstance(
+                    elapsed, bool
+                ):
+                    total_elapsed += float(elapsed)
+                for tag in stage.get("sampling_sources") or []:
+                    source_counts[tag] = source_counts.get(tag, 0) + 1
+        best_sequence = getattr(self, "_best_sequence_", None)
+        if self.best_estimator_ is not None and best_sequence is not None:
+            best_candidate = {
+                "pipeline": safe(list(best_sequence)),
+                "score": safe(self.best_estimator_score),
+            }
+        else:
+            best_candidate = None
+        return {
+            "schema_version": 2,
+            "object": "aml",
+            "estimator": {
+                "class": "%s.%s" % (self.__class__.__module__, self.__class__.__qualname__),
+                "params": safe(self.get_params(deep=False)),
+            },
+            "preset": self.preset,
+            "scoring": safe(self.scoring),
+            "cv": safe(self.cv),
+            "length": self.length,
+            "min_random_evals": self.min_random_evals,
+            "random_state": safe(self.random_state),
+            "budget": {
+                # Configured per-stage limits; the last two aggregate over all
+                # stages of all candidates (sum of stage wall times).
+                "time_limit": safe(self.time_limit),
+                "max_evals": safe(self.max_evals),
+                "cpu_limit": safe(self.cpu_limit),
+                "memory_limit": safe(self.memory_limit),
+                "candidates": len(history),
+                "evaluations": total_evaluations,
+                "elapsed_seconds": total_elapsed,
+            },
+            "termination": {
+                # AML-level verdict; per-stage termination reasons stay inside
+                # each candidate's stage bundles.
+                "status": "completed" if self.best_estimator_ is not None else None,
+                "termination_reason": safe(self.termination_reason),
+            },
+            "candidates": candidates,
+            "best_candidate": best_candidate,
+            "sampling_sources": source_counts,
+        }
+
     def _require_fitted(self):
         if self.best_estimator_ is None:
             raise RuntimeError("AML has not been fitted")
@@ -950,7 +1196,8 @@ class AML(object):
     def get_params(self, deep=True):
         """Return constructor parameters using the scikit-learn convention."""
         return {
-            "config": self.config,
+            "config": None if self.preset is not None else self.config,
+            "preset": self.preset,
             "length": self.length,
             "scoring": self.scoring,
             "cat_cols": self.cat_cols,
@@ -963,6 +1210,8 @@ class AML(object):
             "stack_decision": self.stack_decision,
             "stack_cv": self.stack_cv,
             "stack_n_jobs": self.stack_n_jobs,
+            "stacking": self.stacking,
+            "resume": self.resume,
             "verbose": self.verbose,
             "n_jobs": self.n_jobs,
             "cpu_limit": self.cpu_limit,
@@ -980,14 +1229,168 @@ class AML(object):
         invalid = sorted(set(params) - set(valid_params))
         if invalid:
             raise ValueError("Invalid AML parameters: %s" % ", ".join(invalid))
+        preset = params.get("preset", self.preset)
+        if preset not in (None, "classification", "regression"):
+            raise ValueError("preset must be None, 'classification', or 'regression'")
+        config = params.get("config", None if preset is not None else self.config)
+        if preset is not None and config is not None:
+            raise ValueError("config and preset are mutually exclusive")
+        previous_preset = self.preset
+        if "preset" in params and previous_preset != preset:
+            if self._uses_default_length and "length" not in params:
+                self.length = 1 if preset is not None else 5
+            if self._uses_default_max_evals and "max_evals" not in params:
+                self.max_evals = 20 if preset is not None else None
+        if "preset" in params and "scoring" not in params and self._uses_preset_scoring:
+            self.scoring = (
+                "neg_root_mean_squared_error"
+                if preset == "regression"
+                else "accuracy"
+            )
+        if "scoring" in params:
+            self.scoring = params["scoring"]
+            self._uses_preset_scoring = False
+        if ("preset" in params or "config" in params):
+            self.preset = preset
+            self.config = default_config if preset is None and config is None else (
+                config if preset is None else _preset_config(preset)
+            )
+            self.config_types = {}
+            self.couldBlast = []
+            self.couldBfirst = []
+            self.feature_selector = set()
+            self.types()
+            self.letters = self.config_types.keys()
+            self.words = Words(self.letters, last=self.couldBlast, first=self.couldBfirst)
+        if "preset" in params and previous_preset != preset and self._uses_implicit_surrogates:
+            self.surrogates = _preset_surrogates() if preset is not None else None
+            self._uses_preset_surrogates = preset is not None
+        if "surrogates" in params:
+            self.surrogates = params["surrogates"]
+            self._uses_preset_surrogates = False
+            self._uses_implicit_surrogates = False
         for key, value in params.items():
+            if key in {"config", "preset", "scoring", "surrogates"}:
+                continue
             setattr(self, key, value)
+        if "length" in params:
+            self._uses_default_length = False
+        if "max_evals" in params:
+            self._uses_default_max_evals = False
         self._apply_resource_limits()
         self.best_estimator_ = None
         self.evaluation_history_ = []
+        self.stage_audits_history_ = []
+        self._best_sequence_ = None
         self.termination_reason = None
         self.summary_ = {}
         return self
+
+    @staticmethod
+    def _surrogate_rejection_profile(history):
+        """Classify one surrogate stage's trial history for rule rejection.
+
+        Returns ``"forbidden"`` when at least one trial was evaluated and every
+        trial was invalidated by a forbidden-parameter rule, and ``None``
+        otherwise (no trials, or completed / fit-failed evaluations present),
+        so callers can tell "blocked by rules" apart from ordinary failures.
+        """
+        if not history:
+            return None
+        invalid_only = all(item.get("status") == "invalid" for item in history)
+        rule_blocked = any(
+            record.get("type") == "ForbiddenParameterCombination"
+            for item in history
+            for record in (item.get("failure_records") or [])
+        )
+        return "forbidden" if invalid_only and rule_blocked else None
+
+    @staticmethod
+    def _prefixed_param_variants(name, param_names):
+        """Search-space keys of a pipeline that refer to a parameter name.
+
+        Pipeline search spaces key parameters by step prefix (``stp_0__C``) while
+        rules written for the API use bare names (``C``); an already-prefixed name
+        is used as-is when it exists in the space, otherwise every key whose base
+        name matches is returned.
+        """
+        if name in param_names:
+            return [name]
+        base = name.rsplit("__", 1)[-1]
+        return sorted(k for k in param_names if k.rsplit("__", 1)[-1] == base)
+
+    def _expand_forbidden_rules(self, rules, param_names):
+        """Expand forbidden rules to one pipeline's step-prefixed parameter names.
+
+        Each dict rule becomes one rule per declaring step (a candidate is rejected
+        when any of its steps matches); a rule naming no declared parameter can never
+        match and is dropped, mirroring the legacy silent-skip behavior. Callables
+        pass through untouched: they inspect the full candidate mapping themselves.
+        """
+        from itertools import product
+
+        expanded = []
+        for rule in tuple(rules or ()):
+            if callable(rule):
+                expanded.append(rule)
+                continue
+            if not isinstance(rule, dict) or not rule:
+                raise ValueError("Forbidden rules must be callables or parameter mappings")
+            keys = list(rule)
+            variants = [self._prefixed_param_variants(key, param_names) for key in keys]
+            if any(not options for options in variants):
+                continue
+            values = tuple(rule[key] for key in keys)
+            expanded.extend(dict(zip(combo, values)) for combo in product(*variants))
+        return tuple(expanded)
+
+    def _expand_conditional_map(self, conditional, param_names):
+        """Expand a conditional map to one pipeline's step-prefixed parameter names.
+
+        Both the conditioned parameter and its dependency keys may be bare API names;
+        each is rewritten to every variant declared by the pipeline. When several steps
+        declare the same name the entry becomes a callable so that any matching step
+        keeps the parameter active. A condition referencing an undeclared parameter can
+        never match, which leaves the conditioned parameter inactive.
+        """
+        from itertools import product
+
+        from .structsearch import SurrogateRandomCV
+
+        expanded = {}
+        for name, rule in dict(conditional or {}).items():
+            variants = self._prefixed_param_variants(name, param_names)
+            if not variants:
+                continue  # this pipeline does not declare the parameter; nothing to condition on
+            if callable(rule):
+                for key in variants:
+                    expanded[key] = rule
+                continue
+            if not isinstance(rule, dict) or not rule:
+                raise ValueError("Conditional rules must be callables or parameter mappings")
+            deps = list(rule)
+            dep_variants = [self._prefixed_param_variants(dep, param_names) for dep in deps]
+            values = tuple(rule[dep] for dep in deps)
+            if any(not options for options in dep_variants):
+                # The condition names a parameter this pipeline does not declare; it can
+                # never match, so the conditioned parameter stays inactive.
+                for key in variants:
+                    expanded.setdefault(key, rule)
+                continue
+            combos = list(product(*dep_variants))
+            if len(variants) == 1 and len(combos) == 1:
+                expanded[variants[0]] = dict(zip(combos[0], values))
+            else:
+
+                def _matches(params, combos=combos, values=values):
+                    return any(
+                        SurrogateRandomCV._condition_matches(dict(zip(combo, values)), params)
+                        for combo in combos
+                    )
+
+                for key in variants:
+                    expanded[key] = _matches
+        return expanded
 
     def optimize_pipeline(self, seq, X, y):
         """
@@ -995,10 +1398,13 @@ class AML(object):
         estimators and transformers.
 
         :param seq: the tuple of steps of the pipeline to be optimized
-        :param X: numpy array of training features
+        :param X: Training features; preset DataFrames without ``cat_cols``
+            are preprocessed inside the candidate pipeline.
         :param y: numpy array of training values
         :return: the optimized pipeline and its score
         """
+        self.last_candidate_errors_ = []
+        self._last_candidate_stage_audits_ = []
         from .structsearch import SurrogateRandomCV
         surrogates = self.surrogates
         if surrogates is None:
@@ -1015,6 +1421,26 @@ class AML(object):
         steps = []
         config = {}
         task_name = self.check_point + "_".join(seq)
+        if self.preset is not None and self.cat_cols is None:
+            import pandas as pd
+
+            if isinstance(X, pd.DataFrame):
+                from .DataProcess import FoldLocalDataPreprocessor
+
+                steps.append(("preprocess", FoldLocalDataPreprocessor()))
+        elif self.cat_cols is not None:
+            from category_encoders.one_hot import OneHotEncoder
+
+            steps.append(
+                (
+                    "categorical_encoder",
+                    OneHotEncoder(
+                        cols=self.cat_cols,
+                        return_df=False,
+                        handle_unknown="value",
+                    ),
+                )
+            )
         while ent_idx < n:
             est = seq[ent_idx]
             clss = self._get_class(est)
@@ -1030,11 +1456,7 @@ class AML(object):
                         pre,
                         StackingEstimator(
                             mdl,
-                            res=self.stack_res,
-                            probs=self.stack_probs,
-                            decision=self.stack_decision,
-                            cv=self.stack_cv,
-                            n_jobs=self.stack_n_jobs,
+                            **self._stacking_options(),
                         ),
                     )
                 )
@@ -1069,7 +1491,7 @@ class AML(object):
                             threshold=-inf,
                         )
                         self.config[est][int_pre + "__" + "max_features"] = Integer(
-                            1, self.num_features
+                            1, self.num_features_upper_bound
                         )
                         for kw in self.config[next_est]:
                             self.config[est][
@@ -1091,9 +1513,9 @@ class AML(object):
                 config[pre + "__" + step_param_prefix + kw] = self.config[est][kw]
         ppln = Pipeline(steps)
         if self.verbose > 0:
-            print("=" * 90)
-            print(seq)
-            print("-" * 90)
+            emit(logging.INFO, "=" * 90)
+            emit(logging.INFO, seq)
+            emit(logging.INFO, "-" * 90)
         from time import perf_counter
 
         started = perf_counter()
@@ -1127,11 +1549,20 @@ class AML(object):
             }
             self.last_candidate_duration_ = perf_counter() - started
             return ppln, score
+        # Rewrite API-level rules (bare parameter names) into this pipeline's
+        # step-prefixed search-space keys so forbidden/conditional matching can
+        # actually see the candidates it is meant to constrain.
+        param_names = set(config)
+        pipeline_forbidden = self._expand_forbidden_rules(self.forbidden, param_names)
+        pipeline_conditional = self._expand_conditional_map(self.conditional, param_names)
+        best_stage = None
+        failed_trial_errors = []
+        stage_profiles = []
         for srgt in surrogates:
             OPTIM = SurrogateRandomCV(
                 ppln,
-                params=config,
-                max_iter=srgt[1],
+                param_distributions=config,
+                n_iter=srgt[1],
                 min_evals=self.min_random_evals,
                 scoring=self.scoring,
                 cv=self.cv,
@@ -1140,22 +1571,46 @@ class AML(object):
                 regressor=srgt[0],
                 scipy_solver=srgt[3],
                 task_name=task_name,
-                Continue=True,
+                continue_=self.resume,
                 warm_start=True,
                 n_jobs=self.n_jobs,
                 time_limit=self.time_limit,
                 max_evals=self.max_evals,
                 random_state=self.random_state,
-                forbidden=self.forbidden,
-                conditional=self.conditional,
+                forbidden=pipeline_forbidden,
+                conditional=pipeline_conditional,
+                callbacks=self.callbacks,
             )
             OPTIM.fit(X, y)
+            # Capture this stage's audit bundle (JSON-safe by construction) so
+            # the candidate-level record stays complete after fit.
+            self._last_candidate_stage_audits_.append(OPTIM.to_audit_dict())
+            stage_profiles.append(
+                self._surrogate_rejection_profile(OPTIM.evaluation_history_)
+            )
+            if not math.isfinite(OPTIM.best_estimator_score):
+                failed_trial_errors.extend(
+                    item["error"]
+                    for item in OPTIM.evaluation_history_
+                    if item.get("error")
+                )
+            # A later stage may run out of budget and evaluate nothing; keep the best stage.
+            if best_stage is None or OPTIM.best_estimator_score <= best_stage[1]:
+                best_stage = (OPTIM.best_estimator_, OPTIM.best_estimator_score)
             if getattr(OPTIM, "summary_", None):
                 self.termination_reason = getattr(
                     OPTIM, "termination_reason", self.termination_reason
                 )
                 self.summary_ = dict(OPTIM.summary_)
+        self._last_candidate_rule_rejected_ = any(
+            profile == "forbidden" for profile in stage_profiles
+        ) and all(profile in ("forbidden", None) for profile in stage_profiles)
         if OPTIM is None:
             raise RuntimeError("No surrogate search was executed")
+        self.last_candidate_errors_ = (
+            failed_trial_errors
+            if best_stage is not None and not math.isfinite(best_stage[1])
+            else []
+        )
         self.last_candidate_duration_ = perf_counter() - started
-        return OPTIM.best_estimator_, OPTIM.best_estimator_score
+        return best_stage
