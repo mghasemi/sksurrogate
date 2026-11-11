@@ -9,10 +9,15 @@ SQLite-only storage is an intentional v1 decision. Authentication is opt-in:
 set ``SKSURROGATE_API_KEY`` to require a shared key on every endpoint except
 ``/api/health``, and ``SKSURROGATE_API_CORS_ORIGINS`` (comma-separated) to
 control which browser origins may call the API — by default only local dev
-origins are allowed.
+origins are allowed. With no key configured the API is open to any client that
+can reach it, so startup logs a warning in that case; deployments that expose
+the port beyond a trusted network should set ``SKSURROGATE_REQUIRE_AUTH`` to
+fail fast instead of serving an unauthenticated control plane (registry
+promote/rollback/delete are among the endpoints).
 """
 
 import json
+import logging
 import os
 from urllib.parse import parse_qsl
 
@@ -42,6 +47,39 @@ from .routers import (
     sensitivity,
     synthdata,
 )
+
+
+def _check_auth_settings() -> None:
+    """Validate the auth configuration at startup.
+
+    With no key configured every ``/api`` endpoint except ``/api/health`` is
+    open to any client that can reach this process — fine for local single-user
+    use, but dangerous once the port is published (the container entrypoint
+    binds all interfaces). Log a one-line warning in that case; if the
+    deployment declares itself exposed via ``SKSURROGATE_REQUIRE_AUTH``
+    (1/true/yes), refuse to start instead of serving an open control plane.
+    """
+    require_auth = os.environ.get("SKSURROGATE_REQUIRE_AUTH", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    if settings.api_key is None and require_auth:
+        raise RuntimeError(
+            "SKSURROGATE_REQUIRE_AUTH is set but SKSURROGATE_API_KEY is not. A "
+            "deployment that may expose the API port beyond a trusted network "
+            "must configure SKSURROGATE_API_KEY."
+        )
+    if settings.api_key is None:
+        logging.getLogger("sksurrogate.api").warning(
+            "API authentication disabled (SKSURROGATE_API_KEY unset): every /api "
+            "endpoint except /api/health is open to any client that can reach "
+            "this process. Set SKSURROGATE_API_KEY when the port may be exposed "
+            "beyond localhost."
+        )
+
+
+_check_auth_settings()
 
 
 def _cors_origins() -> list[str]:

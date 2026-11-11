@@ -12,12 +12,21 @@ exemption, WebSocket handshake policy on the job stream, and the SPA fallback
 staying reachable without a key.
 """
 
+import logging
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient  # noqa: E402
 from starlette.websockets import WebSocketDisconnect  # noqa: E402
 
 from api.config import settings  # noqa: E402
-from api.main import app  # noqa: E402
+from api.main import app, _check_auth_settings  # noqa: E402
+
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture(scope="module")
@@ -112,3 +121,70 @@ def test_spa_fallback_not_gated_by_key(client, key):
     key — only ``/api`` scopes are protected."""
     res = client.get("/")
     assert res.status_code == 200
+
+
+# --- Startup validation (SKSURROGATE_REQUIRE_AUTH) --------------------------
+# _check_auth_settings runs at api.main import time; the unit tests below call
+# it directly with patched settings/env, and the subprocess pins at the bottom
+# exercise the real module-level path in fresh interpreters.
+
+
+def test_no_key_without_requirement_warns(client, caplog):
+    """Default configuration logs a one-line startup warning."""
+    with caplog.at_level(logging.WARNING, logger="sksurrogate.api"):
+        _check_auth_settings()
+    assert any("authentication disabled" in r.message.lower() for r in caplog.records)
+
+
+def test_key_configured_does_not_warn(client, key, caplog):
+    with caplog.at_level(logging.WARNING, logger="sksurrogate.api"):
+        _check_auth_settings()
+    assert not [r for r in caplog.records if r.name == "sksurrogate.api"]
+
+
+@pytest.mark.parametrize("value", ["1", "true", "yes"])
+def test_require_auth_without_key_refuses_startup(client, monkeypatch, value):
+    monkeypatch.setenv("SKSURROGATE_REQUIRE_AUTH", value)
+    with pytest.raises(RuntimeError, match="SKSURROGATE_API_KEY"):
+        _check_auth_settings()
+
+
+def test_require_auth_falsy_value_only_warns(client, monkeypatch, caplog):
+    monkeypatch.setenv("SKSURROGATE_REQUIRE_AUTH", "0")
+    with caplog.at_level(logging.WARNING, logger="sksurrogate.api"):
+        _check_auth_settings()  # no raise — warning only
+    assert any("authentication disabled" in r.message.lower() for r in caplog.records)
+
+
+def test_require_auth_with_key_passes(client, key, monkeypatch):
+    monkeypatch.setenv("SKSURROGATE_REQUIRE_AUTH", "true")
+    _check_auth_settings()  # no exception expected
+
+
+def _import_api_main(env_extra: dict) -> subprocess.CompletedProcess:
+    """Import ``api.main`` in a fresh interpreter with only the given
+    SKSURROGATE_* variables set (host env values are stripped so the test is
+    deterministic)."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("SKSURROGATE_")}
+    env.update(env_extra)
+    return subprocess.run(
+        [sys.executable, "-c", "import api.main"],
+        env=env,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+
+def test_subprocess_import_refused_when_require_auth_and_no_key():
+    res = _import_api_main({"SKSURROGATE_REQUIRE_AUTH": "1"})
+    assert res.returncode != 0
+    assert "SKSURROGATE_API_KEY" in res.stderr
+
+
+def test_subprocess_import_ok_with_require_auth_and_key():
+    res = _import_api_main(
+        {"SKSURROGATE_REQUIRE_AUTH": "true", "SKSURROGATE_API_KEY": "subprocess-key"}
+    )
+    assert res.returncode == 0, res.stderr
