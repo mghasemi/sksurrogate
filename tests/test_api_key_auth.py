@@ -118,9 +118,15 @@ def test_websocket_wrong_key_query_param_rejected(client, key):
 
 def test_spa_fallback_not_gated_by_key(client, key):
     """Static UI assets and the index fallback must stay reachable without a
-    key — only ``/api`` scopes are protected."""
+    key — only ``/api`` scopes are protected.
+
+    ``/`` serves the SPA only when ``webui/dist`` has been built (it is not
+    built in CI's test job), so both 200 (built UI) and 404 (no dist) are
+    correct here. What matters is that the middleware never answers 401/403
+    for a non-``/api`` path.
+    """
     res = client.get("/")
-    assert res.status_code == 200
+    assert res.status_code in (200, 404), res.status_code
 
 
 # --- Startup validation (SKSURROGATE_REQUIRE_AUTH) --------------------------
