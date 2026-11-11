@@ -465,8 +465,8 @@ On **Inference**, explicitly resolve a model by version or registry alias.
 For a quick request, choose a stored partition or enter JSON rows and click
 **Run prediction**. Turn on **Validate before run** to check the input
 against the task's registered data schema before prediction. Review the
-returned predictions, model version, request ID, latency, row count, ignored
-columns, and lineage.
+returned predictions, model version, request ID, latency, row count, and
+ignored columns; batch runs are additionally registered in registry lineage.
 
 For stored partitions, the API projects the data onto the bundle's feature
 schema, which removes the target label and normalizes feature order. Inline

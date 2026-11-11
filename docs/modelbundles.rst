@@ -37,6 +37,10 @@ an atomic write:
     )
     predictions = loaded.predict(X_new)
 
+``ModelBundle.predict`` delegates directly to the fitted estimator and skips
+schema validation; use ``predict_batch`` when the input must be checked against
+the recorded schema (see :doc:`inference`).
+
 ``load_bundle`` checks the bundle format, and can reject an incompatible feature schema
 or runtime dependency set. Pass ``strict_dependencies=False`` when the environment is
 managed separately and dependency comparison is not required.
