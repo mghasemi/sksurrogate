@@ -117,8 +117,10 @@ From a source checkout (Docker with Compose required)::
     docker compose --profile dev up --build       # hot reload; UI on http://localhost:5174
 
 Set ``SKSURROGATE_PORT`` to change the port and ``SKSURROGATE_API_KEY`` to
-require an API key. Data persists in the ``sksurrogate-data`` volume. See the
-control-plane guide for details.
+require an API key; for any published port also set
+``SKSURROGATE_REQUIRE_AUTH=1`` so the container refuses to start without a key.
+Data persists in the ``sksurrogate-data`` volume. See the control-plane guide
+for details.
 
 Benchmarks
 ----------

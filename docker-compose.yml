@@ -32,6 +32,7 @@ services:
       - sksurrogate-data:/data
     environment:
       SKSURROGATE_API_KEY: ${SKSURROGATE_API_KEY:-}
+      SKSURROGATE_REQUIRE_AUTH: ${SKSURROGATE_REQUIRE_AUTH:-}
       SKSURROGATE_API_CORS_ORIGINS: ${SKSURROGATE_API_CORS_ORIGINS:-}
 
 volumes:

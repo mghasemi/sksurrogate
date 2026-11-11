@@ -11,7 +11,8 @@ API authentication
   unset, the API logs a warning at startup; setting
   ``SKSURROGATE_REQUIRE_AUTH=1|true|yes`` makes it refuse to start without a
   key — for deployments that expose the port beyond a trusted network (the
-  Docker entrypoint binds all interfaces).
+  Docker entrypoint binds all interfaces). The Compose file forwards the
+  variable into the prod container.
 * The web UI's **Settings / Audit** page now reports the server's
   authentication state: a warning when the server requires an API key this
   browser has not stored, an error note when the stored key is rejected (401),

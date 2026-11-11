@@ -48,8 +48,11 @@ Docker
 
 The ``prod`` image serves the built UI and API from one port, runs as a
 non-root user, exposes ``/api/health`` as its healthcheck and stores data in
-the ``sksurrogate-data`` volume (``/data``). Set ``SKSURROGATE_API_KEY`` for
-non-local use and ``--build-arg EXTRAS="..."`` to add optional packages.
+the ``sksurrogate-data`` volume (``/data``). The Compose file forwards
+``SKSURROGATE_API_KEY``, ``SKSURROGATE_REQUIRE_AUTH`` and
+``SKSURROGATE_API_CORS_ORIGINS`` into the container: set the key for non-local
+use, and ``SKSURROGATE_REQUIRE_AUTH=1`` to turn a missing key into a startup
+error. Use ``--build-arg EXTRAS="..."`` to add optional packages.
 
 Configuration and storage
 =========================
@@ -69,17 +72,19 @@ for endpoints under ``/api`` other than ``/api/health``, set
    export SKSURROGATE_API_KEY='replace-with-a-secret'
    uvicorn api.main:app --reload --host 127.0.0.1 --port 8013
 
-Clients can send the key in an ``X-API-Key`` header. The web UI's Settings
-page accepts the API base URL and key; its requests use the key header, and
-job WebSocket connections send it as a query parameter. The UI keeps these
-settings in browser local storage, so use a trusted browser profile and avoid
-sharing it with untrusted users.
+Clients can send the key in an ``X-API-Key`` header or as an
+``Authorization: Bearer`` token. The web UI's Settings page accepts the API
+base URL and key; its requests use the key header, and job WebSocket
+connections send it as a query parameter. The UI keeps these settings in
+browser local storage, so use a trusted browser profile and avoid sharing it
+with untrusted users.
 
 When ``SKSURROGATE_API_KEY`` is unset, the API is open to callers that can
 reach it — the server logs a startup warning whenever it starts in this mode.
 Do not expose a keyless instance to an untrusted network; for deployments whose
 port may be published (the Docker entrypoint binds all interfaces), set
-``SKSURROGATE_REQUIRE_AUTH=1`` so the API refuses to start without a key. For
+``SKSURROGATE_REQUIRE_AUTH=1`` (``true`` and ``yes`` also work) so the API
+refuses to start without a key. For
 cross-origin browser clients, set ``SKSURROGATE_API_CORS_ORIGINS`` to a
 comma-separated list of explicit origins. Localhost and ``127.0.0.1`` origins
 are allowed for development by default.
