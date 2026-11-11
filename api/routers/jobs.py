@@ -1,15 +1,23 @@
 """Job status endpoints: polling and a lightweight WebSocket progress stream.
 
-API-key enforcement (when ``SKSURROGATE_API_KEY`` is set) happens in the
-shared middleware in ``api/main.py``, which also covers this WebSocket route;
-the browser UI passes the key as an ``api_key`` query parameter because it
-cannot set custom headers on a WS handshake.
+Authentication happens in the shared middleware in ``api/main.py``, which also
+covers this WebSocket route; the browser UI passes a key as an
+``api_key`` query parameter because it cannot set custom headers on a WS
+handshake.
+
+Authorization is per task (see ``api.acl``): the HTTP routes carry
+``Depends(job_access)``, which resolves the job record's ``task_name`` and
+requires ``viewer``/``editor`` on it, and the list endpoint filters records down
+to tasks the caller can see. The WebSocket handler cannot use a
+``Request``-typed dependency, so it checks :func:`api.deps.job_ws_allowed`
+before accepting the connection.
 """
 
 import asyncio
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, Depends
 
+from .. import acl
 from ..config import settings
 from ..deps import job_access, job_ws_allowed, not_found
 from ..jobs import job_manager
