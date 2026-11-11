@@ -194,3 +194,30 @@ def test_subprocess_import_ok_with_require_auth_and_key():
         {"SKSURROGATE_REQUIRE_AUTH": "true", "SKSURROGATE_API_KEY": "subprocess-key"}
     )
     assert res.returncode == 0, res.stderr
+
+
+# --- Schema/documentation gating -------------------------------------------
+
+
+def test_schema_and_docs_open_when_no_key(client):
+    assert client.get("/openapi.json").status_code == 200
+    assert client.get("/docs").status_code == 200
+
+
+def test_schema_and_docs_gated_when_key_configured(client, key):
+    for path in ("/openapi.json", "/docs", "/redoc"):
+        assert client.get(path).status_code == 401, path
+        assert client.get(path, headers={"X-API-Key": key}).status_code == 200, path
+
+
+# --- Failed-authentication audit -------------------------------------------
+
+
+def test_failed_auth_is_logged_without_the_supplied_secret(client, key, caplog):
+    supplied = "wrong-secret-value"
+    with caplog.at_level(logging.WARNING, logger="sksurrogate.api"):
+        res = client.get("/api/tasks", headers={"X-API-Key": supplied})
+    assert res.status_code == 401
+    messages = " ".join(record.getMessage() for record in caplog.records)
+    assert "API key rejected" in messages
+    assert supplied not in messages

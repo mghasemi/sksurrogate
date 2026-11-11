@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from SKSurrogate import CorrelationThreshold, SensAprx
 
 from ..config import settings
+from ..safety import safe_segment
 from ..deps import bad_request, finite_or_none as _finite, not_found, open_tracker
 from ..jobs import job_manager
 
@@ -48,7 +49,7 @@ def _load_train_xy(task_name, train_partition):
     target = metadata.get("target_name")
     if target is None:
         raise not_found("No dataset registered for task %r" % task_name)
-    csv_path = settings.task_dataset_dir(task_name) / (train_partition + ".csv")
+    csv_path = settings.task_dataset_dir(task_name) / (safe_segment(train_partition, "partition") + ".csv")
     if not csv_path.exists():
         raise not_found("No dataset partition %r stored for task %r" % (train_partition, task_name))
     frame = pd.read_csv(csv_path)

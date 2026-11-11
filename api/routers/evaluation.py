@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 from SKSurrogate import build_cv, load_bundle, mltrack, save_bundle
 
 from ..config import settings
+from ..safety import safe_segment
 from ..deps import (
     bad_request,
     finite_or_none,
@@ -57,7 +58,7 @@ def _bundle_versions(task_name):
 
 
 def _load_bundle(task_name, model_version):
-    bundle_path = settings.task_bundles_dir(task_name) / (model_version + ".bundle")
+    bundle_path = settings.task_bundles_dir(task_name) / (safe_segment(model_version, "model version") + ".bundle")
     if not bundle_path.exists():
         raise not_found("No bundle %r found for task %r" % (model_version, task_name))
     return load_bundle(bundle_path, strict_dependencies=False)
@@ -317,10 +318,10 @@ def run_nested_cv(task_name: str, body: NestedCVRequest):
         )
         bundle.metadata["evaluations"] = evaluations[-20:]
         local_bundle_path = (
-            settings.task_bundles_dir(task_name) / (bundle.model_version + ".bundle")
+            settings.task_bundles_dir(task_name) / (safe_segment(bundle.model_version, "model version") + ".bundle")
         )
         registry_bundle_path = (
-            settings.registry_dir / task_name / (bundle.model_version + ".bundle")
+            settings.registry_dir / task_name / (safe_segment(bundle.model_version, "model version") + ".bundle")
         )
         bundle_paths = (
             (registry_bundle_path, local_bundle_path)

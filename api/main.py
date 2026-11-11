@@ -17,6 +17,7 @@ promote/rollback/delete are among the endpoints).
 """
 
 import json
+import hmac
 import logging
 import os
 from urllib.parse import parse_qsl
@@ -26,6 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
 from .config import settings
+from .safety import UnsafeName
 from . import logs as log_capture
 from .routers import (
     bundles,
@@ -103,7 +105,16 @@ class ApiKeyMiddleware:
     dependencies do not apply to WebSockets. The key is read from an
     ``X-API-Key`` header, a Bearer token, or — for the WS handshake, where
     browsers cannot set custom headers — an ``api_key`` query parameter.
+
+    When a key is configured the OpenAPI schema and documentation routes are
+    gated too: an unauthenticated caller should not be able to enumerate the
+    control plane's full request/response surface.
     """
+
+    #: Non-``/api`` routes that reveal or exercise the API surface.
+    PROTECTED_SCHEMA_PATHS = frozenset(
+        {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}
+    )
 
     def __init__(self, app):
         self.app = app
@@ -118,11 +129,13 @@ class ApiKeyMiddleware:
 
     async def __call__(self, scope, receive, send):
         path = scope.get("path", "")
-        protected = (
-            settings.api_key is not None
-            and scope["type"] in ("http", "websocket")
-            and path.startswith("/api")
-            and path != "/api/health"
+        key = settings.api_key
+        if key is None:
+            await self.app(scope, receive, send)
+            return
+        protected = scope["type"] in ("http", "websocket") and (
+            (path.startswith("/api") and path != "/api/health")
+            or path in self.PROTECTED_SCHEMA_PATHS
         )
         if not protected:
             await self.app(scope, receive, send)
@@ -133,12 +146,20 @@ class ApiKeyMiddleware:
         if authorization.lower().startswith("bearer "):
             supplied = supplied or authorization[7:].strip()
         if scope["type"] == "websocket":
-            for key, value in parse_qsl(scope.get("query_string", b"").decode("latin-1")):
-                if key == "api_key":
+            for param, value in parse_qsl(scope.get("query_string", b"").decode("latin-1")):
+                if param == "api_key":
                     supplied = supplied or value
                     break
 
-        if supplied != settings.api_key:
+        expected = key.encode("utf-8")
+        if not hmac.compare_digest(supplied.encode("utf-8"), expected):
+            client = scope.get("client") or ("unknown", 0)
+            logging.getLogger("sksurrogate.api").warning(
+                "API key rejected: %s %s from %s",
+                scope.get("method", "websocket"),
+                path,
+                client[0],
+            )
             if scope["type"] == "http":
                 response = JSONResponse(status_code=401, content={"detail": "Invalid or missing API key"})
                 await response(scope, receive, send)
@@ -153,6 +174,12 @@ app = FastAPI(
     description="Control-plane API for the SKSurrogate MLOps toolkit.",
     version="0.1.0",
 )
+
+
+@app.exception_handler(UnsafeName)
+async def _unsafe_name_handler(request, exc):
+    """Map caller-supplied path segments that would escape storage to HTTP 400."""
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 # Middleware added first ends up innermost; CORSMiddleware is added last so it
 # stays outermost and can decorate the 401 responses with CORS headers.

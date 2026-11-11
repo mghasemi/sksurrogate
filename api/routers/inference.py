@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from SKSurrogate import ModelRegistry, SchemaValidationError, predict_batch
 
 from ..config import settings
+from ..safety import safe_segment
 from ..deps import append_monitor_record, bad_request, not_found, open_tracker, resolve_bundle
 
 router = APIRouter(prefix="/api/inference", tags=["inference"])
@@ -75,7 +76,7 @@ def _resolve_input_frame(task_name, body: PredictRequest, bundle):
     if body.rows is not None:
         return pd.DataFrame(body.rows), []
     if body.partition is not None:
-        csv_path = settings.task_dataset_dir(task_name) / (body.partition + ".csv")
+        csv_path = settings.task_dataset_dir(task_name) / (safe_segment(body.partition, "partition") + ".csv")
         if not csv_path.exists():
             raise not_found("No dataset partition %r stored for task %r" % (body.partition, task_name))
         frame = pd.read_csv(csv_path)
@@ -127,8 +128,10 @@ def predict_batch_endpoint(task_name: str, body: PredictRequest):
     frame, ignored_columns = _resolve_input_frame(task_name, body, bundle)
     _check_preflight(task_name, frame, bundle, body.preflight)
     request_id = body.request_id or uuid.uuid4().hex
-    output_dir = settings.task_predictions_dir(task_name) / bundle.model_version
-    output_path = output_dir / (request_id + ".csv")
+    output_dir = settings.task_predictions_dir(task_name) / safe_segment(
+        bundle.model_version, "model version"
+    )
+    output_path = output_dir / (safe_segment(request_id, "request id") + ".csv")
     started = perf_counter()
     try:
         result = predict_batch(bundle, frame, output_path=output_path, request_id=request_id)

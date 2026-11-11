@@ -23,6 +23,7 @@ from starlette.responses import FileResponse
 from SKSurrogate import DataPreprocess, ModelRegistry, SynthData
 
 from ..config import settings
+from ..safety import safe_segment
 from ..deps import bad_request, not_found, open_tracker
 
 router = APIRouter(prefix="/api/datasets", tags=["synthetic-data"])
@@ -64,7 +65,7 @@ def _load_partition_frame(task_name, partition):
             return tracker.get_dataframe(partition)
         except ValueError:
             pass
-    csv_path = settings.task_dataset_dir(task_name) / (partition + ".csv")
+    csv_path = settings.task_dataset_dir(task_name) / (safe_segment(partition, "partition") + ".csv")
     if csv_path.exists():
         return pd.read_csv(csv_path)
     raise not_found("No dataset partition %r stored for task %r" % (partition, task_name))

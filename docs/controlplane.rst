@@ -89,6 +89,24 @@ cross-origin browser clients, set ``SKSURROGATE_API_CORS_ORIGINS`` to a
 comma-separated list of explicit origins. Localhost and ``127.0.0.1`` origins
 are allowed for development by default.
 
+The shared key protects the entire control plane, not just the inference
+routes: registry promotion and rollback, artifact deletion, dataset uploads
+and retraining are all reachable with the same key. When a key is configured,
+the OpenAPI schema and interactive documentation (``/openapi.json``,
+``/docs``, ``/redoc``) require it as well, so an unauthenticated client cannot
+enumerate the request/response surface. Rejected requests are logged at
+``WARNING`` with the HTTP method, path and client host; the supplied
+credential is never written to the log.
+
+Caller-supplied names that become filesystem path segments — task names, model
+versions, dataset partitions, request IDs and job IDs — are validated before
+use. Values containing path separators, control characters or ``..`` are
+rejected with HTTP 400, and bundle and partition joins are additionally
+resolved and proven to stay inside the storage root. Before this validation a
+keyed caller could read arbitrary ``*.csv`` files with a traversal
+``partition`` and load any ``*.bundle`` file on the host (``joblib``) with a
+traversal ``model_version``.
+
 Optional LLM-assisted project synthesis
 =======================================
 
