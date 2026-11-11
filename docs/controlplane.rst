@@ -76,7 +76,10 @@ settings in browser local storage, so use a trusted browser profile and avoid
 sharing it with untrusted users.
 
 When ``SKSURROGATE_API_KEY`` is unset, the API is open to callers that can
-reach it. Do not expose a keyless instance to an untrusted network. For
+reach it — the server logs a startup warning whenever it starts in this mode.
+Do not expose a keyless instance to an untrusted network; for deployments whose
+port may be published (the Docker entrypoint binds all interfaces), set
+``SKSURROGATE_REQUIRE_AUTH=1`` so the API refuses to start without a key. For
 cross-origin browser clients, set ``SKSURROGATE_API_CORS_ORIGINS`` to a
 comma-separated list of explicit origins. Localhost and ``127.0.0.1`` origins
 are allowed for development by default.

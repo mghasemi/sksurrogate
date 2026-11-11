@@ -4,6 +4,22 @@ Changelog
 [Unreleased]
 ------------
 
+API authentication
+~~~~~~~~~~~~~~~~~~
+
+* Startup validation for the shared-key API: when ``SKSURROGATE_API_KEY`` is
+  unset, the API logs a warning at startup; setting
+  ``SKSURROGATE_REQUIRE_AUTH=1|true|yes`` makes it refuse to start without a
+  key — for deployments that expose the port beyond a trusted network (the
+  Docker entrypoint binds all interfaces).
+* The web UI's **Settings / Audit** page now reports the server's
+  authentication state: a warning when the server requires an API key this
+  browser has not stored, an error note when the stored key is rejected (401),
+  and otherwise a reminder that the server runs without key enforcement.
+* Regression tests for the shared-key middleware (HTTP header styles,
+  WebSocket handshake policy, ``/api/health`` exemption, SPA fallback) and the
+  startup validation, including fresh-interpreter import pins.
+
 Logging and telemetry
 ~~~~~~~~~~~~~~~~~~~~~
 

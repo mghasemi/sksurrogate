@@ -65,10 +65,14 @@ synthetic examples for interface practice, not meaningful model benchmarks.
 
 .. warning::
 
-   The API is open when ``SKSURROGATE_API_KEY`` is unset. Do not expose a
-   keyless service to an untrusted network. If you enable a key, enter it on
-   **Settings / Audit**. The UI stores the API base URL and key in this
-   browser's local storage; use a trusted browser profile.
+   The API is open when ``SKSURROGATE_API_KEY`` is unset — the server logs a
+   startup warning whenever it starts that way. Do not expose a keyless service
+   to an untrusted network; for deployments whose port may be published, set
+   ``SKSURROGATE_REQUIRE_AUTH`` so the API refuses to start without a key. If
+   you enable a key, enter it on **Settings / Audit**, which reports when the
+   server requires one and when a stored key is rejected. The UI stores the
+   API base URL and key in this browser's local storage; use a trusted browser
+   profile.
 
 The workflow at a glance
 ========================
@@ -562,7 +566,11 @@ checkpoint is usable.
 
 Use **Settings / Audit** to configure the API base URL and shared API key for
 this browser, and to review task registry audit events. Connection settings
-are browser-local; registry audit history is task data stored by the API.
+are browser-local; registry audit history is task data stored by the API. The
+**API connection** card also reports the server's authentication state when you
+open it: a warning if the server requires an API key that this browser has not
+stored, an error note if the stored key was rejected (401), and otherwise a
+reminder that the server runs without key enforcement.
 
 Use **Logs** to read what a job actually did. The page lists captured entries
 newest first with time, severity badge, job, logger and message. Severity chips
