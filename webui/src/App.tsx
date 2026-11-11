@@ -23,7 +23,8 @@ import {
 } from "lucide-react";
 
 import { listTasks } from "./api/client";
-import { Loading } from "./components/ui";
+import { Badge, Loading } from "./components/ui";
+import { AuthProvider, useAuth, useUsername } from "./lib/auth-context";
 import { TaskProvider, useTask } from "./lib/task-context";
 import { useHealth } from "./lib/hooks";
 
@@ -46,6 +47,7 @@ const SettingsPage = lazy(() => import("./pages/Settings"));
 const ProjectsPage = lazy(() => import("./pages/Projects"));
 const ExplainPage = lazy(() => import("./pages/Explain"));
 const DesignPage = lazy(() => import("./pages/Design"));
+const LoginPage = lazy(() => import("./pages/Login"));
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
@@ -158,6 +160,36 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
   );
 }
 
+/**
+ * Who the server thinks we are. In open (unauthenticated) mode it says so
+ * explicitly rather than inventing a user; with enforcement on it shows the
+ * account and offers sign-out.
+ */
+function IdentityChip() {
+  const { me, status, logout } = useAuth();
+  const username = useUsername();
+  if (!status) return null;
+  if (!status.auth_enforced) {
+    return (
+      <span className="muted" style={{ fontSize: 12 }}>
+        <Badge tone="warn">no auth</Badge>
+      </span>
+    );
+  }
+  if (!me || me.source === "anonymous") return null;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+      <Badge tone={me.is_admin ? "info" : "muted"}>
+        {username}
+        {me.is_admin ? " · admin" : ""}
+      </Badge>
+      <button type="button" className="btn" onClick={() => void logout()}>
+        Sign out
+      </button>
+    </span>
+  );
+}
+
 /** Sentinel option value for "add a new task" in the task dropdown. */
 const NEW_TASK_VALUE = "__new_task__";
 
@@ -230,6 +262,7 @@ function Topbar({ onMenu }: { onMenu: () => void }) {
         <span className="dot" />
         {healthOk === null ? "checking…" : healthOk ? "API online" : "API offline"}
       </span>
+      <IdentityChip />
     </header>
   );
 }
@@ -237,11 +270,26 @@ function Topbar({ onMenu }: { onMenu: () => void }) {
 function Shell() {
   const [navOpen, setNavOpen] = useState(false);
   const location = useLocation();
+  const { loading, needsLogin } = useAuth();
 
-  // Close the off-canvas sidebar whenever the route changes.
+  // Close the off-canvas sidebar whenever the route changes. Declared before
+  // the login gate so the hook order is identical in every render.
   useEffect(() => {
     setNavOpen(false);
   }, [location.pathname]);
+
+  // The login gate sits above every route: with authentication enforced and no
+  // session, no page is mounted and no page-level query is issued.
+  if (loading) {
+    return <Loading label="Checking session…" />;
+  }
+  if (needsLogin) {
+    return (
+      <Suspense fallback={<Loading label="Loading…" />}>
+        <LoginPage />
+      </Suspense>
+    );
+  }
 
   return (
     <div className={`shell${navOpen ? " nav-open" : ""}`}>
@@ -280,11 +328,13 @@ function Shell() {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <TaskProvider>
-        <BrowserRouter>
-          <Shell />
-        </BrowserRouter>
-      </TaskProvider>
+      <AuthProvider>
+        <TaskProvider>
+          <BrowserRouter>
+            <Shell />
+          </BrowserRouter>
+        </TaskProvider>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }

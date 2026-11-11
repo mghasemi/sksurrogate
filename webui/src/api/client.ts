@@ -85,6 +85,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   if (body !== undefined) headers["Content-Type"] = "application/json";
   const res = await fetch(`${base()}${path}`, {
     method,
+    // The browser session is an HttpOnly cookie; same-origin calls attach it by
+    // default, and "include" also covers an explicitly configured API base.
+    credentials: "include",
     headers: Object.keys(headers).length ? headers : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
@@ -2129,4 +2132,141 @@ export const updateProjectHypothesisStatus = (
   post<Project>(
     `/api/projects/${encodeURIComponent(projectId)}/records/${encodeURIComponent(recordId)}/status`,
     { status },
+  );
+
+/* ------------------------------------------------------------------ */
+/* Identity, ownership and sharing                                     */
+/* ------------------------------------------------------------------ */
+
+export interface AuthStatus {
+  auth_enforced: boolean;
+  login_available: boolean;
+  bootstrap_required: boolean;
+  session_ttl_seconds: number;
+}
+
+export interface AuthUser {
+  user_id: number;
+  username: string;
+  is_admin: boolean;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** How the current request authenticated; `anonymous` means auth is not enforced. */
+export interface Principal {
+  user_id: number | null;
+  username: string;
+  is_admin: boolean;
+  source: "session" | "api_key" | "static" | "anonymous";
+  user: AuthUser | null;
+  auth_enforced: boolean;
+}
+
+export type AclRole = "viewer" | "editor" | "owner";
+
+export interface ApiKeyRecord {
+  id: number;
+  user_id: number;
+  name: string;
+  prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
+export interface ShareEntry {
+  user_id: number;
+  username: string | null;
+  is_active: boolean;
+  role: AclRole;
+  granted_by: number | null;
+  created_at: string;
+}
+
+export interface SharesPayload {
+  kind: string;
+  resource_id: string;
+  shares: ShareEntry[];
+  role?: AclRole;
+}
+
+const enc = encodeURIComponent;
+
+export const authStatus = () => get<AuthStatus>("/api/auth/status");
+export const currentPrincipal = () => get<Principal>("/api/auth/me");
+
+export const login = (username: string, password: string) =>
+  post<{ user: AuthUser; expires_in: number }>("/api/auth/login", { username, password });
+
+export const logout = () => post<{ ok: boolean }>("/api/auth/logout");
+
+export const changePassword = (currentPassword: string, newPassword: string) =>
+  post<{ ok: boolean }>("/api/auth/password", {
+    current_password: currentPassword,
+    new_password: newPassword,
+  });
+
+/** The caller's API keys. The secret itself is only ever returned by createApiKey. */
+export const listApiKeys = async (): Promise<ApiKeyRecord[]> =>
+  (await get<{ keys: ApiKeyRecord[] }>("/api/auth/keys")).keys;
+
+export const createApiKey = (name: string) =>
+  post<{ key: string; record: ApiKeyRecord }>("/api/auth/keys", { name });
+
+export const revokeApiKey = (keyId: number) =>
+  request<{ revoked: ApiKeyRecord }>("DELETE", `/api/auth/keys/${keyId}`);
+
+export const listUsers = async (): Promise<AuthUser[]> =>
+  (await get<{ users: AuthUser[] }>("/api/auth/users")).users;
+
+export const createUser = (username: string, password: string, isAdmin = false) =>
+  post<{ user: AuthUser }>("/api/auth/users", { username, password, is_admin: isAdmin });
+
+export const updateUser = (
+  userId: number,
+  patch: { is_active?: boolean; is_admin?: boolean; password?: string },
+) => request<{ user: AuthUser }>("PATCH", `/api/auth/users/${userId}`, patch);
+
+/** Tasks the caller can see, with their role — empty when auth is not enforced. */
+export const myTasks = () =>
+  get<{ tasks: Array<{ task_name: string; role: AclRole }>; auth_enforced: boolean }>(
+    "/api/access/tasks",
+  );
+
+export const myProjects = () =>
+  get<{ projects: Array<{ project_id: string; role: AclRole }>; auth_enforced: boolean }>(
+    "/api/access/projects",
+  );
+
+export const taskShares = (taskName: string) =>
+  get<SharesPayload>(`/api/access/tasks/${enc(taskName)}`);
+
+export const shareTask = (taskName: string, username: string, role: AclRole) =>
+  post<SharesPayload>(`/api/access/tasks/${enc(taskName)}/shares`, { username, role });
+
+export const unshareTask = (taskName: string, userId: number) =>
+  request<SharesPayload>(
+    "DELETE",
+    `/api/access/tasks/${enc(taskName)}/shares/${userId}`,
+  );
+
+export const projectShares = (projectId: string) =>
+  get<SharesPayload>(`/api/access/projects/${enc(projectId)}`);
+
+export const shareProject = (projectId: string, username: string, role: AclRole) =>
+  post<SharesPayload>(`/api/access/projects/${enc(projectId)}/shares`, { username, role });
+
+export const unshareProject = (projectId: string, userId: number) =>
+  request<SharesPayload>(
+    "DELETE",
+    `/api/access/projects/${enc(projectId)}/shares/${userId}`,
+  );
+
+/** Admin: give one account ownership of every unowned task/project. */
+export const adoptOrphans = (kind: "task" | "project", userId?: number) =>
+  post<{ kind: string; username: string; adopted: string[]; count: number }>(
+    "/api/access/adopt",
+    { kind, user_id: userId },
   );

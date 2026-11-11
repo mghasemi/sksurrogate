@@ -1,9 +1,11 @@
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { health, getApiKey, getApiBase, getEffectiveApiBase, probeAuthMode, registryAudit, setApiKey, setApiBase } from "../api/client";
+import { health, getApiKey, getApiBase, getEffectiveApiBase, registryAudit, setApiKey, setApiBase } from "../api/client";
 import type { AuditEvent } from "../api/client";
 import { Badge, Card, ErrorNote, Loading, Table, fmtNum } from "../components/ui";
+import { AccountCard, ApiKeysCard, SharingCard, UsersCard } from "../components/account";
+import { useAuth } from "../lib/auth-context";
 import { useTask } from "../lib/task-context";
 
 function ApiBaseCard() {
@@ -12,18 +14,11 @@ function ApiBaseCard() {
   const [key, setKey] = useState(getApiKey());
   const [saved, setSaved] = useState(false);
 
-  // Does this server enforce a shared API key? /api/health is never gated, so
-  // probe with a cheap protected endpoint (see client.ts). The note below only
-  // shows when the answer is known; an unreachable server is already reported
-  // by the Server card's health query. When no key is stored and the probe
-  // succeeds, the server genuinely runs open; when a stored key is accepted we
-  // stay silent — there is nothing to fix in either direction.
-  const authQ = useQuery({
-    queryKey: ["auth-mode"],
-    queryFn: probeAuthMode,
-    staleTime: 30_000,
-    retry: false,
-  });
+  // The server states its own posture at /api/auth/status. Probing a protected
+  // endpoint instead cannot tell "open server" from "keyed server + accepted
+  // key" — both answer 200 — which is why the note below reads the explicit
+  // flag rather than guessing.
+  const { status: authStatusInfo } = useAuth();
 
   const onSave = () => {
     setApiBase(url.trim());
@@ -66,17 +61,20 @@ function ApiBaseCard() {
       <p className="muted" style={{ marginTop: 6 }}>
         Sent as an <code>X-API-Key</code> header on every request (and a query parameter for job streams) when the server requires one. Leave empty for local, keyless use.
       </p>
-      {authQ.data === "required" && !getApiKey() && (
-        <p className="warn-note">
-          This server requires an API key — enter it in the field above and save. Other views will fail until then.
+      {authStatusInfo?.auth_enforced && (
+        <p className="muted">
+          This server requires an identity: the browser signs in with a username and password (see the Account card), and scripts use an API key. A key in the field above is optional and only needed by non-browser clients.
         </p>
       )}
-      {authQ.data === "required" && getApiKey() && (
-        <p className="error-note">The stored API key was rejected by this server (401) — check it against the server's SKSURROGATE_API_KEY.</p>
-      )}
-      {authQ.data === "open" && !getApiKey() && (
+      {authStatusInfo && !authStatusInfo.auth_enforced && (
         <p className="muted">
-          Server is not enforcing an API key. Fine for localhost; if this port may be reachable beyond a trusted network, set <code>SKSURROGATE_API_KEY</code> on the server side.
+          Server is not enforcing authentication. Fine for localhost; if this port may be reachable beyond a trusted network, set{" "}
+          <code>SKSURROGATE_REQUIRE_AUTH=true</code> and create an account on the server side.
+        </p>
+      )}
+      {authStatusInfo?.auth_enforced && getApiKey() && (
+        <p className="muted">
+          A key is stored in this browser; it is sent alongside the session cookie. Remove it unless a non-browser tool needs it.
         </p>
       )}
       {saved && <p className="success-note">Saved — all views now talk to the new endpoint.</p>}
@@ -164,9 +162,16 @@ export default function SettingsPage() {
     <div className="stack">
       <div className="page-head">
         <h1>Settings / Audit</h1>
-        <span className="desc">API connection for this browser, plus the registry audit trail for task “{task || "…"}”.</span>
+        <span className="desc">
+          Account, API keys and sharing for this deployment, the API connection for this browser,
+          and the registry audit trail for task “{task || "…"}”.
+        </span>
       </div>
 
+      <AccountCard />
+      <ApiKeysCard />
+      <SharingCard />
+      <UsersCard />
       <ApiBaseCard />
       <ServerCard />
       <AuditLogCard task={task} />
