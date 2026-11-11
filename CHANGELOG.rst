@@ -4,6 +4,36 @@ Changelog
 [Unreleased]
 ------------
 
+Users, sessions and sharing
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **User accounts** (``api/auth.py``): username + password with scrypt digests,
+  server-side sessions in an ``HttpOnly; SameSite=Strict`` cookie (only token
+  digests are stored, so sessions are revocable), and per-user API keys shown
+  once at creation. Login is throttled per username and client address, unknown
+  usernames cost the same scrypt work, and failures never log the supplied
+  secret.
+* **Ownership and sharing** (``api/acl.py``): the task is the ACL unit with
+  ordered roles ``viewer`` < ``editor`` < ``owner``; projects own themselves.
+  Every task-scoped router enforces access through one router-level dependency,
+  list endpoints (``/api/tasks``, ``/api/projects``, ``/api/jobs``) are filtered,
+  strangers get 404 rather than 403, and ``POST /api/access/adopt`` lets an
+  administrator take ownership of pre-auth material.
+* **Endpoints**: ``/api/auth/{status,login,logout,me,password,keys,users}`` and
+  ``/api/access/{tasks,projects,adopt}``.
+* **First administrator**: ``python -m api.auth_cli create-admin`` or the
+  idempotent ``SKSURROGATE_ADMIN_USERNAME``/``SKSURROGATE_ADMIN_PASSWORD``
+  bootstrap; the Compose prod service forwards both plus
+  ``SKSURROGATE_SESSION_TTL`` and ``SKSURROGATE_SESSION_COOKIE_SECURE``.
+* **Web UI**: login gate above every route, an identity badge with sign-out in
+  the top bar, and Settings cards for account password, API keys, sharing of the
+  selected task (with adoption for admins) and user management.
+* **Compatibility**: with neither ``SKSURROGATE_API_KEY`` nor
+  ``SKSURROGATE_REQUIRE_AUTH`` the API stays open and single-user; the shared key
+  keeps working as an admin-equivalent break-glass principal.
+* **Docs**: new :doc:`auth-and-sharing` chapter (toctree + control-plane
+  cross-link) and a Docker/readme paragraph on the new variables.
+
 API authentication
 ~~~~~~~~~~~~~~~~~~
 

@@ -119,8 +119,14 @@ From a source checkout (Docker with Compose required)::
 Set ``SKSURROGATE_PORT`` to change the port and ``SKSURROGATE_API_KEY`` to
 require an API key; for any published port also set
 ``SKSURROGATE_REQUIRE_AUTH=1`` so the container refuses to start without a key.
-Data persists in the ``sksurrogate-data`` volume. See the control-plane guide
-for details.
+With ``SKSURROGATE_REQUIRE_AUTH`` enabled the UI asks for a username and
+password instead, and every dataset, bundle and project belongs to an account
+that can share it with others; bootstrap the first administrator with
+``SKSURROGATE_ADMIN_USERNAME``/``SKSURROGATE_ADMIN_PASSWORD`` or
+``python -m api.auth_cli create-admin``, then create per-user API keys in
+**Settings → API keys**. Data persists in the ``sksurrogate-data`` volume. See
+the :doc:`control-plane guide <docs/controlplane>` and the
+:doc:`authentication and sharing chapter <docs/auth-and-sharing>` for details.
 
 Benchmarks
 ----------

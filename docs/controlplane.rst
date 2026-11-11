@@ -89,6 +89,12 @@ cross-origin browser clients, set ``SKSURROGATE_API_CORS_ORIGINS`` to a
 comma-separated list of explicit origins. Localhost and ``127.0.0.1`` origins
 are allowed for development by default.
 
+The key above is a single shared secret: it authenticates *a* caller, not an
+account. For per-user accounts, browser sessions, per-user API keys and sharing
+of datasets/models/projects between accounts, see
+:doc:`auth-and-sharing` — the same ``SKSURROGATE_REQUIRE_AUTH`` switch enables
+both, and the shared key remains available as a break-glass administrator.
+
 The shared key protects the entire control plane, not just the inference
 routes: registry promotion and rollback, artifact deletion, dataset uploads
 and retraining are all reachable with the same key. When a key is configured,
