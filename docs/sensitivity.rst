@@ -146,6 +146,35 @@ with correlation below a given threshold:
 The above procedure selects those features which has high (positive or negative) correlation with higher number of
 other features and omits the other features. Repeats this process until no more pair with high correlation remains.
 
+Stored weightings and the consensus ranking
+===========================================
+Sensitivity indices are only useful if they accumulate somewhere comparable, so
+a completed run is merged into the task's ``weights`` table in its tracking
+database, under the column matching the method (``sobol``, ``morris``,
+``delta_mmnt``). ``mltrack.RetrieveWeights``, ``mltrack.heatmap`` and
+``mltrack.TopFeatures`` read that table, and the control plane's **Consensus top
+features** card ranks every feature by how often it appears in the top *N* of
+each stored weighting column.
+
+Registering a partition seeds the table with the two cheap dataset-level
+weightings for its numeric columns — feature-target Pearson correlation and
+feature variance — so the card is meaningful before the first sensitivity run.
+Tasks registered before that existed (or whose partition was replaced) can be
+back-filled with ``POST /api/sensitivity/{task}/base-weights``; the card offers
+the same action when it finds no stored weighting at all.
+
+``mltrack.FeatureWeights`` computes and stores weights itself, but it reads an
+unpartitioned ``data`` table that API-registered tasks do not have. For
+partitioned data use ``mltrack.PersistWeights({column: values}, features=...)``,
+which merges externally computed weights into the same table (and is what the
+API uses).
+
+.. note::
+   Correlation pruning is a *selection* step: it reports which features to drop
+   at a given absolute-correlation threshold and deliberately adds no weighting
+   column. Feeding a selection into a consensus of weightings would count the
+   same evidence twice, so the consensus card only grows when a weighting exists.
+
 Heatmaps
 ========
 

@@ -27,6 +27,7 @@ from SKSurrogate import (
 )
 
 from ..config import settings
+from ..features import NumericFeatureError, numeric_train_xy
 from ..safety import safe_segment
 from ..deps import bad_request, finite_or_none as _finite, not_found, open_tracker, unprocessable, task_access
 
@@ -234,10 +235,35 @@ async def register_dataset(task_name: str, target: str = Form(...), partition: s
     dataset_dir.mkdir(parents=True, exist_ok=True)
     csv_path = dataset_dir / (safe_segment(partition, "partition") + ".csv")
 
+    weights_stored = []
     with open_tracker(task_name) as tracker:
         tracker.RegisterData(frame, target, partition=partition)
         tracker.UpdateMetadata({"dataset_deduced_types": pivot_types})
         metadata = tracker.GetMetadata()
+        # Seed the ``weights`` table with the two cheap dataset-level weightings
+        # (feature-target Pearson and feature variance) for the numeric columns.
+        # ``mltrack.FeatureWeights`` cannot do this for an API task — it reads an
+        # unpartitioned ``data`` table that registered tasks do not have — and
+        # without a base row set the "Consensus top features" card stays empty
+        # until a weighting exists. Sensitivity runs merge their own column on top.
+        try:
+            projection = numeric_train_xy(frame, target)
+        except NumericFeatureError:
+            projection = None
+        if projection is not None:
+            data = pd.DataFrame(projection.X, columns=projection.columns)
+            values = pd.Series(projection.y)
+            try:
+                tracker.PersistWeights(
+                    {
+                        "pearson": [data[column].corr(values) for column in projection.columns],
+                        "variance": [data[column].var() for column in projection.columns],
+                    },
+                    features=projection.columns,
+                )
+                weights_stored = ["pearson", "variance"]
+            except Exception:  # pragma: no cover - auxiliary; never fail an upload
+                weights_stored = []
 
     # Persist the materialized target values after successful tracker registration.
     frame.to_csv(csv_path, index=False)
@@ -267,6 +293,8 @@ async def register_dataset(task_name: str, target: str = Form(...), partition: s
         "deduced_types": pivot_types,
         # Return bounded, count-only PII pattern findings for the uploaded frame.
         "sensitive_scan": sensitive_feature_report(frame),
+        # Which weighting columns this registration seeded (numeric features only).
+        "weights_stored": weights_stored,
     }
 
 

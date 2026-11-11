@@ -5,6 +5,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import {
   addProjectArtifact,
   asSensitivityResult,
+  computeBaseWeights,
   getCorrelationMatrix,
   getProject,
   getTopFeatures,
@@ -48,6 +49,10 @@ export default function FeatureAnalysisPage() {
 
   // Result of the most recent sensitivity job, captured for the ranking heatmap.
   const [sensResult, setSensResult] = useState<SensitivityJobResult | null>(null);
+  // Bumped whenever stored weightings change (job completion or base-weight
+  // computation) so the consensus card refetches. The job id alone is not a
+  // trigger: it changes at submission, before the weights exist on the server.
+  const [weightsRevision, setWeightsRevision] = useState(0);
 
   const linkProjectJobMut = useMutation({
     mutationFn: ({ jobId: completedJobId, taskName }: { jobId: string; taskName: string }) => {
@@ -175,6 +180,11 @@ export default function FeatureAnalysisPage() {
                   if (!decoded) return;
                   setSensResult(decoded);
                   setTab("ranking");
+                  if (decoded.weights_stored) {
+                    setWeightsRevision((revision) => revision + 1);
+                    qc.invalidateQueries({ queryKey: ["weights-heatmap", task, trainPartition] });
+                    qc.invalidateQueries({ queryKey: ["top-features"] });
+                  }
                 }}
               />
             </>
@@ -221,7 +231,7 @@ export default function FeatureAnalysisPage() {
         </Card>
       </div>
 
-      <TopFeaturesCard task={task} refreshKey={sensResult ? sensResult.method : null} />
+      <TopFeaturesCard task={task} trainPartition={trainPartition} revision={weightsRevision} />
 
       <Card
         title="Heatmaps"
@@ -313,13 +323,28 @@ export default function FeatureAnalysisPage() {
  * There is nothing to show until weights have been persisted for the task, so an
  * unavailable response renders a disabled card pointing at the sensitivity job.
  */
-function TopFeaturesCard({ task, refreshKey }: { task: string; refreshKey: string | null }) {
+function TopFeaturesCard({
+  task,
+  trainPartition,
+  revision,
+}: {
+  task: string;
+  trainPartition: string;
+  revision: number;
+}) {
+  const qc = useQueryClient();
   const [num, setNum] = useState(10);
   const topQ = useQuery({
-    queryKey: ["top-features", task, num, refreshKey],
+    queryKey: ["top-features", task, num, revision],
     queryFn: () => getTopFeatures(task, num),
     enabled: !!task,
     retry: false,
+  });
+  // Explicit backfill for tasks registered before registration seeded the
+  // dataset-level weightings (and after a partition is replaced).
+  const baseMut = useMutation({
+    mutationFn: () => computeBaseWeights(task, trainPartition),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["top-features"] }),
   });
 
   const data = topQ.data;
@@ -340,7 +365,23 @@ function TopFeaturesCard({ task, refreshKey }: { task: string; refreshKey: strin
       {topQ.isLoading && task && <Loading />}
       {topQ.isError && <ErrorNote error={topQ.error} />}
 
-      {data && !data.available && <EmptyState title="No stored weightings yet" hint={data.hint} />}
+      {data && !data.available && (
+        <>
+          <EmptyState title="No stored weightings yet" hint={data.hint} />
+          {task && (
+            <button className="btn" disabled={baseMut.isPending} onClick={() => baseMut.mutate()}>
+              {baseMut.isPending ? "Computing…" : "Compute dataset-level weights"}
+            </button>
+          )}
+          {baseMut.isError && <ErrorNote error={baseMut.error} />}
+          {baseMut.isSuccess && (
+            <p className="success-note">
+              Stored {baseMut.data.weights_columns.join(", ")} for {fmtNum(baseMut.data.feature_count)} numeric
+              feature(s).
+            </p>
+          )}
+        </>
+      )}
 
       {data?.available && data.features.length === 0 && (
         <EmptyState title="No features ranked" hint={`No feature appears in the top ${num} of any stored weighting.`} />
@@ -349,7 +390,8 @@ function TopFeaturesCard({ task, refreshKey }: { task: string; refreshKey: strin
       {data?.available && data.features.length > 0 && (
         <>
           <p className="muted">
-            Ranked by appearances across <strong>{fmtNum(data.weightings ?? 0)}</strong> weighting column(s).
+            Ranked by appearances across <strong>{fmtNum(data.weightings ?? 0)}</strong> weighting column(s):{" "}
+            <span className="mono">{(data.weight_columns ?? []).join(", ")}</span>.
           </p>
           <div className="chips">
             {data.features.map(([feature, count]) => (

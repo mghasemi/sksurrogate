@@ -954,6 +954,11 @@ export interface SensitivityJobResult {
   weights: Array<number | null>;
   /** Which SALib estimator produced the weights (delta-mmnt only). */
   estimator?: string | null;
+  /** Column this run was persisted under in the task's ``weights`` table. */
+  weights_column?: string;
+  /** False when the run's weights could not be stored (analysis still valid). */
+  weights_stored?: boolean;
+  storage_error?: string | null;
   evaluation_protocol?: {
     train_partition: string;
     train_fingerprint: string | null;
@@ -986,6 +991,9 @@ export function asSensitivityResult(result: unknown): SensitivityJobResult | nul
     weights: r.weights,
     interpretation: r.interpretation,
     estimator: r.estimator ?? null,
+    weights_column: r.weights_column,
+    weights_stored: r.weights_stored,
+    storage_error: r.storage_error ?? null,
     evaluation_protocol: r.evaluation_protocol,
   };
 }
@@ -1050,9 +1058,25 @@ export interface TopFeaturesResponse {
   num?: number;
   /** Number of weighting columns the consensus was computed over. */
   weightings?: number;
+  /** Names of those weighting columns (e.g. ``sobol``, ``pearson``). */
+  weight_columns?: string[];
   /** [feature, appearances] pairs, most frequent first. Empty when unavailable. */
   features: Array<[string, number]>;
 }
+
+/** Recompute and store the dataset-level weightings (Pearson, variance). */
+export const computeBaseWeights = (task: string, trainPartition = "train") =>
+  post<{
+    task_name: string;
+    partition: string;
+    weights_columns: string[];
+    feature_count: number;
+    row_count: number;
+    excluded_columns: Array<{ column: string; dtype: string }>;
+    rows_dropped: number;
+  }>(
+    `/api/sensitivity/${encodeURIComponent(task)}/base-weights?train_partition=${encodeURIComponent(trainPartition)}`,
+  );
 
 export const getTopFeatures = (task: string, num = 10) =>
   get<TopFeaturesResponse>(

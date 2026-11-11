@@ -87,6 +87,19 @@ def run_sensitivity(task_name: str, body: SensitivityRequest):
         if analyzer.weights_ is None:
             raise RuntimeError("sensitivity analysis produced no weights")
         weights = [_finite(value) for value in analyzer.weights_]
+
+        # Persist this run as a weighting column so RetrieveWeights/TopFeatures
+        # (and therefore the "Consensus top features" card) see it. Storing is
+        # auxiliary: an unwritable database must not discard a valid analysis.
+        column = {"sobol": "sobol", "morris": "morris", "delta-mmnt": "delta_mmnt"}[body.method]
+        weights_stored = False
+        storage_error = None
+        try:
+            with open_tracker(task_name) as tracker:
+                tracker.PersistWeights({column: weights}, features=feature_columns)
+            weights_stored = True
+        except Exception as exc:  # pragma: no cover - auxiliary
+            storage_error = "%s: %s" % (type(exc).__name__, exc)
         return {
             "method": body.method,
             # For delta-mmnt: which SALib estimator produced these weights
@@ -97,6 +110,9 @@ def run_sensitivity(task_name: str, body: SensitivityRequest):
             "top_feature_indices": top_indices,
             "top_feature_names": [feature_columns[index] for index in top_indices],
             "weights": weights,
+            "weights_column": column,
+            "weights_stored": weights_stored,
+            "storage_error": storage_error,
             "evaluation_protocol": {
                 "train_partition": body.train_partition,
                 "train_fingerprint": train_fingerprint,
@@ -187,7 +203,23 @@ def get_weights_heatmap(task_name: str, train_partition: str = "train", max_feat
         weights_df = tracker.RetrieveWeights()
     if len(weights_df) > 0 and "feature" in weights_df.columns:
         payload = _heatmap_payload(weights_df, "feature", max_features)
-        return {"task_name": task_name, "kind": "weights", "available": True, "source": "stored", **payload}
+        # Report which columns the stored weightings cover, so the UI can state
+        # the same numeric-only caveat it shows for a computed table. The
+        # projection is auxiliary here: a missing partition must not hide the
+        # stored weights.
+        try:
+            projection, _ = _load_train_xy(task_name, train_partition)
+            excluded = projection.excluded
+        except Exception:  # pragma: no cover - defensive
+            excluded = []
+        return {
+            "task_name": task_name,
+            "kind": "weights",
+            "available": True,
+            "source": "stored",
+            "excluded_columns": excluded,
+            **payload,
+        }
 
     projection, _ = _load_train_xy(task_name, train_partition)
     frame = pd.DataFrame(projection.X, columns=projection.columns)
@@ -207,6 +239,36 @@ def get_weights_heatmap(task_name: str, train_partition: str = "train", max_feat
         "source": "computed",
         "excluded_columns": projection.excluded,
         **payload,
+    }
+
+
+@router.post("/{task_name}/base-weights")
+def compute_base_weights(task_name: str, train_partition: str = "train"):
+    """Compute and store the dataset-level weightings (feature-target Pearson, variance).
+
+    Registration seeds these for new partitions; this endpoint backfills tasks
+    registered before that existed (and re-seeds after a partition is replaced).
+    It is the explicit, side-effecting counterpart to the read-only
+    ``top-features`` endpoint: the consensus card offers it when the task has no
+    stored weighting at all.
+    """
+    projection, _ = _load_train_xy(task_name, train_partition)
+    data = pd.DataFrame(projection.X, columns=projection.columns)
+    values = pd.Series(projection.y)
+    weights = {
+        "pearson": [data[column].corr(values) for column in projection.columns],
+        "variance": [data[column].var() for column in projection.columns],
+    }
+    with open_tracker(task_name) as tracker:
+        stored = tracker.PersistWeights(weights, features=projection.columns)
+    return {
+        "task_name": task_name,
+        "partition": train_partition,
+        "weights_columns": [column for column in stored.columns if column != "feature"],
+        "feature_count": len(projection.columns),
+        "row_count": int(len(projection.X)),
+        "excluded_columns": projection.excluded,
+        "rows_dropped": projection.dropped_rows,
     }
 
 
@@ -247,6 +309,7 @@ def get_top_features(task_name: str, num: int = 10):
         "available": True,
         "num": num,
         "weightings": len(weight_columns),
+        "weight_columns": weight_columns,
         # OrderedDict → list of [feature, appearances] pairs, most frequent first.
         "features": [[feature, int(count)] for feature, count in ranking.items()],
     }

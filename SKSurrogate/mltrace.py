@@ -3249,6 +3249,58 @@ class mltrack(object):
         merged.to_sql("weights", self.conn, if_exists="replace", index=False)
         return merged
 
+    def PersistWeights(self, weights, features=None):
+        """Merge externally computed feature weights into the ``weights`` table.
+
+        ``FeatureWeights`` computes and stores weights in one go, but it reads an
+        unpartitioned ``data`` table that API-registered tasks do not have. This
+        entry point accepts weights that were computed elsewhere (for example by
+        the control plane after a ``SensAprx`` run on a registered partition) and
+        merges them into the same table, so ``RetrieveWeights``, ``TopFeatures``
+        and ``mltrack.heatmap`` see them.
+
+        :param weights: mapping ``{column name: sequence of values per feature}``
+        :param features: feature names in the same order as each value sequence;
+            required when the table is still empty
+        :return: the merged :class:`pandas.DataFrame` now stored in the database
+        """
+        from pandas import DataFrame, read_sql, to_numeric
+
+        if not weights:
+            raise ValueError("weights must contain at least one column")
+        existing = read_sql("SELECT * FROM weights", self.conn)
+        if features is None:
+            if len(existing) == 0:
+                raise ValueError("features are required when the weights table is empty")
+            feature_list = [str(value) for value in existing["feature"]]
+        else:
+            feature_list = [str(value) for value in features]
+            if len(set(feature_list)) != len(feature_list):
+                raise ValueError("features must be unique")
+
+        frame = DataFrame({"feature": feature_list})
+        for column, values in weights.items():
+            series = list(values)
+            if len(series) != len(feature_list):
+                raise ValueError(
+                    "weight column %r has %d values for %d features"
+                    % (column, len(series), len(feature_list))
+                )
+            frame[str(column)] = series
+
+        if len(existing) == 0:
+            merged = frame
+        else:
+            # Outer merge keeps rows from weightings computed on a different
+            # feature set (e.g. an earlier run before a column was dropped).
+            merged = existing.merge(frame, on="feature", how="outer")
+        for column in merged.columns:
+            if column != "feature":
+                merged[column] = to_numeric(merged[column], errors="coerce").fillna(0.0)
+        merged.to_sql("weights", self.conn, if_exists="replace", index=False)
+        self.conn.commit()
+        return merged
+
     def RetrieveWeights(self):
         """
         Obtains the previously calculated weights for features and returns the corresponding DataFrame.
@@ -3310,6 +3362,7 @@ class mltrack(object):
     all_plots = allPlots
     load_plot = LoadPlot
     feature_weights = FeatureWeights
+    persist_weights = PersistWeights
     retrieve_weights = RetrieveWeights
     top_features = TopFeatures
     stats = Stats

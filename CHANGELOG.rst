@@ -4,6 +4,27 @@ Changelog
 [Unreleased]
 ------------
 
+Stored weightings and the consensus ranking
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* A completed sensitivity run now merges its weights into the task's tracking
+  database under a method column (``sobol`` / ``morris`` / ``delta_mmnt``), so
+  ``mltrack.RetrieveWeights``, ``mltrack.heatmap`` and ``mltrack.TopFeatures``
+  see it and the **Consensus top features** card actually updates. The job
+  result reports ``weights_column`` and ``weights_stored``; storing is auxiliary
+  and never invalidates a completed analysis.
+* New ``mltrack.PersistWeights`` (alias ``persist_weights``) merges externally
+  computed weights into the ``weights`` table — the API path needs it because
+  ``FeatureWeights`` reads an unpartitioned ``data`` table that registered tasks
+  do not have.
+* Registration seeds the table with feature-target Pearson and feature variance
+  for the numeric columns (reported as ``weights_stored``), and
+  ``POST /api/sensitivity/{task}/base-weights`` back-fills tasks registered
+  before that existed. The consensus card offers that action when it finds no
+  stored weighting.
+* The consensus card refetches when a run stores weights, and names the columns
+  it ranked over.
+
 Sensitivity analysis on mixed-type datasets
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
