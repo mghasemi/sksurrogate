@@ -4,9 +4,14 @@ import time
 
 import numpy as np
 import pandas as pd
+import importlib.util
+
 import pytest
 
-pytest.importorskip("httpx2")
+if importlib.util.find_spec("httpx") is None:
+    # Some hosts ship the httpx2 distribution instead (module `httpx2`);
+    # TestClient works with either, so only skip when neither is present.
+    pytest.importorskip("httpx2")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from api.config import settings  # noqa: E402
