@@ -248,6 +248,38 @@ and non-numeric selections are rejected.
 
    Missing-data profile and the imputation card; saving writes a new partition.
 
+Experiment Design (external experiments)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Experiment Design** is for design of experiments, not model selection. Use it
+when a run is expensive or slow (a physical experiment, an instrument
+calibration, a simulation sweep) and you must decide which input combination to
+measure next. Model and hyperparameter search on a registered dataset belongs to
+**Experiments** instead.
+
+The page walks through three steps:
+
+1. **Variables** — list the continuous inputs you control with their safe
+   ``low``/``high`` bounds. With a task selected, the *Use ranges from the
+   current dataset* card lists its numeric feature columns (target and ignored
+   columns excluded, constant columns omitted) with observed minima/maxima;
+   select columns and import them as variables. Observed ranges describe the
+   data you already have — widen or tighten them using domain knowledge before
+   extrapolating.
+2. **Initial plan** — generate a space-filling Latin-hypercube design of the
+   requested size, download it as CSV, and run those points.
+3. **Suggest the next experiment** — paste one row per completed run as
+   ``input1, …, measured_result``. The surrogate proposes the point with the
+   lowest lower confidence bound, so the result is **minimized**: negate metrics
+   where larger is better. At least two runs are required; repeat after each
+   measurement.
+
+The page only proposes points — it does not execute experiments or read
+results from the dataset automatically. It supports finite continuous boxes and
+a single scalar objective; categorical factors, constraints, noise models and
+multi-objective goals are not yet supported, and you remain responsible for
+physical, ethical and operational constraints.
+
 3. Inspect and reduce features (optional)
 -----------------------------------------
 

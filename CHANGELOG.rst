@@ -40,6 +40,11 @@ Categorical encoding, outlier clipping and duplicate removal
   ``deduplication_history`` lineage.
 * Fixed a tracker lifecycle bug where garbage-collected trackers closed the
   process-wide Peewee database mid-request (``Cannot operate on a closed database``).
+* **Experiment Design** now explains its purpose and workflow in-page and can
+  seed design variables from the selected task's numeric feature ranges
+  (target/ignored/constant columns excluded, observed min/max imported, editable
+  bounds). Docs contrast DoE with model search and state the observed-range
+  caveat.
 * **Diagnostic curves** now slice the preferred partition by the **bundle's own
   schema** and split it deterministically, instead of feeding the tracker's
   current feature list to ``split_train``. Fixes a 500
