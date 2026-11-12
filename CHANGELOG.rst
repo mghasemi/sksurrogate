@@ -40,6 +40,11 @@ Categorical encoding, outlier clipping and duplicate removal
   ``deduplication_history`` lineage.
 * Fixed a tracker lifecycle bug where garbage-collected trackers closed the
   process-wide Peewee database mid-request (``Cannot operate on a closed database``).
+* **Diagnostic curves** now slice the preferred partition by the **bundle's own
+  schema** and split it deterministically, instead of feeding the tracker's
+  current feature list to ``split_train``. Fixes a 500
+  (``ArrayAsFrame expected 13 feature column(s); got shape (1, 9)``) after
+  dataset columns were ignored post-training.
 
 Per-user data reset
 ~~~~~~~~~~~~~~~~~~~

@@ -15,7 +15,6 @@ Endpoints:
                           server-side without matplotlib; classification bundles only
 """
 
-import sqlite3
 from datetime import datetime, timezone
 
 import numpy as np
@@ -368,8 +367,8 @@ def _positive_scores(model, X_test):
 def bundle_curves(task_name: str, model_version: str, bins: int = Query(default=10, ge=2, le=50)):
     """Diagnostic curves for one classification bundle, computed without matplotlib.
 
-    The bundle's estimator is evaluated on the 75/25 split cached by
-    ``mltrack.split_train`` (the same data the library's own plot methods use).
+    The bundle's estimator is evaluated on a deterministic 75/25 split of the
+    preferred registered partition, sliced to the bundle's own feature schema.
     ROC and calibration work for any classifier; cumulative gain and lift are
     binary-only — when the test partition has more than two classes they are
     reported in ``errors`` rather than failing the request.
@@ -383,10 +382,11 @@ def bundle_curves(task_name: str, model_version: str, bins: int = Query(default=
         )
 
     with open_tracker(task_name) as tracker:
-        # ``split_train`` falls back to the plain ``data`` table when the tracker's
-        # X/y are unset — which API-registered tasks never have (their rows live in
-        # per-partition tables). Preload a registered partition so the 75/25 split
-        # has data to work with, mirroring what ``LogMetrics`` does.
+        # Curves need the same feature schema the bundle was fitted on. API
+        # tasks store rows per partition and never populate the tracker's
+        # X/y, so load the preferred partition here and slice it by the
+        # bundle's own schema rather than by the dataset's current ignore
+        # list (which may have changed after the bundle was trained).
         splits = tracker.dataset_splits()
         pool_partition = None
         for name in ("train", "validation", "test"):
@@ -395,25 +395,33 @@ def bundle_curves(task_name: str, model_version: str, bins: int = Query(default=
                 break
         if pool_partition is None and splits:
             pool_partition = sorted(splits)[0]
-        if pool_partition is not None:
-            try:
-                # ``get_data`` would load every stored column; read the frame,
-                # drop the dataset's ignored columns, then populate X/y so the
-                # diagnostic split never sees them.
-                frame = tracker.get_dataframe(pool_partition)
-                frame = drop_ignored(frame, read_ignored_columns(task_name))
-                target = tracker.target if isinstance(tracker.target, str) else None
-                if not target or target not in frame.columns:
-                    target = str(frame.columns[-1])
-                tracker.X = frame.drop(columns=[target]).to_numpy()
-                tracker.y = frame[target].to_numpy()
-            except ValueError as exc:
-                raise not_found(str(exc))
-
+        if pool_partition is None:
+            raise not_found("No registered data available for task %r" % task_name)
         try:
-            model, _, X_train, X_test, y_train, y_test = tracker.split_train(bundle.model)
-        except sqlite3.OperationalError as exc:
-            raise not_found("No registered data available for task %r (%s)" % (task_name, exc))
+            frame = tracker.get_dataframe(pool_partition)
+        except ValueError as exc:
+            raise not_found(str(exc))
+        target = tracker.target if isinstance(tracker.target, str) else None
+        if not target or target not in frame.columns:
+            target = str(frame.columns[-1])
+        expected = [column for column in (bundle.schema or {}) if column in frame.columns]
+        missing = [column for column in (bundle.schema or {}) if column not in frame.columns]
+        if missing:
+            raise unprocessable(
+                "Bundle %r expects feature columns absent from partition %r: %s"
+                % (model_version, pool_partition, ", ".join(missing))
+            )
+        if expected:
+            features = frame[expected]
+        else:
+            features = drop_ignored(frame, read_ignored_columns(task_name)).drop(columns=[target])
+        from sklearn.model_selection import train_test_split
+
+        y = np.asarray(frame[target])
+        X_train, X_test, _, y_test = train_test_split(
+            features, y, train_size=0.75, random_state=0
+        )
+        model = bundle.model
         y_true = np.asarray(y_test)
         classes = list(np.unique(y_true))
 

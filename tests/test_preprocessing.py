@@ -15,6 +15,8 @@ from api import logs  # noqa: E402
 from api.config import settings  # noqa: E402
 from api.deps import open_tracker  # noqa: E402
 from api.main import app  # noqa: E402
+from SKSurrogate import FoldLocalDataPreprocessor, ModelBundle, save_bundle  # noqa: E402
+from SKSurrogate.DataProcess import ArrayAsFrame  # noqa: E402
 
 TASK = "prep-task"
 
@@ -332,4 +334,48 @@ def test_duplicate_analysis_warns_about_balance_and_leakage(client):
         history = tracker.GetMetadata()["deduplication_history"]
     assert history[-1]["output_partition"] == "train_dedup"
     assert history[-1]["rows_removed"] == 5
+
+
+def test_bundle_curves_use_bundle_schema_not_current_ignore_list(client):
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import Pipeline
+
+    rows = 60
+    frame = pd.DataFrame(
+        {
+            "a": [float(index % 7) for index in range(rows)],
+            "b": [float(index) / 7.0 for index in range(rows)],
+            "c": ["x" if index % 2 else "y" for index in range(rows)],
+            "y": [index % 2 for index in range(rows)],
+        }
+    )
+    _register(client, frame)
+    # A column ignored after training must not shrink the matrix the bundle sees.
+    ignored = client.put(
+        f"/api/datasets/{TASK}/ignored-columns", json={"columns": ["a"]}
+    )
+    assert ignored.status_code == 200
+
+    pipeline = Pipeline(
+        [
+            ("as_frame", ArrayAsFrame(columns=["a", "b", "c"])),
+            ("preprocess", FoldLocalDataPreprocessor()),
+            ("classifier", LogisticRegression(max_iter=200)),
+        ]
+    ).fit(frame[["a", "b", "c"]], frame["y"])
+    bundle = ModelBundle(
+        pipeline,
+        task_name=TASK,
+        model_version="schema-v1",
+        schema={"a": "float64", "b": "float64", "c": "object"},
+        dependencies={},
+    )
+    save_bundle(bundle, settings.task_bundles_dir(TASK) / "schema-v1.bundle")
+
+    response = client.get(f"/api/evaluation/{TASK}/schema-v1/curves?bins=5")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["roc"]["auc"] is not None
+    assert payload["n_test_samples"] > 0
+
 
