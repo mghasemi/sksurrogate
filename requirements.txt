@@ -3,6 +3,7 @@
 # 2026-10-24: unpinned manifests allowed pre-fix versions of several packages);
 # no upper pins -- CI intentionally tracks current releases.
 category-encoders
+dask[distributed]>=2024.1
 eli5
 fastapi>0.109
 imbalanced-learn

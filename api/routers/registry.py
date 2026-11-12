@@ -17,7 +17,7 @@ from SKSurrogate import (
 
 from ..config import settings
 from ..safety import safe_segment
-from ..deps import bad_request, bundle_summary, not_found, unprocessable, task_access
+from ..deps import bad_request, bundle_summary, current_principal, not_found, unprocessable, task_access
 
 router = APIRouter(prefix="/api/registry", tags=["registry"], dependencies=[Depends(task_access)])
 
@@ -27,6 +27,13 @@ def _registry():
 
 
 class RegisterRequest(BaseModel):
+    model_version: str
+
+
+class AliasRequest(BaseModel):
+    """Point a user-chosen alias at a registered model version."""
+
+    name: str
     model_version: str
 
 
@@ -101,6 +108,42 @@ def registry_summary(task_name: str):
         raise not_found(str(exc))
 
 
+@router.get("/{task_name}/aliases")
+def list_aliases(task_name: str):
+    """User-chosen model aliases for one task (lifecycle pointers live in /summary)."""
+    try:
+        return {"task_name": task_name, "aliases": _registry().named_aliases(task_name)}
+    except KeyError as exc:
+        raise not_found(str(exc))
+
+
+@router.post("/{task_name}/aliases")
+def set_alias(task_name: str, body: AliasRequest):
+    """Point a human-readable alias (``baseline``, ``best-f1``) at a model version."""
+    try:
+        entry = _registry().set_named_alias(
+            task_name,
+            body.name,
+            body.model_version,
+            actor=current_principal().username,
+        )
+    except KeyError as exc:
+        raise not_found(str(exc))
+    except ValueError as exc:
+        raise bad_request(str(exc))
+    return {"task_name": task_name, "name": body.name, **entry}
+
+
+@router.delete("/{task_name}/aliases/{name}")
+def delete_alias(task_name: str, name: str):
+    """Remove a user-chosen alias; the version it pointed at is not deleted."""
+    try:
+        removed = _registry().delete_named_alias(task_name, name)
+    except KeyError as exc:
+        raise not_found(str(exc))
+    return {"task_name": task_name, "name": name, **removed}
+
+
 @router.get("/{task_name}/history")
 def registry_history(task_name: str):
     try:
@@ -119,7 +162,7 @@ def registry_audit(task_name: str):
 
 @router.get("/{task_name}/load")
 def load_registered_bundle(task_name: str, alias: str = "production"):
-    """Return metadata for the version currently pointed at by a lifecycle alias."""
+    """Return metadata for the version a lifecycle alias or user-chosen alias points at."""
     try:
         bundle = _registry().load(task_name, alias=alias, strict_dependencies=False)
     except KeyError as exc:

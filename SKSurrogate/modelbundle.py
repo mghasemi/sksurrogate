@@ -4,6 +4,7 @@ import importlib.metadata
 import json
 import os
 import platform
+import re
 import shutil
 import tempfile
 import uuid
@@ -15,6 +16,10 @@ import joblib
 
 BUNDLE_FORMAT_VERSION = 1
 REGISTRY_STATES = {"candidate", "validated", "staging", "production", "archived"}
+#: Names reserved for the lifecycle pointers maintained by promote/rollback.
+LIFECYCLE_ALIAS_NAMES = frozenset(REGISTRY_STATES | {"latest"})
+#: User-chosen model alias grammar: lowercase slug, max 64 characters.
+ALIAS_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _SENSITIVE_KEYS = {
     "api_key",
     "apikey",
@@ -560,22 +565,145 @@ class ModelRegistry:
         ]
         return {"datasets": datasets, "predictions": predictions}
 
-    def load(self, task_name, alias="production", **kwargs):
-        index = self._read_index()
-        task = index["models"].get(task_name)
-        if task is None or alias not in task["aliases"]:
-            raise KeyError("Unknown model alias %r for task %r" % (alias, task_name))
-        version = task["aliases"][alias]
-        return load_bundle(self.root / task["versions"][version]["path"], **kwargs)
+    def remove_task(self, task_name):
+        """Delete a task's whole registry entry and stored versions.
 
-    def load_version(self, task_name, model_version, **kwargs):
-        """Load an exact registered version without resolving a lifecycle alias."""
+        Used by the per-user data reset: the index entry and the task's registry
+        directory must disappear together, or a later ``load`` would point at a
+        bundle that no longer exists. Returns the removed version ids.
+        """
         index = self._read_index()
+        task = index["models"].pop(task_name, None)
+        if task is None:
+            return []
+        self._write_index(index)
+        shutil.rmtree(self.root / task_name, ignore_errors=True)
+        return sorted(task.get("versions", {}))
+
+    # -- user-chosen aliases -------------------------------------------
+    #
+    # ``aliases`` holds lifecycle pointers (``candidate``/``production``/...) that
+    # promote/rollback rewrite automatically. Named aliases are a *separate* map
+    # under ``named_aliases``: a stable, user-chosen handle ("baseline-2026-11")
+    # for an immutable ``model_version``, so an experiment can be referred to and
+    # displayed by a human name without touching the lifecycle semantics.
+
+    @staticmethod
+    def validate_alias_name(name):
+        """Return ``name`` if it is a legal, non-reserved alias, else raise ValueError."""
+        if not isinstance(name, str) or not ALIAS_NAME_PATTERN.match(name):
+            raise ValueError(
+                "Alias names must be lowercase letters/digits starting with a letter or digit, "
+                "using '.', '_' or '-' (max 64 characters)"
+            )
+        if name in LIFECYCLE_ALIAS_NAMES:
+            raise ValueError("%r is a reserved lifecycle alias name" % name)
+        return name
+
+    def _task_or_raise(self, index, task_name):
         task = index["models"].get(task_name)
-        if task is None or model_version not in task["versions"]:
+        if task is None:
+            raise KeyError("Unknown model task: %r" % task_name)
+        return task
+
+    def named_aliases(self, task_name):
+        """Return ``{name: {model_version, created_at, created_by}}`` for one task."""
+        index = self._read_index()
+        task = self._task_or_raise(index, task_name)
+        return {
+            name: dict(entry) for name, entry in task.get("named_aliases", {}).items()
+        }
+
+    def resolve_version(self, task_name, identifier):
+        """Resolve an exact version id *or* a named alias to a version id.
+
+        Exact ids win, so a version whose hex id happens to match an alias name
+        is never shadowed. Raises KeyError when neither resolves.
+        """
+        index = self._read_index()
+        task = self._task_or_raise(index, task_name)
+        if identifier in task.get("versions", {}):
+            return identifier
+        entry = task.get("named_aliases", {}).get(identifier)
+        if entry is not None:
+            return entry["model_version"]
+        raise KeyError(
+            "Unknown model version or alias %r for task %r" % (identifier, task_name)
+        )
+
+    def set_named_alias(self, task_name, name, model_version, *, actor=None):
+        """Point a user-chosen alias at a registered version and record it in the audit log."""
+        self.validate_alias_name(name)
+        index = self._read_index()
+        task = self._task_or_raise(index, task_name)
+        if model_version not in task.get("versions", {}):
             raise KeyError(
                 "Unknown model version %r for task %r" % (model_version, task_name)
             )
+        timestamp = datetime.now(timezone.utc).isoformat()
+        previous = task.setdefault("named_aliases", {}).get(name)
+        task["named_aliases"][name] = {
+            "model_version": model_version,
+            "created_at": timestamp,
+            "created_by": actor,
+        }
+        event = {
+            "event_type": "alias_set",
+            "action": "alias_set",
+            "alias": name,
+            "model_version": model_version,
+            "previous_model_version": previous.get("model_version") if previous else None,
+            "actor": actor,
+            "timestamp": timestamp,
+        }
+        task["history"].append(event)
+        task.setdefault("audit", []).append(dict(event))
+        self._write_index(index)
+        return task["named_aliases"][name]
+
+    def delete_named_alias(self, task_name, name):
+        """Remove a user-chosen alias (the version it pointed at is left untouched)."""
+        index = self._read_index()
+        task = self._task_or_raise(index, task_name)
+        removed = task.setdefault("named_aliases", {}).pop(name, None)
+        if removed is None:
+            raise KeyError("Unknown model alias %r for task %r" % (name, task_name))
+        event = {
+            "event_type": "alias_deleted",
+            "action": "alias_deleted",
+            "alias": name,
+            "model_version": removed.get("model_version"),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        task["history"].append(event)
+        task.setdefault("audit", []).append(dict(event))
+        self._write_index(index)
+        return removed
+
+    def load(self, task_name, alias="production", **kwargs):
+        index = self._read_index()
+        task = index["models"].get(task_name)
+        if task is None:
+            raise KeyError("Unknown model alias %r for task %r" % (alias, task_name))
+        if alias in task["aliases"]:
+            version = task["aliases"][alias]
+        elif alias in task.get("named_aliases", {}):
+            version = task["named_aliases"][alias]["model_version"]
+        else:
+            raise KeyError("Unknown model alias %r for task %r" % (alias, task_name))
+        return load_bundle(self.root / task["versions"][version]["path"], **kwargs)
+
+    def load_version(self, task_name, model_version, **kwargs):
+        """Load a registered version by exact id or by user-chosen alias."""
+        index = self._read_index()
+        task = self._task_or_raise(index, task_name)
+        if model_version not in task.get("versions", {}):
+            entry = task.get("named_aliases", {}).get(model_version)
+            if entry is None:
+                raise KeyError(
+                    "Unknown model version %r for task %r" % (model_version, task_name)
+                )
+            model_version = entry["model_version"]
         path = self.root / task["versions"][model_version]["path"]
         return load_bundle(path, **kwargs)
 
@@ -616,5 +744,8 @@ class ModelRegistry:
             raise KeyError("Unknown model task: %r" % task_name)
         return {
             "aliases": dict(task.get("aliases", {})),
+            "named_aliases": {
+                name: dict(entry) for name, entry in task.get("named_aliases", {}).items()
+            },
             "versions": {v: meta.get("state") for v, meta in task.get("versions", {}).items()},
         }

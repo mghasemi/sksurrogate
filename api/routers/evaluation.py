@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 from SKSurrogate import build_cv, load_bundle, mltrack, save_bundle
 
 from ..config import settings
+from ..columns import drop_ignored, read_ignored_columns
 from ..safety import safe_segment
 from ..deps import (
     bad_request,
@@ -254,6 +255,7 @@ def run_nested_cv(task_name: str, body: NestedCVRequest):
                 scoring=scoring_fn,
                 repeats=body.repeats,
                 confidence_level=body.confidence_level,
+                exclude_columns=read_ignored_columns(task_name),
             )
             tracker_metadata = tracker.GetMetadata()
 
@@ -395,7 +397,16 @@ def bundle_curves(task_name: str, model_version: str, bins: int = Query(default=
             pool_partition = sorted(splits)[0]
         if pool_partition is not None:
             try:
-                tracker.get_data(pool_partition)
+                # ``get_data`` would load every stored column; read the frame,
+                # drop the dataset's ignored columns, then populate X/y so the
+                # diagnostic split never sees them.
+                frame = tracker.get_dataframe(pool_partition)
+                frame = drop_ignored(frame, read_ignored_columns(task_name))
+                target = tracker.target if isinstance(tracker.target, str) else None
+                if not target or target not in frame.columns:
+                    target = str(frame.columns[-1])
+                tracker.X = frame.drop(columns=[target]).to_numpy()
+                tracker.y = frame[target].to_numpy()
             except ValueError as exc:
                 raise not_found(str(exc))
 

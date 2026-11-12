@@ -75,6 +75,10 @@ setup(
     ],
     extras_require={
         "test": ["pytest", "pygments"],
+        # The API's optional distributed execution backend (api/jobs.py and
+        # SKSurrogate.execution). The control plane degrades gracefully to the
+        # local backend when it is absent.
+        "dask": ["dask[distributed]>=2024.1"],
         "benchmark": ["openml>=0.15,<0.16", "optuna"],
     },
     python_requires=">=3.10",

@@ -123,6 +123,15 @@ class Settings:
     def projects_dir(self):
         return self.root / "projects"
 
+    @property
+    def settings_dir(self):
+        return self.root / "settings"
+
+    @property
+    def compute_settings_path(self):
+        """Persisted compute budget (see :mod:`api.compute`)."""
+        return self.settings_dir / "compute.json"
+
     def ensure(self):
         for directory in (
             self.datasets_dir,
@@ -135,6 +144,7 @@ class Settings:
             self.logs_dir,
             self.checkpoints_dir,
             self.projects_dir,
+            self.settings_dir,
         ):
             directory.mkdir(parents=True, exist_ok=True)
         return self

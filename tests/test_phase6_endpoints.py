@@ -180,12 +180,15 @@ class TestPhase6JobEndpoints(unittest.TestCase):
                 "resume": resume,
             }
         )
+        # A *completed* resume proves the checkpoint already produced a result.
+        # A stale ``running`` record is deliberately not enough any more: liveness
+        # comes from the job manager, not from the persisted status.
         job_manager._write(
             {
                 "job_id": "active-resume",
                 "task_name": "resume-task",
                 "kind": "experiment",
-                "status": "running",
+                "status": "completed",
                 "created_at": "2025-01-01T00:00:00+00:00",
                 "updated_at": "2025-01-01T00:00:00+00:00",
                 "resume": resume,
@@ -385,10 +388,22 @@ class TestPhase6JobEndpoints(unittest.TestCase):
             self.assertEqual(experiments_router.scoring_options()["backends"], ["local", "dask"])
 
     def test_dask_job_manager_dispatches_and_records_result(self):
+        class FakeCluster:
+            """Stand-in for the LocalCluster that api.jobs builds from the budget."""
+
+            def __init__(self):
+                self.closed = False
+
+            def get_client(self):
+                return SimpleNamespace(close=lambda: None)
+
+            def close(self):
+                self.closed = True
+
         class FakeExecutionBackend:
-            def __init__(self, root, task_name):
+            def __init__(self, root, task_name, client=None):
                 _ = (root, task_name)
-                self.client = SimpleNamespace(close=lambda: None)
+                self.client = client
                 self._function: Callable[[object], object] | None = None
                 self._params: object = None
                 self._status = "queued"
@@ -410,7 +425,10 @@ class TestPhase6JobEndpoints(unittest.TestCase):
                 return {"status": self._status, "result": self._result}
 
         manager = JobManager()
-        with patch("SKSurrogate.execution.DaskExecutionBackend", FakeExecutionBackend):
+        cluster = FakeCluster()
+        with patch("SKSurrogate.execution.DaskExecutionBackend", FakeExecutionBackend), patch(
+            "api.jobs.compute.dask_cluster", return_value=cluster
+        ):
             job_id = manager.submit(
                 "dask-task",
                 "experiment",
@@ -421,6 +439,8 @@ class TestPhase6JobEndpoints(unittest.TestCase):
         self.assertEqual(record["status"], "completed", record["error"])
         self.assertEqual(record["backend"], "dask")
         self.assertEqual(record["result"], {"value": 42})
+        # The job owns its cluster and must release it when it finishes.
+        self.assertTrue(cluster.closed)
 
     @staticmethod
     def _result_factory(job_id):

@@ -365,3 +365,82 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   .kv { grid-template-columns: 1fr; gap: 2px; }
   .kv dt { margin-top: 8px; }
 }
+
+/* ---------- live job activity ---------- */
+/* Pulsing dot: the one always-visible cue that work is in flight. */
+.pulse {
+  position: relative; display: inline-block; flex: 0 0 auto;
+  width: 9px; height: 9px; border-radius: 50%; background: var(--info);
+}
+.pulse::after {
+  content: ""; position: absolute; inset: -4px; border-radius: 50%;
+  border: 1.5px solid var(--info); opacity: 0;
+  animation: pulse-ring 1.6s ease-out infinite;
+}
+.pulse.queued { background: var(--warn); }
+.pulse.queued::after { border-color: var(--warn); }
+@keyframes pulse-ring {
+  0% { transform: scale(0.55); opacity: 0.85; }
+  70% { transform: scale(1.45); opacity: 0; }
+  100% { transform: scale(1.45); opacity: 0; }
+}
+
+.card.job-card.active { border-color: rgba(96, 165, 250, 0.45); box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.12); }
+
+.job-summary { margin: 2px 0 10px; }
+.job-summary-line {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  font-size: 12.5px; margin-bottom: 6px;
+}
+.job-summary-line .badge { font-size: 10.5px; }
+.progress-track {
+  height: 6px; border-radius: 999px; overflow: hidden;
+  background: var(--bg-soft); border: 1px solid var(--border);
+}
+.progress-fill {
+  height: 100%; border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), #7c5cff);
+  transition: width 0.4s ease;
+}
+
+.feed {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-soft); overflow: hidden;
+}
+.feed-row { display: flex; gap: 10px; padding: 5px 10px; font-size: 11.8px; border-top: 1px solid var(--border); }
+.feed-row:first-child { border-top: none; }
+.feed-ts { flex: 0 0 auto; color: var(--muted); font-size: 11px; }
+.feed-msg { color: var(--text); word-break: break-word; }
+.feed-params { display: block; margin-top: 1px; color: var(--muted); font-size: 11px; }
+.feed-row.warning .feed-msg { color: var(--warn); }
+.feed-row.error .feed-msg, .feed-row.critical .feed-msg { color: var(--err); }
+.feed-row.debug .feed-msg { color: var(--muted); }
+
+.run-banner {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 14px; border-radius: var(--radius); font-size: 13px;
+  border: 1px solid rgba(96, 165, 250, 0.4); background: var(--accent-soft);
+}
+.run-banner .spacer { flex: 1; }
+
+.topbar-jobs {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 5px 11px; border-radius: 999px; font-size: 12px; font-weight: 500;
+  color: var(--text); border: 1px solid rgba(96, 165, 250, 0.4); background: var(--accent-soft);
+}
+.topbar-jobs:hover { text-decoration: none; border-color: var(--accent); }
+.topbar-jobs .pulse { width: 8px; height: 8px; }
+
+@media (max-width: 600px) {
+  .topbar-jobs-text { display: none; }
+  .topbar-jobs { padding: 5px 9px; }
+}
+
+/* Indeterminate variant: the search has no honest denominator to report. */
+.progress-track.indeterminate .progress-fill {
+  width: 34%; animation: progress-slide 1.5s ease-in-out infinite;
+}
+@keyframes progress-slide {
+  0% { transform: translateX(-105%); }
+  100% { transform: translateX(300%); }
+}

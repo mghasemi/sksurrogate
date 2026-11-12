@@ -1289,6 +1289,7 @@ class mltrack(object):
         groups=None,
         repeats=1,
         confidence_level=0.95,
+        exclude_columns=None,
     ):
         """Evaluate a model with nested CV while reserving the validation partition for the final score.
 
@@ -1296,6 +1297,9 @@ class mltrack(object):
         ``(estimator, X, y)`` (such as the result of
         ``sklearn.metrics.get_scorer``). When omitted, the estimator's
         ``score`` method is used when available; otherwise accuracy is used.
+
+        ``exclude_columns`` drops named feature columns from both partitions
+        before evaluation (the control plane passes a dataset's ignored columns).
 
         Metric semantics:
         - ``outer_scores`` are fold-level scores computed on each held-out outer split.
@@ -1319,12 +1323,20 @@ class mltrack(object):
             raise ValueError("confidence_level must be between 0 and 1.")
 
         train_frame = self.get_dataframe(train_partition)
+        if exclude_columns:
+            present = [column for column in exclude_columns if column in train_frame.columns]
+            if present:
+                train_frame = train_frame.drop(columns=present)
         target = self.target or train_frame.columns[-1]
         y_train = train_frame[target].to_numpy()
         X_train_frame = train_frame.drop(columns=[target])
 
         try:
             validation_frame = self.get_dataframe(validation_partition)
+            if exclude_columns:
+                present = [column for column in exclude_columns if column in validation_frame.columns]
+                if present:
+                    validation_frame = validation_frame.drop(columns=present)
             y_valid = validation_frame[target].to_numpy()
             X_valid_frame = validation_frame.drop(columns=[target])
         except ValueError:

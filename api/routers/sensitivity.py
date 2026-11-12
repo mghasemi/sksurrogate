@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from SKSurrogate import CorrelationThreshold, SensAprx
 
 from ..config import settings
+from ..columns import drop_ignored, read_ignored_columns
 from ..features import NumericFeatureError, numeric_train_xy
 from ..safety import safe_segment
 from ..deps import bad_request, finite_or_none as _finite, not_found, open_tracker, task_access
@@ -64,6 +65,7 @@ def _load_train_xy(task_name, train_partition):
     if not csv_path.exists():
         raise not_found("No dataset partition %r stored for task %r" % (train_partition, task_name))
     frame = pd.read_csv(csv_path)
+    frame = drop_ignored(frame, read_ignored_columns(task_name))
     try:
         projection = numeric_train_xy(frame, target)
     except NumericFeatureError as exc:
@@ -201,6 +203,9 @@ def get_weights_heatmap(task_name: str, train_partition: str = "train", max_feat
         raise not_found("No dataset registered for task %r" % task_name)
     with open_tracker(task_name) as tracker:
         weights_df = tracker.RetrieveWeights()
+    ignored = read_ignored_columns(task_name)
+    if len(weights_df) > 0 and "feature" in weights_df.columns and ignored:
+        weights_df = pd.DataFrame(weights_df[~weights_df["feature"].isin(ignored)])
     if len(weights_df) > 0 and "feature" in weights_df.columns:
         payload = _heatmap_payload(weights_df, "feature", max_features)
         # Report which columns the stored weightings cover, so the UI can state
@@ -299,10 +304,13 @@ def get_top_features(task_name: str, num: int = 10):
             return unavailable
         if len(weights_df) == 0 or "feature" not in weights_df.columns:
             return unavailable
+        ignored = set(read_ignored_columns(task_name))
         weight_columns = [column for column in weights_df.columns if column != "feature"]
         if not weight_columns:
             return unavailable
         ranking = tracker.TopFeatures(num=num)
+        if ignored:
+            ranking = {feature: count for feature, count in ranking.items() if feature not in ignored}
 
     return {
         "task_name": task_name,

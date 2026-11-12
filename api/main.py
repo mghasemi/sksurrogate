@@ -30,11 +30,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
-from . import acl, auth
+from . import acl, auth, compute
 from .auth import ANONYMOUS, SESSION_COOKIE, STATIC_KEY, Principal
 from .config import _flag, settings
 from .safety import UnsafeName
 from . import logs as log_capture
+from .jobs import job_manager
 from .routers import (
     auth as auth_router,
     bundles,
@@ -54,6 +55,7 @@ from .routers import (
     registry,
     retraining,
     sensitivity,
+    settings as settings_router,
     sharing,
     synthdata,
 )
@@ -344,11 +346,22 @@ app.include_router(explain.router)
 app.include_router(design.router)
 app.include_router(synthesis.router)
 app.include_router(logs.router)
+app.include_router(settings_router.router)
 
 # Capture core + control-plane log records into the per-job store. The handler
 # only forwards records while a job is bound to the current context, so API
 # request handling is not captured.
 log_capture.install()
+
+# Pin BLAS/OpenMP to the configured budget before the first request: jobs
+# re-apply it at start, but request-path estimators (inference, evaluation)
+# share the same process and must not oversubscribe either.
+compute.apply_limits()
+
+# Jobs live in this process, so anything persisted as queued/running at start-up
+# belongs to a previous process that died: mark it interrupted instead of
+# advertising work that no thread is doing.
+job_manager.reconcile()
 
 
 @app.get("/api/health", tags=["health"])

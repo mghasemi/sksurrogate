@@ -23,6 +23,7 @@ from starlette.responses import FileResponse
 from SKSurrogate import DataPreprocess, ModelRegistry, SynthData
 
 from ..config import settings
+from ..columns import drop_ignored, read_ignored_columns
 from ..safety import safe_segment
 from ..deps import bad_request, not_found, open_tracker, task_access
 
@@ -48,26 +49,62 @@ class GenerateSyntheticRequest(BaseModel):
     type_overrides: dict[str, str] | None = None
 
 
+def _is_numeric_column(frame, column):
+    """True when a column can feed ``bin``/``int``/``real`` SynthData types.
+
+    SynthBin/SynthInt/SynthReal compare and bound values numerically, so a
+    text column (e.g. ``Gender`` = "Female"/"Male") handed to them fails with
+    ``'<' not supported between instances of 'str' and 'float'``. Datetimes are
+    excluded too — they have their own ``date`` type.
+    """
+    series = frame[column]
+    return bool(
+        pd.api.types.is_numeric_dtype(series)
+        and not pd.api.types.is_datetime64_any_dtype(series)
+    )
+
+
 def _deduced_synth_types(frame):
-    """Map every column to a SynthData type string using the deducer's types."""
+    """Map every column to a SynthData type string using the deducer's types.
+
+    ``binary`` is only a *cardinality* observation: two distinct string values
+    are binary too. SynthData's ``bin`` type expects numeric 0/1 values, so a
+    text binary column is generated as ``cat`` instead.
+    """
     preview = DataPreprocess(frame)
     preview.deduce_types()
-    numeric = {"float64": "real", "int64": "real"}
-    return {column: numeric.get(typ, "cat") for column, typ in preview.pivot_types.items()}
+    types = {}
+    for column, typ in preview.pivot_types.items():
+        if typ == "float64":
+            types[column] = "real"
+        elif typ == "int64":
+            types[column] = "int"
+        elif typ == "binary":
+            types[column] = "bin" if _is_numeric_column(frame, column) else "cat"
+        elif typ == "datetime64":
+            types[column] = "date"
+        else:
+            types[column] = "cat"
+    return types
 
 
 def _load_partition_frame(task_name, partition):
-    """Return the registered frame for ``partition`` or raise 404."""
+    """Return the registered frame for ``partition`` or raise 404.
+
+    Ignored columns are dropped so synthetic samples never contain features the
+    dataset has excluded from modeling.
+    """
     if not settings.mltrace_db_path(task_name).exists():
         raise not_found("No dataset registered for task %r" % task_name)
+    ignored = read_ignored_columns(task_name)
     with open_tracker(task_name) as tracker:
         try:
-            return tracker.get_dataframe(partition)
+            return drop_ignored(tracker.get_dataframe(partition), ignored)
         except ValueError:
             pass
     csv_path = settings.task_dataset_dir(task_name) / (safe_segment(partition, "partition") + ".csv")
     if csv_path.exists():
-        return pd.read_csv(csv_path)
+        return drop_ignored(pd.read_csv(csv_path), ignored)
     raise not_found("No dataset partition %r stored for task %r" % (partition, task_name))
 
 
@@ -89,12 +126,25 @@ def generate_synthetic(task_name: str, body: GenerateSyntheticRequest):
         frame, default_rv=body.default_rv, distribution_type=body.distribution_type
     )
     overrides = dict(body.type_overrides or {})
-    for column, typ in overrides.items():
+    # Columns the dataset excludes are not in the frame; a stale client override
+    # for one must not fail the request (they never reach generation).
+    for column in list(overrides):
         if column not in frame.columns:
-            raise bad_request("type override for unknown column %r" % column)
+            overrides.pop(column)
+    for column, typ in overrides.items():
         if typ not in _SYNTH_TYPES:
             raise bad_request(
                 "synthetic type must be one of %s (got %r)" % (", ".join(sorted(_SYNTH_TYPES)), typ)
+            )
+        if typ in {"bin", "int", "real"} and not _is_numeric_column(frame, column):
+            raise bad_request(
+                "Synthetic type %r for column %r requires numeric values, but the column contains "
+                "%s data; use 'cat' for text or encode the column first"
+                % (typ, column, frame[column].dtype)
+            )
+        if typ == "date" and pd.api.types.is_numeric_dtype(frame[column]):
+            raise bad_request(
+                "Synthetic type 'date' for column %r requires date-formatted strings" % column
             )
     # Untyped columns default to SynthCat inside transform(); map them from the
     # deducer so numeric columns stay numeric unless the user overrides.

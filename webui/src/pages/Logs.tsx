@@ -152,7 +152,7 @@ export default function LogsPage() {
               <option value="">All jobs</option>
               {jobs.map((job) => (
                 <option key={job.job_id} value={job.job_id}>
-                  {job.task_name} · {job.kind} · {job.job_id.slice(0, 8)} ({job.status})
+                  {job.display_name ?? `${job.task_name} · ${job.kind}`} ({job.status})
                 </option>
               ))}
             </select>
@@ -304,7 +304,7 @@ export default function LogsPage() {
       {selected && (
         <Card
           title={`Entry ${selected.level} · ${new Date(selected.ts).toLocaleString()}`}
-          sub={`${selected.logger} · job ${selected.job_id.slice(0, 8)}… · seq ${selected.seq}`}
+          sub={`${selected.logger} · ${jobs.find((job) => job.job_id === selected.job_id)?.display_name ?? `job ${selected.job_id.slice(0, 8)}…`} · seq ${selected.seq}`}
         >
           <p className="mono">{selected.message}</p>
           {selected.trial !== undefined && selected.trial !== null && (

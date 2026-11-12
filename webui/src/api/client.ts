@@ -123,26 +123,59 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 const get = <T>(path: string) => request<T>("GET", path);
 const post = <T>(path: string, body?: unknown) => request<T>("POST", path, body ?? {});
+const put = <T>(path: string, body?: unknown) => request<T>("PUT", path, body ?? {});
+const patch = <T>(path: string, body?: unknown) => request<T>("PATCH", path, body ?? {});
+const del = <T>(path: string) => request<T>("DELETE", path);
 
 /* ------------------------------------------------------------------ */
 /* Shared shapes                                                       */
 /* ------------------------------------------------------------------ */
 
+export type JobStatus =
+  | "queued"
+  | "running"
+  | "paused"
+  | "cancelled"
+  | "interrupted"
+  | "completed"
+  | "failed";
+
 export interface JobRecord {
   job_id: string;
   task_name: string;
+  /** Human name: the user's custom `label`, or the API's auto-generated fallback. */
+  display_name?: string;
+  /** User-chosen name; null means the auto name is used. */
+  label?: string | null;
+  /** Set when the job was renamed after submission. */
+  aliased_at?: string | null;
+  aliased_by?: string | null;
   kind: "sensitivity" | "experiment" | "retraining" | string;
   backend?: "local" | "dask";
-  status: "queued" | "running" | "completed" | "failed";
+  status: JobStatus;
   created_at: string;
   updated_at: string;
+  /** Refreshed every ~10 s while a job is live; stale means the worker stalled. */
+  heartbeat_at?: string | null;
   result: Record<string, unknown> | null;
   error: string | null;
+  /** Present when the job can be resumed (saved request + checkpoint). */
+  resumable?: boolean;
+  /** Set while a stop request is pending / once it was honoured. */
+  stop?: { mode: "pause" | "cancel"; requested_by?: string | null; requested_at?: string | null; stopped_at?: string | null };
+  stop_requested_at?: string | null;
+  stop_mode?: "pause" | "cancel" | null;
+  stop_requested_by?: string | null;
+  paused_at?: string | null;
+  cancelled_at?: string | null;
+  interrupted_at?: string | null;
 }
 
 export interface BundleSummary {
   task_name: string;
   model_version: string;
+  /** Optional human name stored with the bundle at training time. */
+  label?: string | null;
   created_at: string;
   schema: Record<string, { dtype: string }>;
   metrics: Record<string, number>;
@@ -207,6 +240,8 @@ export interface RegisterDatasetResponse {
   dataset_schema: Record<string, unknown> | null;
   dataset_deduced_types?: Record<string, string>;
   deduced_types: Record<string, string>;
+  /** Columns marked ignored at registration time. */
+  ignored_columns?: string[];
   /** Name-based PII / sensitive-column scan of the uploaded frame (Phase 2.4). */
   sensitive_scan?: SensitiveScanReport;
 }
@@ -219,8 +254,30 @@ export interface DatasetMetadata {
   dataset_schema: Record<string, unknown> | null;
   dataset_deduced_types?: Record<string, string> | null;
   dataset_feature_count: number | null;
+  /** Columns excluded from experiments, analyses and other modeling paths. */
+  ignored_columns?: string[] | null;
+  /** `dataset_feature_count` minus the ignored feature columns. */
+  effective_feature_count?: number | null;
   partitions: Record<string, PartitionInfo>;
 }
+
+export interface IgnoredColumnsResponse {
+  task_name: string;
+  target: string | null;
+  ignored_columns: string[];
+  effective_features: string[];
+  effective_feature_count: number;
+}
+
+/**
+ * Replace the task's ignored-column list. Ignored columns stay in the stored
+ * CSV but are dropped by experiments, analyses, profiles and synthetic data.
+ */
+export const setIgnoredColumns = (task: string, columns: string[]) =>
+  put<IgnoredColumnsResponse>(
+    `/api/datasets/${encodeURIComponent(task)}/ignored-columns`,
+    { columns },
+  );
 
 export interface DatasetPreview {
   task_name: string;
@@ -315,7 +372,12 @@ export async function registerDataset(
   target: string,
   partition: string,
   file: File,
-  options?: { type_overrides?: Record<string, string>; binarize_label?: boolean },
+  options?: {
+    type_overrides?: Record<string, string>;
+    binarize_label?: boolean;
+    /** Feature columns excluded from every modeling path for this task. */
+    ignored_columns?: string[];
+  },
 ): Promise<RegisterDatasetResponse> {
   const form = new FormData();
   form.append("target", target);
@@ -323,6 +385,9 @@ export async function registerDataset(
   form.append("file", file);
   if (options?.type_overrides && Object.keys(options.type_overrides).length) {
     form.append("type_overrides", JSON.stringify(options.type_overrides));
+  }
+  if (options?.ignored_columns?.length) {
+    form.append("ignored_columns", JSON.stringify(options.ignored_columns));
   }
   if (options?.binarize_label) form.append("binarize_label", "true");
   return (await uploadDataset(
@@ -333,6 +398,139 @@ export async function registerDataset(
 
 export const getDatasetMetadata = (task: string) =>
   get<DatasetMetadata>(`/api/datasets/${encodeURIComponent(task)}`);
+
+/* ------------------------------------------------------------------ */
+/* Data preprocessing                                                  */
+/* ------------------------------------------------------------------ */
+
+export interface PreprocessingColumn {
+  column: string;
+  dtype: string;
+  deduced_type?: string | null;
+  ignored: boolean;
+  is_target: boolean;
+  missing: number;
+  missing_pct: number;
+  unique: number;
+  constant: boolean;
+  all_missing: boolean;
+  numeric_summary: {
+    count: number;
+    mean: number | null;
+    std: number | null;
+    min: number | null;
+    q25: number | null;
+    q50: number | null;
+    q75: number | null;
+    max: number | null;
+  } | null;
+  top_values: Array<{ value: string; count: number; share: number }> | null;
+}
+
+export interface ImputationMethod {
+  name: string;
+  label: string;
+  numeric_only: boolean;
+  params: Array<{
+    name: string;
+    kind: "string" | "int";
+    required?: boolean;
+    default?: unknown;
+    min?: number;
+    max?: number;
+    help?: string;
+  }>;
+}
+
+export interface PreprocessingOverview {
+  task_name: string;
+  partition: string;
+  target: string;
+  rows: number;
+  columns: string[];
+  ignored_columns: string[];
+  deduced_types: Record<string, string>;
+  missing: {
+    rows: number;
+    columns: PreprocessingColumn[];
+    total_cells: number;
+    missing_cells: number;
+    missing_pct: number;
+    rows_with_any_missing: number;
+    rows_with_any_missing_pct: number;
+    complete_rows: number;
+    complete_pct: number;
+    target_missing: number;
+  };
+  quality: {
+    duplicate_rows: { count: number; rate: number; scope: string };
+    constant_features: string[];
+    all_missing_features: string[];
+    duplicate_features: Array<{ feature: string; duplicate_of: string }>;
+    scope: string;
+  } | null;
+  missingness_patterns: {
+    method: string;
+    pattern_limit: number;
+    patterns: Array<{ missing_features: string[]; count: number; proportion: number }>;
+    other_count: number;
+    scope: string;
+  } | null;
+  target_profile: Record<string, unknown> | null;
+  row_sampling: Record<string, unknown> | null;
+  profile_features_truncated: number;
+  preview: Array<Record<string, unknown>>;
+  methods: ImputationMethod[];
+}
+
+export interface ImputationReport {
+  task_name: string;
+  partition: string;
+  output_partition: string;
+  written: boolean;
+  method: string;
+  columns: string[];
+  rows_before: number;
+  rows_after: number;
+  rows_dropped: number;
+  missing_before: Record<string, number>;
+  missing_after: Record<string, number>;
+  cells_imputed: number;
+  target_missing_before: number;
+  target_missing_after: number;
+  numeric_shift: Record<
+    string,
+    { before: PreprocessingColumn["numeric_summary"]; after: PreprocessingColumn["numeric_summary"] }
+  >;
+  categorical_shift: Record<
+    string,
+    {
+      before: Array<{ value: string; count: number; share: number }>;
+      after: Array<{ value: string; count: number; share: number }>;
+    }
+  >;
+  dataset_fingerprint?: string | null;
+  csv_path?: string;
+}
+
+export const getPreprocessing = (task: string, partition: string) =>
+  get<PreprocessingOverview>(
+    `/api/datasets/${encodeURIComponent(task)}/${encodeURIComponent(partition)}/preprocessing`,
+  );
+
+export interface ImputeRequest {
+  partition: string;
+  method: string;
+  columns?: string[] | null;
+  params?: Record<string, unknown>;
+  output_partition?: string | null;
+  preview_only?: boolean;
+  drop_missing_target?: boolean;
+}
+
+/** Compute an imputed copy (preview_only) or write it as a NEW partition. */
+export const imputeDataset = (task: string, body: ImputeRequest) =>
+  post<ImputationReport>(`/api/datasets/${encodeURIComponent(task)}/impute`, body);
 
 export const previewDataset = (task: string, partition: string, limit = 20) =>
   get<DatasetPreview>(
@@ -636,14 +834,42 @@ export interface RegistryHistoryEntry {
   timestamp: string;
 }
 
+export interface RegistryAliasEntry {
+  model_version: string;
+  created_at: string;
+  created_by?: string | null;
+}
+
 export interface RegistrySummary {
   task_name: string;
+  /** Lifecycle pointers rewritten by promote/rollback (candidate, production, latest…). */
   aliases: Record<string, string>;
+  /** User-chosen names pointing at immutable versions. */
+  named_aliases: Record<string, RegistryAliasEntry>;
   versions: Record<string, string>;
 }
 
 export const registrySummary = (task: string) =>
   get<RegistrySummary>(`/api/registry/${encodeURIComponent(task)}/summary`);
+
+export interface RegistryAliasesResponse {
+  task_name: string;
+  aliases: Record<string, RegistryAliasEntry>;
+}
+
+export const listRegistryAliases = (task: string) =>
+  get<RegistryAliasesResponse>(`/api/registry/${encodeURIComponent(task)}/aliases`);
+
+export const setRegistryAlias = (task: string, name: string, modelVersion: string) =>
+  post<{ task_name: string; name: string } & RegistryAliasEntry>(
+    `/api/registry/${encodeURIComponent(task)}/aliases`,
+    { name, model_version: modelVersion },
+  );
+
+export const deleteRegistryAlias = (task: string, name: string) =>
+  del<{ task_name: string; name: string; model_version: string }>(
+    `/api/registry/${encodeURIComponent(task)}/aliases/${encodeURIComponent(name)}`,
+  );
 
 export const registryHistory = (task: string) =>
   get<{ task_name: string; history: RegistryHistoryEntry[] }>(`/api/registry/${encodeURIComponent(task)}/history`);
@@ -1318,6 +1544,8 @@ export interface RunExperimentRequest {
   /** Disallowed parameter combinations, e.g. [["penalty", "l1"]] or [["max_depth", 1]]. */
   forbidden?: Array<[string, unknown]> | null;
   backend?: "local" | "dask";
+  /** Optional human name for the job and the produced bundle. */
+  label?: string | null;
 }
 
 export interface ExperimentTopPipeline {
@@ -1344,7 +1572,10 @@ export interface ExperimentResult {
 }
 
 export const runExperiment = (task: string, body: RunExperimentRequest) =>
-  post<{ job_id: string; status: string }>(`/api/experiments/${encodeURIComponent(task)}/run`, body);
+  post<{ job_id: string; display_name?: string; status: string }>(
+    `/api/experiments/${encodeURIComponent(task)}/run`,
+    body,
+  );
 
 /** Optimize one explicit pipeline structure (no search over structures). */
 export interface OptimizePipelineRequest {
@@ -1355,6 +1586,8 @@ export interface OptimizePipelineRequest {
   random_state?: number | null;
   owner?: string | null;
   run_id?: string | null;
+  /** Optional human name for the job and the produced bundle. */
+  label?: string | null;
 }
 
 export interface OptimizePipelineResult {
@@ -1365,7 +1598,10 @@ export interface OptimizePipelineResult {
 }
 
 export const optimizePipeline = (task: string, body: OptimizePipelineRequest) =>
-  post<{ job_id: string; status: string }>(`/api/experiments/${encodeURIComponent(task)}/optimize-pipeline`, body);
+  post<{ job_id: string; display_name?: string; status: string }>(
+    `/api/experiments/${encodeURIComponent(task)}/optimize-pipeline`,
+    body,
+  );
 
 /** A small, safe default search space (subset of the library's default_config). */
 export const DEFAULT_EXPERIMENT_CONFIG: SearchSpace = {
@@ -1424,8 +1660,108 @@ export const listJobs = (task?: string) =>
 
 export const getJob = (jobId: string) => get<JobRecord>(`/api/jobs/${encodeURIComponent(jobId)}`);
 
+/**
+ * Slim job descriptor for the always-on activity indicator. The full
+ * `/api/jobs` payload carries results (and their evaluation histories), which
+ * is far too heavy to poll from the top bar.
+ */
+export interface ActiveJobSummary {
+  job_id: string;
+  task_name: string;
+  display_name?: string;
+  kind: string;
+  backend?: string | null;
+  status: "queued" | "running";
+  created_at: string;
+  updated_at: string;
+  log_counts?: Partial<LogCounts> | null;
+}
+
+/** Queued/running jobs visible to the caller (newest first). */
+export const listActiveJobs = (task?: string) =>
+  get<{ jobs: ActiveJobSummary[]; count: number }>(
+    `/api/jobs/active${task ? `?task_name=${encodeURIComponent(task)}` : ""}`,
+  );
+
+/* ------------------------------------------------------------------ */
+/* Compute budget                                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Server-side limit on how much CPU background jobs may use. Every value is
+ * capped by `cores`, which the server reads from its own CPU affinity.
+ */
+export interface ComputeSettingsValues {
+  /** Concurrent background jobs. */
+  job_workers: number;
+  /** Total fold-worker processes, shared by all jobs (joblib pool width). */
+  job_threads: number;
+  /** BLAS/OpenMP threads per job thread. */
+  blas_threads: number;
+  /** Processes in the local Dask cluster. */
+  dask_workers: number;
+  /** Threads per Dask worker. */
+  dask_threads: number;
+}
+
+export interface ComputeSettingsSnapshot {
+  cores: number;
+  values: ComputeSettingsValues;
+  defaults: ComputeSettingsValues;
+  budget: {
+    used: number;
+    available: number;
+    reserved_blas: number;
+    fold_workers: number;
+    summary: string;
+    dask_summary: string;
+  };
+}
+
+export const getComputeSettings = () => get<ComputeSettingsSnapshot>("/api/settings/compute");
+
+export const updateComputeSettings = (values: ComputeSettingsValues) =>
+  put<ComputeSettingsSnapshot>("/api/settings/compute", values);
+
+/** Result of a destructive per-user reset (files/jobs/bytes removed). */
+export interface ResetResult {
+  tasks: string[];
+  projects: string[];
+  jobs: number;
+  log_files: number;
+  files: number;
+  bytes: number;
+  skipped_shared: { tasks: string[]; projects: string[] };
+  open_mode: boolean;
+}
+
+/**
+ * Erase every task/project this account owns, with all derived artifacts.
+ * `confirm` must be `reset <username>` (or `reset everything` on an open
+ * single-user server); the API checks it before deleting anything.
+ */
+export const resetMyData = (confirm: string, includeShared = false) =>
+  post<ResetResult>("/api/settings/reset", {
+    confirm,
+    include_shared: includeShared,
+  });
+
 export const resumeJob = (jobId: string) =>
   post<{ job_id: string; status: string }>(`/api/jobs/${encodeURIComponent(jobId)}/resume`);
+
+/**
+ * Give a job a human-readable label, or clear it with `null` to fall back to
+ * the API's auto name. The `job_id` remains the identity for every route.
+ */
+export const renameJob = (jobId: string, label: string | null) =>
+  patch<JobRecord>(`/api/jobs/${encodeURIComponent(jobId)}`, { label });
+
+/**
+ * Ask a live job to stop at its next candidate boundary. `pause` keeps the
+ * checkpoint so it can be resumed later; `cancel` abandons the run.
+ */
+export const stopJob = (jobId: string, mode: "pause" | "cancel") =>
+  post<JobRecord>(`/api/jobs/${encodeURIComponent(jobId)}/stop`, { mode });
 
 /** Subscribe to a job's WebSocket progress stream. Returns an unsubscribe fn. */
 export function subscribeToJob(
@@ -1473,6 +1809,10 @@ export interface LogEntry {
   /** Sampling phase of the trial: init | explore | surrogate_exploit. */
   phase?: string | null;
   status?: string | null;
+  /** Objective value of the trial, when the core reported one. */
+  score?: number | null;
+  /** Hyperparameters the trial evaluated (search-space names → values). */
+  params?: Record<string, unknown> | null;
   /** Full traceback, present on error entries raised from a job. */
   detail?: string;
 }

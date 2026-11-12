@@ -22,6 +22,7 @@ from fastapi import HTTPException
 from SKSurrogate import dataset_profile, load_bundle
 
 from .config import settings
+from .columns import drop_ignored, read_ignored_columns
 from .safety import safe_segment
 from .deps import open_tracker
 from .jobs import job_manager
@@ -79,6 +80,7 @@ def profile_fact(task_name: str, partition: str = "train", max_rows: int = 500) 
     with open_tracker(task_name) as tracker:
         frame = tracker.get_dataframe(partition=partition)
         metadata = tracker.GetMetadata()
+    frame = drop_ignored(frame, read_ignored_columns(task_name))
     target = metadata.get("target_name")
     report = dataset_profile(
         frame,

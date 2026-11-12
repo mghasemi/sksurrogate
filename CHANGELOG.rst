@@ -4,6 +4,192 @@ Changelog
 [Unreleased]
 ------------
 
+Data Preprocessing page
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* New **Data Preprocessing** page under “1. Data”: missing-data overview
+  (counts/percentages, complete rows, per-column detected and implied types,
+  numeric quantiles or top categories), a dataset preview with missing cells
+  marked, data-quality flags (duplicate rows/features, constant and all-missing
+  columns) and observed missingness patterns.
+* Materialized imputation: drop rows, mean, median, most frequent, constant,
+  KNN and iterative/MICE. A preview reports before/after missing counts, cells
+  imputed and distribution shift without writing. Saving creates a **new**
+  partition (source untouched), stores an ``imputation_history`` recipe and
+  registers the CSV for lineage; the target is never imputed, ignored columns
+  are refused, numeric-only methods validate dtypes, and an existing output name
+  answers 409.
+* Endpoints: ``GET /api/datasets/{task}/{partition}/preprocessing`` and
+  ``POST /api/datasets/{task}/impute``.
+
+Per-user data reset
+~~~~~~~~~~~~~~~~~~~
+
+* ``POST /api/settings/reset`` erases every task and research project the caller
+  owns, with all derivative artifacts: datasets, mltrace databases, bundles,
+  registry versions and index entries, predictions, monitoring records,
+  checkpoints, job records and per-job logs. Accounts, sessions and API keys are
+  kept.
+* Ownership is resolved from ``auth/acl.db``: only explicit ``owner`` grants are
+  removed, unowned legacy material is untouched, and resources shared with other
+  users are skipped unless ``include_shared`` is set. A live job on a scoped task
+  answers 409. In no-auth mode the single anonymous user owns everything, so the
+  reset wipes the local workspace.
+* The request requires a typed confirmation (``reset <username>`` or
+  ``reset everything``), records one ``account.reset`` audit event with counts,
+  and is exposed as a **Danger zone** card on Settings with a result summary.
+
+Synthetic generation handles text-binary columns
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* A two-value **string** column (``Gender`` = Female/Male) was detected as
+  ``binary`` and defaulted to SynthData's numeric ``bin`` type, which failed with
+  ``'<' not supported between instances of 'str' and 'float'``. String binary
+  columns now default to ``cat`` (backend and UI inference alike), the UI keeps
+  no stale per-column types across tasks, and an explicit ``bin``/``int``/``real``
+  override on a text column answers 400 with an actionable message instead of
+  crashing generation. Overrides for columns excluded by the dataset are ignored.
+
+Ignored dataset columns
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* The Datasets page type selectors (**Detected / selected type** during upload and
+  **Column generation types** in the Synthetic data card) gained an **ignore**
+  option. Ignoring is a dataset-level, reversible choice stored in the task
+  metadata: the column stays in the stored CSV, but every modeling path drops it.
+* ``PUT /api/datasets/{task}/ignored-columns`` replaces the list; registration
+  accepts an ``ignored_columns`` form field, and dataset metadata returns
+  ``ignored_columns`` plus ``effective_feature_count``. Unknown columns and the
+  target answer 400.
+* Enforcement is centralised in ``api/columns.py`` and applied by training
+  (`load_partition`), sensitivity/correlation analysis, dataset profiles, nested
+  CV, diagnostic curves, monitoring drift, synthetic generation and synthesis
+  facts. ``mltrack.nested_cv_evaluation`` accepts ``exclude_columns`` for the
+  nested-CV path. Stored weights for ignored features are filtered from the
+  heatmap and consensus ranking.
+
+Human names for jobs and model versions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Every job record now carries a ``display_name``: the user's ``label`` when one
+  was given, otherwise ``<kind> · <task> · <local date time>``. Experiment and
+  pipeline-optimization submissions accept an optional ``label``; the same name
+  is stored in the produced bundle's metadata and returned as
+  ``display_name`` in the submit response. ``PATCH /api/jobs/{id}`` renames an
+  existing job (or clears the label with ``null``) and records
+  ``aliased_at``/``aliased_by``; ``job_id`` stays the canonical identity.
+* ``ModelRegistry`` gained user-chosen named aliases, separate from the
+  lifecycle pointers: ``set_named_alias`` / ``named_aliases`` /
+  ``resolve_version`` / ``delete_named_alias``, backed by
+  ``GET|POST|DELETE /api/registry/{task}/aliases``. Aliases resolve in
+  ``load``/``load_version``, registry promotion and the inference endpoints
+  (``model_version`` falls back to the registry when no stored bundle file
+  matches). Names are validated lowercase slugs that cannot collide with
+  lifecycle states, and every set/delete is audited.
+* The web UI renders these names instead of truncated ids in the run banner,
+  the job tracker, the Jobs table, the Logs selectors, the Registry aliases
+  card, and the bundle detail heading.
+
+Pause, stop and resume jobs from the UI
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Nothing could stop a run once submitted: the job pool had no control path and
+  the searches had no cancellation hook. ``AML`` and ``SurrogateRandomCV`` now
+  take a ``stop_check`` callable and raise the new ``SearchStopped`` between
+  candidate evaluations; it is deliberately not a ``ValueError``, which the
+  optimizer already treats as a failed candidate.
+* ``POST /api/jobs/{id}/stop`` with ``pause`` or ``cancel``. Pausing keeps the
+  checkpoint and marks the job ``paused``; cancelling marks it ``cancelled``.
+  Requests are recorded on the record, are honoured for jobs still waiting in
+  the queue, and are rejected (409) for jobs this process does not own.
+* ``POST /api/jobs/{id}/resume`` now accepts ``paused`` and ``interrupted`` in
+  addition to ``failed``, and covers ``optimize_pipeline`` as well as
+  ``experiment``: pipeline jobs now save a re-submittable request, so both kinds
+  resume from the same checkpoint. The new job id is returned; the original
+  record stays as history.
+* The UI gained **Pause** / **Stop** while a job runs and **Resume** once it can
+  be resumed, on the job card, the Jobs table and the Experiments tracker.
+
+Job liveness is no longer inferred from the JSON record
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* A crashed API process left jobs displayed as ``running`` forever. The job
+  manager now keeps an in-memory registry of the jobs this process actually
+  owns: ``/api/jobs/active`` returns only live ids, ``GET /api/jobs/{id}`` and
+  the WebSocket stream rewrite a stale ``queued``/``running`` record to
+  ``interrupted``, and start-up reconciliation marks every leftover record
+  ``interrupted`` with an explanatory error.
+* Each live job refreshes ``heartbeat_at`` every 10 s; the tracker warns when a
+  job is still registered but has not reported for 30 s, which covers a hung
+  worker rather than a dead process.
+* New statuses ``paused`` / ``cancelled`` / ``interrupted`` are understood by the
+  Jobs filters, counts and badges.
+* The top-bar badge now polls in background tabs
+  (``refetchIntervalInBackground``); React Query otherwise pauses the interval
+  while the tab is hidden and a finished job keeps its "running" pill.
+
+Compute budget for background jobs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The job pool and the search's fold pool multiplied into unbounded
+  parallelism: a hard-coded `ThreadPoolExecutor(max_workers=4)` combined with
+  `AML(n_jobs=-1)` could ask for `4 x cpu_count` workers, plus one BLAS thread
+  pool per job thread. New `api/compute.py` owns an explicit budget —
+  `job_workers`, `job_threads` (the *total* joblib pool, shared by all jobs),
+  `blas_threads`, `dask_workers`, `dask_threads` — with two enforced invariants:
+  `job_workers*blas_threads + job_threads <= cores` and
+  `dask_workers*dask_threads <= cores`. `cores` is
+  `sched_getaffinity`-derived, so cpusets are respected.
+* The budget is server state: `GET /api/settings/compute` reports it (with the
+  arithmetic), `PUT /api/settings/compute` persists it to
+  `<API home>/settings/compute.json` and rejects anything that does not fit with
+  422. A *Settings → Compute budget* card edits it; the card is admin-only once
+  authentication is enforced.
+* Enforcement is not advisory: the executor is built/resized from
+  `job_workers`; every job start exports `OMP_NUM_THREADS`/`MKL_NUM_THREADS`/…
+  at `blas_threads` (joblib honours a parent-set value, so loky workers inherit
+  it) and applies a process-wide `threadpoolctl` limit; `fit_experiment_bundle`
+  and `fit_pipeline_bundle` pass `n_jobs=job_threads` to `AML`, covering the
+  fold pool, `cross_val_score` and stacking. Verified against a live run:
+  `job_threads=2` produced at most two loky workers, each with
+  `OMP_NUM_THREADS=1`.
+* Each job record stores the budget it ran under (`compute`) and the values it
+  applied (`compute_applied`); bundles record `n_jobs` in their reproducibility
+  block. Settings apply to subsequently submitted jobs.
+* `dask[distributed]` is now installed by `requirements.txt` (and exposed as the
+  `dask` extra in `setup.py`), so the Dask backend works in the shipped image.
+  A Dask job now builds its `LocalCluster` with `dask_workers` /
+  `dask_threads` — previously `Client()` created one worker per core — and
+  closes it on completion.
+* Defaults preserve the previous capacity without oversubscribing:
+  `cores - job_workers` fold workers (28 on a 32-core host), one BLAS thread per
+  job slot, four job slots (clamped on small hosts).
+
+Live job activity in the UI
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* A running experiment looked inert: the page showed no spinner, the tracker
+  card sat below the fold, and the only cue was a static ``running`` badge.
+  ``JobTracker`` now pulses, counts elapsed time, tails the job's captured
+  entries and lists the trials being evaluated (index, phase, score and
+  hyperparameters). Progress is an indeterminate stripe — the search does not
+  know its trial count — with a determinate bar available when a caller passes
+  ``expectedTrials``.
+* The *Experiments* page shows a banner above the fold while its job is queued
+  or running (state, elapsed time, links to the tracker and logs), scrolls the
+  tracker into view on submission, and disables both run buttons until the job
+  finishes so a double click cannot start a second search.
+* The top bar carries an always-on **N jobs active** badge, on every page, that
+  links to *Jobs*; the browser tab title is prefixed while work is in flight.
+* New ``GET /api/jobs/active`` returns summaries only (no ``result``, no
+  ``resume`` payload) for queued/running jobs, so the badge's four-second poll
+  stays small even when finished experiments carry large evaluation histories.
+* Per-trial log entries now expose structured ``score`` and ``params`` fields
+  (the message text is unchanged), which is what the activity feed renders.
+* The *Advanced* run settings labelled ``length`` as "Length (trials)"; in
+  ``AML`` it caps the number of components in a generated pipeline. The control
+  is now "Max pipeline length" with a hint, and docs match.
+
 Experiments on mixed-type partitions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

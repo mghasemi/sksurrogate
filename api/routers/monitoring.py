@@ -32,6 +32,7 @@ from SKSurrogate import (
 )
 
 from .. import acl
+from ..columns import drop_ignored, read_ignored_columns
 from ..config import settings
 from ..safety import safe_segment
 from ..deps import append_drift_alerts, bad_request, load_monitor_records, not_found, open_tracker, task_access
@@ -104,7 +105,7 @@ def _load_partition(task_name, partition):
     csv_path = settings.task_dataset_dir(task_name) / (safe_segment(partition, "partition") + ".csv")
     if not csv_path.exists():
         raise not_found("No dataset partition %r stored for task %r" % (partition, task_name))
-    return pd.read_csv(csv_path)
+    return drop_ignored(pd.read_csv(csv_path), read_ignored_columns(task_name))
 
 
 class PredictionSource(BaseModel):

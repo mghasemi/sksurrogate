@@ -89,8 +89,10 @@ export function statusTone(status: string): "ok" | "warn" | "err" | "info" | "mu
       return "info";
     case "queued":
     case "candidate":
+    case "paused":
       return "warn";
     case "failed":
+    case "interrupted":
     case "archived":
       return "err";
     default:

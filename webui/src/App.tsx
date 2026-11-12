@@ -6,6 +6,7 @@ import {
   Boxes,
   ClipboardCheck,
   Cpu,
+  Eraser,
   Database,
   FolderKanban,
   FlaskConical,
@@ -24,6 +25,7 @@ import {
 
 import { listTasks } from "./api/client";
 import { Badge, Loading } from "./components/ui";
+import { GlobalJobIndicator } from "./components/GlobalJobIndicator";
 import { AuthProvider, useAuth, useUsername } from "./lib/auth-context";
 import { TaskProvider, useTask } from "./lib/task-context";
 import { useHealth } from "./lib/hooks";
@@ -32,6 +34,7 @@ import { useHealth } from "./lib/hooks";
 // only pays for the shell + the first route (see docs/HANDOFF.md next steps).
 const DashboardPage = lazy(() => import("./pages/Dashboard"));
 const DatasetsPage = lazy(() => import("./pages/Datasets"));
+const PreprocessingPage = lazy(() => import("./pages/Preprocessing"));
 const FeatureAnalysisPage = lazy(() => import("./pages/FeatureAnalysis"));
 const ExperimentsPage = lazy(() => import("./pages/Experiments"));
 const EvaluationPage = lazy(() => import("./pages/Evaluation"));
@@ -71,6 +74,7 @@ const NAV_GROUPS: Array<{ label: string; items: NavEntry[] }> = [
     label: "1. Data",
     items: [
       { to: "/datasets", label: "Datasets", icon: Database },
+      { to: "/preprocessing", label: "Data Preprocessing", icon: Eraser },
       { to: "/features", label: "Feature Analysis", icon: Sigma },
       { to: "/design", label: "Experiment Design", icon: Ruler },
     ],
@@ -115,6 +119,7 @@ const TITLES: Record<string, string> = {
   "/design": "Experiment Design",
   "/explain": "Explain",
   "/datasets": "Datasets",
+  "/preprocessing": "Data Preprocessing",
   "/features": "Feature Analysis",
   "/experiments": "Experiments",
   "/evaluation": "Evaluation",
@@ -258,6 +263,7 @@ function Topbar({ onMenu }: { onMenu: () => void }) {
           </select>
         )}
       </label>
+      <GlobalJobIndicator />
       <span className={`health-dot${healthOk ? " ok" : ""}`}>
         <span className="dot" />
         {healthOk === null ? "checking…" : healthOk ? "API online" : "API offline"}
@@ -305,6 +311,7 @@ function Shell() {
             <Route path="/design" element={<DesignPage />} />
             <Route path="/explain" element={<ExplainPage />} />
             <Route path="/datasets" element={<DatasetsPage />} />
+            <Route path="/preprocessing" element={<PreprocessingPage />} />
             <Route path="/features" element={<FeatureAnalysisPage />} />
             <Route path="/experiments" element={<ExperimentsPage />} />
             <Route path="/evaluation" element={<EvaluationPage />} />

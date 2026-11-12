@@ -2,13 +2,13 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 
-import { listJobs, resumeJob } from "../api/client";
+import { listJobs, resumeJob, stopJob } from "../api/client";
 import type { JobRecord } from "../api/client";
 import { Card, ErrorNote, Loading, StatusBadge, Table } from "../components/ui";
 import { JobTracker } from "../components/JobTracker";
 
 const KINDS = ["sensitivity", "nested-cv", "experiment", "optimize_pipeline", "retraining", "project-synthesis"] as const;
-const STATUSES = ["queued", "running", "completed", "failed"] as const;
+const STATUSES = ["queued", "running", "paused", "interrupted", "completed", "failed", "cancelled"] as const;
 
 export default function JobsPage() {
   const qc = useQueryClient();
@@ -24,6 +24,10 @@ export default function JobsPage() {
       setSelectedId(res.job_id);
       qc.invalidateQueries({ queryKey: ["jobs"] });
     },
+  });
+  const stopMut = useMutation({
+    mutationFn: ({ jobId, mode }: { jobId: string; mode: "pause" | "cancel" }) => stopJob(jobId, mode),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["jobs"] }),
   });
 
   const jobsQ = useQuery({
@@ -46,6 +50,7 @@ export default function JobsPage() {
     const all = jobsQ.data?.jobs ?? [];
     return {
       running: all.filter((j) => j.status === "running" || j.status === "queued").length,
+      paused: all.filter((j) => j.status === "paused" || j.status === "interrupted").length,
       completed: all.filter((j) => j.status === "completed").length,
       failed: all.filter((j) => j.status === "failed").length,
     };
@@ -60,6 +65,7 @@ export default function JobsPage() {
 
       {jobsQ.isError && <ErrorNote error={jobsQ.error} />}
       {resumeMut.isError && <ErrorNote error={resumeMut.error} />}
+      {stopMut.isError && <ErrorNote error={stopMut.error} />}
       {jobsQ.isLoading && <Loading />}
 
       <Card title="Filters">
@@ -87,7 +93,8 @@ export default function JobsPage() {
             </select>
           </div>
           <span className="muted" style={{ alignSelf: "flex-end", marginBottom: 8 }}>
-            {counts.running} active · {counts.completed} completed · {counts.failed} failed
+            {counts.running} active · {counts.paused} paused/interrupted · {counts.completed} completed ·{" "}
+            {counts.failed} failed
           </span>
         </div>
       </Card>
@@ -97,11 +104,15 @@ export default function JobsPage() {
           <p className="muted">No jobs match the current filters.</p>
         ) : (
           <Table<JobRecord>
-            columns={["Task", "Kind", "Status", "Backend", "Created", "Updated", ""]}
+            columns={["Name", "Task", "Kind", "Status", "Backend", "Created", "Updated", ""]}
             rows={jobs}
             keyOf={(j) => j.job_id}
             onRowClick={(j) => setSelectedId(j.job_id)}
             render={(j) => [
+              <td key="n">
+                {j.display_name ?? j.label ?? j.job_id.slice(0, 8) + "…"}
+                {!j.label && <span className="muted" style={{ display: "block", fontSize: 11.5 }}>auto name — click the row to rename</span>}
+              </td>,
               <td key="t">{j.task_name}</td>,
               <td key="k">
                 <span className="badge info">{j.kind}</span>
@@ -120,20 +131,51 @@ export default function JobsPage() {
                 >
                   Logs
                 </Link>
-                {j.kind === "experiment" && j.status === "failed" && (
+                {j.status === "running" && j.resumable && (
                   <button
                     className="btn"
-                    disabled={resumeMut.isPending}
+                    disabled={stopMut.isPending}
                     onClick={(event) => {
                       event.stopPropagation();
-                      if (window.confirm("Resume this failed experiment using its existing checkpoint?")) {
-                        resumeMut.mutate(j.job_id);
+                      if (window.confirm("Pause this job and keep its checkpoint for a later resume?")) {
+                        stopMut.mutate({ jobId: j.job_id, mode: "pause" });
                       }
                     }}
                   >
-                    {resumeMut.isPending && resumeMut.variables === j.job_id ? "Resuming…" : "Resume"}
+                    Pause
                   </button>
                 )}
+                {(j.status === "running" || j.status === "queued") && (
+                  <button
+                    className="btn danger"
+                    disabled={stopMut.isPending}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (window.confirm("Stop this job? The run is abandoned.")) {
+                        stopMut.mutate({ jobId: j.job_id, mode: "cancel" });
+                      }
+                    }}
+                  >
+                    Stop
+                  </button>
+                )}
+                {j.resumable &&
+                  j.status !== "running" &&
+                  j.status !== "queued" &&
+                  j.status !== "completed" && (
+                    <button
+                      className="btn"
+                      disabled={resumeMut.isPending}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        if (window.confirm("Resume this job from its checkpoint?")) {
+                          resumeMut.mutate(j.job_id);
+                        }
+                      }}
+                    >
+                      {resumeMut.isPending && resumeMut.variables === j.job_id ? "Resuming…" : "Resume"}
+                    </button>
+                  )}
               </td>,
             ]}
           />
@@ -142,10 +184,11 @@ export default function JobsPage() {
 
       {selectedId && (
         <>
-          <JobTracker jobId={selectedId} />
+          <JobTracker jobId={selectedId} onResume={setSelectedId} />
           <p className="muted">
             The tracker subscribes to the job’s WebSocket stream and falls back to polling; the full result JSON is
-            expandable once the job reaches a terminal state.
+            expandable once the job reaches a terminal state. A job is only shown as active while this API process
+            actually owns it — records left behind by a crash are marked interrupted.
           </p>
         </>
       )}

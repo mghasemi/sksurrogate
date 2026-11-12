@@ -13,7 +13,7 @@ from io import BytesIO
 from typing import Annotated
 
 import pandas as pd
-from fastapi import APIRouter, File, Form, UploadFile, Depends
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Depends
 from pydantic import BaseModel, Field
 
 from SKSurrogate import (
@@ -21,15 +21,17 @@ from SKSurrogate import (
     DataPreprocess,
     ModelRegistry,
     cv_param_defs,
-    default_cv_spec,
     dataset_profile,
+    default_cv_spec,
     sensitive_feature_report,
 )
 
 from ..config import settings
+from ..columns import drop_ignored, normalize_ignored_columns, read_ignored_columns
 from ..features import NumericFeatureError, numeric_train_xy
+from ..preprocessing import METHODS as IMPUTATION_METHODS, ImputationError, impute_partition, missing_overview
 from ..safety import safe_segment
-from ..deps import bad_request, finite_or_none as _finite, not_found, open_tracker, unprocessable, task_access
+from ..deps import bad_request, current_principal, finite_or_none as _finite, not_found, open_tracker, unprocessable, task_access
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"], dependencies=[Depends(task_access)])
 
@@ -84,6 +86,12 @@ class SetCVRequest(BaseModel):
     params: dict[str, object] | None = None
 
 
+class IgnoredColumnsRequest(BaseModel):
+    """Dataset-level column exclusions: names to drop from every modeling path."""
+
+    columns: list[str] = []
+
+
 class DatasetProfileRequest(BaseModel):
     partition: str = "train"
     target: str | None = None
@@ -105,10 +113,16 @@ def profile_registered_dataset(task_name: str, body: DatasetProfileRequest):
             frame = tracker.get_dataframe(partition=body.partition)
             metadata = tracker.GetMetadata()
         target = body.target or metadata.get("target_name")
+        ignored = read_ignored_columns(task_name)
+        if ignored:
+            frame = drop_ignored(frame, ignored)
+        requested_features = body.features
+        if requested_features is not None and ignored:
+            requested_features = [column for column in requested_features if column not in ignored]
         report = dataset_profile(
             frame,
             target=target,
-            features=body.features,
+            features=requested_features,
             group_by=body.group_by,
             max_rows=body.max_rows,
             max_features=body.max_features,
@@ -120,6 +134,7 @@ def profile_registered_dataset(task_name: str, body: DatasetProfileRequest):
     return {
         "task_name": task_name,
         "partition": body.partition,
+        "ignored_columns": ignored,
         "dataset_fingerprint": metadata.get("dataset_partition_history", {})
         .get(body.partition, {})
         .get("fingerprint"),
@@ -164,6 +179,41 @@ def set_cv(task_name: str, body: SetCVRequest):
     return {"task_name": task_name, "cv": stored_spec}
 
 
+@router.put("/{task_name}/ignored-columns")
+def set_ignored_columns(task_name: str, body: IgnoredColumnsRequest):
+    """Replace the dataset's ignored-column list.
+
+    Ignored columns remain in the stored partitions (so the choice is reversible
+    and fingerprints stay valid) but are dropped by experiments, pipeline
+    optimization, baselines, sensitivity/correlation analysis, dataset profiles,
+    synthetic generation and monitoring drift. The target column cannot be
+    ignored, and unknown names are rejected rather than silently ignored.
+    """
+    if not settings.mltrace_db_path(task_name).exists():
+        raise not_found("No dataset registered for task %r" % task_name)
+    with open_tracker(task_name) as tracker:
+        metadata = tracker.GetMetadata()
+        target = metadata.get("target_name")
+        known = metadata.get("dataset_columns") or []
+        try:
+            normalized = normalize_ignored_columns(body.columns, known, target)
+        except ValueError as exc:
+            raise bad_request(str(exc))
+        tracker.UpdateMetadata({"ignored_columns": normalized})
+    effective = [
+        column
+        for column in known
+        if column != target and column not in set(normalized)
+    ]
+    return {
+        "task_name": task_name,
+        "target": target,
+        "ignored_columns": normalized,
+        "effective_features": effective,
+        "effective_feature_count": len(effective),
+    }
+
+
 @router.post("/{task_name}/inspect")
 async def inspect_dataset(task_name: str, file: UploadFile = File(...)):
     """Preview a CSV's deduced schema without persisting anything (Phase 5.1).
@@ -197,13 +247,17 @@ async def inspect_dataset(task_name: str, file: UploadFile = File(...)):
 async def register_dataset(task_name: str, target: str = Form(...), partition: str = Form("train"),
                             file: UploadFile = File(...),
                             type_overrides: Annotated[str | None, Form()] = None,
-                            binarize_label: Annotated[bool, Form()] = False):
+                            binarize_label: Annotated[bool, Form()] = False,
+                            ignored_columns: Annotated[str | None, Form()] = None):
     """Upload a CSV, deduce its schema, and register it for a task/partition.
 
     ``type_overrides`` (JSON object of column -> type) is applied via
     ``DataPreprocess.set_type`` before registration so the user-reviewed types from
     the inspect step win over the automatic deduction; ``binarize_label`` maps the
     target's unique values to 0..n-1 through ``transform_label_bin`` (Phase 5.1).
+    ``ignored_columns`` (JSON array of names) is stored in the task metadata: the
+    columns stay in the stored CSV but are dropped by every training/analysis
+    path (see ``api.columns``).
     """
     if not (file.filename or "").lower().endswith(".csv"):
         raise bad_request("Only CSV uploads are supported")
@@ -231,6 +285,16 @@ async def register_dataset(task_name: str, target: str = Form(...), partition: s
     frame, pivot_types = apply_type_overrides(
         frame, preview, target, overrides=overrides or None, binarize_label=binarize_label is True
     )
+    ignored = []
+    if isinstance(ignored_columns, str) and ignored_columns:
+        try:
+            parsed_ignored = json.loads(ignored_columns)
+        except (TypeError, ValueError):
+            raise bad_request("ignored_columns must be a JSON array of column names")
+        try:
+            ignored = normalize_ignored_columns(parsed_ignored, frame.columns, target)
+        except ValueError as exc:
+            raise bad_request(str(exc))
     dataset_dir = settings.task_dataset_dir(task_name)
     dataset_dir.mkdir(parents=True, exist_ok=True)
     csv_path = dataset_dir / (safe_segment(partition, "partition") + ".csv")
@@ -238,7 +302,9 @@ async def register_dataset(task_name: str, target: str = Form(...), partition: s
     weights_stored = []
     with open_tracker(task_name) as tracker:
         tracker.RegisterData(frame, target, partition=partition)
-        tracker.UpdateMetadata({"dataset_deduced_types": pivot_types})
+        tracker.UpdateMetadata(
+            {"dataset_deduced_types": pivot_types, "ignored_columns": ignored}
+        )
         metadata = tracker.GetMetadata()
         # Seed the ``weights`` table with the two cheap dataset-level weightings
         # (feature-target Pearson and feature variance) for the numeric columns.
@@ -251,17 +317,26 @@ async def register_dataset(task_name: str, target: str = Form(...), partition: s
         except NumericFeatureError:
             projection = None
         if projection is not None:
+            ignored_set = set(ignored)
+            feature_columns = [
+                column for column in projection.columns if column not in ignored_set
+            ]
             data = pd.DataFrame(projection.X, columns=projection.columns)
+            if ignored_set:
+                data = pd.DataFrame(data[feature_columns])
             values = pd.Series(projection.y)
+            if not feature_columns:
+                weights_stored = []
             try:
-                tracker.PersistWeights(
-                    {
-                        "pearson": [data[column].corr(values) for column in projection.columns],
-                        "variance": [data[column].var() for column in projection.columns],
-                    },
-                    features=projection.columns,
-                )
-                weights_stored = ["pearson", "variance"]
+                if feature_columns:
+                    tracker.PersistWeights(
+                        {
+                            "pearson": [data[column].corr(values) for column in feature_columns],
+                            "variance": [data[column].var() for column in feature_columns],
+                        },
+                        features=feature_columns,
+                    )
+                    weights_stored = ["pearson", "variance"]
             except Exception:  # pragma: no cover - auxiliary; never fail an upload
                 weights_stored = []
 
@@ -291,6 +366,7 @@ async def register_dataset(task_name: str, target: str = Form(...), partition: s
         "dataset_schema": metadata.get("dataset_schema"),
         "dataset_deduced_types": metadata.get("dataset_deduced_types"),
         "deduced_types": pivot_types,
+        "ignored_columns": ignored,
         # Return bounded, count-only PII pattern findings for the uploaded frame.
         "sensitive_scan": sensitive_feature_report(frame),
         # Which weighting columns this registration seeded (numeric features only).
@@ -363,7 +439,219 @@ def get_dataset_metadata(task_name: str):
         "dataset_schema": metadata.get("dataset_schema"),
         "dataset_deduced_types": metadata.get("dataset_deduced_types"),
         "dataset_feature_count": metadata.get("dataset_feature_count"),
+        "ignored_columns": metadata.get("ignored_columns") or [],
+        "effective_feature_count": len(
+            [
+                column
+                for column in (metadata.get("dataset_columns") or [])
+                if column != metadata.get("target_name")
+                and column not in set(metadata.get("ignored_columns") or [])
+            ]
+        ),
         "partitions": splits,
+    }
+
+
+@router.get("/{task_name}/{partition}/preprocessing")
+def preprocessing_overview(
+    task_name: str,
+    partition: str,
+    max_rows: int = 5000,
+    max_categories: int = 10,
+    preview_limit: int = 20,
+):
+    """Dataset overview for the preprocessing page: types, missingness, quality, preview.
+
+    Reads the stored partition without dropping ignored columns — the page must
+    show them and let the user see why they are excluded — and reuses the bounded
+    ``dataset_profile`` diagnostics for distributions, duplicate/constant
+    features and missingness patterns.
+    """
+    if not settings.mltrace_db_path(task_name).exists():
+        raise not_found("No dataset registered for task %r" % task_name)
+    csv_path = settings.task_dataset_dir(task_name) / (safe_segment(partition, "partition") + ".csv")
+    if not csv_path.exists():
+        raise not_found("No dataset partition %r stored for task %r" % (partition, task_name))
+    frame = pd.read_csv(csv_path)
+    with open_tracker(task_name) as tracker:
+        metadata = tracker.GetMetadata()
+    target = metadata.get("target_name")
+    ignored = metadata.get("ignored_columns") or []
+    deduced = metadata.get("dataset_deduced_types") or {}
+    if target not in frame.columns:
+        raise bad_request(
+            "Partition %r has no target column %r" % (partition, target)
+        )
+
+    overview = missing_overview(
+        frame, target=target, ignored=ignored, deduced_types=deduced
+    )
+    active = [column for column in frame.columns if column != target and column not in set(ignored)]
+    profile_features = active[:100]
+    profile = None
+    if profile_features:
+        try:
+            profile = dataset_profile(
+                frame,
+                target=target,
+                features=profile_features,
+                max_rows=max_rows,
+                max_features=100,
+                max_categories=max_categories,
+                random_state=0,
+            )
+        except ValueError as exc:
+            raise bad_request(str(exc))
+
+    head = frame.head(max(preview_limit, 0))
+    preview_records = head.astype(object).where(pd.notna(head), None).to_dict(orient="records")
+    return {
+        "task_name": task_name,
+        "partition": partition,
+        "target": target,
+        "rows": int(len(frame)),
+        "columns": list(frame.columns),
+        "ignored_columns": ignored,
+        "deduced_types": deduced,
+        "missing": overview,
+        "quality": (profile or {}).get("data_quality"),
+        "missingness_patterns": (profile or {}).get("missingness_patterns"),
+        "target_profile": (profile or {}).get("target"),
+        "row_sampling": (profile or {}).get("row_sampling"),
+        "profile_features_truncated": max(len(active) - len(profile_features), 0),
+        "preview": preview_records,
+        "methods": IMPUTATION_METHODS,
+    }
+
+
+class ImputeRequest(BaseModel):
+    """Materialize an imputed copy of one partition.
+
+    ``preview_only`` computes and returns the comparison report without writing
+    anything; otherwise the result is saved as ``output_partition`` and
+    registered in the task's partition history.
+    """
+
+    partition: str = "train"
+    method: str
+    columns: list[str] | None = None
+    params: dict = {}
+    output_partition: str | None = None
+    preview_only: bool = False
+    drop_missing_target: bool = False
+
+
+@router.post("/{task_name}/impute")
+def impute_dataset(task_name: str, body: ImputeRequest):
+    """Impute missing values into a NEW partition; the source partition is untouched."""
+    if not settings.mltrace_db_path(task_name).exists():
+        raise not_found("No dataset registered for task %r" % task_name)
+    csv_path = settings.task_dataset_dir(task_name) / (safe_segment(body.partition, "partition") + ".csv")
+    if not csv_path.exists():
+        raise not_found("No dataset partition %r stored for task %r" % (body.partition, task_name))
+    output = body.output_partition or (body.partition + "_imputed")
+    _validate_partition_name(output)
+    if output == body.partition:
+        raise bad_request("output_partition must differ from the source partition")
+    output_path = settings.task_dataset_dir(task_name) / (safe_segment(output, "partition") + ".csv")
+    if not body.preview_only and output_path.exists():
+        raise HTTPException(
+            status_code=409,
+            detail="Partition %r already exists; choose a new output partition name" % output,
+        )
+
+    frame = pd.read_csv(csv_path)
+    dataset_dir = settings.task_dataset_dir(task_name)
+    dataset_dir.mkdir(parents=True, exist_ok=True)
+    fingerprint = None
+    with open_tracker(task_name) as tracker:
+        metadata = tracker.GetMetadata()
+        target = metadata.get("target_name")
+        ignored = metadata.get("ignored_columns") or []
+        try:
+            result, report = impute_partition(
+                frame,
+                target=target,
+                ignored=ignored,
+                method=body.method,
+                columns=body.columns,
+                params=body.params,
+                drop_missing_target=body.drop_missing_target,
+            )
+        except ImputationError as exc:
+            raise bad_request(str(exc))
+
+        if body.preview_only:
+            return {
+                "task_name": task_name,
+                "partition": body.partition,
+                "output_partition": output,
+                "written": False,
+                **report,
+            }
+
+        result.to_csv(output_path, index=False)
+        tracker.RegisterData(
+            result,
+            target,
+            partition=output,
+            source_uri="imputed:%s" % body.partition,
+        )
+        splits = tracker.dataset_splits()
+        fingerprint = (splits.get(output) or {}).get("fingerprint")
+        history = list(metadata.get("imputation_history") or [])
+        history.append(
+            {
+                "source_partition": body.partition,
+                "output_partition": output,
+                "method": report["method"],
+                "columns": report["columns"],
+                "params": body.params,
+                "rows_before": report["rows_before"],
+                "rows_after": report["rows_after"],
+                "cells_imputed": report["cells_imputed"],
+                "drop_missing_target": bool(body.drop_missing_target),
+                "actor": current_principal().username,
+            }
+        )
+        tracker.UpdateMetadata({"imputation_history": history[-50:]})
+    try:
+        ModelRegistry(settings.registry_dir).register_dataset(
+            task_name,
+            fingerprint,
+            output_path,
+            metadata={
+                "partition": output,
+                "source": "imputed",
+                "source_partition": body.partition,
+                "method": report["method"],
+                "columns": report["columns"],
+            },
+        )
+    except Exception:  # pragma: no cover - lineage is auxiliary
+        pass
+    try:
+        from .. import audit
+
+        audit.record(
+            "dataset.impute",
+            principal=current_principal(),
+            task_name=task_name,
+            source_partition=body.partition,
+            output_partition=output,
+            method=report["method"],
+            cells_imputed=report["cells_imputed"],
+        )
+    except Exception:  # pragma: no cover - audit must not fail the write
+        pass
+    return {
+        "task_name": task_name,
+        "partition": body.partition,
+        "output_partition": output,
+        "written": True,
+        "csv_path": str(output_path),
+        "dataset_fingerprint": fingerprint,
+        **report,
     }
 
 

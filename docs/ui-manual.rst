@@ -138,7 +138,11 @@ Open **Datasets**. For each CSV partition:
    sensitive-column scan. The scan reports pattern counts only; it does not
    expose matched cell contents. Inspection does not commit the file.
 4. Choose the **Target column**. Review the detected type of every column and
-   change any incorrect type before committing. If appropriate, enable
+   change any incorrect type before committing. If a column must not participate
+   in modeling — an identifier, a leaky field, a free-text note — set its type to
+   **ignore (exclude from work)**. The column is still stored (so it can be
+   restored later) but is dropped from every downstream experiment and analysis.
+   The target column cannot be ignored. If appropriate, enable
    **Binarize / ordinal-encode target labels** to encode target categories.
 5. Click **Commit dataset**. The API registers the partition and schema,
    calculates a dataset fingerprint, and stores the CSV under the task.
@@ -162,13 +166,27 @@ when a relaxed contract is intended.
 
    Dataset registration and the task-level cross-validation settings.
 
-After registration, review **Registered metadata** for the target, feature
-count, fingerprint, and partitions. Use **Target statistics** to inspect the
-target distribution. The optional **Synthetic data** card can generate a
-downloadable sample from a registered partition; choose the row count, source
-partition, marginal or joint distribution, and a generation type for each
-column. Synthetic output is a generated file, not a replacement for the
-registered source dataset.
+After registration, review **Registered metadata** for the target, effective
+feature count, ignored columns, fingerprint, and partitions. An **ignore** choice
+made at upload is listed there and can be changed at any time from **Column
+generation types** in the **Synthetic data** card: choosing **ignore (exclude
+from experiments)** persists a dataset-level exclusion, and choosing a real type
+restores the column. Excluded columns are dropped from experiments, pipeline
+optimization, baselines, sensitivity and correlation analysis, dataset profiles,
+nested CV, diagnostic curves, monitoring drift and synthetic generation; existing
+model bundles keep the schema they were trained with, so retrain after changing
+the ignore list. Use **Target statistics** to inspect the target distribution.
+The optional **Synthetic data** card can generate a downloadable sample from a
+registered partition; choose the row count, source partition, marginal or joint
+distribution, and a generation type for each column. Synthetic output is a
+generated file, not a replacement for the registered source dataset.
+
+.. figure:: images/ui-ignored-columns.png
+   :alt: Column generation types with one column marked ignore
+   :width: 100%
+
+   Marking a column ignored in the Column generation types table. The choice is
+   stored with the dataset and applied to every downstream analysis.
 
 Choose **Cross-validation partitioning** deliberately. The selected splitter
 and its parameters are stored for the task and reused by downstream
@@ -176,6 +194,37 @@ cross-validation. For classification, use a stratified splitter when class
 balance matters; for grouped or time-ordered observations, select a splitter
 that preserves that structure rather than randomly mixing related or future
 observations across folds.
+
+Missing data and imputation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Open **Data Preprocessing**. Choose the stored partition to inspect. The page
+shows the row count, per-column detected and implied types, missing counts and
+percentages, complete-row share, numeric quantiles or top categories, a data
+preview with missing cells rendered as “—”, and a data-quality card with
+duplicate rows/features, constant and all-missing columns, and the observed
+missingness patterns.
+
+To impute, pick a method — drop rows, mean, median, most frequent, constant,
+K-nearest neighbours or iterative/MICE — and the columns to fill (the target is
+never imputed, and ignored columns are not offered). Use **Preview imputation**
+to compare before/after missing counts, distribution shift and the number of
+imputed cells without writing anything. **Save as new partition** writes the
+result under a new partition name (for example ``train_imputed``), records the
+imputation recipe in the task metadata and registers the CSV as a lineage
+artifact. The source partition is never modified, and a name that already exists
+is rejected.
+
+Materialized imputation is a deliberate transformation of the data: experiments
+and cross-validation continue to use fold-local imputation on the original
+partition, so evaluate models on the original data unless you intentionally
+select the derived partition afterwards.
+
+.. figure:: images/ui-preprocessing.png
+   :alt: Data Preprocessing page with missing-data overview and imputation controls
+   :width: 100%
+
+   Missing-data profile and the imputation card; saving writes a new partition.
 
 3. Inspect and reduce features (optional)
 -----------------------------------------
@@ -241,8 +290,10 @@ directives without hand-writing them.
 
 Then configure the run:
 
-1. Set the trial length, maximum generation, number of parents, and training
-   partition. Keep an experiment small for an initial smoke test.
+1. Set the maximum pipeline length, maximum generation, number of parents, and
+   training partition. The pipeline length bounds how many components a
+   generated pipeline may chain; it is not a trial count. Keep an experiment
+   small for an initial smoke test.
 2. Choose a scoring metric that matches the task and the business objective.
    The selected scorer is the objective the search optimizes.
 3. Choose **Evolutionary (EOA)** or **Surrogate-assisted** search. The latter
@@ -250,9 +301,31 @@ Then configure the run:
 4. **Search engine** selects ``AML.fit(strategy="eoa")`` (default) or
    ``strategy="surrogate"`` (surrogate search only; generation and parent
    settings are ignored).
-5. Keep the **Local** execution backend unless a Dask-enabled API environment
-   is available.
+5. **Execution backend** chooses **Local** (thread pool in the API process) or
+   **Dask**. The API image ships ``dask[distributed]``; a Dask job runs on a
+   local cluster sized by the compute budget and tears it down afterwards. The
+   option stays disabled when a source install lacks the package.
 6. Click **Start experiment**, then follow progress on the page or in **Jobs**.
+
+While a run is in flight the page is no longer silent:
+
+* a banner above the fold names the state (``Experiment running`` /
+  ``Experiment queued``), counts elapsed time and links to the live tracker and
+  the captured logs;
+* the top bar shows a pulsing **N jobs active** badge on every page, linking to
+  **Jobs**, and prefixes the browser tab title with the active job count;
+* the page pins its job card in view, which shows a pulsing status dot, elapsed
+  time, the number of trials evaluated, the latest sampling phase
+  (``init``/``explore``) and the best objective value so far;
+* the card's activity feed tails the captured log entries — one line per trial
+  with its status, score and the hyperparameters that were evaluated — so it is
+  visible what the search is currently trying. Errors and warnings are counted
+  next to the feed.
+
+Progress is shown as an indeterminate stripe, not a percentage: the search does
+not know in advance how many candidate pipelines it will evaluate. When a
+caller-supplied trial budget exists, ``JobTracker`` renders a determinate bar
+instead.
 
 The API builds an ``SKSurrogate.aml.AML`` search and uses
 ``SKSurrogate.eoa.EOA`` for evolutionary optimization; the surrogate path can
@@ -261,12 +334,29 @@ also use ``SurrogateRandomCV``. The optional ``stacking`` directive configures
 features. Conditional parameters and forbidden combinations constrain
 incompatible choices.
 
+A running search can be **paused** (checkpoint kept) or **stopped** — both from
+the job card on this page, from **Jobs**, or from the tracker that follows the
+run. Pausing freezes the elapsed clock and leaves the job ``paused``; **Resume**
+then submits a new job that continues from the saved checkpoint and returns its
+id. Only experiment and pipeline-optimization jobs can be paused, because only
+they carry a resumable checkpoint; other kinds can be cancelled but not resumed.
+A job that is only marked running because the API process died is shown as
+``interrupted`` and offers **Resume** when a checkpoint survived.
+
 When the job completes, inspect the score history, top pipelines, and
 score-versus-duration Pareto frontier. Use **Optimize this structure** to tune
 one of the returned component sequences. A completed search creates a bundle
 that appears in **Model Bundles**. Use **Jobs** to inspect job status and
 details; failed experiment jobs may offer a resume action when a checkpoint
 allows it.
+
+Give a run a name in **Experiment name (optional)** before starting it. The
+name replaces the machine job id in the run banner, the job tracker, the Jobs
+table and the Logs page, and it is stored on the produced bundle as well. Leaving
+it empty keeps the generated name (``experiment · <task> · <date time>``). The
+job id stays visible next to the name and remains the identity used by links,
+checkpoints and project artifacts. Rename or clear the name later with
+**Rename** on any job tracker.
 
 .. figure:: images/ui-experiments.png
    :alt: Experiments page with JSON search space and run controls
@@ -447,7 +537,12 @@ Open **Registry & Deployment**:
    aliases, lifecycle history, approval events, audit log, and lineage.
 4. If a production alias needs to point to another version, use **Rollback**
    to select the target model version and lifecycle alias.
-5. Use **Use in Inference** to open the selected registry alias in the
+5. Use **Model aliases** to give a version a stable, human-chosen name such as
+   ``baseline`` or ``credit-card-v2``. Unlike lifecycle aliases, a named alias is
+   not rewritten by promotion; it always points at the version you chose, is
+   resolvable by the API and the Python registry, and can be deleted without
+   touching the version. Every set/delete appears in the history and audit log.
+6. Use **Use in Inference** to open the selected registry alias in the
    Inference page.
 
 This workflow uses ``ModelRegistry`` and ``DeploymentApprovalGate`` from
@@ -574,6 +669,27 @@ and retraining can run in the background; their job records remain visible
 after navigation. A failed experiment can expose a resume action when its
 checkpoint is usable.
 
+The **Name** column shows each job's human name rather than its id: the custom
+label submitted with an experiment, or a generated ``<kind> · <task> · <date
+time>`` name. Click a row and use **Rename** in the tracker to give any job a
+friendly name or clear it back to the generated one; the short job id stays
+visible beside the name because it remains the identity used by links,
+checkpoints and project artifacts. The same names appear in the run banner, the
+Experiments tracker and the Logs page job selector.
+
+The tracker shown for a selected job subscribes to the live status stream and
+tails the job's captured log entries. Its header carries **Pause**/**Stop**
+while the job runs and **Resume** once it is paused, interrupted or failed with
+a checkpoint; a live job whose heartbeat is older than 30 s is flagged as
+possibly stalled. Jobs whose API process died are marked ``interrupted`` at
+start-up, so the activity badge and the list only show work that is actually
+running. While the job runs, the tracker lists the most
+recent entries (trial index, phase, score and the evaluated hyperparameters)
+and counts warnings and errors. It also links to the full log view. The top-bar
+**N jobs active** badge is backed by ``GET /api/jobs/active``, a summaries-only
+endpoint that returns no results or resume payloads — keeping the four-second
+poll small regardless of how large the finished experiment results are.
+
 Use **Settings / Audit** to manage your identity and sharing, configure the API
 base URL for this browser, and review task registry audit events. Connection
 settings are browser-local; everything else is server state.
@@ -594,6 +710,24 @@ settings are browser-local; everything else is server state.
 * **API connection** — the API base URL and an optional shared key for
   non-browser clients. The card reports the server's declared posture: whether
   authentication is enforced, and whether a key is stored in this browser.
+* **Compute budget** — concurrent jobs, the total CV-fold worker pool, BLAS
+  threads per job, and the size of the local Dask cluster. The card shows the
+  server's core count and the arithmetic of the current budget; a combination
+  that exceeds the cores cannot be saved, and the API rejects it with 422 even
+  if the form is bypassed. Saved values apply to jobs submitted afterwards (a
+  running job keeps the limits it started with) and are recorded on each job
+  record, so a slow or fast run can always be traced back to its budget. Only an
+  administrator can change these values once authentication is enforced.
+* **Danger zone — reset my data** — permanently deletes every task and research
+  project you own, including datasets, bundles, registry versions, predictions,
+  monitoring records, checkpoints, jobs and their logs. The button stays
+  disabled until you type the confirmation phrase shown on the card
+  (``reset <username>``; ``reset everything`` on a server without
+  authentication). Resources shared with other users are kept by default; tick
+  **Also delete resources I own that are shared with other users** to include
+  them. A live job on one of your tasks blocks the reset (stop it first), and
+  accounts, sessions and API keys are never removed. Until you click
+  **Reload application**, cached pages may still show the old data.
 
 Only when the server runs without authentication do the identity cards show a
 note instead of controls. The contract behind them — endpoints, roles, the

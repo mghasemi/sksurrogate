@@ -489,6 +489,7 @@ class AML(BaseEstimator):
             preset=None,
             resume=False,
             callbacks=None,
+            stop_check=None,
     ):
         from collections import OrderedDict
 
@@ -561,6 +562,9 @@ class AML(BaseEstimator):
         self.stacking = stacking
         self.resume = resume
         self.callbacks = callbacks
+        #: Optional ``Callable[[], bool]`` forwarded to every search stage so a
+        #: job can be paused between candidate evaluations (see api/control.py).
+        self.stop_check = stop_check
         self.verbose = verbose
         self.num_features_upper_bound = 2
         self.cpu_limit = cpu_limit
@@ -991,6 +995,10 @@ class AML(BaseEstimator):
 
             fitted = OrderedDict([])
             for seq in ppl:
+                if self.stop_check is not None and self.stop_check():
+                    from .structsearch import SearchStopped
+
+                    raise SearchStopped("Search stopped by request")
                 best_mdl, best_scr = self.optimize_pipeline(seq, X, y)
                 if seq not in self.models:
                     self.models[seq] = (best_mdl, best_scr)
@@ -1580,6 +1588,7 @@ class AML(BaseEstimator):
                 forbidden=pipeline_forbidden,
                 conditional=pipeline_conditional,
                 callbacks=self.callbacks,
+                stop_check=self.stop_check,
             )
             OPTIM.fit(X, y)
             # Capture this stage's audit bundle (JSON-safe by construction) so

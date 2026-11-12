@@ -204,7 +204,14 @@ def resolve_bundle(task_name, *, model_version=None, alias=None, strict_dependen
             field="model version",
         )
         if not bundle_path.exists():
-            raise not_found("No bundle %r found for task %r" % (model_version, task_name))
+            # Not an unregistered bundle file — it may be a user-chosen alias of
+            # a registered version (or an exact registered version id).
+            try:
+                return ModelRegistry(settings.registry_dir).load_version(
+                    task_name, model_version, strict_dependencies=strict_dependencies
+                )
+            except KeyError:
+                raise not_found("No bundle %r found for task %r" % (model_version, task_name))
         return load_bundle(bundle_path, strict_dependencies=strict_dependencies)
     raise bad_request("Either model_version or alias must be provided")
 
@@ -287,6 +294,7 @@ def bundle_summary(bundle):
     return {
         "task_name": bundle.task_name,
         "model_version": bundle.model_version,
+        "label": (bundle.metadata or {}).get("label"),
         "created_at": bundle.created_at,
         "schema": bundle.schema,
         "metrics": bundle.metrics,

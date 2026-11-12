@@ -77,6 +77,31 @@ records a timestamped history entry. Roll back an alias to a known version with:
 
     registry.rollback("customer-churn", "production", model_version="previous-version")
 
+Named model aliases
+-------------------
+
+Lifecycle aliases are rewritten by promotion and rollback, so they cannot identify a
+*specific* experiment for long. A **named alias** is a user-chosen, stable handle for an
+immutable model version — useful when referring to a run in a paper, a notebook or a
+conversation:
+
+.. code-block:: python
+
+    registry.set_named_alias("customer-churn", "baseline", version, actor="mehdi")
+    registry.resolve_version("customer-churn", "baseline")   # -> version
+    registry.load("customer-churn", alias="baseline")        # same bundle
+    registry.load_version("customer-churn", "baseline")      # same bundle
+    registry.named_aliases("customer-churn")                 # {name: {model_version, ...}}
+    registry.delete_named_alias("customer-churn", "baseline")
+
+Alias names are lowercase slugs (letters, digits, ``.``, ``_``, ``-``; max 64
+characters) and may not collide with the lifecycle names
+(``candidate``/``validated``/``staging``/``production``/``archived``/``latest``).
+Every set/delete is appended to the registry history and audit log with the acting
+identity, and re-pointing an existing alias records the previous version. Exact
+version ids always take precedence over aliases during resolution, and deleting an
+alias never deletes the version it pointed at.
+
 Artifact retention and deletion
 ================================
 
