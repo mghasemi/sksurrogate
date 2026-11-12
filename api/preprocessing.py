@@ -784,7 +784,7 @@ def encoding_preview(frame, *, target, ignored, sample_rows=1000, max_outputs=40
     except Exception as exc:  # pragma: no cover - surfaced verbatim to the UI
         raise ImputationError("Could not fit the encoding preview: %s" % exc)
 
-    column_names = list(frame.columns)
+    column_names = list(sample.columns)
     per_column_outputs = {column: [] for column in features}
     for _name, transformer, columns in groups:
         positions = [columns] if isinstance(columns, (int, np.integer)) else list(columns)

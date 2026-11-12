@@ -218,6 +218,22 @@ def test_encoding_preview_reports_fold_local_matrix(client):
     assert any("per training fold" in note for note in report["notes"])
 
 
+def test_encoding_preview_with_leading_ignored_columns(client):
+    _register(client)
+    ignored = client.put(
+        f"/api/datasets/{TASK}/ignored-columns", json={"columns": ["x"]}
+    )
+    assert ignored.status_code == 200
+    response = client.get(f"/api/datasets/{TASK}/train/encoding-preview")
+    assert response.status_code == 200, response.text
+    report = response.json()
+    assert report["input_features"] == ["z", "cat"]
+    per_column = {entry["column"]: entry for entry in report["per_column"]}
+    assert per_column["z"]["kind"] == "numeric"
+    assert per_column["cat"]["kind"] == "categorical"
+    assert per_column["cat"]["output_feature_count"] >= 2
+
+
 def _register_clipped(client):
     frame = pd.DataFrame(
         {
