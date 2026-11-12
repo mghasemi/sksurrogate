@@ -17,12 +17,13 @@ import {
   STACKING_COMPONENT,
   getProject,
   getPresets,
+  getPreflight,
   getScoringOptions,
   optimizePipeline,
   runExperiment,
 } from "../api/client";
 import type { ExperimentResult, JobRecord, ParamSpec, RunExperimentRequest, SearchSpace } from "../api/client";
-import { Card, ErrorNote, Table, Tabs, fmtNum } from "../components/ui";
+import { Badge, Card, ErrorNote, Table, Tabs, fmtNum } from "../components/ui";
 import { JobTracker } from "../components/JobTracker";
 import { ScoringSelect } from "../components/ScoringSelect";
 import { fmtElapsed, useElapsed } from "../lib/hooks";
@@ -261,6 +262,13 @@ export default function ExperimentsPage() {
   const availableBackends = backendOptionsQ.data?.backends ?? ["local"];
 
   const presetsQ = useQuery({ queryKey: ["experiment-presets"], queryFn: getPresets, staleTime: Infinity });
+  const preflightQ = useQuery({
+    queryKey: ["preflight", task],
+    queryFn: () => getPreflight(task, "train"),
+    enabled: !!task,
+    retry: false,
+    staleTime: 60_000,
+  });
   const presetInfo = presetsQ.data?.presets.find((p) => p.value === preset);
   const parsed = useMemo(() => parseSpace(configJson), [configJson]);
   const warnings = useMemo(
@@ -429,6 +437,33 @@ export default function ExperimentsPage() {
           bundle stores the same name.
         </span>
       </div>
+
+      {task && preflightQ.data && preflightQ.data.messages.length > 0 && (
+        <Card
+          title="Pre-flight checks"
+          sub="Advisory only — the experiment still runs. Findings echo the Data page diagnostics and name the columns they concern."
+        >
+          {preflightQ.data.messages.map((message) => (
+            <div
+              key={message.code}
+              className={message.severity === "warn" ? "warn-note" : "hint"}
+              style={{ marginBottom: 8 }}
+            >
+              <Badge tone={message.severity === "warn" ? "warn" : message.severity === "err" ? "err" : "info"}>
+                {message.severity}
+              </Badge>{" "}
+              {message.message}
+              {message.columns.length > 0 && (
+                <span className="mono"> — {message.columns.join(", ")}</span>
+              )}
+            </div>
+          ))}
+          <p className="hint">
+            {fmtNum(preflightQ.data.effective_rows)} complete rows across{" "}
+            {fmtNum(preflightQ.data.active_features)} active feature(s). {preflightQ.data.scope}
+          </p>
+        </Card>
+      )}
 
       <Tabs
         tabs={[

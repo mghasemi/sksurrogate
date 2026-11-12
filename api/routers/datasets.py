@@ -40,6 +40,7 @@ from ..eda import (
     stability,
 )
 from ..features import NumericFeatureError, numeric_train_xy
+from ..preflight import submit_preflight
 from ..preprocessing import (
     CLIP_METHODS,
     METHODS as IMPUTATION_METHODS,
@@ -622,6 +623,31 @@ def _preprocessing_payload(
         "methods": IMPUTATION_METHODS,
         "clip_methods": CLIP_METHODS,
     }
+
+
+@router.get("/{task_name}/preflight")
+def dataset_preflight(task_name: str, partition: str = "train", max_rows: int = 5000):
+    """Advisory pre-flight for a pending experiment run (never blocks it)."""
+    if not settings.mltrace_db_path(task_name).exists():
+        raise not_found("No dataset registered for task %r" % task_name)
+    csv_path = settings.task_dataset_dir(task_name) / (safe_segment(partition, "partition") + ".csv")
+    if not csv_path.exists():
+        raise not_found("No dataset partition %r stored for task %r" % (partition, task_name))
+    frame = pd.read_csv(csv_path)
+    with open_tracker(task_name) as tracker:
+        metadata = tracker.GetMetadata()
+    target = metadata.get("target_name")
+    if target not in frame.columns:
+        raise bad_request("Partition %r has no target column %r" % (partition, target))
+    ignored = read_ignored_columns(task_name)
+    try:
+        report = submit_preflight(
+            frame, target=target, ignored=ignored, max_rows=max_rows
+        )
+    except (TypeError, ValueError) as exc:
+        raise bad_request("Pre-flight failed: %s" % exc)
+    report.update({"task_name": task_name, "partition": partition})
+    return report
 
 
 @router.get("/{task_name}/{partition}/preprocessing")

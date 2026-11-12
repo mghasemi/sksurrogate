@@ -306,6 +306,59 @@ Formal tests live in the control plane only: ``dataset_profile`` keeps its
 descriptive contract, and every block that reports a p-value says so in its own
 name and caveat.
 
+Pre-flight checks for experiment submission
+-------------------------------------------
+
+``GET /api/datasets/{task_name}/preflight?partition=train`` answers what a user
+is about to run into, without blocking the run (``blocking`` is always
+``false``). It is advisory: the submit buttons stay enabled and the job is
+submitted exactly as before. The report contains
+
+* ``messages`` — every finding in severity order (``err`` → ``warn`` → ``info``),
+  each with a stable ``code``, a sentence and the offending ``columns``;
+* ``warnings`` / ``hints`` — the same entries split by severity;
+* ``effective_rows`` — complete cases across the active (non-ignored,
+  non-target) features;
+* ``thresholds`` — the numbers that produced the findings, so the UI can
+  explain why a hint fired.
+
+Rules and their defaults:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - Code
+     - Fires when
+   * - ``identifier_columns``
+     - a modeled column looks like an identifier (name hint, distinct ratio ≥
+       0.95, consecutive row index)
+   * - ``high_cardinality``
+     - a text column has at least half as many levels as rows
+   * - ``near_duplicate_features``
+     - identical / rounded-equal / ``|r| ≥ 0.999`` feature pairs
+   * - ``conflicting_labels``
+     - duplicate feature rows carry more than one target value
+   * - ``class_imbalance``
+     - categorical target ratio ≥ 3:1
+   * - ``limited_stratification``
+     - the smallest class allows fewer than 5 stratified folds
+   * - ``missing_cells``
+     - more than 10 % of feature cells are missing
+   * - ``high_missing_columns``
+     - a column is missing in more than 50 % of rows
+   * - ``skewed_features``
+     - ``|skewness| > 2`` on a numeric feature
+   * - ``small_effective_sample``
+     - complete rows below ``max(100, 10 × feature count)``
+   * - ``constant_features``
+     - a feature has at most one distinct value
+
+The same rules run on the sampled rows (5,000 by default) and use the active
+feature list, so ignoring a column in the Datasets page removes its warning.
+None of the findings changes the modeling pipeline; they exist so a reported
+score is read with its data caveats.
+
 These are exploratory diagnostics: association does not establish causation,
 leakage, or scientific mechanisms. A strong feature association is a prompt for
 review, not proof of redundancy or a reason to remove a feature automatically.

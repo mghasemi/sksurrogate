@@ -568,6 +568,33 @@ export interface StabilityReport {
   }>;
 }
 
+/** Advisory pre-flight report for a pending experiment submission. */
+export interface PreflightMessage {
+  code: string;
+  severity: "info" | "warn" | "err";
+  message: string;
+  columns: string[];
+}
+
+export interface PreflightReport {
+  task_name: string;
+  partition: string;
+  rows: number;
+  sampled: boolean;
+  target: string;
+  active_features: number;
+  effective_rows: number;
+  complete_rows: number;
+  messages: PreflightMessage[];
+  warnings: PreflightMessage[];
+  hints: PreflightMessage[];
+  has_warnings: boolean;
+  blocking: false;
+  scope: string;
+  thresholds: Record<string, number>;
+  interpretation: string;
+}
+
 /** Partition-to-partition drift report. */
 export interface PartitionDrift {
   task_name: string;
@@ -973,6 +1000,12 @@ export const getPartitionDrift = (task: string, partition: string, reference: st
 export const getEdaReport = (task: string, partition: string) =>
   get<{ task_name: string; partition: string; generated_at: string; markdown: string }>(
     `/api/datasets/${encodeURIComponent(task)}/${encodeURIComponent(partition)}/eda-report`,
+  );
+
+/** Advisory pre-flight warnings/hints for a pending experiment run. */
+export const getPreflight = (task: string, partition = "train") =>
+  get<PreflightReport>(
+    `/api/datasets/${encodeURIComponent(task)}/preflight?partition=${encodeURIComponent(partition)}`,
   );
 
 export interface ImputeRequest {

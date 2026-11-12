@@ -48,6 +48,17 @@ Data Preprocessing page
   >50-level columns skipped), and ``GET .../eda-report`` returning a
   self-contained Markdown report that the UI downloads as
   ``eda-<task>-<partition>.md``. Formal tests stay out of ``dataset_profile``.
+* **Pre-flight checks before a run**: ``GET /api/datasets/{task}/preflight``
+  returns advisory warnings and hints (identifier columns still modeled,
+  conflicting duplicate labels, class imbalance, heavily missing columns, strong
+  skew, small complete-case sample, constants) with stable codes, named columns
+  and the thresholds used. The Experiments page renders them above the tabs and
+  **never blocks submission** (``blocking: false``).
+* **Notebook parity**: ``examples/notebooks/scientific_workflow.ipynb`` now
+  exports ``eda-formal-tests.csv``, ``eda-effect-sizes.csv``,
+  ``eda-stability.csv``, ``eda-quality-flags.csv`` and ``eda-report.md`` from
+  the same helpers the Data page uses, so the offline report and the UI cannot
+  drift apart.
 
 Categorical encoding, outlier clipping and duplicate removal
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

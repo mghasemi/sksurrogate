@@ -413,6 +413,22 @@ model**. It runs a bounded random-forest / extra-trees search through
 ``AML(preset=...)`` with the surrogate strategy. Use the **Advanced** tab for
 full control, described next.
 
+A **Pre-flight checks** card sits above the tabs and lists what is about to
+distort the run: identifier-like columns that are still modeled, duplicate
+feature rows carrying conflicting labels, class imbalance, heavily missing
+columns, strong skew, and a small complete-case sample. The card is **advisory
+only** — the submit buttons stay enabled and the experiment runs; it exists so a
+score is never read without its data caveats. Its findings come from the same
+``GET /api/datasets/{task}/preflight`` route that the Data page diagnostics use,
+and it names the columns it is talking about.
+
+.. figure:: images/experiments-preflight.png
+   :alt: Experiments page with the advisory pre-flight checks card
+   :width: 100%
+
+   Pre-flight warnings for the selected task; warnings and hints are listed in
+   severity order and the run is never blocked.
+
 In **Advanced**, the page starts with a JSON search-space example. Each
 top-level key identifies a fully-qualified scikit-learn estimator class;
 parameter definitions specify real, integer, or categorical ranges. Validate

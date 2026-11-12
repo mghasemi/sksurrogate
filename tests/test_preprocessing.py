@@ -308,6 +308,37 @@ def test_eda_report_route_returns_markdown_with_scope(client):
     assert missing.status_code == 404
 
 
+def test_preflight_route_is_advisory_and_names_the_columns(client):
+    rng = np.random.default_rng(9)
+    n = 200
+    frame = pd.DataFrame(
+        {
+            "row_id": np.arange(n),
+            "surname": [f"name{i % 150}" for i in range(n)],
+            "amount": np.round(rng.normal(loc=100, scale=15, size=n), 3),
+            "label": np.where(rng.random(n) < 0.9, "common", "rare"),
+        }
+    )
+    frame.loc[rng.choice(n, 60, replace=False), "amount"] = np.nan
+    _register(client, frame, target="label")
+
+    response = client.get(f"/api/datasets/{TASK}/preflight?partition=train")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["blocking"] is False
+    assert payload["task_name"] == TASK and payload["partition"] == "train"
+    codes = {entry["code"] for entry in payload["messages"]}
+    assert "identifier_columns" in codes
+    assert "class_imbalance" in codes
+    identifier = next(entry for entry in payload["warnings"] if entry["code"] == "identifier_columns")
+    assert "row_id" in identifier["columns"] and "surname" in identifier["columns"]
+
+    missing_partition = client.get(f"/api/datasets/{TASK}/preflight?partition=nope")
+    assert missing_partition.status_code == 404
+    unknown = client.get("/api/datasets/no-such-task/preflight")
+    assert unknown.status_code == 404
+
+
 def test_preview_only_imputation_writes_nothing(client):
     _register(client)
     before = (settings.task_dataset_dir(TASK) / "train.csv").read_text()

@@ -211,6 +211,27 @@ dataset fingerprints stay valid.
     Returns ``ignored_columns`` and ``effective_feature_count`` beside the
     registered schema and partitions.
 
+``GET /api/datasets/{task_name}/preflight?partition=train``
+    Advisory pre-flight for a pending experiment: identifier and high-cardinality
+    columns, conflicting duplicate labels, class imbalance, heavy missingness,
+    skew and small complete-case samples, each with a stable ``code`` and the
+    offending columns. ``blocking`` is always ``false`` — the run is never
+    refused.
+
+``GET /api/datasets/{task_name}/{partition}/preprocessing``
+    The full EDA payload behind the Data Preprocessing page: missingness,
+    distributions, associations, collinearity, target composition, quality flags,
+    missingness mechanism with Little's MCAR, type audit, formal tests, effect
+    sizes and stability.
+
+``GET /api/datasets/{task_name}/{partition}/partition-drift?reference=train``
+    Feature-level shift between two stored partitions (KS + PSI for numeric
+    features; chi-square homogeneity, Cramér's V and total variation for
+    categorical ones).
+
+``GET /api/datasets/{task_name}/{partition}/eda-report``
+    The same payload rendered as a self-contained Markdown report.
+
 Ignored columns are dropped wherever a stored partition becomes a feature matrix:
 experiments, pipeline optimization, baselines, explanations, sensitivity and
 correlation analysis, dataset profiles, nested CV, diagnostic curves, monitoring
