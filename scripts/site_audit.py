@@ -124,6 +124,17 @@ def main():
           not (missing["og:image:width"] or missing["og:image:height"] or missing["og:image:alt"]),
           ", ".join(missing["og:image:width"] + missing["og:image:height"] + missing["og:image:alt"]))
 
+    # ---- 1b. landmarks (Lighthouse a11y "landmark-one-main") ------------
+    no_main, multi_main = [], []
+    for p in all_pages:
+        n = len(re.findall(r"<main\b", open(p).read()))
+        if n == 0:
+            no_main.append(url_path(p))
+        elif n > 1:
+            multi_main.append("%s (%d)" % (url_path(p), n))
+    check("exactly one <main> landmark per page", not no_main and not multi_main,
+          ", ".join(no_main + multi_main) or "all pages have exactly one")
+
     # ---- 2. stylesheet ------------------------------------------------
     css = open(os.path.join(ROOT, "assets", "site.css")).read()
     media = len(re.findall(r"@media", css))

@@ -192,7 +192,10 @@ body.sub{max-width:none}
 .topbar nav a:hover{color:var(--ink)}
 .topbar nav a.cta{background:var(--ember);color:#170B04;font-weight:600;padding:7px 15px;border-radius:7px}
 .wrap{max-width:1080px;margin:0 auto;padding:0 40px}
-main{padding:72px 0 96px}
+/* NOTE: no bare `main{padding:...}` rule here. Sub-pages use <main class="wrap">
+   and .wrap already sets their padding; a bare main{} rule would (a) be shadowed
+   by .wrap today or, if scoped to body.sub, override it — and (b) leak into the
+   homepage's landmark-only <main>, which must stay zero-padding. */
 .crumb{font-family:"Fira Mono",monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);margin-bottom:26px}
 .crumb a:hover{color:var(--dim)}
 .crumb span{color:var(--line2);margin:0 8px}
@@ -319,5 +322,4 @@ body.sub .lede{font-size:16.5px;max-width:62ch;margin-bottom:18px}
   .subfooter{grid-template-columns:1fr}
   .prose{max-width:none}
   .prose pre{font-size:11.5px}
-  main{padding:44px 0 64px}
 }
