@@ -54,7 +54,11 @@
         <pre><code>pip install sksurrogate</code></pre>
         <p>The package requires Python 3.10 or newer and ships the search layer on top of
           scikit-learn. Nothing else is needed for the tuner; the control plane runs from a
-          compose profile when you want it.</p>
+          published Docker image when you want it.</p>
+
+        <h2>Control plane (optional)</h2>
+        <pre><code>docker run --rm -p 8013:8013 -v sksurrogate-data:/data mghasemi/sksurrogate:latest</code></pre>
+        <p>The published image (<a href="https://hub.docker.com/r/mghasemi/sksurrogate" target="_blank" rel="noopener">Docker Hub ↗</a>, v0.3.0) serves the UI and API on port 8013; datasets, experiments and model bundles stay in the named volume — the image ships no user data. Prefer the latest main branch? Build from a checkout: <code>docker compose --profile prod up -d</code>.</p>
 
         <h2>Optimize a model</h2>
         <pre><code>from sklearn.svm import SVC

@@ -154,6 +154,8 @@
     <div class="chips">
       <!-- pip line per content-plan S2 -->
       <div class="copy"><span class="sigil">$</span><span id="pipcmd">pip install scikit-learn sksurrogate</span><span class="sep"></span><kbd data-copy-target="pipcmd" role="button" tabindex="0">Copy</kbd></div>
+      <!-- Registry line verified against Docker Hub mghasemi/sksurrogate (published from tag v0.3.0, 2026-11-12) -->
+      <div class="copy"><span class="sigil">$</span><span id="dockerrun">docker run --rm -p 8013:8013 -v sksurrogate-data:/data mghasemi/sksurrogate:latest</span><span class="sep"></span><kbd data-copy-target="dockerrun" role="button" tabindex="0">Copy</kbd></div>
       <!-- Docker line verified against docs/controlplane.rst (compose profile, port 8013) -->
       <div class="copy"><span class="sigil">$</span><span id="dockercmd">docker compose --profile prod up -d</span><span class="sep"></span><kbd data-copy-target="dockercmd" role="button" tabindex="0">Copy</kbd></div>
     </div>
@@ -246,7 +248,7 @@
       <ul>
         <li>Quality gates<span>metrics vs thresholds</span></li>
         <li>Registry<span>candidate → prod</span></li>
-        <li>Deployment<span>docker · :8013</span></li>
+        <li>Deployment<span><a href="https://hub.docker.com/r/mghasemi/sksurrogate" target="_blank" rel="noopener" title="Docker Hub: mghasemi/sksurrogate">docker · :8013</a></span></li>
       </ul></div>
     <div class="stage"><div class="n">04</div><h3>Operate</h3>
       <ul>
@@ -489,9 +491,12 @@ search = SurrogateRandomCV(
 ).fit(X, y)
 search.best_params_, search.best_score_</pre>
     <div>
+      <!-- Registry line verified against Docker Hub mghasemi/sksurrogate (published from tag v0.3.0, 2026-11-12) -->
+<pre class="codeblock"><span class="p">$</span> docker run --rm -p 8013:8013 -v sksurrogate-data:/data mghasemi/sksurrogate:latest
+<span class="c"># published image (v0.3.0) — UI + API on http://localhost:8013; data stays in the named volume</span></pre>
       <!-- Docker line verified against docs/controlplane.rst (compose profile prod → UI+API on :8013) -->
 <pre class="codeblock"><span class="p">$</span> docker compose --profile prod up -d
-<span class="c"># control-plane UI + API on http://localhost:8013 — API key optional</span></pre>
+<span class="c"># or from a source checkout — control-plane UI + API on http://localhost:8013, API key optional</span></pre>
       <!-- Placeholders per content-plan S12 ⚠: render as muted labels, no dead links -->
       <div class="atlaunch">
         <div class="atchip"><span>Colab notebook</span><i>at launch</i></div>

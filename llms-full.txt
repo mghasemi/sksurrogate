@@ -8,6 +8,8 @@ Learn the surface before you spend another experiment. SKSurrogate searches hype
 
 $ pip install scikit-learn sksurrogate
 
+$ docker run --rm -p 8013:8013 -v sksurrogate-data:/data mghasemi/sksurrogate:latest
+
 $ docker compose --profile prod up -d
 
 Get started Read the docs ↗
@@ -251,8 +253,12 @@ search = SurrogateRandomCV(
 search.best_params_, search.best_score_
 
 $
+ docker run --rm -p 8013:8013 -v sksurrogate-data:/data mghasemi/sksurrogate:latest
+# published image (v0.3.0) — UI + API on http://localhost:8013; data stays in the named volume
+
+$
  docker compose --profile prod up -d
-# control-plane UI + API on http://localhost:8013 — API key optional
+# or from a source checkout — control-plane UI + API on http://localhost:8013, API key optional
 
 Colab notebook at launch
 
