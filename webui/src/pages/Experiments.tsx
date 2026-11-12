@@ -441,7 +441,7 @@ export default function ExperimentsPage() {
 
       {mode === "quick" && (
         <Card title="Quick start" sub="Pick the kind of problem and a time budget. No search space to write — a bounded, safe search is used.">
-          <div className="row">
+          <div className="row top">
             <div className="field">
               <label>Problem type</label>
               <select value={preset} onChange={(e) => setPreset(e.target.value as "classification" | "regression")}>
