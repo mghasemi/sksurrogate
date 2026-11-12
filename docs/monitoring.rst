@@ -150,6 +150,42 @@ registration metadata when available, and accepts the same row, feature, and
 category bounds. Its response includes the registered partition fingerprint.
 API limits are at most 10,000 rows, 100 features, and 50 categories.
 
+EDA in the Data page
+--------------------
+
+``GET /api/datasets/{task_name}/{partition}/preprocessing`` backs the Data
+Preprocessing page and forwards the profile blocks that describe a registered
+partition, so the page can show distributions, associations and collinearity
+without a second request:
+
+* ``column_profiles`` — the per-column profile entries (kind, missingness,
+  cardinality, constant/all-missing flags, quantile or frequency distribution);
+* ``target_associations`` / ``feature_associations`` — ranked association
+  entries, each naming its statistic (``pearson``, ``correlation_ratio``,
+  ``cramers_v``). Feature-pair rows are capped at ``association_limit`` (200)
+  and the response reports ``feature_associations_truncated`` rather than
+  silently dropping pairs;
+* ``rank_associations`` — Spearman and Kendall coefficients for numeric pairs;
+* ``multicollinearity`` — VIF rows and the standardized condition number;
+* ``target_composition`` — exact target counts over the **full** partition.
+  Classification targets report class counts, minority share, imbalance ratio
+  and ``recommended_folds`` (``min(5, smallest class)`` plus a
+  ``stratification_feasible`` flag). Numeric targets report counts and the
+  bounded profile's shape statistics; a two-valued numeric column carries
+  ``binary_like`` so a 0/1 float target is not presented as a regression target.
+
+.. figure:: images/preprocessing-eda.png
+   :alt: Data Preprocessing page with distribution rails, target analysis, association heatmap and collinearity table
+   :width: 100%
+
+   Distributions, target composition, associations and collinearity cards on
+   the Data Preprocessing page.
+
+The association heatmap deliberately contains numeric (Pearson) pairs only:
+correlation ratio and Cramer's V live on different scales and must not share one
+colour ramp. Every card states its scope — sampled rows versus the full
+partition — and none of these statistics is a causal claim or a hypothesis test.
+
 These are exploratory diagnostics: association does not establish causation,
 leakage, or scientific mechanisms. A strong feature association is a prompt for
 review, not proof of redundancy or a reason to remove a feature automatically.

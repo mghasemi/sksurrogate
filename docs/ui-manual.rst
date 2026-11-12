@@ -205,6 +205,32 @@ preview with missing cells rendered as “—”, and a data-quality card with
 duplicate rows/features, constant and all-missing columns, and the observed
 missingness patterns.
 
+Three further cards summarize the partition before modeling:
+
+* **Distributions** — one row per active feature. Numeric columns get a rail
+  spanning min → q25 → median → q75 → max with the IQR outlier count; categorical
+  columns get their most frequent levels as bars. The card states when the
+  profile was computed on a row sample.
+* **Target analysis** — exact class counts over the full partition with the
+  minority share, imbalance ratio and the fold count stratified k-fold can
+  actually reach (a class that occurs once blocks stratification). Regression
+  targets show shape statistics (skewness, excess kurtosis, IQR outlier rate)
+  and a two-valued 0/1 column is labelled classification-shaped rather than
+  treated as a regression target.
+* **Associations** — association with the target, each row naming its statistic
+  (Pearson, correlation ratio or Cramér's V), a Pearson-only heatmap of numeric
+  feature pairs, and a collapsible Spearman/Kendall table. **Collinearity** adds
+  variance inflation factors and the design-matrix condition number, with a
+  reading per row. These are descriptive diagnostics: the page never removes a
+  column automatically.
+
+.. figure:: images/preprocessing-eda.png
+   :alt: Distributions, target analysis, association heatmap and collinearity cards
+   :width: 100%
+
+   Distribution rails, exact target composition, association heatmap and VIF
+   table for a registered partition; every card states its sampling scope.
+
 To impute, pick a method — drop rows, mean, median, most frequent, constant,
 K-nearest neighbours or iterative/MICE — and the columns to fill (the target is
 never imputed, and ignored columns are not offered). Use **Preview imputation**

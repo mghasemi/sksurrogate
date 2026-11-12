@@ -867,6 +867,86 @@ def encoding_preview(frame, *, target, ignored, sample_rows=1000, max_outputs=40
     }
 
 
+def target_balance(frame, *, target, distribution=None, max_classes=50):
+    """Exact target composition for the Data-page target card.
+
+    Classification targets report **exact** class counts over the full partition
+    (no sampling), the minority share and the largest fold count that keeps every
+    class represented at least twice. Regression targets reuse the bounded
+    ``dataset_profile`` summary (passed as ``distribution``) and are labelled as
+    shape diagnostics rather than a distributional test.
+
+    ``distribution`` is the target ``distribution`` block returned by
+    ``SKSurrogate.dataset_profile``; when omitted the numeric branch reports only
+    counts.
+    """
+    if target not in frame.columns:
+        raise ValueError("target column %r is not in frame" % target)
+    series = frame[target]
+    rows = int(len(series))
+    missing = int(series.isna().sum())
+    if _is_numeric(series):
+        distinct_values = int(series.nunique(dropna=True))
+        return {
+            "kind": "numeric",
+            "rows": rows,
+            "missing": missing,
+            "distinct_values": distinct_values,
+            # A 0/1 float column is numeric by dtype but classification-shaped in
+            # practice; flag it so the card can say so instead of implying regression.
+            "binary_like": distinct_values == 2,
+            "distribution": distribution,
+            "scope": "exact counts; shape statistics from the bounded profile sample",
+            "interpretation": (
+                "Skewness, kurtosis and IQR outlier counts describe shape; they are not "
+                "normality tests and they do not justify a transformation on their own."
+            ),
+        }
+    counts = series.dropna().astype(str).value_counts()
+    class_count = int(counts.size)
+    total = int(counts.sum())
+    if not class_count:
+        return {
+            "kind": "categorical",
+            "rows": rows,
+            "missing": missing,
+            "distinct_classes": 0,
+            "classes": [],
+            "classes_truncated": 0,
+            "scope": "full partition rows",
+            "interpretation": "The target has no observed values.",
+        }
+    minority = int(counts.min())
+    majority = int(counts.max())
+    ordered = counts.head(max_classes)
+    return {
+        "kind": "categorical",
+        "rows": rows,
+        "missing": missing,
+        "distinct_classes": class_count,
+        "classes": [
+            {
+                "label": label,
+                "count": int(count),
+                "share": float(count / total) if total else 0.0,
+            }
+            for label, count in ordered.items()
+        ],
+        "classes_truncated": int(max(class_count - max_classes, 0)),
+        "min_class_count": minority,
+        "max_class_count": majority,
+        "minority_share": float(minority / total) if total else 0.0,
+        "imbalance_ratio": float(majority / minority) if minority else None,
+        "recommended_folds": int(min(5, minority)) if minority >= 2 else None,
+        "stratification_feasible": bool(minority >= 2),
+        "scope": "full partition rows; class list capped",
+        "interpretation": (
+            "Class counts are exact. Stratified k-fold requires every class to appear "
+            "in every training fold, so the fold count is capped by the smallest class."
+        ),
+    }
+
+
 __all__ = [
     "CLIP_METHODS",
     "ClipError",
@@ -878,4 +958,5 @@ __all__ = [
     "encoding_preview",
     "impute_partition",
     "missing_overview",
+    "target_balance",
 ]

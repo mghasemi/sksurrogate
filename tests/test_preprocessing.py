@@ -40,12 +40,12 @@ def _frame():
     )
 
 
-def _register(client, frame=None):
+def _register(client, frame=None, target="y"):
     buffer = io.StringIO()
     (frame if frame is not None else _frame()).to_csv(buffer, index=False)
     response = client.post(
         f"/api/datasets/{TASK}/register",
-        data={"target": "y", "partition": "train"},
+        data={"target": target, "partition": "train"},
         files={"file": ("train.csv", buffer.getvalue().encode("utf-8"), "text/csv")},
     )
     assert response.status_code == 200, response.text
@@ -88,6 +88,96 @@ def test_preprocessing_overview_reports_types_missingness_and_preview(client):
     assert len(payload["preview"]) == 8
     method_names = {method["name"] for method in payload["methods"]}
     assert {"drop_rows", "mean", "median", "most_frequent", "constant", "knn", "iterative"} <= method_names
+
+
+def test_preprocessing_overview_exposes_eda_blocks(client):
+    """Tier 1 EDA: profile outputs the page used to drop must be reachable.
+
+    ``dataset_profile`` computes distributions, associations, rank associations
+    and collinearity; the overview endpoint used to forward only quality and
+    missingness. This pins the additive payload contract.
+    """
+    _register(client)
+    payload = _preprocessing(client)
+
+    # Column contract table: active features only (the target is reported separately).
+    profiled = {entry["column"]: entry for entry in payload["column_profiles"]}
+    assert set(profiled) == {"x", "z", "cat"}
+    assert profiled["x"]["kind"] == "numeric"
+    assert profiled["x"]["distribution"]["median"] is not None
+    assert profiled["cat"]["kind"] == "categorical"
+    assert profiled["cat"]["distribution"]["top"]
+    assert payload["feature_count"] == 3
+    assert payload["feature_limit"] == 100
+
+    # Associations: every entry names its method, target list is ranked by |value|.
+    assert payload["target_associations"]
+    for entry in payload["target_associations"]:
+        assert entry["method"]
+        assert set(entry) == {"feature", "method", "value"}
+    values = [entry["value"] for entry in payload["target_associations"] if entry["value"] is not None]
+    assert values == sorted(values, reverse=True)
+    for entry in payload["feature_associations"]:
+        assert entry["method"]
+        assert {"feature_a", "feature_b", "method", "value"} == set(entry)
+    assert payload["association_limit"] == 200
+    assert payload["feature_associations_truncated"] == 0
+
+    assert set(payload["rank_associations"]) >= {"target", "features", "interpretation"}
+    assert payload["multicollinearity"]["scope"]
+    assert isinstance(payload["multicollinearity"]["vif"], list)
+
+    # Target composition is exact over the full partition. The fixture target is a
+    # 0.0/1.0 float column: numeric by dtype, classification-shaped in practice.
+    composition = payload["target_composition"]
+    assert composition["kind"] == "numeric"
+    assert composition["binary_like"] is True
+    assert composition["distinct_values"] == 2
+    assert composition["missing"] == 1
+    assert composition["distribution"]["median"] is not None
+
+
+def test_target_composition_caps_folds_by_smallest_class(client):
+    """A rare class limits the stratified fold count; a singleton blocks it."""
+    frame = pd.DataFrame(
+        {
+            "a": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+            "b": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0],
+            "label": ["rare", "rare", "mid", "mid", "mid", "top", "top"],
+        }
+    )
+    _register(client, frame, target="label")
+    composition = _preprocessing(client)["target_composition"]
+    assert composition["kind"] == "categorical"
+    assert composition["min_class_count"] == 2
+    assert composition["recommended_folds"] == 2
+    assert composition["classes_truncated"] == 0
+
+    singleton = frame.copy()
+    singleton.loc[0, "label"] = "unique"
+    _register(client, singleton, target="label")
+    composition = _preprocessing(client)["target_composition"]
+    assert composition["min_class_count"] == 1
+    assert composition["recommended_folds"] is None
+    assert composition["stratification_feasible"] is False
+
+
+def test_target_composition_reports_numeric_shape(client):
+    """Regression targets report shape statistics, not class counts."""
+    frame = pd.DataFrame(
+        {
+            "a": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            "b": [2.0, 4.0, 6.0, 8.0, 10.0, 12.0],
+            "y": [0.1, 0.2, 0.35, 0.9, 2.4, 7.7],
+        }
+    )
+    _register(client, frame)
+    composition = _preprocessing(client)["target_composition"]
+    assert composition["kind"] == "numeric"
+    assert "classes" not in composition
+    assert composition["distribution"]["skewness"] > 0
+    assert composition["distribution"]["excess_kurtosis"] is not None
+    assert composition["scope"].startswith("exact counts")
 
 
 def test_preview_only_imputation_writes_nothing(client):

@@ -40,6 +40,7 @@ from ..preprocessing import (
     encoding_preview,
     impute_partition,
     missing_overview,
+    target_balance,
 )
 from ..safety import safe_segment
 from ..deps import bad_request, current_principal, finite_or_none as _finite, not_found, open_tracker, unprocessable, task_access
@@ -476,7 +477,12 @@ def preprocessing_overview(
     Reads the stored partition without dropping ignored columns — the page must
     show them and let the user see why they are excluded — and reuses the bounded
     ``dataset_profile`` diagnostics for distributions, duplicate/constant
-    features and missingness patterns.
+    features and missingness patterns. The profile blocks that describe the data
+    scientifically are forwarded too (column profiles, target/feature
+    associations, rank associations, collinearity), with feature pairs capped at
+    ``association_limit`` so the payload stays bounded on wide frames; exact
+    target counts come from ``preprocessing.target_balance`` over the full
+    partition.
     """
     if not settings.mltrace_db_path(task_name).exists():
         raise not_found("No dataset registered for task %r" % task_name)
@@ -514,6 +520,19 @@ def preprocessing_overview(
         except ValueError as exc:
             raise bad_request(str(exc))
 
+    # Feature-pair associations grow quadratically; keep the endpoint payload
+    # bounded and report exactly how many pairs were dropped instead of letting
+    # the browser receive a multi-megabyte response on a 100-column frame.
+    association_limit = 200
+    all_feature_associations = (profile or {}).get("feature_associations") or []
+    target_profile = (profile or {}).get("target")
+    target_composition = target_balance(
+        frame,
+        target=target,
+        distribution=(target_profile or {}).get("distribution"),
+        max_classes=max_categories,
+    )
+
     head = frame.head(max(preview_limit, 0))
     preview_records = head.astype(object).where(pd.notna(head), None).to_dict(orient="records")
     return {
@@ -527,9 +546,22 @@ def preprocessing_overview(
         "missing": overview,
         "quality": (profile or {}).get("data_quality"),
         "missingness_patterns": (profile or {}).get("missingness_patterns"),
-        "target_profile": (profile or {}).get("target"),
+        "target_profile": target_profile,
+        "target_composition": target_composition,
         "row_sampling": (profile or {}).get("row_sampling"),
         "profile_features_truncated": max(len(active) - len(profile_features), 0),
+        "column_profiles": (profile or {}).get("columns") or [],
+        "feature_count": (profile or {}).get("feature_count"),
+        "feature_limit": (profile or {}).get("feature_limit"),
+        "target_associations": (profile or {}).get("target_associations") or [],
+        "feature_associations": all_feature_associations[:association_limit],
+        "feature_associations_truncated": max(
+            len(all_feature_associations) - association_limit, 0
+        ),
+        "association_limit": association_limit,
+        "rank_associations": (profile or {}).get("rank_associations"),
+        "multicollinearity": (profile or {}).get("multicollinearity"),
+        "group_comparisons": (profile or {}).get("group_comparisons"),
         "preview": preview_records,
         "methods": IMPUTATION_METHODS,
         "clip_methods": CLIP_METHODS,

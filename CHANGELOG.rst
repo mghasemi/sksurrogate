@@ -21,6 +21,16 @@ Data Preprocessing page
   answers 409.
 * Endpoints: ``GET /api/datasets/{task}/{partition}/preprocessing`` and
   ``POST /api/datasets/{task}/impute``.
+* **Scientific EDA cards** on the same page: per-column distribution rails and
+  categorical bars with IQR outlier counts, exact target composition (class
+  counts, minority share, imbalance ratio, feasible stratified fold count) or
+  regression shape statistics, ranked target and feature associations with a
+  Pearson-only numeric heatmap plus a Spearman/Kendall table, and VIF /
+  condition-number collinearity diagnostics. The overview endpoint now forwards
+  ``column_profiles``, ``target_associations``, ``feature_associations``
+  (capped at ``association_limit``), ``rank_associations``,
+  ``multicollinearity`` and ``target_composition``; profile blocks are
+  descriptive and each card states its sampling scope.
 
 Categorical encoding, outlier clipping and duplicate removal
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

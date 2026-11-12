@@ -479,10 +479,135 @@ export interface PreprocessingOverview {
   target_profile: Record<string, unknown> | null;
   row_sampling: Record<string, unknown> | null;
   profile_features_truncated: number;
+  /* EDA blocks forwarded from SKSurrogate.dataset_profile (Tier 1). */
+  column_profiles: EdaColumn[];
+  feature_count: number | null;
+  feature_limit: number | null;
+  target_associations: AssociationEntry[];
+  feature_associations: FeatureAssociationEntry[];
+  feature_associations_truncated: number;
+  association_limit: number;
+  rank_associations: RankAssociations | null;
+  multicollinearity: Multicollinearity | null;
+  group_comparisons: Record<string, unknown> | null;
+  target_composition: TargetComposition | null;
   preview: Array<Record<string, unknown>>;
   methods: ImputationMethod[];
   clip_methods: ClipMethod[];
 }
+
+/** Numeric distribution block returned by ``dataset_profile``. */
+export interface EdaNumericDistribution {
+  count: number;
+  non_finite_count: number;
+  mean: number | null;
+  std: number | null;
+  min: number | null;
+  q25: number | null;
+  median: number | null;
+  q75: number | null;
+  max: number | null;
+  median_absolute_deviation: number | null;
+  skewness: number | null;
+  excess_kurtosis: number | null;
+  iqr_outlier_count: number;
+  iqr_outlier_rate: number | null;
+  iqr_lower_fence: number | null;
+  iqr_upper_fence: number | null;
+}
+
+export interface EdaCategoricalDistribution {
+  count: number;
+  unique: number;
+  top: Array<{ value: string; count: number; proportion: number }>;
+  other_count: number;
+}
+
+/** One profiled feature column, as returned by ``dataset_profile``. */
+export interface EdaColumn {
+  column: string;
+  dtype: string;
+  kind: "numeric" | "categorical";
+  missing_count: number;
+  missing_rate: number;
+  unique_count: number;
+  constant: boolean;
+  all_missing: boolean;
+  distribution: EdaNumericDistribution | EdaCategoricalDistribution;
+}
+
+export interface AssociationEntry {
+  feature: string;
+  method: string;
+  value: number | null;
+}
+
+export interface FeatureAssociationEntry {
+  feature_a: string;
+  feature_b: string;
+  method: string;
+  value: number | null;
+}
+
+export interface RankAssociations {
+  target: Array<{ feature: string; method: string; value: number; n: number }>;
+  features: Array<{
+    feature_a: string;
+    feature_b: string;
+    method: string;
+    value: number;
+    n: number;
+  }>;
+  interpretation: string;
+}
+
+export interface Multicollinearity {
+  numeric_features: string[];
+  complete_case_rows: number;
+  condition_number: number | null;
+  condition_number_reason?: string;
+  vif: Array<{
+    feature: string;
+    value: number | null;
+    r_squared: number;
+    reason?: string;
+  }>;
+  scope: string;
+  interpretation: string;
+}
+
+/**
+ * Exact target composition. ``categorical`` carries class counts and the fold
+ * count stratified k-fold can actually reach; ``numeric`` carries shape
+ * statistics only (``binary_like`` flags a 0/1 float column).
+ */
+export type TargetComposition =
+  | {
+      kind: "categorical";
+      rows: number;
+      missing: number;
+      distinct_classes: number;
+      classes: Array<{ label: string; count: number; share: number }>;
+      classes_truncated: number;
+      min_class_count?: number;
+      max_class_count?: number;
+      minority_share?: number;
+      imbalance_ratio?: number | null;
+      recommended_folds?: number | null;
+      stratification_feasible?: boolean;
+      scope: string;
+      interpretation: string;
+    }
+  | {
+      kind: "numeric";
+      rows: number;
+      missing: number;
+      distinct_values: number;
+      binary_like: boolean;
+      distribution: EdaNumericDistribution | null;
+      scope: string;
+      interpretation: string;
+    };
 
 export interface ClipMethod {
   name: string;

@@ -13,12 +13,17 @@ import {
 import type {
   ClipReport,
   DuplicateAnalysis,
+  EdaColumn,
+  EdaNumericDistribution,
   EncodingPreview,
   ImputationReport,
+  Multicollinearity,
   PreprocessingColumn,
   PreprocessingOverview,
+  TargetComposition,
 } from "../api/client";
-import { Badge, Card, EmptyState, ErrorNote, Loading, Table, fmtNum } from "../components/ui";
+import { Badge, Card, EmptyState, ErrorNote, Loading, Table, fmtNum, fmtSci } from "../components/ui";
+import { Heatmap } from "../components/Heatmap";
 import { useTask } from "../lib/task-context";
 
 function pct(value: number | null | undefined): string {
@@ -105,6 +110,429 @@ function ReportView({ report }: { report: ImputationReport }) {
 function TargetDistribution({ distribution }: { distribution: DuplicateAnalysis["target_before"] }) {
   if (distribution.kind === "categorical") return <>{topLine(distribution.values ?? null)}</>;
   return <>{summaryLine(distribution.summary ?? null)}</>;
+}
+
+function isNumericDistribution(
+  distribution: EdaColumn["distribution"],
+): distribution is EdaNumericDistribution {
+  return "median" in distribution;
+}
+
+/**
+ * Target distribution line. ``dataset_profile`` numeric summaries carry
+ * ``median``, categorical ones carry ``top[].proportion`` — different shapes from
+ * the ``missing_overview`` summaries the older helpers expected, so this reads
+ * the profile shape directly instead of the overview one.
+ */
+function ProfileDistributionLine({ profile }: { profile: Record<string, unknown> }) {
+  const distribution = profile.distribution as EdaColumn["distribution"] | undefined;
+  if (!distribution) return <span>—</span>;
+  if (isNumericDistribution(distribution)) {
+    return (
+      <span>
+        mean {num(distribution.mean)} · sd {num(distribution.std)} · q25 {num(distribution.q25)} ·{" "}
+        median {num(distribution.median)} · q75 {num(distribution.q75)} · [{num(distribution.min)},{" "}
+        {num(distribution.max)}]
+      </span>
+    );
+  }
+  if (!distribution.top.length) return <span>—</span>;
+  return (
+    <span>
+      {distribution.top
+        .map((entry) => `${entry.value} (${pct(entry.proportion)})`)
+        .join(", ")}
+    </span>
+  );
+}
+
+/** min → q25 → median → q75 → max rail; the box is the IQR, the tick the median. */
+function QuantileRail({ distribution }: { distribution: EdaNumericDistribution }) {
+  const { min, q25, median, q75, max } = distribution;
+  if (min === null || max === null || q25 === null || median === null || q75 === null) {
+    return <span className="muted">no finite values</span>;
+  }
+  const span = max - min;
+  const at = (value: number) =>
+    span > 0 ? Math.max(0, Math.min(100, ((value - min) / span) * 100)) : 0;
+  return (
+    <div
+      style={{ position: "relative", height: 18, minWidth: 120 }}
+      title={`min ${num(min)} · q25 ${num(q25)} · median ${num(median)} · q75 ${num(q75)} · max ${num(max)}`}
+    >
+      <div style={{ position: "absolute", left: 0, right: 0, top: 7, height: 6, background: "var(--bg-soft)", borderRadius: 3 }} />
+      <div
+        style={{
+          position: "absolute",
+          left: `${at(q25)}%`,
+          width: `${Math.max(at(q75) - at(q25), 0.8)}%`,
+          top: 7,
+          height: 6,
+          background: "var(--accent)",
+          opacity: 0.6,
+          borderRadius: 3,
+        }}
+      />
+      <div style={{ position: "absolute", left: `calc(${at(median)}% - 1px)`, top: 2, width: 2, height: 16, background: "var(--text)" }} />
+    </div>
+  );
+}
+
+const DISTRIBUTION_ROWS = 25;
+
+function DistributionCard({ data }: { data: PreprocessingOverview }) {
+  const [showAll, setShowAll] = useState(false);
+  const columns = data.column_profiles;
+  const sampling = data.row_sampling as { truncated?: boolean; method?: string } | null;
+  const shown = showAll ? columns : columns.slice(0, DISTRIBUTION_ROWS);
+  return (
+    <Card
+      title="Distributions"
+      sub="Per-column summaries from the bounded profile. The rail spans min → q25 → median → q75 → max; categorical bars are the most frequent levels. Descriptive only."
+    >
+      {sampling?.truncated && (
+        <p className="hint">
+          Computed on a row sample (method: {sampling.method ?? "without_replacement"}); the table
+          below describes the sample, not the full partition.
+        </p>
+      )}
+      {columns.length === 0 ? (
+        <p className="muted">No active feature column to profile.</p>
+      ) : (
+        <Table<EdaColumn>
+          columns={["Column", "Kind", "Distribution", "Outliers"]}
+          rows={shown}
+          keyOf={(column) => column.column}
+          render={(column) => {
+            const distribution = column.distribution;
+            return [
+              <td key="c" className="mono">
+                {column.column}{" "}
+                {column.constant && <Badge tone="warn">constant</Badge>}{" "}
+                {column.all_missing && <Badge tone="err">all missing</Badge>}
+              </td>,
+              <td key="k">{column.kind}</td>,
+              <td key="d">
+                {isNumericDistribution(distribution) ? (
+                  <>
+                    <QuantileRail distribution={distribution} />
+                    <span className="muted" style={{ display: "block", marginTop: 2 }}>
+                      {num(distribution.min)} · {num(distribution.q25)} · {num(distribution.median)} ·{" "}
+                      {num(distribution.q75)} · {num(distribution.max)}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    {distribution.top.slice(0, 4).map((entry) => (
+                      <div className="bar-row" key={entry.value} style={{ gridTemplateColumns: "1fr 90px 44px" }}>
+                        <span className="mono" title={entry.value}>{entry.value}</span>
+                        <div className="bar-track">
+                          <div className="bar-fill" style={{ width: `${Math.min(100, entry.proportion * 100)}%` }} />
+                        </div>
+                        <span className="mono">{pct(entry.proportion)}</span>
+                      </div>
+                    ))}
+                    {distribution.other_count > 0 && (
+                      <span className="hint">{fmtNum(distribution.other_count)} further value(s)</span>
+                    )}
+                  </>
+                )}
+              </td>,
+              <td key="o">
+                {isNumericDistribution(distribution) ? (
+                  distribution.iqr_outlier_count > 0 ? (
+                    <Badge tone="warn">
+                      {fmtNum(distribution.iqr_outlier_count)} IQR ({pct(distribution.iqr_outlier_rate)})
+                    </Badge>
+                  ) : (
+                    <span className="muted">0 IQR</span>
+                  )
+                ) : (
+                  <span className="muted">{fmtNum(distribution.unique)} levels</span>
+                )}
+              </td>,
+            ];
+          }}
+        />
+      )}
+      {!showAll && columns.length > DISTRIBUTION_ROWS && (
+        <p className="hint">
+          Showing {DISTRIBUTION_ROWS} of {fmtNum(columns.length)} profiled columns.{" "}
+          <button className="link-btn" onClick={() => setShowAll(true)}>Show all</button>
+        </p>
+      )}
+      {shown.some((column) => column.missing_rate > 0) && (
+        <p className="hint">Distributions exclude missing values; see the missing-data overview for rates.</p>
+      )}
+    </Card>
+  );
+}
+
+function TargetCard({ composition }: { composition: TargetComposition | null }) {
+  if (!composition) {
+    return (
+      <Card title="Target analysis" sub="Composition of the modeled target.">
+        <p className="muted">No target composition available for this partition.</p>
+      </Card>
+    );
+  }
+  if (composition.kind === "categorical") {
+    const feasible = composition.stratification_feasible;
+    return (
+      <Card
+        title="Target analysis"
+        sub="Exact class counts over the full partition. Stratified k-fold needs every class to appear in every training fold."
+      >
+        <dl className="kv">
+          <dt>Classes</dt>
+          <dd>{fmtNum(composition.distinct_classes)}</dd>
+          <dt>Minority share</dt>
+          <dd>{pct(composition.minority_share)} ({fmtNum(composition.min_class_count)} rows)</dd>
+          <dt>Imbalance ratio</dt>
+          <dd>{composition.imbalance_ratio ? `${num(composition.imbalance_ratio, 2)} : 1` : "—"}</dd>
+          <dt>Recommended folds</dt>
+          <dd>
+            {composition.recommended_folds ?? "none"}{" "}
+            {feasible ? (
+              <Badge tone="ok">stratification feasible</Badge>
+            ) : (
+              <Badge tone="err">a class occurs once — stratification impossible</Badge>
+            )}
+          </dd>
+          <dt>Missing target</dt>
+          <dd>{fmtNum(composition.missing)}</dd>
+        </dl>
+        <h4 style={{ marginTop: 14 }}>Class composition</h4>
+        {composition.classes.map((entry) => (
+          <div className="bar-row" key={entry.label}>
+            <span className="mono" title={entry.label}>{entry.label}</span>
+            <div className="bar-track">
+              <div className="bar-fill" style={{ width: `${Math.min(100, entry.share * 100)}%` }} />
+            </div>
+            <span className="mono">{pct(entry.share)}</span>
+          </div>
+        ))}
+        {composition.classes_truncated > 0 && (
+          <p className="hint">{fmtNum(composition.classes_truncated)} further class(es) not shown.</p>
+        )}
+        <p className="hint">{composition.interpretation}</p>
+      </Card>
+    );
+  }
+  const distribution = composition.distribution;
+  return (
+    <Card
+      title="Target analysis"
+      sub="Regression-shaped target: exact counts plus descriptive shape statistics from the bounded profile sample."
+    >
+      <dl className="kv">
+        <dt>Distinct values</dt>
+        <dd>
+          {fmtNum(composition.distinct_values)}{" "}
+          {composition.binary_like && <Badge tone="info">2-valued — classification-shaped</Badge>}
+        </dd>
+        <dt>Missing</dt>
+        <dd>{fmtNum(composition.missing)}</dd>
+        {distribution && (
+          <>
+            <dt>Mean · std</dt>
+            <dd>{num(distribution.mean)} · {num(distribution.std)}</dd>
+            <dt>Range</dt>
+            <dd>[{num(distribution.min)}, {num(distribution.max)}]</dd>
+            <dt>Skewness</dt>
+            <dd>{num(distribution.skewness, 3)}</dd>
+            <dt>Excess kurtosis</dt>
+            <dd>{num(distribution.excess_kurtosis, 3)}</dd>
+            <dt>IQR outliers</dt>
+            <dd>
+              {fmtNum(distribution.iqr_outlier_count)} ({pct(distribution.iqr_outlier_rate)})
+            </dd>
+          </>
+        )}
+      </dl>
+      {distribution && (
+        <>
+          <h4 style={{ marginTop: 14 }}>Quantiles</h4>
+          <QuantileRail distribution={distribution} />
+        </>
+      )}
+      <p className="hint">{composition.interpretation}</p>
+    </Card>
+  );
+}
+
+const HEATMAP_FEATURES = 10;
+
+function AssociationsCard({ data }: { data: PreprocessingOverview }) {
+  const ranked = data.target_associations.filter((entry) => entry.value !== null);
+  const maxAbs = Math.max(1e-9, ...ranked.map((entry) => Math.abs(entry.value ?? 0)));
+  const heatmap = useMemo(() => {
+    // Only Pearson pairs form one comparable matrix: correlation ratio and
+    // Cramér's V live on different scales and must not share a colour ramp.
+    const pearson = data.feature_associations.filter(
+      (entry) => entry.method === "pearson" && entry.value !== null,
+    );
+    const strength = new Map<string, number>();
+    for (const entry of pearson) {
+      const value = Math.abs(entry.value ?? 0);
+      strength.set(entry.feature_a, Math.max(strength.get(entry.feature_a) ?? 0, value));
+      strength.set(entry.feature_b, Math.max(strength.get(entry.feature_b) ?? 0, value));
+    }
+    const labels = [...strength.entries()]
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, HEATMAP_FEATURES)
+      .map(([label]) => label);
+    if (labels.length < 2) return null;
+    const index = new Map(labels.map((label, position) => [label, position]));
+    const values: Array<Array<number | null>> = labels.map((_, row) =>
+      labels.map((__, column) => (row === column ? 1 : null)),
+    );
+    for (const entry of pearson) {
+      const row = index.get(entry.feature_a);
+      const column = index.get(entry.feature_b);
+      if (row === undefined || column === undefined) continue;
+      values[row][column] = entry.value;
+      values[column][row] = entry.value;
+    }
+    return { labels, columns: labels, values };
+  }, [data.feature_associations]);
+
+  return (
+    <Card
+      title="Associations"
+      sub="Exploratory association with the target and between features. Every row names its statistic; these are not causal effects or hypothesis tests."
+    >
+      {ranked.length === 0 ? (
+        <p className="muted">No association could be computed from the profiled columns.</p>
+      ) : (
+        <>
+          <h4>With the target</h4>
+          <Table<(typeof ranked)[number]>
+            columns={["Feature", "Statistic", "Value"]}
+            rows={ranked.slice(0, 25)}
+            keyOf={(entry) => entry.feature}
+            render={(entry) => [
+              <td key="f" className="mono">{entry.feature}</td>,
+              <td key="m"><Badge tone="muted">{entry.method}</Badge></td>,
+              <td key="v">
+                <div className="bar-row" style={{ gridTemplateColumns: "120px 1fr 64px" }}>
+                  <div className="bar-track">
+                    <div
+                      className="bar-fill"
+                      style={{ width: `${(Math.abs(entry.value ?? 0) / maxAbs) * 100}%` }}
+                    />
+                  </div>
+                  <span className="mono">{num(entry.value, 3)}</span>
+                </div>
+              </td>,
+            ]}
+          />
+        </>
+      )}
+
+      {heatmap && (
+        <>
+          <h4 style={{ marginTop: 16 }}>Numeric feature pairs (Pearson)</h4>
+          <Heatmap data={heatmap} mode="diverging" />
+          <p className="hint">
+            Categorical and mixed pairs use correlation ratio or Cramér's V and are left out of this
+            matrix so one colour ramp never mixes statistics.
+          </p>
+        </>
+      )}
+
+      {data.feature_associations_truncated > 0 && (
+        <p className="hint">
+          {fmtNum(data.feature_associations_truncated)} further feature pair(s) exceeded the{" "}
+          {fmtNum(data.association_limit)}-pair payload limit.
+        </p>
+      )}
+
+      {data.rank_associations?.target.length ? (
+        <details style={{ marginTop: 12 }}>
+          <summary className="muted">Rank association with the target (Spearman / Kendall)</summary>
+          <Table<{ feature: string; method: string; value: number; n: number }>
+            columns={["Feature", "Statistic", "Value", "n"]}
+            rows={data.rank_associations.target}
+            keyOf={(entry, index) => `${entry.feature}-${entry.method}-${index}`}
+            render={(entry) => [
+              <td key="f" className="mono">{entry.feature}</td>,
+              <td key="m">{entry.method}</td>,
+              <td key="v">{num(entry.value, 3)}</td>,
+              <td key="n">{fmtNum(entry.n)}</td>,
+            ]}
+          />
+          <p className="hint">{data.rank_associations.interpretation}</p>
+        </details>
+      ) : null}
+    </Card>
+  );
+}
+
+function vifTone(value: number | null): "ok" | "warn" | "err" | "muted" {
+  if (value === null) return "muted";
+  if (value >= 10) return "err";
+  if (value >= 5) return "warn";
+  return "ok";
+}
+
+function CollinearityCard({ multicollinearity }: { multicollinearity: Multicollinearity | null }) {
+  return (
+    <Card
+      title="Collinearity"
+      sub="Variance inflation factors and the design-matrix condition number on complete finite rows of the sampled columns."
+    >
+      {!multicollinearity || multicollinearity.numeric_features.length < 2 ? (
+        <p className="muted">
+          Needs at least two numeric feature columns; this partition profiles{" "}
+          {fmtNum(multicollinearity?.numeric_features.length ?? 0)}.
+        </p>
+      ) : (
+        <>
+          <dl className="kv">
+            <dt>Numeric features</dt>
+            <dd>{fmtNum(multicollinearity.numeric_features.length)}</dd>
+            <dt>Complete rows</dt>
+            <dd>{fmtNum(multicollinearity.complete_case_rows)}</dd>
+            <dt>Condition number</dt>
+            <dd>
+              {multicollinearity.condition_number === null
+                ? (multicollinearity.condition_number_reason ?? "—")
+                : fmtSci(multicollinearity.condition_number)}
+            </dd>
+          </dl>
+          <h4 style={{ marginTop: 14 }}>Variance inflation factors</h4>
+          <Table<Multicollinearity["vif"][number]>
+            columns={["Feature", "VIF", "R²", "Reading"]}
+            rows={multicollinearity.vif}
+            keyOf={(entry) => entry.feature}
+            render={(entry) => [
+              <td key="f" className="mono">{entry.feature}</td>,
+              <td key="v">
+                {entry.value === null ? (
+                  <Badge tone="err">{entry.reason ?? "undefined"}</Badge>
+                ) : (
+                  <Badge tone={vifTone(entry.value)}>{num(entry.value, 2)}</Badge>
+                )}
+              </td>,
+              <td key="r">{num(entry.r_squared, 3)}</td>,
+              <td key="t" className="muted">
+                {entry.value === null
+                  ? "near-perfect linear dependence"
+                  : entry.value >= 10
+                    ? "strong — consider dropping or combining"
+                    : entry.value >= 5
+                      ? "moderate"
+                      : "low"}
+              </td>,
+            ]}
+          />
+          <p className="hint">{multicollinearity.scope}</p>
+          <p className="hint">{multicollinearity.interpretation}</p>
+        </>
+      )}
+    </Card>
+  );
 }
 
 function EncodingCard({ task, partition }: { task: string; partition: string }) {
@@ -713,6 +1141,14 @@ export default function PreprocessingPage() {
             )}
           </Card>
 
+          <DistributionCard data={data} />
+
+          <TargetCard composition={data.target_composition} />
+
+          <AssociationsCard data={data} />
+
+          <CollinearityCard multicollinearity={data.multicollinearity} />
+
           <Card title="Data quality" sub="Computed on a bounded row sample; duplicates and constants are descriptive flags, not automatic exclusions.">
             {data.quality ? (
               <dl className="kv">
@@ -740,13 +1176,9 @@ export default function PreprocessingPage() {
                   <>
                     <dt>Target distribution</dt>
                     <dd className="muted">
-                      {String(
-                        (data.target_profile as Record<string, unknown>).kind === "numeric"
-                          ? summaryLine((data.target_profile as Record<string, unknown>)
-                              .distribution as PreprocessingColumn["numeric_summary"])
-                          : topLine((data.target_profile as Record<string, unknown>)
-                              .distribution as PreprocessingColumn["top_values"]),
-                      )}
+                      <ProfileDistributionLine
+                        profile={data.target_profile as Record<string, unknown>}
+                      />
                     </dd>
                   </>
                 )}
