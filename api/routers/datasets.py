@@ -9,6 +9,7 @@ docs/ui-gap-implementation-plan.md Phase 5.1/5.2.
 
 import json
 import re
+from datetime import datetime, timezone
 from io import BytesIO
 from typing import Annotated
 
@@ -28,7 +29,16 @@ from SKSurrogate import (
 
 from ..config import settings
 from ..columns import drop_ignored, normalize_ignored_columns, read_ignored_columns
-from ..eda import missing_mechanism, quality_flags, semantic_audit
+from ..eda import (
+    effect_sizes,
+    formal_tests,
+    markdown_report,
+    missing_mechanism,
+    partition_drift,
+    quality_flags,
+    semantic_audit,
+    stability,
+)
 from ..features import NumericFeatureError, numeric_train_xy
 from ..preprocessing import (
     CLIP_METHODS,
@@ -465,8 +475,7 @@ def get_dataset_metadata(task_name: str):
     }
 
 
-@router.get("/{task_name}/{partition}/preprocessing")
-def preprocessing_overview(
+def _preprocessing_payload(
     task_name: str,
     partition: str,
     max_rows: int = 5000,
@@ -560,6 +569,19 @@ def preprocessing_overview(
         )
     except (TypeError, ValueError) as exc:
         raise bad_request("Type audit failed: %s" % exc)
+    tier3_rows = min(max_rows, 2000)
+    try:
+        tests = formal_tests(frame, target=target, ignored=ignored, max_rows=tier3_rows)
+    except (TypeError, ValueError) as exc:
+        raise bad_request("Formal tests failed: %s" % exc)
+    try:
+        effects = effect_sizes(frame, target=target, ignored=ignored, max_rows=tier3_rows)
+    except (TypeError, ValueError) as exc:
+        raise bad_request("Effect sizes failed: %s" % exc)
+    try:
+        stability_report = stability(frame, target=target, ignored=ignored, max_rows=tier3_rows)
+    except (TypeError, ValueError) as exc:
+        raise bad_request("Stability diagnostics failed: %s" % exc)
 
     head = frame.head(max(preview_limit, 0))
     preview_records = head.astype(object).where(pd.notna(head), None).to_dict(orient="records")
@@ -593,9 +615,89 @@ def preprocessing_overview(
         "quality_flags": quality_report,
         "missing_mechanism": mechanism,
         "type_audit": audit,
+        "formal_tests": tests,
+        "effect_sizes": effects,
+        "stability": stability_report,
         "preview": preview_records,
         "methods": IMPUTATION_METHODS,
         "clip_methods": CLIP_METHODS,
+    }
+
+
+@router.get("/{task_name}/{partition}/preprocessing")
+def preprocessing_overview(
+    task_name: str,
+    partition: str,
+    max_rows: int = 5000,
+    max_categories: int = 10,
+    preview_limit: int = 20,
+):
+    """Per-partition EDA payload for the Data Preprocessing page."""
+    return _preprocessing_payload(task_name, partition, max_rows, max_categories, preview_limit)
+
+
+@router.get("/{task_name}/{partition}/partition-drift")
+def partition_drift_report(
+    task_name: str,
+    partition: str,
+    reference: str = "train",
+    max_rows: int = 5000,
+    max_columns: int = 50,
+):
+    """Feature-level shift between this partition and a reference partition.
+
+    Numeric features report a two-sample KS test and PSI; categorical features a
+    chi-square homogeneity test, Cramer's V and the total variation distance.
+    """
+    if not settings.mltrace_db_path(task_name).exists():
+        raise not_found("No dataset registered for task %r" % task_name)
+    if reference == partition:
+        raise bad_request("reference and partition must name different partitions")
+    with open_tracker(task_name) as tracker:
+        metadata = tracker.GetMetadata()
+    target = metadata.get("target_name")
+    ignored = read_ignored_columns(task_name)
+
+    def load(name: str) -> pd.DataFrame:
+        path = settings.task_dataset_dir(task_name) / (safe_segment(name, "partition") + ".csv")
+        if not path.exists():
+            raise not_found("No dataset partition %r stored for task %r" % (name, task_name))
+        return pd.read_csv(path)
+
+    reference_frame = load(reference)
+    current_frame = load(partition)
+    try:
+        report = partition_drift(
+            reference_frame,
+            current_frame,
+            target=target,
+            ignored=ignored,
+            max_rows=max_rows,
+            max_columns=max_columns,
+        )
+    except (TypeError, ValueError) as exc:
+        raise bad_request("Partition drift failed: %s" % exc)
+    report.update(
+        {
+            "task_name": task_name,
+            "partition": partition,
+            "reference": reference,
+            "target": target,
+        }
+    )
+    return report
+
+
+@router.get("/{task_name}/{partition}/eda-report")
+def eda_report(task_name: str, partition: str, max_rows: int = 5000, max_categories: int = 10):
+    """Render the EDA payload as a self-contained Markdown report."""
+    payload = _preprocessing_payload(task_name, partition, max_rows, max_categories, preview_limit=0)
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {
+        "task_name": task_name,
+        "partition": partition,
+        "generated_at": generated_at,
+        "markdown": markdown_report(payload, generated_at=generated_at),
     }
 
 

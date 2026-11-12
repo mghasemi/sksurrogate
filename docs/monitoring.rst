@@ -246,6 +246,66 @@ missingness and type blocks, at most 12 numeric columns in the formal test) and
 none of them modifies the partition. The one formal test is labelled as such;
 everything else is a descriptive signal for review.
 
+Formal tests, effect sizes, partition drift and stability
+---------------------------------------------------------
+
+Three more blocks travel with the overview response and one route adds a
+cross-partition comparison:
+
+* ``formal_tests`` — Anderson–Darling normality test per numeric feature column.
+  The test reports the statistic and the **tabulated critical value nearest the
+  requested α** (0.751 at 5 % for the normal case) plus the rejection verdict. A
+  p-value is intentionally not reported on this code path: SciPy's
+  ``method="interpolate"`` returns a value capped at the smallest tabulated
+  significance (0.15), which reads like a p-value and is not one. The response's
+  ``caveat`` states that a rejection at large ``n`` can be trivial and that a
+  non-rejection never proves normality.
+* ``effect_sizes`` — Cohen's d and Cliff's δ between the largest target classes
+  (or an explicit grouping), each with a percentile bootstrap interval:
+
+  .. math::
+
+      d = \frac{\bar x_A - \bar x_B}{s_p}, \qquad
+      \delta = \frac{2U}{n_A n_B} - 1 .
+
+  ``δ`` is computed from the Mann–Whitney statistic, so point estimates and
+  bootstrap replicates are ``O(n log n)`` rather than pairwise ``O(n^2)``.
+  Intervals are per comparison and uncorrected; a numeric target refuses the
+  block with ``reason = "grouping_column_is_numeric"`` instead of inventing
+  classes.
+* ``stability`` — every summary (mean, median, std, q25, q75) is recomputed on
+  two disjoint random halves of the sampled rows and reported as a fraction of
+  the column's IQR, together with the effective sample size (complete cases
+  across the tested numeric columns). Values near 1 mean the profile's numbers
+  depend on which rows were drawn.
+* ``GET /api/datasets/{task}/{partition}/partition-drift?reference=train`` —
+  numeric features: two-sample Kolmogorov–Smirnov statistic and p-value plus the
+  population stability index (decile bins from the reference); categorical
+  features: chi-square homogeneity on the **2 × k marginal count table**,
+  Cramér's V and total variation distance. Categorical columns with more than 50
+  levels skip the test (``reason = "too_many_levels"``) because the expected
+  counts collapse and the p-value is meaningless. PSI ≥ 0.2 carries a warning
+  badge and is descriptive, not a test.
+* ``GET /api/datasets/{task}/{partition}/eda-report`` — the whole payload
+  rendered as a self-contained Markdown report (sections for missingness, target
+  composition, distributions, associations, collinearity, quality flags,
+  missingness mechanism, type audit, formal tests, effect sizes, stability, and a
+  methods/limits footer). The UI downloads it as ``eda-<task>-<partition>.md``;
+  every section repeats its sampling scope, so the file is reproducible advice
+  rather than a dashboard screenshot.
+
+.. figure:: images/preprocessing-tier3.png
+   :alt: Formal tests, effect sizes, partition drift and summary stability cards
+   :width: 100%
+
+   Anderson–Darling verdicts with tabulated critical values, bootstrap effect
+   sizes by target class, KS/PSI drift against another partition, and IQR-scaled
+   half-sample stability with the report download.
+
+Formal tests live in the control plane only: ``dataset_profile`` keeps its
+descriptive contract, and every block that reports a p-value says so in its own
+name and caveat.
+
 These are exploratory diagnostics: association does not establish causation,
 leakage, or scientific mechanisms. A strong feature association is a prompt for
 review, not proof of redundancy or a reason to remove a feature automatically.

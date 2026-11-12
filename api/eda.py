@@ -21,6 +21,8 @@ frame it receives.
 from __future__ import annotations
 
 import re
+import warnings
+from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
@@ -804,4 +806,848 @@ def semantic_audit(
     }
 
 
-__all__ = ["little_mcar", "missing_mechanism", "quality_flags", "semantic_audit"]
+def _cohens_d(left: np.ndarray, right: np.ndarray):
+    n_left, n_right = len(left), len(right)
+    if n_left < 2 or n_right < 2:
+        return None
+    pooled = np.sqrt(
+        ((n_left - 1) * np.var(left, ddof=1) + (n_right - 1) * np.var(right, ddof=1))
+        / (n_left + n_right - 2)
+    )
+    if not np.isfinite(pooled) or pooled <= 0:
+        return None
+    return float((np.mean(left) - np.mean(right)) / pooled)
+
+
+def _cliffs_delta(left: np.ndarray, right: np.ndarray):
+    """Cliff's delta from the Mann-Whitney statistic: ``2U/(n1 n2) - 1``.
+
+    Rank-based, so the point estimate and its bootstrap replicates are
+    ``O(n log n)`` instead of the naive ``O(n^2)`` pairwise count.
+    """
+    n_left, n_right = len(left), len(right)
+    if n_left < 2 or n_right < 2:
+        return None
+    ranks = stats.rankdata(np.concatenate([left, right]))
+    u_left = float(np.sum(ranks[:n_left]) - n_left * (n_left + 1) / 2.0)
+    return 2.0 * u_left / (n_left * n_right) - 1.0
+
+
+def _effect_interval(left, right, rng, reps, subsample):
+    """Bootstrap CIs for Cohen's d and Cliff's delta (percentile method)."""
+    left = np.asarray(left, dtype=float)
+    right = np.asarray(right, dtype=float)
+    if subsample and (len(left) > subsample or len(right) > subsample):
+        if len(left) > subsample:
+            left = rng.choice(left, subsample, replace=False)
+        if len(right) > subsample:
+            right = rng.choice(right, subsample, replace=False)
+    d_values = []
+    delta_values = []
+    for _ in range(reps):
+        sample_left = left[rng.integers(0, len(left), len(left))]
+        sample_right = right[rng.integers(0, len(right), len(right))]
+        d = _cohens_d(sample_left, sample_right)
+        delta = _cliffs_delta(sample_left, sample_right)
+        if d is not None:
+            d_values.append(d)
+        if delta is not None:
+            delta_values.append(delta)
+    def interval(values):
+        if len(values) < max(10, reps // 4):
+            return None
+        low, high = np.quantile(values, [0.025, 0.975])
+        return [float(low), float(high)]
+    return interval(d_values), interval(delta_values)
+
+
+def effect_sizes(
+    frame,
+    *,
+    target=None,
+    group_by=None,
+    ignored=None,
+    max_groups=3,
+    max_features=8,
+    max_rows=2000,
+    bootstrap=300,
+    subsample=400,
+    min_group_rows=10,
+    random_state=0,
+):
+    """Standardized effect sizes between target classes (or a chosen grouping).
+
+    Reports Cohen's d and Cliff's delta per numeric feature and class pair, each
+    with a percentile bootstrap interval. Groups beyond ``max_groups`` (by size),
+    features beyond ``max_features``, and bootstrap replicates are capped so the
+    endpoint stays bounded. No multiplicity correction is applied; intervals are
+    per-comparison and a "significant" interval among many comparisons is weak
+    evidence.
+    """
+    if not isinstance(frame, pd.DataFrame):
+        raise TypeError("frame must be a pandas DataFrame")
+    if frame.empty:
+        raise ValueError("frame must contain at least one row")
+    ignored = set(ignored or [])
+    grouping = group_by or target
+    if grouping is None or grouping not in frame.columns:
+        return {
+            "grouping": None,
+            "comparisons": [],
+            "reason": "no_grouping_column",
+            "interpretation": "Effect sizes need a categorical target or an explicit group_by column.",
+        }
+    if _is_numeric(frame[grouping]):
+        return {
+            "grouping": grouping,
+            "comparisons": [],
+            "reason": "grouping_column_is_numeric",
+            "interpretation": (
+                "Effect sizes compare groups; a numeric target has no classes. "
+                "Pick a categorical group_by column or bin the target first."
+            ),
+        }
+    sample, sampled = _sample(frame, max_rows, random_state)
+    labels = sample[grouping].astype("string")
+    counts = labels.dropna().value_counts()
+    retained = [
+        (label, int(count))
+        for label, count in counts.items()
+        if int(count) >= min_group_rows
+    ][:max_groups]
+    if len(retained) < 2:
+        return {
+            "grouping": grouping,
+            "comparisons": [],
+            "reason": "fewer_than_two_eligible_groups",
+            "groups": [{"label": label, "rows": count} for label, count in retained],
+            "interpretation": (
+                "At least two groups with %d+ rows are required." % min_group_rows
+            ),
+        }
+    features = [
+        column
+        for column in sample.columns
+        if column != grouping and column != target and column not in ignored
+        and _is_numeric(sample[column])
+        and np.nanstd(pd.to_numeric(sample[column], errors="coerce").to_numpy(dtype=float)) > 0
+    ][:max_features]
+    rng = np.random.default_rng(random_state)
+    comparisons = []
+    for column in features:
+        values = pd.to_numeric(sample[column], errors="coerce").to_numpy(dtype=float)
+        for left_index, (left_label, left_rows) in enumerate(retained):
+            for right_label, right_rows in retained[left_index + 1:]:
+                left_values = values[(labels == left_label).to_numpy()]
+                right_values = values[(labels == right_label).to_numpy()]
+                left_values = left_values[np.isfinite(left_values)]
+                right_values = right_values[np.isfinite(right_values)]
+                if len(left_values) < min_group_rows or len(right_values) < min_group_rows:
+                    continue
+                d = _cohens_d(left_values, right_values)
+                delta = _cliffs_delta(left_values, right_values)
+                if d is None and delta is None:
+                    continue
+                d_ci, delta_ci = _effect_interval(left_values, right_values, rng, bootstrap, subsample)
+                comparisons.append(
+                    {
+                        "feature": column,
+                        "group_a": left_label,
+                        "group_b": right_label,
+                        "n_a": int(len(left_values)),
+                        "n_b": int(len(right_values)),
+                        "cohens_d": d,
+                        "cohens_d_ci": d_ci,
+                        "cliffs_delta": delta,
+                        "cliffs_delta_ci": delta_ci,
+                        "median_difference": float(np.median(left_values) - np.median(right_values)),
+                        "direction": (
+                            "higher_in_a" if d is not None and d > 0
+                            else "higher_in_b" if d is not None else None
+                        ),
+                    }
+                )
+    comparisons.sort(
+        key=lambda entry: (
+            -abs(entry["cliffs_delta"]) if entry["cliffs_delta"] is not None else 0.0
+        )
+    )
+    return {
+        "grouping": grouping,
+        "rows": int(len(sample)),
+        "sampled": bool(sampled),
+        "groups": [{"label": label, "rows": count} for label, count in retained],
+        "bootstrap": int(bootstrap),
+        "subsample": int(subsample),
+        "comparisons": comparisons,
+        "scope": "sampled rows; numeric features; per-comparison intervals",
+        "interpretation": (
+            "Cohen's d is a standardized mean difference (0.2 small, 0.5 medium, "
+            "0.8 large, in the conventional reading); Cliff's delta is the "
+            "probability of a higher value minus the reverse. Intervals are "
+            "bootstrap percentiles and are not adjusted for multiple comparisons."
+        ),
+    }
+
+
+def formal_tests(frame, *, target=None, ignored=None, max_rows=2000, max_columns=20, alpha=0.05):
+    """Normality tests per numeric column (Anderson-Darling).
+
+    Returns the statistic, the critical value at the requested significance level
+    (nearest available), the rejection verdict and a fixed caveat. This is the only
+    block in the EDA family that is a hypothesis test; it never enters
+    ``dataset_profile``.
+    """
+    if not isinstance(frame, pd.DataFrame):
+        raise TypeError("frame must be a pandas DataFrame")
+    if frame.empty:
+        raise ValueError("frame must contain at least one row")
+    ignored = set(ignored or [])
+    sample, sampled = _sample(frame, max_rows, 0)
+    features = [
+        column for column in sample.columns
+        if column != target and column not in ignored and _is_numeric(sample[column])
+    ][:max_columns]
+    results = []
+    for column in features:
+        values = pd.to_numeric(sample[column], errors="coerce").to_numpy(dtype=float)
+        values = values[np.isfinite(values)]
+        if values.size < 8:
+            results.append(
+                {"column": column, "n": int(values.size), "statistic": None,
+                 "critical_value": None, "rejects_normality": None,
+                 "reason": "fewer_than_8_finite_values"}
+            )
+            continue
+        if np.unique(values).size < 3:
+            results.append(
+                {"column": column, "n": int(values.size), "statistic": None,
+                 "critical_value": None, "rejects_normality": None,
+                 "reason": "fewer_than_3_distinct_values"}
+            )
+            continue
+        try:
+            try:
+                # Deliberately read the tabulated critical values (SciPy < 1.19).
+                # The ``method="interpolate"`` path caps its p-value at the
+                # smallest tabulated level (0.15), which reads like a real
+                # p-value and is not one; the FutureWarning is suppressed only
+                # because we handle the 1.19 signature below.
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", FutureWarning)
+                    result = stats.anderson(values, dist="norm")
+            except TypeError:  # SciPy >= 1.19 removed the table attributes
+                result = stats.anderson(values, dist="norm", method="interpolate")
+        except (ValueError, TypeError) as exc:  # pragma: no cover - defensive
+            results.append(
+                {"column": column, "n": int(values.size), "statistic": None,
+                 "critical_value": None, "p_value": None, "rejects_normality": None,
+                 "reason": str(exc)}
+            )
+            continue
+        critical_values = getattr(result, "critical_values", None)
+        if critical_values is None:
+            p_value = float(getattr(result, "pvalue", None))
+            results.append(
+                {
+                    "column": column,
+                    "n": int(values.size),
+                    "statistic": float(result.statistic),
+                    "p_value": p_value,
+                    "p_value_censored": bool(p_value >= 0.149),
+                    "critical_value": None,
+                    "significance_level": float(alpha),
+                    "rejects_normality": bool(p_value < alpha),
+                    "reason": None,
+                }
+            )
+            continue
+        levels = np.asarray(result.significance_level, dtype=float)
+        index = int(np.argmin(np.abs(levels - alpha * 100.0)))
+        critical = float(critical_values[index])
+        results.append(
+            {
+                "column": column,
+                "n": int(values.size),
+                "statistic": float(result.statistic),
+                "critical_value": critical,
+                "p_value": None,
+                "p_value_censored": None,
+                "significance_level": float(levels[index] / 100.0),
+                "rejects_normality": bool(result.statistic > critical),
+                "reason": None,
+            }
+        )
+    return {
+        "rows": int(len(sample)),
+        "sampled": bool(sampled),
+        "alpha": float(alpha),
+        "columns": results,
+        "method": "anderson_darling",
+        "scope": "sampled rows; numeric feature columns",
+        "caveat": (
+            "Anderson-Darling tests normality, not whether a transformation is "
+            "needed; with large n it rejects on trivial departures, and a "
+            "non-rejection never proves normality."
+        ),
+    }
+
+
+def _psi(reference, current, bins=10):
+    reference = np.asarray(reference, dtype=float)
+    current = np.asarray(current, dtype=float)
+    if reference.size < 2 or current.size < 2:
+        return None
+    edges = np.unique(np.quantile(reference, np.linspace(0.0, 1.0, bins + 1)))
+    if edges.size < 2:
+        return 0.0 if np.allclose(current, reference[0]) else 1.0
+    reference_share = np.clip(np.histogram(reference, bins=edges)[0] / reference.size, 1e-12, None)
+    current_share = np.clip(np.histogram(current, bins=edges)[0] / current.size, 1e-12, None)
+    return float(np.sum((current_share - reference_share) * np.log(current_share / reference_share)))
+
+
+def partition_drift(reference, current, *, features=None, target=None, ignored=None,
+                    max_columns=50, max_rows=5000, random_state=0):
+    """Distribution shift between two partitions of the same task.
+
+    Numeric features report a two-sample Kolmogorov-Smirnov test and the
+    population stability index (decile bins taken from the reference); categorical
+    features report a chi-square test of homogeneity, Cramer's V and the total
+    variation distance. All tests are per feature and uncorrected.
+    """
+    for name, frame in (("reference", reference), ("current", current)):
+        if not isinstance(frame, pd.DataFrame):
+            raise TypeError("%s must be a pandas DataFrame" % name)
+        if frame.empty:
+            raise ValueError("%s frame must contain at least one row" % name)
+    ignored = set(ignored or [])
+    reference_sample, reference_sampled = _sample(reference, max_rows, random_state)
+    current_sample, current_sampled = _sample(current, max_rows, random_state)
+    if features is None:
+        features = [
+            column for column in reference.columns
+            if column in current_sample.columns and column != target and column not in ignored
+        ][:max_columns]
+    numeric_rows = []
+    categorical_rows = []
+    for column in features:
+        if column not in reference_sample.columns or column not in current_sample.columns:
+            continue
+        left_series = reference_sample[column]
+        right_series = current_sample[column]
+        if _is_numeric(left_series) and _is_numeric(right_series):
+            left = pd.to_numeric(left_series, errors="coerce").to_numpy(dtype=float)
+            right = pd.to_numeric(right_series, errors="coerce").to_numpy(dtype=float)
+            left = left[np.isfinite(left)]
+            right = right[np.isfinite(right)]
+            if left.size < 8 or right.size < 8:
+                numeric_rows.append({"column": column, "reason": "too_few_finite_values"})
+                continue
+            ks = stats.ks_2samp(left, right)
+            numeric_rows.append(
+                {
+                    "column": column,
+                    "n_reference": int(left.size),
+                    "n_current": int(right.size),
+                    "ks_statistic": float(ks.statistic),
+                    "ks_p_value": float(ks.pvalue),
+                    "psi": _psi(left, right),
+                    "mean_reference": float(np.mean(left)),
+                    "mean_current": float(np.mean(right)),
+                    "shift_in_pooled_sd": float(
+                        (np.mean(right) - np.mean(left))
+                        / (np.sqrt((np.var(left) + np.var(right)) / 2.0) or np.nan)
+                    ),
+                    "reason": None,
+                }
+            )
+        else:
+            left = left_series.astype("string").fillna("<missing>")
+            right = right_series.astype("string").fillna("<missing>")
+            left_counts = left.value_counts()
+            right_counts = right.value_counts()
+            levels = sorted(set(left_counts.index) | set(right_counts.index), key=str)
+            if len(levels) < 2:
+                categorical_rows.append({"column": column, "reason": "insufficient_levels"})
+                continue
+            if len(levels) > 50:
+                # A chi-square on a near-unique text column is uninformative
+                # (expected counts collapse, df explodes); report the shift
+                # descriptively instead of a meaningless p-value.
+                share_left = left_counts / max(int(left_counts.sum()), 1)
+                share_right = right_counts / max(int(right_counts.sum()), 1)
+                categorical_rows.append(
+                    {
+                        "column": column,
+                        "levels": int(len(levels)),
+                        "total_variation": float(
+                            0.5 * np.abs(
+                                share_left.reindex(levels, fill_value=0.0).to_numpy(dtype=float)
+                                - share_right.reindex(levels, fill_value=0.0).to_numpy(dtype=float)
+                            ).sum()
+                        ),
+                        "reason": "too_many_levels",
+                    }
+                )
+                continue
+            # Compare the two marginal distributions directly. A crosstab of the
+            # two samples would pair independent rows and test the wrong thing.
+            table = np.array(
+                [
+                    [int(left_counts.get(level, 0)) for level in levels],
+                    [int(right_counts.get(level, 0)) for level in levels],
+                ],
+                dtype=float,
+            )
+            try:
+                chi2, p_value, _, _ = stats.chi2_contingency(table)
+            except ValueError as exc:  # pragma: no cover - defensive
+                categorical_rows.append({"column": column, "reason": str(exc)})
+                continue
+            share_left = left_counts / max(int(left_counts.sum()), 1)
+            share_right = right_counts / max(int(right_counts.sum()), 1)
+            total_variation = float(
+                0.5 * np.abs(
+                    share_left.reindex(levels, fill_value=0.0).to_numpy(dtype=float)
+                    - share_right.reindex(levels, fill_value=0.0).to_numpy(dtype=float)
+                ).sum()
+            )
+            total = float(table.sum())
+            categorical_rows.append(
+                {
+                    "column": column,
+                    "chi2": float(chi2),
+                    "p_value": float(p_value),
+                    "cramers_v": float(np.sqrt(chi2 / total)) if total else None,
+                    "total_variation": total_variation,
+                    "levels": int(len(levels)),
+                    "reason": None,
+                }
+            )
+    return {
+        "features": list(features),
+        "reference_rows": int(len(reference_sample)),
+        "current_rows": int(len(current_sample)),
+        "sampled": bool(reference_sampled or current_sampled),
+        "numeric": numeric_rows,
+        "categorical": categorical_rows,
+        "scope": "sampled rows; per-feature tests, uncorrected",
+        "caveats": [
+            "KS and chi-square p-values are per comparison and are not adjusted for the number of features tested.",
+            "PSI above 0.2 conventionally signals a meaningful shift; it is descriptive, not a test.",
+            "A shift between partitions can be legitimate (a temporal split) or a leak (a random split with duplicated rows).",
+        ],
+    }
+
+
+def stability(frame, *, target=None, ignored=None, max_rows=2000, max_columns=20, random_state=0):
+    """How far do the summary statistics move between two random halves?
+
+    Reports per-column relative differences for numeric quantiles/mean and the
+    largest share difference for categorical levels, plus the effective sample
+    size (complete cases across the tested numeric columns). Large values mean the
+    profile's numbers depend on which rows happened to be sampled.
+    """
+    if not isinstance(frame, pd.DataFrame):
+        raise TypeError("frame must be a pandas DataFrame")
+    if frame.empty:
+        raise ValueError("frame must contain at least one row")
+    ignored = set(ignored or [])
+    sample, sampled = _sample(frame, max_rows, random_state)
+    if len(sample) < 20:
+        return {
+            "rows": int(len(sample)),
+            "columns": [],
+            "reason": "fewer_than_20_rows",
+            "max_relative_difference": None,
+            "interpretation": "Too few rows to compare halves.",
+        }
+    shuffled = sample.sample(frac=1.0, random_state=random_state)
+    half = len(shuffled) // 2
+    left, right = shuffled.iloc[:half], shuffled.iloc[half:]
+    features = [
+        column for column in sample.columns
+        if column != target and column not in ignored
+    ][:max_columns]
+    columns = []
+    numeric_columns = []
+    for column in features:
+        if _is_numeric(sample[column]):
+            left_values = pd.to_numeric(left[column], errors="coerce").to_numpy(dtype=float)
+            right_values = pd.to_numeric(right[column], errors="coerce").to_numpy(dtype=float)
+            left_values = left_values[np.isfinite(left_values)]
+            right_values = right_values[np.isfinite(right_values)]
+            if left_values.size < 5 or right_values.size < 5:
+                continue
+            numeric_columns.append(column)
+            pooled = np.concatenate([left_values, right_values])
+            q25, q75 = np.quantile(pooled, [0.25, 0.75])
+            scale = float(q75 - q25)
+            if not np.isfinite(scale) or scale <= 0:
+                scale = float(np.std(pooled, ddof=1))
+            if not np.isfinite(scale) or scale <= 0:
+                scale = 1.0
+            comparisons = {}
+            for name, function in (
+                ("mean", np.mean),
+                ("median", np.median),
+                ("std", lambda values: np.std(values, ddof=1)),
+                ("q25", lambda values: np.quantile(values, 0.25)),
+                ("q75", lambda values: np.quantile(values, 0.75)),
+            ):
+                first = float(function(left_values))
+                second = float(function(right_values))
+                # Scale by the column's IQR so a zero-centred column does not
+                # explode the ratio when its mean happens to be near zero.
+                comparisons[name] = abs(first - second) / scale
+            columns.append(
+                {
+                    "column": column,
+                    "kind": "numeric",
+                    "scale": scale,
+                    "relative_differences": comparisons,
+                    "max_relative_difference": max(comparisons.values()),
+                }
+            )
+        else:
+            left_share = left[column].astype("string").value_counts(normalize=True)
+            right_share = right[column].astype("string").value_counts(normalize=True)
+            levels = left_share.index.union(right_share.index)
+            if not len(levels):
+                continue
+            difference = float(
+                np.max(
+                    np.abs(
+                        left_share.reindex(levels, fill_value=0.0).to_numpy(dtype=float)
+                        - right_share.reindex(levels, fill_value=0.0).to_numpy(dtype=float)
+                    )
+                )
+            )
+            columns.append(
+                {
+                    "column": column,
+                    "kind": "categorical",
+                    "max_share_difference": difference,
+                    "max_relative_difference": difference,
+                }
+            )
+    effective_rows = int(len(sample))
+    if numeric_columns:
+        matrix = sample[numeric_columns].apply(pd.to_numeric, errors="coerce")
+        effective_rows = int(matrix.notna().all(axis=1).sum())
+    overall = max((entry["max_relative_difference"] for entry in columns), default=None)
+    return {
+        "rows": int(len(sample)),
+        "sampled": bool(sampled),
+        "half_rows": int(half),
+        "effective_rows": effective_rows,
+        "columns": columns,
+        "max_relative_difference": overall,
+        "scope": "two disjoint random halves of the sampled rows",
+        "interpretation": (
+            "Values near 1 mean the summary is unstable at this sample size; the "
+            "profile should be read as approximate. Categorical entries are absolute "
+            "share differences, numeric ones are relative differences."
+        ),
+    }
+
+
+def _markdown_table(headers, rows):
+    lines = ["| " + " | ".join(headers) + " |",
+             "| " + " | ".join("---" for _ in headers) + " |"]
+    for row in rows:
+        lines.append("| " + " | ".join("" if value is None else str(value) for value in row) + " |")
+    return "\n".join(lines)
+
+
+def _format_number(value, digits=4):
+    if value is None:
+        return "—"
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if not np.isfinite(number):
+        return "—"
+    if number != 0 and abs(number) < 1e-3:
+        return "%.3e" % number
+    return ("%." + str(digits) + "f") % number
+
+
+def markdown_report(payload, *, generated_at=None, max_rows=25):
+    """Render the EDA payload as a self-contained Markdown report.
+
+    Every section repeats its sample scope and the run limits, so a reader can
+    reproduce or discount the numbers without opening the UI.
+    """
+    if generated_at is None:
+        generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    missing = payload.get("missing") or {}
+    composition = payload.get("target_composition") or {}
+    formal = payload.get("formal_tests") or {}
+    effects = payload.get("effect_sizes") or {}
+    stability_report = payload.get("stability") or {}
+    flags = payload.get("quality_flags") or {}
+    mechanism = payload.get("missing_mechanism") or {}
+    audit = payload.get("type_audit") or {}
+    sampling = payload.get("row_sampling") or {}
+
+    lines = []
+    lines.append("# EDA report — `%s` / `%s`" % (payload.get("task_name"), payload.get("partition")))
+    lines.append("")
+    lines.append("- Generated: %s (UTC)" % generated_at)
+    lines.append("- Target: `%s`; rows: %s; columns: %s"
+                 % (payload.get("target"), payload.get("rows"), len(payload.get("columns") or [])))
+    lines.append("- Ignored columns: %s" % (", ".join(payload.get("ignored_columns") or []) or "none"))
+    lines.append("- Row sampling: %s (limit %s)"
+                 % (sampling.get("method", "none"), payload.get("feature_limit")))
+    lines.append("- All statistics are descriptive unless a section is labelled as a test;"
+                 " no causal claim is made anywhere in this report.")
+    lines.append("")
+
+    lines.append("## Missingness")
+    lines.append("")
+    lines.append("- Missing cells: %s of %s (%s%%)"
+                 % (missing.get("missing_cells"), missing.get("total_cells"),
+                    _format_number((missing.get("missing_pct") or 0) * 100, 2)))
+    lines.append("- Complete rows: %s (%s%%)"
+                 % (missing.get("complete_rows"), _format_number((missing.get("complete_pct") or 0) * 100, 2)))
+    lines.append("- Target missing: %s" % missing.get("target_missing"))
+    column_rows = []
+    for entry in (missing.get("columns") or [])[:max_rows]:
+        column_rows.append(
+            [
+                "`%s`" % entry.get("column"),
+                entry.get("deduced_type") or entry.get("dtype"),
+                "%s (%s%%)" % (entry.get("missing"), _format_number((entry.get("missing_pct") or 0) * 100, 1)),
+                entry.get("unique"),
+                "yes" if entry.get("constant") else "",
+                "yes" if entry.get("ignored") else "",
+            ]
+        )
+    if column_rows:
+        lines.append("")
+        lines.append(_markdown_table(["Column", "Type", "Missing", "Distinct", "Constant", "Ignored"], column_rows))
+    lines.append("")
+
+    if composition:
+        lines.append("## Target composition")
+        lines.append("")
+        if composition.get("kind") == "categorical":
+            lines.append("- Classes: %s; minority share: %s; imbalance ratio: %s"
+                         % (composition.get("distinct_classes"),
+                            _format_number((composition.get("minority_share") or 0) * 100, 1) + "%",
+                            _format_number(composition.get("imbalance_ratio"), 2)))
+            lines.append("- Recommended stratified folds: %s (feasible: %s)"
+                         % (composition.get("recommended_folds"), composition.get("stratification_feasible")))
+            lines.append("")
+            lines.append(_markdown_table(
+                ["Class", "Rows", "Share"],
+                [["`%s`" % entry.get("label"), entry.get("count"),
+                  _format_number((entry.get("share") or 0) * 100, 1) + "%"]
+                 for entry in (composition.get("classes") or [])[:max_rows]],
+            ))
+        else:
+            distribution = composition.get("distribution") or {}
+            lines.append("- Numeric target with %s distinct values%s"
+                         % (composition.get("distinct_values"),
+                            " (binary-like)" if composition.get("binary_like") else ""))
+            lines.append("- Skewness: %s; excess kurtosis: %s; IQR outliers: %s"
+                         % (_format_number(distribution.get("skewness"), 3),
+                            _format_number(distribution.get("excess_kurtosis"), 3),
+                            distribution.get("iqr_outlier_count")))
+        lines.append("")
+
+    lines.append("## Distributions")
+    lines.append("")
+    distribution_rows = []
+    for entry in (payload.get("column_profiles") or [])[:max_rows]:
+        distribution = entry.get("distribution") or {}
+        if entry.get("kind") == "numeric":
+            summary = "min %s · q25 %s · median %s · q75 %s · max %s" % (
+                _format_number(distribution.get("min")),
+                _format_number(distribution.get("q25")),
+                _format_number(distribution.get("median")),
+                _format_number(distribution.get("q75")),
+                _format_number(distribution.get("max")),
+            )
+        else:
+            summary = "; ".join(
+                "%s (%s%%)" % (level.get("value"), _format_number((level.get("proportion") or 0) * 100, 1))
+                for level in (distribution.get("top") or [])[:4]
+            )
+        distribution_rows.append(["`%s`" % entry.get("column"), entry.get("kind"), summary])
+    if distribution_rows:
+        lines.append(_markdown_table(["Column", "Kind", "Summary"], distribution_rows))
+    lines.append("")
+
+    lines.append("## Associations")
+    lines.append("")
+    lines.append("Target associations (each row names its statistic):")
+    lines.append("")
+    association_rows = [
+        ["`%s`" % entry.get("feature"), entry.get("method"), _format_number(entry.get("value"), 3)]
+        for entry in (payload.get("target_associations") or [])[:max_rows]
+    ]
+    lines.append(_markdown_table(["Feature", "Statistic", "Value"], association_rows) if association_rows
+                 else "No association could be computed.")
+    lines.append("")
+    lines.append("These are exploratory associations, not causal effects or hypothesis tests.")
+    lines.append("")
+
+    multicollinearity = payload.get("multicollinearity")
+    if multicollinearity:
+        lines.append("## Collinearity")
+        lines.append("")
+        lines.append("- Condition number: %s (%s)"
+                     % (_format_number(multicollinearity.get("condition_number")),
+                        multicollinearity.get("condition_number_reason") or "standardized design matrix"))
+        lines.append("")
+        lines.append(_markdown_table(
+            ["Feature", "VIF", "R²"],
+            [["`%s`" % entry.get("feature"),
+              _format_number(entry.get("value"), 2) if entry.get("value") is not None
+              else (entry.get("reason") or "undefined"),
+              _format_number(entry.get("r_squared"), 3)]
+             for entry in (multicollinearity.get("vif") or [])],
+        ))
+        lines.append("")
+
+    if flags:
+        lines.append("## Data-quality flags")
+        lines.append("")
+        if flags.get("flags"):
+            lines.append(_markdown_table(
+                ["Severity", "Flag", "Column", "Detail"],
+                [[flag.get("severity"), flag.get("kind"), flag.get("column") or "—", flag.get("detail")]
+                 for flag in flags.get("flags")[:max_rows]],
+            ))
+        else:
+            lines.append("No flag raised.")
+        lines.append("")
+        duplicates = flags.get("duplicates") or {}
+        lines.append("- Feature-duplicate rows: %s; exact duplicates: %s; conflicting-label groups: %s (%s rows)"
+                     % (duplicates.get("feature_duplicates"), duplicates.get("exact_rows"),
+                        duplicates.get("conflicting_label_groups"), duplicates.get("conflicting_label_rows")))
+        lines.append("- Scope: %s" % flags.get("scope"))
+        lines.append("")
+
+    if mechanism:
+        lines.append("## Missing-data mechanism")
+        lines.append("")
+        mcar = mechanism.get("mcar") or {}
+        if mcar.get("statistic") is not None:
+            lines.append("- Little's MCAR: χ² = %s, df = %s, p = %s (n = %s rows, %s columns)"
+                         % (_format_number(mcar.get("statistic"), 3), mcar.get("df"),
+                            _format_number(mcar.get("p_value")), mcar.get("rows"), mcar.get("columns")))
+        else:
+            lines.append("- Little's MCAR: not available (%s)" % (mcar.get("reason") or "unknown"))
+        lines.append("- Columns tested: %s" % (", ".join(mechanism.get("columns") or []) or "none"))
+        if mechanism.get("shifts"):
+            lines.append("")
+            lines.append(_markdown_table(
+                ["Missing column", "Numeric column", "Mean observed", "Mean missing", "Std. diff"],
+                [[entry.get("missing_column"), entry.get("numeric_column"),
+                  _format_number(entry.get("mean_observed")), _format_number(entry.get("mean_missing")),
+                  _format_number(entry.get("standardized_difference"), 3)]
+                 for entry in mechanism.get("shifts")[:12]],
+            ))
+        lines.append("")
+        lines.append(mechanism.get("interpretation") or "")
+        lines.append("")
+
+    if audit and audit.get("issues"):
+        lines.append("## Type audit")
+        lines.append("")
+        lines.append(_markdown_table(
+            ["Severity", "Column", "Issue", "Detail"],
+            [[issue.get("severity"), issue.get("column"), issue.get("issue"), issue.get("detail")]
+             for issue in audit.get("issues")[:max_rows]],
+        ))
+        lines.append("")
+
+    if formal:
+        lines.append("## Formal tests — normality (Anderson-Darling)")
+        lines.append("")
+        lines.append(_markdown_table(
+            ["Column", "n", "Statistic", "p", "Critical (5%)", "Rejects normality", "Reason"],
+            [["`%s`" % entry.get("column"), entry.get("n"),
+              _format_number(entry.get("statistic"), 3),
+              _format_number(entry.get("p_value")),
+              _format_number(entry.get("critical_value"), 3),
+              entry.get("rejects_normality"),
+              entry.get("reason") or ""]
+             for entry in (formal.get("columns") or [])[:max_rows]],
+        ))
+        lines.append("")
+        lines.append(formal.get("caveat") or "")
+        lines.append("")
+
+    if effects and effects.get("comparisons"):
+        lines.append("## Effect sizes (bootstrap intervals)")
+        lines.append("")
+        lines.append("- Grouping: `%s`; groups: %s; bootstrap replicates: %s"
+                     % (effects.get("grouping"),
+                        ", ".join("%s (%s)" % (group.get("label"), group.get("rows"))
+                                  for group in effects.get("groups") or []),
+                        effects.get("bootstrap")))
+        lines.append("")
+        lines.append(_markdown_table(
+            ["Feature", "Group A", "Group B", "Cohen's d [95% CI]", "Cliff's δ [95% CI]"],
+            [["`%s`" % entry.get("feature"), entry.get("group_a"), entry.get("group_b"),
+              "%s %s" % (_format_number(entry.get("cohens_d"), 2),
+                         "[%s, %s]" % (_format_number((entry.get("cohens_d_ci") or [None, None])[0], 2),
+                                       _format_number((entry.get("cohens_d_ci") or [None, None])[1], 2))
+                         if entry.get("cohens_d_ci") else ""),
+              "%s %s" % (_format_number(entry.get("cliffs_delta"), 2),
+                         "[%s, %s]" % (_format_number((entry.get("cliffs_delta_ci") or [None, None])[0], 2),
+                                       _format_number((entry.get("cliffs_delta_ci") or [None, None])[1], 2))
+                         if entry.get("cliffs_delta_ci") else "")]
+             for entry in (effects.get("comparisons") or [])[:max_rows]],
+        ))
+        lines.append("")
+        lines.append(effects.get("interpretation") or "")
+        lines.append("")
+
+    if stability_report:
+        lines.append("## Summary stability")
+        lines.append("")
+        lines.append("- Two halves of the sampled rows; effective rows: %s of %s"
+                     % (stability_report.get("effective_rows"), stability_report.get("rows")))
+        lines.append("- Largest relative difference: %s"
+                     % _format_number(stability_report.get("max_relative_difference"), 3))
+        lines.append("")
+        lines.append(_markdown_table(
+            ["Column", "Kind", "Max relative difference"],
+            [["`%s`" % entry.get("column"), entry.get("kind"),
+              _format_number(entry.get("max_relative_difference"), 3)]
+             for entry in (stability_report.get("columns") or [])[:max_rows]],
+        ))
+        lines.append("")
+        lines.append(stability_report.get("interpretation") or "")
+        lines.append("")
+
+    lines.append("## Methods and limits")
+    lines.append("")
+    lines.append("- Numeric summaries and associations come from the bounded `dataset_profile`"
+                 " contract (≤5,000 sampled rows, ≤100 features, ≤10 categories).")
+    lines.append("- Formal tests are Anderson-Darling (normality) and Little's MCAR; effect"
+                 " intervals are percentile bootstrap; nothing is corrected for multiplicity.")
+    lines.append("- Counts labelled *exact* (target composition, duplicate rows) cover the full"
+                 " partition; everything else is bounded to the sampled rows named above.")
+    lines.append("- This report never modifies the partition and never removes a column.")
+    lines.append("")
+    return "\n".join(lines)
+
+
+__all__ = [
+    "effect_sizes",
+    "formal_tests",
+    "little_mcar",
+    "markdown_report",
+    "missing_mechanism",
+    "partition_drift",
+    "quality_flags",
+    "semantic_audit",
+    "stability",
+]

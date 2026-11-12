@@ -41,12 +41,12 @@ def _frame():
     )
 
 
-def _register(client, frame=None, target="y"):
+def _register(client, frame=None, target="y", partition="train"):
     buffer = io.StringIO()
     (frame if frame is not None else _frame()).to_csv(buffer, index=False)
     response = client.post(
         f"/api/datasets/{TASK}/register",
-        data={"target": target, "partition": "train"},
+        data={"target": target, "partition": partition},
         files={"file": ("train.csv", buffer.getvalue().encode("utf-8"), "text/csv")},
     )
     assert response.status_code == 200, response.text
@@ -228,6 +228,84 @@ def test_preprocessing_overview_flags_identifier_columns(client):
     kinds = {(flag["kind"], flag["column"]) for flag in payload["quality_flags"]["flags"]}
     assert ("identifier_like", "row_id") in kinds
     assert payload["type_audit"]["issues"] == []
+
+
+def test_preprocessing_overview_exposes_tier3_diagnostics(client):
+    """Formal tests, effect sizes and stability travel with the overview."""
+    frame = pd.DataFrame(
+        {
+            "x": np.linspace(0.0, 1.0, 120),
+            "z": np.random.default_rng(2).normal(size=120),
+            "label": ["a"] * 60 + ["b"] * 60,
+        }
+    )
+    frame.loc[frame["label"] == "b", "x"] = frame.loc[frame["label"] == "b", "x"] + 0.5
+    _register(client, frame, target="label")
+    payload = _preprocessing(client)
+
+    formal = payload["formal_tests"]
+    assert formal["method"] == "anderson_darling"
+    assert {entry["column"] for entry in formal["columns"]} == {"x", "z"}
+    assert all("rejects_normality" in entry for entry in formal["columns"])
+
+    effects = payload["effect_sizes"]
+    assert effects["grouping"] == "label"
+    assert effects["groups"] and len(effects["groups"]) == 2
+    comparison = effects["comparisons"][0]
+    assert comparison["group_a"] == "a" and comparison["group_b"] == "b"
+    assert comparison["cohens_d"] < 0  # 'b' has the larger x
+    low, high = comparison["cliffs_delta_ci"]
+    assert low <= comparison["cliffs_delta"] <= high
+
+    stability_report = payload["stability"]
+    assert stability_report["effective_rows"] <= stability_report["rows"]
+    assert stability_report["columns"]
+    assert stability_report["max_relative_difference"] is not None
+
+
+def test_partition_drift_route_reports_shift_and_refuses_identical_partitions(client):
+    rng = np.random.default_rng(4)
+    frame = pd.DataFrame(
+        {
+            "x": rng.normal(size=200),
+            "z": rng.normal(size=200),
+            "y": rng.choice([0.0, 1.0], size=200),
+        }
+    )
+    _register(client, frame)
+    shifted = frame.copy()
+    shifted["z"] = shifted["z"] + 5.0
+    _register(client, shifted, partition="holdout")
+
+    response = client.get(f"/api/datasets/{TASK}/holdout/partition-drift?reference=train")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["reference"] == "train" and payload["partition"] == "holdout"
+    rows = {entry["column"]: entry for entry in payload["numeric"]}
+    assert rows["z"]["ks_p_value"] < 0.05
+    assert rows["z"]["psi"] > 0.2
+    assert rows["x"]["ks_p_value"] > 0.01
+    assert payload["caveats"]
+
+    same = client.get(f"/api/datasets/{TASK}/train/partition-drift?reference=train")
+    assert same.status_code == 400
+    assert "different partitions" in same.json()["detail"]
+
+
+def test_eda_report_route_returns_markdown_with_scope(client):
+    _register(client)
+    response = client.get(f"/api/datasets/{TASK}/train/eda-report")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["generated_at"]
+    markdown = payload["markdown"]
+    assert markdown.startswith("# EDA report")
+    for heading in ("## Missingness", "## Distributions", "## Methods and limits"):
+        assert heading in markdown
+    assert "never modifies the partition" in markdown
+
+    missing = client.get(f"/api/datasets/{TASK}/nonexistent/eda-report")
+    assert missing.status_code == 404
 
 
 def test_preview_only_imputation_writes_nothing(client):

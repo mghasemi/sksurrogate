@@ -494,9 +494,112 @@ export interface PreprocessingOverview {
   quality_flags: QualityFlags;
   missing_mechanism: MissingMechanism;
   type_audit: TypeAudit;
+  formal_tests: FormalTests;
+  effect_sizes: EffectSizes;
+  stability: StabilityReport;
   preview: Array<Record<string, unknown>>;
   methods: ImputationMethod[];
   clip_methods: ClipMethod[];
+}
+
+/** Anderson-Darling normality tests (``api/eda.py::formal_tests``). */
+export interface FormalTests {
+  rows: number;
+  sampled: boolean;
+  alpha: number;
+  method: string;
+  scope: string;
+  caveat: string;
+  columns: Array<{
+    column: string;
+    n: number;
+    statistic: number | null;
+    p_value: number | null;
+    critical_value: number | null;
+    significance_level?: number;
+    rejects_normality: boolean | null;
+    reason: string | null;
+  }>;
+}
+
+/** Standardized effect sizes with bootstrap intervals. */
+export interface EffectSizes {
+  grouping: string | null;
+  rows?: number;
+  sampled?: boolean;
+  groups?: Array<{ label: string; rows: number }>;
+  bootstrap?: number;
+  subsample?: number;
+  scope?: string;
+  interpretation: string;
+  reason?: string | null;
+  comparisons: Array<{
+    feature: string;
+    group_a: string;
+    group_b: string;
+    n_a?: number;
+    n_b?: number;
+    cohens_d: number | null;
+    cohens_d_ci: [number, number] | null;
+    cliffs_delta: number | null;
+    cliffs_delta_ci: [number, number] | null;
+    median_difference?: number;
+    direction: string | null;
+  }>;
+}
+
+/** Summary-statistic stability between two random halves. */
+export interface StabilityReport {
+  rows: number;
+  sampled?: boolean;
+  half_rows?: number;
+  effective_rows: number;
+  reason?: string;
+  scope?: string;
+  interpretation: string;
+  max_relative_difference: number | null;
+  columns: Array<{
+    column: string;
+    kind: string;
+    scale?: number;
+    max_share_difference?: number;
+    relative_differences?: Record<string, number>;
+    max_relative_difference: number;
+  }>;
+}
+
+/** Partition-to-partition drift report. */
+export interface PartitionDrift {
+  task_name: string;
+  partition: string;
+  reference: string;
+  target: string | null;
+  reference_rows: number;
+  current_rows: number;
+  sampled: boolean;
+  scope: string;
+  caveats: string[];
+  numeric: Array<{
+    column: string;
+    n_reference?: number;
+    n_current?: number;
+    ks_statistic?: number;
+    ks_p_value?: number;
+    psi?: number;
+    mean_reference?: number;
+    mean_current?: number;
+    shift_in_pooled_sd?: number;
+    reason: string | null;
+  }>;
+  categorical: Array<{
+    column: string;
+    chi2?: number;
+    p_value?: number;
+    cramers_v?: number | null;
+    total_variation?: number;
+    levels?: number;
+    reason: string | null;
+  }>;
 }
 
 /** Tier-2 data-quality diagnostics (``api/eda.py::quality_flags``). */
@@ -857,6 +960,19 @@ export interface ImputationReport {
 export const getPreprocessing = (task: string, partition: string) =>
   get<PreprocessingOverview>(
     `/api/datasets/${encodeURIComponent(task)}/${encodeURIComponent(partition)}/preprocessing`,
+  );
+
+/** Feature-level shift between a partition and a reference partition. */
+export const getPartitionDrift = (task: string, partition: string, reference: string) =>
+  get<PartitionDrift>(
+    `/api/datasets/${encodeURIComponent(task)}/${encodeURIComponent(partition)}/partition-drift` +
+      `?reference=${encodeURIComponent(reference)}`,
+  );
+
+/** Self-contained Markdown EDA report (rendered server-side). */
+export const getEdaReport = (task: string, partition: string) =>
+  get<{ task_name: string; partition: string; generated_at: string; markdown: string }>(
+    `/api/datasets/${encodeURIComponent(task)}/${encodeURIComponent(partition)}/eda-report`,
   );
 
 export interface ImputeRequest {

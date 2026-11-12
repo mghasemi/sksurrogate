@@ -256,6 +256,33 @@ Below them, three diagnostic cards turn the profile into review decisions:
    Flags, Little's MCAR statistic and dtype/value mismatches; every entry names
    its column and no flag removes anything automatically.
 
+Four cards turn the diagnostics into statistics and comparisons:
+
+* **Formal tests (Anderson–Darling)** — one row per numeric feature with the
+  statistic, the tabulated critical value at α = 0.05, the verdict, and the
+  caveat that a rejection at large *n* can be trivial. The p-value is omitted on
+  this path because SciPy's interpolated p is capped at 0.15 and would read as a
+  real number.
+* **Effect sizes between groups** — Cohen's *d* and Cliff's δ between the largest
+  target classes (or a chosen grouping) with percentile bootstrap intervals,
+  labelled as uncorrected per-comparison intervals. A numeric target says so
+  instead of inventing classes.
+* **Partition drift** — pick another stored partition and compare: two-sample KS
+  and PSI per numeric feature (PSI ≥ 0.2 is badged), chi-square, Cramér's V and
+  total variation per categorical feature. Columns with more than 50 levels skip
+  the test.
+* **Summary stability** — each summary recomputed on two disjoint random halves,
+  expressed as a fraction of the column's IQR, with the effective sample size.
+  **Download EDA report (Markdown)** renders the whole page as a reproducible
+  file whose sections repeat their sampling scope.
+
+.. figure:: images/preprocessing-tier3.png
+   :alt: Formal tests, effect sizes, partition drift and summary stability
+   :width: 100%
+
+   Anderson–Darling verdicts, bootstrap effect sizes by target class, KS/PSI
+   drift against a holdout partition, and IQR-scaled half-sample stability.
+
 To impute, pick a method — drop rows, mean, median, most frequent, constant,
 K-nearest neighbours or iterative/MICE — and the columns to fill (the target is
 never imputed, and ignored columns are not offered). Use **Preview imputation**

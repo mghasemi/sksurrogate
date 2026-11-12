@@ -39,6 +39,15 @@ Data Preprocessing page
   type audit (numeric-looking text, mixed types, boolean/date-like text,
   whitespace and case variants). New response blocks: ``quality_flags``,
   ``missing_mechanism``, ``type_audit``; helpers live in ``api/eda.py``.
+* **Tier-3 statistics** on the same page: Anderson–Darling normality tests per
+  numeric column (tabulated critical values, verdict, caveat), Cohen's *d* and
+  Cliff's δ with percentile bootstrap intervals between the largest target
+  classes, IQR-scaled half-sample stability with the effective sample size, a new
+  ``GET .../partition-drift`` route (two-sample KS + PSI per numeric feature,
+  chi-square homogeneity + Cramér's V + total variation per categorical feature,
+  >50-level columns skipped), and ``GET .../eda-report`` returning a
+  self-contained Markdown report that the UI downloads as
+  ``eda-<task>-<partition>.md``. Formal tests stay out of ``dataset_profile``.
 
 Categorical encoding, outlier clipping and duplicate removal
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -6,7 +6,9 @@ import {
   deduplicateDataset,
   getDatasetMetadata,
   getDuplicates,
+  getEdaReport,
   getEncodingPreview,
+  getPartitionDrift,
   getPreprocessing,
   imputeDataset,
 } from "../api/client";
@@ -15,7 +17,9 @@ import type {
   DuplicateAnalysis,
   EdaColumn,
   EdaNumericDistribution,
+  EffectSizes,
   EncodingPreview,
+  FormalTests,
   ImputationReport,
   MissingMechanism,
   Multicollinearity,
@@ -24,6 +28,7 @@ import type {
   PreprocessingOverview,
   QualityFlag,
   QualityFlags,
+  StabilityReport,
   TargetComposition,
   TypeAudit,
 } from "../api/client";
@@ -732,6 +737,264 @@ function TypeAuditCard({ audit }: { audit: TypeAudit }) {
   );
 }
 
+function FormalTestsCard({ tests }: { tests: FormalTests }) {
+  const rows = tests.columns;
+  return (
+    <Card
+      title="Formal tests — normality (Anderson–Darling)"
+      sub={`Hypothesis tests at α = ${tests.alpha}. These are the only test results in this page apart from Little's MCAR; they are not evidence about a model.`}
+    >
+      {rows.length === 0 ? (
+        <p className="muted">No numeric feature column to test.</p>
+      ) : (
+        <Table<(typeof rows)[number]>
+          columns={["Column", "n", "Statistic", "p", "Critical (5%)", "Verdict", "Note"]}
+          rows={rows}
+          keyOf={(entry) => entry.column}
+          render={(entry) => [
+            <td key="c" className="mono">{entry.column}</td>,
+            <td key="n">{fmtNum(entry.n)}</td>,
+            <td key="s">{num(entry.statistic, 3)}</td>,
+            <td key="p">{entry.p_value === null ? "—" : fmtSci(entry.p_value)}</td>,
+            <td key="k">{num(entry.critical_value, 3)}</td>,
+            <td key="v">
+              {entry.rejects_normality === null ? (
+                <Badge tone="muted">not tested</Badge>
+              ) : entry.rejects_normality ? (
+                <Badge tone="warn">rejects normality</Badge>
+              ) : (
+                <Badge tone="ok">no rejection</Badge>
+              )}
+            </td>,
+            <td key="r" className="muted">{entry.reason ?? ""}</td>,
+          ]}
+        />
+      )}
+      <p className="hint">{tests.caveat}</p>
+    </Card>
+  );
+}
+
+function formatInterval(interval: [number, number] | null): string {
+  if (!interval) return "—";
+  return `[${num(interval[0], 2)}, ${num(interval[1], 2)}]`;
+}
+
+function EffectSizesCard({ effects }: { effects: EffectSizes }) {
+  return (
+    <Card
+      title="Effect sizes between groups"
+      sub="Standardized differences between the largest target classes (or a selected grouping), with percentile bootstrap intervals. Not adjusted for multiple comparisons."
+    >
+      {effects.comparisons.length === 0 ? (
+        <p className="muted">
+          {effects.reason === "grouping_column_is_numeric"
+            ? "The target is numeric — effect sizes need classes. Choose a categorical group_by column (or bin the target) to compare groups."
+            : effects.reason === "fewer_than_two_eligible_groups"
+              ? "Fewer than two groups have at least 10 rows, so no comparison is possible."
+              : effects.interpretation}
+        </p>
+      ) : (
+        <>
+          <p className="muted">
+            Grouping: <code>{effects.grouping}</code> ·{" "}
+            {(effects.groups ?? []).map((group) => `${group.label} (${fmtNum(group.rows)})`).join(" · ")} ·{" "}
+            {fmtNum(effects.bootstrap)} bootstrap replicates
+          </p>
+          <Table<(typeof effects.comparisons)[number]>
+            columns={["Feature", "Comparison", "Cohen's d [95% CI]", "Cliff's δ [95% CI]"]}
+            rows={effects.comparisons.slice(0, 20)}
+            keyOf={(entry, index) => `${entry.feature}-${entry.group_a}-${entry.group_b}-${index}`}
+            render={(entry) => [
+              <td key="f" className="mono">{entry.feature}</td>,
+              <td key="g">
+                {entry.group_a} vs {entry.group_b}
+              </td>,
+              <td key="d">
+                {num(entry.cohens_d, 2)} <span className="muted">{formatInterval(entry.cohens_d_ci)}</span>
+              </td>,
+              <td key="k">
+                {num(entry.cliffs_delta, 2)}{" "}
+                <span className="muted">{formatInterval(entry.cliffs_delta_ci)}</span>
+              </td>,
+            ]}
+          />
+        </>
+      )}
+      <p className="hint">{effects.interpretation}</p>
+    </Card>
+  );
+}
+
+function DriftCard({
+  task,
+  partition,
+  partitions,
+}: {
+  task: string;
+  partition: string;
+  partitions: string[];
+}) {
+  const candidates = partitions
+    .filter((name) => name !== partition)
+    .sort((left, right) => {
+      if (left === "train") return -1;
+      if (right === "train") return 1;
+      return left.localeCompare(right);
+    });
+  const [reference, setReference] = useState(candidates[0] ?? "");
+  useEffect(() => {
+    if (!candidates.includes(reference)) setReference(candidates[0] ?? "");
+  }, [candidates, reference]);
+  const driftQ = useQuery({
+    queryKey: ["partition-drift", task, partition, reference],
+    queryFn: () => getPartitionDrift(task, partition, reference),
+    enabled: !!task && !!partition && !!reference,
+    retry: false,
+  });
+  const data = driftQ.data;
+  return (
+    <Card
+      title="Partition drift"
+      sub="Compare this partition with another stored partition: two-sample KS and PSI for numeric features, chi-square, Cramér's V and total variation for categorical ones."
+    >
+      {candidates.length === 0 ? (
+        <p className="muted">
+          Only one partition is stored for this task; register a second partition (for example a
+          holdout file) to compare distributions.
+        </p>
+      ) : (
+        <>
+          <div className="row top">
+            <div className="field" style={{ flex: "0 1 240px" }}>
+              <label>Reference partition</label>
+              <select value={reference} onChange={(event) => setReference(event.target.value)}>
+                {candidates.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          {driftQ.isLoading && <Loading label="Comparing partitions…" />}
+          {driftQ.isError && <ErrorNote error={driftQ.error} />}
+          {data && (
+            <>
+              <h4>Numeric features</h4>
+              <Table<(typeof data.numeric)[number]>
+                columns={["Column", "KS statistic", "KS p", "PSI", "Shift (pooled SD)"]}
+                rows={data.numeric.filter((entry) => !entry.reason)}
+                keyOf={(entry) => entry.column}
+                render={(entry) => [
+                  <td key="c" className="mono">{entry.column}</td>,
+                  <td key="s">{num(entry.ks_statistic, 3)}</td>,
+                  <td key="p">{entry.ks_p_value === undefined ? "—" : fmtSci(entry.ks_p_value)}</td>,
+                  <td key="i">
+                    {num(entry.psi, 3)}{" "}
+                    {(entry.psi ?? 0) >= 0.2 && <Badge tone="warn">≥ 0.2</Badge>}
+                  </td>,
+                  <td key="m">{num(entry.shift_in_pooled_sd, 2)}</td>,
+                ]}
+              />
+              {data.categorical.filter((entry) => !entry.reason).length > 0 && (
+                <>
+                  <h4 style={{ marginTop: 14 }}>Categorical features</h4>
+                  <Table<(typeof data.categorical)[number]>
+                    columns={["Column", "χ²", "p", "Cramér's V", "Total variation"]}
+                    rows={data.categorical.filter((entry) => !entry.reason)}
+                    keyOf={(entry) => entry.column}
+                    render={(entry) => [
+                      <td key="c" className="mono">{entry.column}</td>,
+                      <td key="x">{num(entry.chi2, 2)}</td>,
+                      <td key="p">{entry.p_value === undefined ? "—" : fmtSci(entry.p_value)}</td>,
+                      <td key="v">{num(entry.cramers_v, 3)}</td>,
+                      <td key="t">{num(entry.total_variation, 3)}</td>,
+                    ]}
+                  />
+                </>
+              )}
+              <p className="hint">
+                Reference <code>{data.reference}</code> ({fmtNum(data.reference_rows)} rows) vs{" "}
+                <code>{data.partition}</code> ({fmtNum(data.current_rows)} rows). {data.scope}.
+              </p>
+              {data.caveats.map((caveat) => (
+                <p key={caveat} className="hint">{caveat}</p>
+              ))}
+            </>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
+function StabilityCard({
+  report,
+  task,
+  partition,
+}: {
+  report: StabilityReport;
+  task: string;
+  partition: string;
+}) {
+  const reportMut = useMutation({ mutationFn: () => getEdaReport(task, partition) });
+  const download = () => {
+    const payload = reportMut.data;
+    if (!payload) return;
+    const blob = new Blob([payload.markdown], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `eda-${task}-${partition}.md`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
+  return (
+    <Card
+      title="Summary stability"
+      sub="Each summary is recomputed on two disjoint random halves of the sampled rows; values near 1 mean the number depends on which rows were drawn."
+    >
+      <dl className="kv">
+        <dt>Effective rows</dt>
+        <dd>{fmtNum(report.effective_rows)} of {fmtNum(report.rows)} (complete cases)</dd>
+        <dt>Largest difference</dt>
+        <dd>{num(report.max_relative_difference, 3)} (fraction of the column IQR)</dd>
+      </dl>
+      {report.columns.length > 0 && (
+        <Table<(typeof report.columns)[number]>
+          columns={["Column", "Kind", "Max difference"]}
+          rows={report.columns.slice(0, 20)}
+          keyOf={(entry) => entry.column}
+          render={(entry) => [
+            <td key="c" className="mono">{entry.column}</td>,
+            <td key="k">{entry.kind}</td>,
+            <td key="d">{num(entry.max_relative_difference, 3)}</td>,
+          ]}
+        />
+      )}
+      <div className="row" style={{ marginTop: 12 }}>
+        <button className="primary" onClick={() => reportMut.mutate()} disabled={reportMut.isPending}>
+          {reportMut.isPending ? "Building report…" : "Download EDA report (Markdown)"}
+        </button>
+        {reportMut.data && (
+          <button className="link-btn" onClick={download}>
+            Save {`eda-${task}-${partition}.md`}
+          </button>
+        )}
+      </div>
+      {reportMut.isError && <ErrorNote error={reportMut.error} />}
+      {reportMut.data && (
+        <p className="hint">
+          Report generated at {reportMut.data.generated_at}; it repeats the sample scope and limits
+          of every table.
+        </p>
+      )}
+      <p className="hint">{report.interpretation}</p>
+    </Card>
+  );
+}
+
 function EncodingCard({ task, partition }: { task: string; partition: string }) {
   const previewQ = useQuery<EncodingPreview>({
     queryKey: ["encoding-preview", task, partition],
@@ -1351,6 +1614,14 @@ export default function PreprocessingPage() {
           <MissingMechanismCard mechanism={data.missing_mechanism} />
 
           <TypeAuditCard audit={data.type_audit} />
+
+          <FormalTestsCard tests={data.formal_tests} />
+
+          <EffectSizesCard effects={data.effect_sizes} />
+
+          <DriftCard task={task} partition={partition} partitions={partitions} />
+
+          <StabilityCard report={data.stability} task={task} partition={partition} />
 
           <Card title="Data quality" sub="Computed on a bounded row sample; duplicates and constants are descriptive flags, not automatic exclusions.">
             {data.quality ? (
