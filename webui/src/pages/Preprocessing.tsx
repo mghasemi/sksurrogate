@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 
 import {
   clipDataset,
@@ -32,9 +33,12 @@ import type {
   TargetComposition,
   TypeAudit,
 } from "../api/client";
-import { Badge, Card, EmptyState, ErrorNote, Loading, Table, fmtNum, fmtSci } from "../components/ui";
+import { Badge, Card, EmptyState, ErrorNote, Loading, Table, Tabs, fmtNum, fmtSci } from "../components/ui";
 import { Heatmap } from "../components/Heatmap";
 import { useTask } from "../lib/task-context";
+
+/** Tab ids are URL-synced so a tab survives reload and can be deep-linked. */
+const TAB_IDS = ["overview", "distributions", "relationships", "quality", "stability", "transform"];
 
 function pct(value: number | null | undefined): string {
   return `${((value ?? 0) * 100).toFixed(1)}%`;
@@ -1427,6 +1431,10 @@ export default function PreprocessingPage() {
     enabled: !!task,
     retry: false,
   });
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get("tab");
+  const tab = TAB_IDS.includes(tabParam ?? "") ? (tabParam as string) : "overview";
+  const setTab = (id: string) => setSearchParams({ tab: id }, { replace: true });
   const partitions = useMemo(() => Object.keys(metaQ.data?.partitions ?? {}), [metaQ.data]);
 
   const [partition, setPartition] = useState("train");
@@ -1552,6 +1560,20 @@ export default function PreprocessingPage() {
 
       {data && (
         <>
+          <Tabs
+            tabs={[
+              { id: "overview", label: "Overview" },
+              { id: "distributions", label: "Distributions" },
+              { id: "relationships", label: "Relationships" },
+              { id: "quality", label: "Quality & missingness" },
+              { id: "stability", label: "Stability & drift" },
+              { id: "transform", label: "Transform" },
+            ]}
+            active={tab}
+            onChange={setTab}
+          />
+          {tab === "overview" && (
+            <>
           <Card title="Missing data overview" sub="Per-column counts and the share of complete rows. Ignored columns are excluded from modeling but shown here.">
             <dl className="kv">
               <dt>Rows</dt>
@@ -1601,14 +1623,31 @@ export default function PreprocessingPage() {
             )}
           </Card>
 
+            </>
+          )}
+
+          {tab === "distributions" && (
+            <>
           <DistributionCard data={data} />
 
           <TargetCard composition={data.target_composition} />
 
+            </>
+          )}
+
+          {tab === "relationships" && (
+            <>
           <AssociationsCard data={data} />
 
           <CollinearityCard multicollinearity={data.multicollinearity} />
 
+          <EffectSizesCard effects={data.effect_sizes} />
+
+            </>
+          )}
+
+          {tab === "quality" && (
+            <>
           <QualityFlagsCard flags={data.quality_flags} />
 
           <MissingMechanismCard mechanism={data.missing_mechanism} />
@@ -1617,12 +1656,20 @@ export default function PreprocessingPage() {
 
           <FormalTestsCard tests={data.formal_tests} />
 
-          <EffectSizesCard effects={data.effect_sizes} />
+            </>
+          )}
 
+          {tab === "stability" && (
+            <>
           <DriftCard task={task} partition={partition} partitions={partitions} />
 
           <StabilityCard report={data.stability} task={task} partition={partition} />
 
+            </>
+          )}
+
+          {tab === "overview" && (
+            <>
           <Card title="Data quality" sub="Computed on a bounded row sample; duplicates and constants are descriptive flags, not automatic exclusions.">
             {data.quality ? (
               <dl className="kv">
@@ -1677,10 +1724,20 @@ export default function PreprocessingPage() {
             )}
           </Card>
 
+            </>
+          )}
+
+          {tab === "transform" && (
+            <>
           <DuplicatesCard task={task} partition={partition} qc={qc} />
 
           <EncodingCard task={task} partition={partition} />
 
+            </>
+          )}
+
+          {tab === "overview" && (
+            <>
           <Card title="Dataset preview" sub={`First ${fmtNum(data.preview.length)} rows of the stored partition. “—” is a missing value.`}>
             <Table<Record<string, unknown>>
               columns={data.columns}
@@ -1696,6 +1753,11 @@ export default function PreprocessingPage() {
             />
           </Card>
 
+            </>
+          )}
+
+          {tab === "transform" && (
+            <>
           <Card
             title="Impute missing data"
             sub="Preview the result first; saving writes an imputed copy as a NEW partition and records its provenance. The target is never imputed."
@@ -1819,6 +1881,8 @@ export default function PreprocessingPage() {
           </Card>
 
           <ClipCard task={task} partition={partition} overview={data} qc={qc} />
+            </>
+          )}
         </>
       )}
     </div>

@@ -198,14 +198,35 @@ observations across folds.
 Missing data and imputation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Open **Data Preprocessing**. Choose the stored partition to inspect. The page
-shows the row count, per-column detected and implied types, missing counts and
-percentages, complete-row share, numeric quantiles or top categories, a data
-preview with missing cells rendered as “—”, and a data-quality card with
-duplicate rows/features, constant and all-missing columns, and the observed
-missingness patterns.
+Open **Data Preprocessing**. Choose the stored partition to inspect. The page is
+organised in six tabs, and the selected tab is kept in the URL
+(``?tab=quality``), so a view survives a reload and can be linked:
 
-Three further cards summarize the partition before modeling:
+* **Overview** — partition picker, per-column detected and implied types with
+  missing counts and complete-row share, the data-quality card (duplicate
+  rows/features, constant and all-missing columns, missingness patterns) and the
+  row preview with missing cells rendered as “—”.
+* **Distributions** — one row per active feature (quantile rails and categorical
+  bars, IQR outlier counts) and the target-analysis card.
+* **Relationships** — target and feature associations with the Pearson-only
+  heatmap, the Spearman/Kendall table, collinearity diagnostics, and the
+  bootstrap effect sizes between the largest target classes.
+* **Quality & missingness** — the data-quality flags, Little's MCAR block with
+  mean shifts, the dtype/value type audit, and the Anderson–Darling normality
+  tests.
+* **Stability & drift** — half-sample summary stability with the Markdown report
+  download, and the partition-drift comparison against another stored partition.
+* **Transform** — impute, clip/winsorize, deduplicate and preview categorical
+  encoding; every action previews first and writes a new partition.
+
+.. figure:: images/ui-preprocessing.png
+   :alt: Data Preprocessing page with the six-tab bar and the Overview tab
+   :width: 100%
+
+   The tab bar with **Overview** active: missing-data profile, data-quality flags
+   and the row preview. Transformations live under **Transform**.
+
+The remaining tabs group the cards by question:
 
 * **Distributions** — one row per active feature. Numeric columns get a rail
   spanning min → q25 → median → q75 → max with the IQR outlier count; categorical
@@ -231,7 +252,7 @@ Three further cards summarize the partition before modeling:
    Distribution rails, exact target composition, association heatmap and VIF
    table for a registered partition; every card states its sampling scope.
 
-Below them, three diagnostic cards turn the profile into review decisions:
+Under **Quality & missingness**, three diagnostic cards turn the profile into review decisions:
 
 * **Data-quality flags** — identifier-like columns (high distinct ratio or an
   id/name hint; continuous measurements are not flagged), high-cardinality text
@@ -256,7 +277,7 @@ Below them, three diagnostic cards turn the profile into review decisions:
    Flags, Little's MCAR statistic and dtype/value mismatches; every entry names
    its column and no flag removes anything automatically.
 
-Four cards turn the diagnostics into statistics and comparisons:
+The **Stability & drift** and **Quality & missingness** tabs add the statistics:
 
 * **Formal tests (Anderson–Darling)** — one row per numeric feature with the
   statistic, the tabulated critical value at α = 0.05, the verdict, and the
@@ -319,12 +340,6 @@ quantile winsorizing and z-score clipping. Select numeric columns, preview the
 bounds, how many values each tail moves, and the before/after mean and standard
 deviation, then save a new partition. The target and ignored columns are refused,
 and non-numeric selections are rejected.
-
-.. figure:: images/ui-preprocessing.png
-   :alt: Data Preprocessing page with missing-data overview and imputation controls
-   :width: 100%
-
-   Missing-data profile and the imputation card; saving writes a new partition.
 
 Experiment Design (external experiments)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

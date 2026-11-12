@@ -59,6 +59,11 @@ Data Preprocessing page
   ``eda-stability.csv``, ``eda-quality-flags.csv`` and ``eda-report.md`` from
   the same helpers the Data page uses, so the offline report and the UI cannot
   drift apart.
+* **Tabbed Data Preprocessing page**: the twelve cards are grouped into
+  **Overview**, **Distributions**, **Relationships**, **Quality & missingness**,
+  **Stability & drift** and **Transform**. The active tab lives in the URL
+  (``?tab=quality``), so a view survives a reload and can be linked; only the
+  active tab's cards mount, so the drift query runs when its tab is opened.
 
 Categorical encoding, outlier clipping and duplicate removal
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
