@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Videos — SKSurrogate walkthroughs</title>
+<meta name="description" content="Screen-recorded walkthroughs of SKSurrogate: how pipelines are composed, how the surrogate search moves through them, and how a candidate is evaluated before a bundle is registered.">
+<link rel="canonical" href="https://sksurrogate.com/videos/">
+<meta property="og:site_name" content="SKSurrogate">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://sksurrogate.com/videos/">
+<meta property="og:title" content="Videos — SKSurrogate walkthroughs">
+<meta property="og:description" content="Screen-recorded walkthroughs of SKSurrogate: how pipelines are composed, how the surrogate search moves through them, and how a candidate is evaluated before a bundle is registered.">
+<meta property="og:image" content="https://sksurrogate.com/assets/og-card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="SKSurrogate — from raw dataset to deployed, drift-monitored model. MIT, pip install sksurrogate.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://sksurrogate.com/assets/og-card.png">
+<link rel="icon" href="../assets/mark.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../icons/icon-180.png">
+<link rel="stylesheet" href="../assets/site.css">
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "VideoObject", "name": "Introducing SKSurrogate", "description": "A walkthrough of how SKSurrogate composes an ML pipeline and how the search evaluates it: surrogate-based modelling and evolutionary search (EOA) over the combinatorial space of pipeline structures, fold-local preprocessing, out-of-fold stacking, and an evaluation protocol — nested cross-validation, learning curves, interpretability read-outs — carried through to a registered bundle.", "thumbnailUrl": ["https://i.ytimg.com/vi/XY6Hj8PFP-Q/maxresdefault.jpg"], "uploadDate": "2026-11-12T17:18:33Z", "duration": "PT7M24S", "embedUrl": "https://www.youtube-nocookie.com/embed/XY6Hj8PFP-Q", "contentUrl": "https://www.youtube.com/watch?v=XY6Hj8PFP-Q", "url": "https://www.youtube.com/watch?v=XY6Hj8PFP-Q", "isPartOf": {"@id": "https://sksurrogate.com/#website"}, "publisher": {"@type": "Organization", "name": "SKSurrogate", "url": "https://sksurrogate.com/"}}
+</script>
+</head>
+<body class="sub">
+
+<header class="topbar">
+  <a class="brand" href="../"><img src="../assets/mark.svg" alt="">SKSurrogate</a>
+  <nav>
+    <a href="../">Product</a>
+    <a href="../benchmarks/">Benchmarks</a>
+    <a href="../concepts/">Concepts</a>
+    <a href="../quickstart/">Quickstart</a>
+    <a href="../blog/">Blog</a>
+    <a href="../videos/">Videos</a>
+    <a href="../faq/">FAQ</a>
+    <a href="../cite/">Cite</a>
+    <a href="../about/">About</a>
+    <a href="https://sksurrogate.readthedocs.io/en/latest/intro.html" target="_blank" rel="noopener">Docs ↗</a>
+    <a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a>
+  </nav>
+</header>
+
+<main class="wrap">
+<div class="crumb"><a href="../">sksurrogate</a><span>/</span>videos</div>
+      <h1>Videos</h1>
+      <p class="lede">Screen-recorded walkthroughs of the package: how the pipeline pieces are
+        composed, how the search decides what to try next, and how a candidate earns its place in a
+        registered bundle. Longer than a changelog entry, shorter than a paper.</p>
+
+      <div class="videofacade-wrap">
+        <a class="videofacade" href="https://www.youtube.com/watch?v=XY6Hj8PFP-Q" data-vid="XY6Hj8PFP-Q" data-title="Introducing SKSurrogate">
+          <img src="https://i.ytimg.com/vi/XY6Hj8PFP-Q/maxresdefault.jpg" alt="Title frame of the Introducing SKSurrogate walkthrough" width="1280" height="720" loading="lazy">
+          <span class="video-play">Play</span>
+          <span class="video-len">7:24</span>
+        </a>
+        <p class="video-meta">12 November 2026 · 7 min 24 s ·
+          <a href="https://www.youtube.com/watch?v=XY6Hj8PFP-Q" target="_blank" rel="noopener">watch on YouTube ↗</a></p>
+      </div>
+
+      <div class="prose">
+        <h2>What the first walkthrough covers</h2>
+        <p>SKSurrogate does not search a grid and return a winner. It fits a response surface to the
+          evaluations it has spent, uses that surface to choose the next candidate, and keeps every
+          evaluation on the record. The video follows that loop through an actual pipeline:</p>
+        <ul>
+          <li><strong>Composition.</strong> Data transformers and scikit-learn estimators assembled
+            into candidate pipelines, so the search space is pipeline <em>structure</em>, not only
+            hyperparameters.</li>
+          <li><strong>Search.</strong> Surrogate-based modelling paired with evolutionary search
+            (EOA) to move through a combinatorial space that is far too large to enumerate.</li>
+          <li><strong>Preprocessing discipline.</strong> Fold-local preprocessing and out-of-fold
+            stacking — fitted inside each fold, never on the full dataset.</li>
+          <li><strong>Evaluation.</strong> Nested cross-validation, learning curves and
+            interpretability read-outs, which is what separates a measured result from a lucky
+            one.</li>
+          <li><strong>The artifact.</strong> A registered bundle carrying its data identity and
+            evaluation record, not just a fitted object.</li>
+        </ul>
+
+        <h2>What it is not</h2>
+        <p>A benchmark result. The numbers that decide whether this beats a given baseline live on
+          the <a href="../benchmarks/">benchmark page</a>, at equal evaluation budgets, including the cells where
+          the surrogate loses — and the honest conclusion there is that the response surface matters
+          more than the search mechanism.</p>
+
+        <h2>Where to go next</h2>
+        <ul>
+          <li><a href="../quickstart/">Quickstart</a> — install, run a search, switch to automatic pipeline design.</li>
+          <li><a href="../concepts/">Concepts</a> — surrogate-based optimization, conformal intervals and
+            nested cross-validation in the terms the docs use.</li>
+          <li><a href="https://sksurrogate.readthedocs.io/en/latest/surrogate.html" target="_blank" rel="noopener">Surrogate search guide ↗</a>
+            — strategies, acquisition and how the surface is fitted.</li>
+          <li><a href="https://www.youtube.com/channel/UC3ymiGRojwNJygRZC-212WA" target="_blank" rel="noopener">The channel ↗</a> — new walkthroughs and
+            short clips.</li>
+        </ul>
+
+        <h2>Subscribe</h2>
+        <p>There is no schedule and no newsletter. The
+          <a href="https://www.youtube.com/channel/UC3ymiGRojwNJygRZC-212WA?sub_confirmation=1" target="_blank" rel="noopener">channel</a> is where walkthroughs, short
+          clips and corrections to published results appear first.</p>
+      </div>
+
+      <script>
+      (function () {
+        var f = document.querySelector('.videofacade');
+        if (!f) return;
+        f.addEventListener('click', function (ev) {
+          ev.preventDefault();
+          var frame = document.createElement('iframe');
+          frame.className = 'video-embed';
+          frame.src = 'https://www.youtube-nocookie.com/embed/XY6Hj8PFP-Q?autoplay=1&rel=0';
+          frame.title = f.getAttribute('data-title') || 'SKSurrogate walkthrough';
+          frame.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
+          frame.allowFullscreen = true;
+          f.parentNode.replaceChild(frame, f);
+        });
+      })();
+      </script>
+</main>
+
+<footer class="subfooter">
+  <div>
+    <h5>Project</h5>
+    <ul>
+      <li><a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a></li>
+      <li><a href="https://pypi.org/project/sksurrogate/" target="_blank" rel="noopener">PyPI ↗</a></li>
+      <li><a href="https://sksurrogate.readthedocs.io/en/latest/" target="_blank" rel="noopener">Documentation ↗</a></li>
+      <li><a href="https://github.com/mghasemi/sksurrogate/blob/master/CHANGELOG.rst" target="_blank" rel="noopener">Changelog ↗</a></li>
+    </ul>
+  </div>
+  <div>
+    <h5>Site</h5>
+    <ul>
+      <li><a href="../quickstart/">Quickstart</a></li>
+      <li><a href="../benchmarks/">Benchmarks</a></li>
+      <li><a href="../concepts/">Concepts</a></li>
+      <li><a href="../blog/">Blog</a></li>
+      <li><a href="../videos/">Videos</a></li>
+      <li><a href="../faq/">FAQ</a></li>
+      <li><a href="../cite/">Citation</a></li>
+      <li><a href="../about/">About</a></li>
+      <li><a href="../roadmap/">Roadmap</a></li>
+      <li><a href="../contact/">Contact</a></li>
+    </ul>
+  </div>
+  <div>
+    <h5>Maintainer</h5>
+    <ul>
+      <li><a href="https://mghasemi.net" target="_blank" rel="noopener">mghasemi.net ↗</a></li>
+      <li><a href="mailto:mehdi.ghasemi@gmail.com">mehdi.ghasemi@gmail.com</a></li>
+      <li><a href="https://orcid.org/0000-0002-9551-1780" target="_blank" rel="noopener">ORCID ↗</a></li>
+    </ul>
+  </div>
+</footer>
+<div class="subfootline">
+  <span>© 2019–2026 Mehdi Ghasemi · MIT licence</span>
+  <span>sksurrogate v0.3.0 · scikit-learn-native</span>
+</div>
+</body>
+</html>

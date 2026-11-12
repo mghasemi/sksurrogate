@@ -20,6 +20,7 @@
 - [Nested cross-validation](https://sksurrogate.com/concepts/nested-cross-validation/)
 - [FAQ](https://sksurrogate.com/faq/)
 - [Benchmark post](https://sksurrogate.com/blog/honest-benchmark/)
+- [Videos](https://sksurrogate.com/videos/) — walkthroughs on the SKSurrogate channel (youtube.com/@sksurrogate)
 - [Citation](https://sksurrogate.com/cite/)
 - [About](https://sksurrogate.com/about/)
 - [Source](https://github.com/mghasemi/sksurrogate)

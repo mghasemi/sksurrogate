@@ -26,6 +26,7 @@ NAV = [
     ("/concepts/", "Concepts", False),
     ("/quickstart/", "Quickstart", False),
     ("/blog/", "Blog", False),
+    ("/videos/", "Videos", False),
     ("/faq/", "FAQ", False),
     ("/cite/", "Cite", False),
     ("/about/", "About", False),
@@ -45,6 +46,7 @@ FOOTER = [
         ("/benchmarks/", "Benchmarks", False),
     ("/concepts/", "Concepts", False),
         ("/blog/", "Blog", False),
+        ("/videos/", "Videos", False),
         ("/faq/", "FAQ", False),
         ("/cite/", "Citation", False),
         ("/about/", "About", False),
@@ -191,7 +193,7 @@ def main():
             jsonld = webpage_jsonld(url_path, page["name"])
         target = write_page(url_path, page["title"], page["desc"], page["body"],
                             ogtype=page.get("ogtype", "article"), jsonld=jsonld,
-                            noindex=noindex)
+                            noindex=noindex, scripts=page.get("scripts", ""))
         written.append((url_path, target, noindex))
         print("wrote", os.path.relpath(target, ROOT))
 

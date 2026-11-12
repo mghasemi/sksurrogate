@@ -7,6 +7,7 @@ sections — or (b) marked COPY_PENDING and replaced by a TODO block.
 import html
 
 SEP = ' \n'
+SITE_ROOT = "https://sksurrogate.com"
 
 TODO = ('<p class="todo">Copy pending — this page is a structural shell. Nothing here '
         'is approved text, and the page is excluded from search indexing '
@@ -382,7 +383,13 @@ def contact(rel):
           serves its own fonts. Pages are served by GitHub Pages, which may log requests under
           <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement" target="_blank" rel="noopener">GitHub's
           privacy statement</a>. Nothing else is collected.</p>
-      </div>''' % (crumb(rel, "contact"), L(rel, "/blog/honest-benchmark/"))
+        <p>The <a href="%s">videos page</a> is the one exception, and only after you act: no third-party
+          script, iframe or cookie is loaded until you press play. When you do, the player is
+          YouTube's privacy-enhanced embed on <code>youtube-nocookie.com</code>, and from that point
+          Google's own
+          <a href="https://policies.google.com/privacy" target="_blank" rel="noopener">privacy policy</a>
+          applies to that player.</p>
+      </div>''' % (crumb(rel, "contact"), L(rel, "/blog/honest-benchmark/"), L(rel, "/videos/"))
 
 
 # ----------------------------------------------------------------------- faq
@@ -725,7 +732,128 @@ def faq(rel):
                    L(rel, "/quickstart/"), L(rel, "/benchmarks/"), L(rel, "/concepts/"))
 
 
-# ----------------------------------------------------------------- vs-optuna
+# -------------------------------------------------------------------- videos
+VIDEO_ID = "XY6Hj8PFP-Q"
+VIDEO_URL = "https://www.youtube.com/watch?v=" + VIDEO_ID
+VIDEO_EMBED = "https://www.youtube-nocookie.com/embed/" + VIDEO_ID
+VIDEO_THUMB = "https://i.ytimg.com/vi/" + VIDEO_ID + "/maxresdefault.jpg"
+VIDEO_TITLE = "Introducing SKSurrogate"
+VIDEO_UPLOADED = "2026-11-12T17:18:33Z"
+VIDEO_DURATION = "PT7M24S"
+VIDEO_LENGTH_TEXT = "7 min 24 s"
+CHANNEL_URL = "https://www.youtube.com/channel/UC3ymiGRojwNJygRZC-212WA"
+CHANNEL_SUBSCRIBE = CHANNEL_URL + "?sub_confirmation=1"
+
+VIDEO_DESC = ("A walkthrough of how SKSurrogate composes an ML pipeline and how the search "
+              "evaluates it: surrogate-based modelling and evolutionary search (EOA) over the "
+              "combinatorial space of pipeline structures, fold-local preprocessing, out-of-fold "
+              "stacking, and an evaluation protocol — nested cross-validation, learning curves, "
+              "interpretability read-outs — carried through to a registered bundle.")
+
+
+def videos_jsonld():
+    import json as _json
+    data = {
+        "@context": "https://schema.org",
+        "@type": "VideoObject",
+        "name": VIDEO_TITLE,
+        "description": VIDEO_DESC,
+        "thumbnailUrl": [VIDEO_THUMB],
+        "uploadDate": VIDEO_UPLOADED,
+        "duration": VIDEO_DURATION,
+        "embedUrl": VIDEO_EMBED,
+        "contentUrl": VIDEO_URL,
+        "url": VIDEO_URL,
+        "isPartOf": {"@id": SITE_ROOT + "/#website"},
+        "publisher": {"@type": "Organization", "name": "SKSurrogate",
+                      "url": SITE_ROOT + "/"},
+    }
+    return ('<script type="application/ld+json">\n%s\n</script>\n'
+            % _json.dumps(data, ensure_ascii=False))
+
+
+def videos(rel):
+    return '''%s
+      <h1>Videos</h1>
+      <p class="lede">Screen-recorded walkthroughs of the package: how the pipeline pieces are
+        composed, how the search decides what to try next, and how a candidate earns its place in a
+        registered bundle. Longer than a changelog entry, shorter than a paper.</p>
+
+      <div class="videofacade-wrap">
+        <a class="videofacade" href="%s" data-vid="%s" data-title="%s">
+          <img src="%s" alt="Title frame of the %s walkthrough" width="1280" height="720" loading="lazy">
+          <span class="video-play">Play</span>
+          <span class="video-len">7:24</span>
+        </a>
+        <p class="video-meta">12 November 2026 · %s ·
+          <a href="%s" target="_blank" rel="noopener">watch on YouTube ↗</a></p>
+      </div>
+
+      <div class="prose">
+        <h2>What the first walkthrough covers</h2>
+        <p>SKSurrogate does not search a grid and return a winner. It fits a response surface to the
+          evaluations it has spent, uses that surface to choose the next candidate, and keeps every
+          evaluation on the record. The video follows that loop through an actual pipeline:</p>
+        <ul>
+          <li><strong>Composition.</strong> Data transformers and scikit-learn estimators assembled
+            into candidate pipelines, so the search space is pipeline <em>structure</em>, not only
+            hyperparameters.</li>
+          <li><strong>Search.</strong> Surrogate-based modelling paired with evolutionary search
+            (EOA) to move through a combinatorial space that is far too large to enumerate.</li>
+          <li><strong>Preprocessing discipline.</strong> Fold-local preprocessing and out-of-fold
+            stacking — fitted inside each fold, never on the full dataset.</li>
+          <li><strong>Evaluation.</strong> Nested cross-validation, learning curves and
+            interpretability read-outs, which is what separates a measured result from a lucky
+            one.</li>
+          <li><strong>The artifact.</strong> A registered bundle carrying its data identity and
+            evaluation record, not just a fitted object.</li>
+        </ul>
+
+        <h2>What it is not</h2>
+        <p>A benchmark result. The numbers that decide whether this beats a given baseline live on
+          the <a href="%s">benchmark page</a>, at equal evaluation budgets, including the cells where
+          the surrogate loses — and the honest conclusion there is that the response surface matters
+          more than the search mechanism.</p>
+
+        <h2>Where to go next</h2>
+        <ul>
+          <li><a href="%s">Quickstart</a> — install, run a search, switch to automatic pipeline design.</li>
+          <li><a href="%s">Concepts</a> — surrogate-based optimization, conformal intervals and
+            nested cross-validation in the terms the docs use.</li>
+          <li><a href="https://sksurrogate.readthedocs.io/en/latest/surrogate.html" target="_blank" rel="noopener">Surrogate search guide ↗</a>
+            — strategies, acquisition and how the surface is fitted.</li>
+          <li><a href="%s" target="_blank" rel="noopener">The channel ↗</a> — new walkthroughs and
+            short clips.</li>
+        </ul>
+
+        <h2>Subscribe</h2>
+        <p>There is no schedule and no newsletter. The
+          <a href="%s" target="_blank" rel="noopener">channel</a> is where walkthroughs, short
+          clips and corrections to published results appear first.</p>
+      </div>
+
+      <script>
+      (function () {
+        var f = document.querySelector('.videofacade');
+        if (!f) return;
+        f.addEventListener('click', function (ev) {
+          ev.preventDefault();
+          var frame = document.createElement('iframe');
+          frame.className = 'video-embed';
+          frame.src = '%s?autoplay=1&rel=0';
+          frame.title = f.getAttribute('data-title') || 'SKSurrogate walkthrough';
+          frame.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
+          frame.allowFullscreen = true;
+          f.parentNode.replaceChild(frame, f);
+        });
+      })();
+      </script>''' % (crumb(rel, "videos"), VIDEO_URL, VIDEO_ID, VIDEO_TITLE, VIDEO_THUMB, VIDEO_TITLE,
+                      VIDEO_LENGTH_TEXT, VIDEO_URL,
+                      L(rel, "/benchmarks/"), L(rel, "/quickstart/"), L(rel, "/concepts/"),
+                      CHANNEL_URL, CHANNEL_SUBSCRIBE, VIDEO_EMBED)
+
+
+
 def vs_optuna(rel):
     return '''%s
       <h1>SKSurrogate vs Optuna and skopt</h1>
@@ -785,6 +913,9 @@ PAGES = [
     dict(path="faq", title="SKSurrogate FAQ",
          desc="Twelve questions about SKSurrogate, answered from documented behaviour and published benchmark results: scikit-learn fit, speed versus Optuna, categorical features, conformal intervals, deployment.",
          body=faq, name="SKSurrogate FAQ", jsonld=faq_jsonld),
+    dict(path="videos", title="Videos — SKSurrogate walkthroughs",
+         desc="Screen-recorded walkthroughs of SKSurrogate: how pipelines are composed, how the surrogate search moves through them, and how a candidate is evaluated before a bundle is registered.",
+         body=videos, name="Videos", jsonld=videos_jsonld, ogtype="website"),
     dict(path="vs-optuna", title="SKSurrogate vs Optuna and skopt",
          desc="How SKSurrogate compares with Optuna and scikit-optimize on the criteria that decide an HPO tool. (Structural shell — copy pending.)",
          body=vs_optuna, name="SKSurrogate vs Optuna and skopt", noindex=True),

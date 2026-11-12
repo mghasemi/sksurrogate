@@ -1,17 +1,18 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://sksurrogate.com/</loc><lastmod>2026-11-10</lastmod></url>
-  <url><loc>https://sksurrogate.com/quickstart/</loc><lastmod>2026-11-10</lastmod></url>
-  <url><loc>https://sksurrogate.com/benchmarks/</loc><lastmod>2026-11-10</lastmod></url>
-  <url><loc>https://sksurrogate.com/concepts/</loc><lastmod>2026-11-10</lastmod></url>
-  <url><loc>https://sksurrogate.com/concepts/surrogate-optimization/</loc><lastmod>2026-11-10</lastmod></url>
-  <url><loc>https://sksurrogate.com/concepts/conformal-intervals/</loc><lastmod>2026-11-10</lastmod></url>
-  <url><loc>https://sksurrogate.com/concepts/nested-cross-validation/</loc><lastmod>2026-11-10</lastmod></url>
-  <url><loc>https://sksurrogate.com/cite/</loc><lastmod>2026-11-10</lastmod></url>
-  <url><loc>https://sksurrogate.com/about/</loc><lastmod>2026-11-10</lastmod></url>
-  <url><loc>https://sksurrogate.com/roadmap/</loc><lastmod>2026-11-10</lastmod></url>
-  <url><loc>https://sksurrogate.com/blog/</loc><lastmod>2026-11-10</lastmod></url>
-  <url><loc>https://sksurrogate.com/contact/</loc><lastmod>2026-11-10</lastmod></url>
-  <url><loc>https://sksurrogate.com/faq/</loc><lastmod>2026-11-10</lastmod></url>
-  <url><loc>https://sksurrogate.com/blog/honest-benchmark/</loc><lastmod>2026-11-10</lastmod></url>
+  <url><loc>https://sksurrogate.com/</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://sksurrogate.com/quickstart/</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://sksurrogate.com/benchmarks/</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://sksurrogate.com/concepts/</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://sksurrogate.com/concepts/surrogate-optimization/</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://sksurrogate.com/concepts/conformal-intervals/</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://sksurrogate.com/concepts/nested-cross-validation/</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://sksurrogate.com/cite/</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://sksurrogate.com/about/</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://sksurrogate.com/roadmap/</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://sksurrogate.com/blog/</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://sksurrogate.com/contact/</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://sksurrogate.com/faq/</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://sksurrogate.com/videos/</loc><lastmod>2026-11-12</lastmod></url>
+  <url><loc>https://sksurrogate.com/blog/honest-benchmark/</loc><lastmod>2026-11-12</lastmod></url>
 </urlset>
