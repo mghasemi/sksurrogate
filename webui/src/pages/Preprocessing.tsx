@@ -285,7 +285,7 @@ function DuplicatesCard({
             </>
           )}
 
-          <div className="row" style={{ marginTop: 12 }}>
+          <div className="row top" style={{ marginTop: 12 }}>
             <div className="field fixed" style={{ flex: "0 1 180px", minWidth: 140 }}>
               <label>Keep</label>
               <select value={keep} onChange={(e) => setKeep(e.target.value as "first" | "last")}>
@@ -410,8 +410,8 @@ function ClipCard({
         <p className="muted">No numeric feature columns to clip.</p>
       ) : (
         <>
-          <div className="row">
-            <div className="field fixed" style={{ flex: "0 1 340px", minWidth: 260 }}>
+          <div className="row top">
+            <div className="field fixed" style={{ flex: "0 1 260px", minWidth: 200 }}>
               <label>Method</label>
               <select value={method} onChange={(e) => setMethod(e.target.value)}>
                 {overview.clip_methods.map((entry) => (
@@ -420,7 +420,7 @@ function ClipCard({
               </select>
             </div>
             {(activeMethod?.params ?? []).map((param) => (
-              <div key={param.name} className="field fixed" style={{ flex: "0 1 170px", minWidth: 130 }}>
+              <div key={param.name} className="field fixed" style={{ flex: "0 1 130px", minWidth: 105 }}>
                 <label>{param.name}</label>
                 <input
                   type="number"
@@ -433,7 +433,7 @@ function ClipCard({
                 {param.help && <span className="hint">{param.help}</span>}
               </div>
             ))}
-            <div className="field fixed" style={{ flex: "0 1 260px", minWidth: 200 }}>
+            <div className="field fixed" style={{ flex: "0 1 190px", minWidth: 160 }}>
               <label>Output partition</label>
               <input value={outputName} onChange={(e) => setOutputName(e.target.value)} spellCheck={false} />
             </div>
@@ -799,7 +799,7 @@ export default function PreprocessingPage() {
               fold-local imputation on the original partition unless you deliberately select the
               derived partition later.
             </div>
-            <div className="row">
+            <div className="row top">
               <div className="field fixed" style={{ flex: "0 1 300px", minWidth: 240 }}>
                 <label>Method</label>
                 <select value={method} onChange={(e) => setMethod(e.target.value)}>

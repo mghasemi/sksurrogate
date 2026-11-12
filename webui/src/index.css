@@ -159,6 +159,9 @@ textarea { resize: vertical; min-height: 90px; font-family: inherit; }
 textarea.mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12.5px; }
 
 .row { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; }
+/* Rows of labelled fields: align field tops so controls stay level even when
+   only some fields carry a hint below the control. */
+.row.top { align-items: flex-start; }
 .row > * { flex: 1; min-width: 130px; }
 .row .fixed { flex: 0 0 auto; width: auto; min-width: 0; }
 
