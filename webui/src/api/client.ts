@@ -491,9 +491,114 @@ export interface PreprocessingOverview {
   multicollinearity: Multicollinearity | null;
   group_comparisons: Record<string, unknown> | null;
   target_composition: TargetComposition | null;
+  quality_flags: QualityFlags;
+  missing_mechanism: MissingMechanism;
+  type_audit: TypeAudit;
   preview: Array<Record<string, unknown>>;
   methods: ImputationMethod[];
   clip_methods: ClipMethod[];
+}
+
+/** Tier-2 data-quality diagnostics (``api/eda.py::quality_flags``). */
+export interface QualityFlag {
+  kind: string;
+  severity: "info" | "warn" | "err";
+  column: string | null;
+  detail: string;
+}
+
+export interface OutlierRow {
+  column: string;
+  count: number;
+  median: number | null;
+  iqr_count: number;
+  iqr_rate: number;
+  iqr_lower_fence: number | null;
+  iqr_upper_fence: number | null;
+  mad: number;
+  mad_bound: number;
+  mad_count: number;
+  mad_rate: number;
+}
+
+export interface QualityFlags {
+  rows: number;
+  sampled: boolean;
+  scope: string;
+  feature_count: number;
+  identifier_columns: Array<{
+    column: string;
+    unique_ratio: number;
+    distinct: number;
+    reason: string;
+  }>;
+  high_cardinality: Array<{ column: string; unique_ratio: number; levels: number }>;
+  quasi_constant: Array<{ column: string; top_value: string; top_share: number }>;
+  date_like_columns: Array<{ column: string; unique_ratio: number }>;
+  numeric_text_columns: Array<{ column: string; unique_ratio: number }>;
+  near_duplicate_columns: Array<{
+    feature: string;
+    duplicate_of: string;
+    method: string;
+    value?: number;
+  }>;
+  leakage: QualityFlag[];
+  outliers: OutlierRow[];
+  duplicates: {
+    exact_rows: number;
+    feature_duplicates: number;
+    conflicting_label_groups: number;
+    conflicting_label_rows: number;
+  };
+  flags: QualityFlag[];
+  thresholds: Record<string, number>;
+  interpretation: string;
+}
+
+/** Missingness structure plus Little's MCAR test (``api/eda.py``). */
+export interface MissingMechanism {
+  rows: number;
+  sampled: boolean;
+  columns: string[];
+  complete_rows: number;
+  scope: string;
+  shifts: Array<{
+    missing_column: string;
+    numeric_column: string;
+    mean_observed: number;
+    mean_missing: number;
+    standardized_difference: number;
+    rows_missing: number;
+  }>;
+  shifts_truncated: number;
+  pattern_correlations: Array<{ feature_a: string; feature_b: string; phi: number }>;
+  pattern_correlations_truncated: number;
+  mcar: {
+    statistic: number | null;
+    df: number | null;
+    p_value: number | null;
+    reason: string | null;
+    patterns?: number;
+    rows?: number;
+    columns?: number;
+    method?: string;
+  } | null;
+  interpretation: string;
+}
+
+/** Dtype/value mismatches (``api/eda.py::semantic_audit``). */
+export interface TypeAudit {
+  rows: number;
+  sampled: boolean;
+  scope: string;
+  issues: Array<{
+    column: string;
+    issue: string;
+    detail: string;
+    examples: string[];
+    severity: string;
+  }>;
+  interpretation: string;
 }
 
 /** Numeric distribution block returned by ``dataset_profile``. */

@@ -231,6 +231,31 @@ Three further cards summarize the partition before modeling:
    Distribution rails, exact target composition, association heatmap and VIF
    table for a registered partition; every card states its sampling scope.
 
+Below them, three diagnostic cards turn the profile into review decisions:
+
+* **Data-quality flags** — identifier-like columns (high distinct ratio or an
+  id/name hint; continuous measurements are not flagged), high-cardinality text
+  columns, quasi-constant columns, near-duplicate features (identical, equal
+  after rounding, or ``|r| ≥ 0.999``), leakage hints (near-perfect target
+  association, a feature constant inside a class, disjoint class ranges) and
+  duplicate feature rows carrying conflicting labels. It also tabulates IQR and
+  MAD outlier counts per numeric column.
+* **Missing-data mechanism** — missing-versus-observed mean shifts and
+  missingness-indicator correlations plus **Little's MCAR test** on the numeric
+  columns, with the statistic, degrees of freedom and p-value. When the test is
+  not identifiable the card says why (no missing values, fewer than two columns
+  with missingness, too few rows) instead of printing a number.
+* **Type audit** — numeric-looking text, mixed-type columns, boolean and
+  date-like text, leading/trailing whitespace and levels that differ only by
+  case, each with example values.
+
+.. figure:: images/preprocessing-flags.png
+   :alt: Data-quality flags, missing-data mechanism and type audit cards
+   :width: 100%
+
+   Flags, Little's MCAR statistic and dtype/value mismatches; every entry names
+   its column and no flag removes anything automatically.
+
 To impute, pick a method — drop rows, mean, median, most frequent, constant,
 K-nearest neighbours or iterative/MICE — and the columns to fill (the target is
 never imputed, and ignored columns are not offered). Use **Preview imputation**

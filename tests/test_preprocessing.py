@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -178,6 +179,55 @@ def test_target_composition_reports_numeric_shape(client):
     assert composition["distribution"]["skewness"] > 0
     assert composition["distribution"]["excess_kurtosis"] is not None
     assert composition["scope"].startswith("exact counts")
+
+
+def test_preprocessing_overview_exposes_tier2_diagnostics(client):
+    """Quality flags, missingness mechanism and type audit reach the page."""
+    _register(client)
+    payload = _preprocessing(client)
+
+    flags = payload["quality_flags"]
+    assert flags["rows"] == 8
+    assert flags["scope"].startswith("sampled rows")
+    assert {"flags", "duplicates", "outliers", "thresholds"} <= set(flags)
+    assert flags["duplicates"]["conflicting_label_groups"] == 0
+
+    mechanism = payload["missing_mechanism"]
+    assert mechanism["scope"].startswith("sampled rows")
+    assert "mcar" in mechanism and "shifts" in mechanism
+    # One column with missing values cannot identify an MCAR test.
+    assert mechanism["mcar"]["reason"] in {
+        "fewer_than_two_columns_with_missing_values",
+        "too_few_rows",
+        "insufficient_patterns",
+        None,
+    }
+
+    audit = payload["type_audit"]
+    assert audit["issues"] == []
+    assert audit["interpretation"]
+
+
+def test_preprocessing_overview_flags_identifier_columns(client):
+    """A row-index column is flagged; CSV round-trip coercion is respected.
+
+    ``code`` is written as text but read back by pandas as an integer column, so
+    the endpoint sees a numeric column and does not claim a text/number mismatch
+    — the honest behaviour. The text-number case is covered by the unit tests on
+    ``semantic_audit``.
+    """
+    frame = pd.DataFrame(
+        {
+            "row_id": np.arange(12),
+            "x": np.linspace(0.0, 1.0, 12),
+            "y": [0, 1] * 6,
+        }
+    )
+    _register(client, frame)
+    payload = _preprocessing(client)
+    kinds = {(flag["kind"], flag["column"]) for flag in payload["quality_flags"]["flags"]}
+    assert ("identifier_like", "row_id") in kinds
+    assert payload["type_audit"]["issues"] == []
 
 
 def test_preview_only_imputation_writes_nothing(client):

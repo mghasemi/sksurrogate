@@ -186,6 +186,66 @@ correlation ratio and Cramer's V live on different scales and must not share one
 colour ramp. Every card states its scope — sampled rows versus the full
 partition — and none of these statistics is a causal claim or a hypothesis test.
 
+Data-quality flags, missingness mechanism and type audit
+--------------------------------------------------------
+
+The same overview response carries three further blocks, computed by
+``api/eda.py``:
+
+* ``quality_flags`` — review candidates with a severity, a column and a detail:
+
+  - ``identifier_like``: a text column whose distinct-value ratio is at least
+    0.95, a name that looks like an identifier (``id``, ``uuid``, ``key``,
+    ``row``, ``index``), a free-text name hint (``name``, ``surname``,
+    ``email``, …) combined with high cardinality, or a numeric column that is a
+    consecutive integer row index. Continuous measurements are **not** flagged.
+  - ``high_cardinality``: a text column whose distinct-value ratio is at least
+    0.5 — one-hot encoding it will be wide.
+  - ``quasi_constant``: one level covers at least 95 % of non-missing rows.
+  - ``near_duplicate_feature``: identical columns, columns equal after rounding,
+    or numeric pairs with ``|r| >= 0.999``.
+  - leakage hints: a target association with ``|value| >= 0.98``, a feature that
+    is constant inside a class, and class ranges that do not overlap.
+  - ``conflicting_labels``: duplicate feature rows that carry more than one
+    target value — the cross-validation leakage signal.
+
+  The block also reports IQR (1.5 × IQR fences) **and** MAD (3 × 1.4826 × MAD)
+  outlier counts per numeric column, plus the duplicate-row counts. Thresholds
+  are returned in ``thresholds``.
+
+* ``missing_mechanism`` — missing-versus-observed mean shifts (a MAR-style
+  signal across numeric columns), pairwise missingness-indicator correlations
+  (φ), and **Little's MCAR test**. The test fits multivariate-normal parameters
+  by EM and compares each missingness pattern's observed means with the ML
+  estimates:
+
+  .. math::
+
+      d^2 = \sum_j n_j (\bar y_j - \hat\mu_j)^\top \hat\Sigma_{jj}^{-1}
+            (\bar y_j - \hat\mu_j), \qquad
+            \mathrm{df} = \sum_j p_j - p .
+
+  It returns ``reason`` instead of a statistic when the test is not applicable
+  (no missing values, fewer than two columns with missingness, too few rows,
+  singular covariance, non-convergence). A rejection does not name a mechanism,
+  and with large ``n`` it rejects on trivial departures.
+
+* ``type_audit`` — numeric-looking text, mixed-type columns, boolean-like text,
+  date-like text, leading/trailing whitespace, and levels that differ only by
+  letter case. Each issue carries up to three example values.
+
+.. figure:: images/preprocessing-flags.png
+   :alt: Data-quality flags, missing-data mechanism and type-audit cards
+   :width: 100%
+
+   Identifier, near-duplicate and conflicting-label flags with IQR/MAD outlier
+   counts; Little's MCAR statistic with mean shifts; and dtype/value mismatches.
+
+All three blocks are bounded (5,000 sampled rows for flags, 2,000 for the
+missingness and type blocks, at most 12 numeric columns in the formal test) and
+none of them modifies the partition. The one formal test is labelled as such;
+everything else is a descriptive signal for review.
+
 These are exploratory diagnostics: association does not establish causation,
 leakage, or scientific mechanisms. A strong feature association is a prompt for
 review, not proof of redundancy or a reason to remove a feature automatically.

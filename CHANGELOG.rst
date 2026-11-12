@@ -31,6 +31,14 @@ Data Preprocessing page
   (capped at ``association_limit``), ``rank_associations``,
   ``multicollinearity`` and ``target_composition``; profile blocks are
   descriptive and each card states its sampling scope.
+* **Tier-2 diagnostics** on the same page: data-quality flags (identifier and
+  high-cardinality columns, quasi-constant and near-duplicate features, leakage
+  hints, conflicting duplicate labels, IQR **and** MAD outlier counts),
+  missingness structure with Little's MCAR test (EM-estimated multivariate
+  normal, chi-square on missingness patterns, explicit refusal reasons), and a
+  type audit (numeric-looking text, mixed types, boolean/date-like text,
+  whitespace and case variants). New response blocks: ``quality_flags``,
+  ``missing_mechanism``, ``type_audit``; helpers live in ``api/eda.py``.
 
 Categorical encoding, outlier clipping and duplicate removal
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

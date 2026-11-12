@@ -17,10 +17,15 @@ import type {
   EdaNumericDistribution,
   EncodingPreview,
   ImputationReport,
+  MissingMechanism,
   Multicollinearity,
+  OutlierRow,
   PreprocessingColumn,
   PreprocessingOverview,
+  QualityFlag,
+  QualityFlags,
   TargetComposition,
+  TypeAudit,
 } from "../api/client";
 import { Badge, Card, EmptyState, ErrorNote, Loading, Table, fmtNum, fmtSci } from "../components/ui";
 import { Heatmap } from "../components/Heatmap";
@@ -531,6 +536,198 @@ function CollinearityCard({ multicollinearity }: { multicollinearity: Multicolli
           <p className="hint">{multicollinearity.interpretation}</p>
         </>
       )}
+    </Card>
+  );
+}
+
+function severityTone(severity: string): "ok" | "warn" | "err" | "info" | "muted" {
+  if (severity === "err") return "err";
+  if (severity === "warn") return "warn";
+  if (severity === "info") return "info";
+  return "muted";
+}
+
+function QualityFlagsCard({ flags }: { flags: QualityFlags }) {
+  const duplicates = flags.duplicates;
+  return (
+    <Card
+      title="Data-quality flags"
+      sub="Review candidates detected on the profiled sample: identifier-like and high-cardinality columns, near-duplicates, leakage hints and outlier counts. Nothing here removes a column automatically."
+    >
+      {flags.flags.length === 0 ? (
+        <p className="muted">No flag raised on this partition.</p>
+      ) : (
+        <Table<QualityFlag>
+          columns={["Severity", "Flag", "Column", "Detail"]}
+          rows={flags.flags}
+          keyOf={(flag, index) => `${flag.kind}-${flag.column ?? ""}-${index}`}
+          render={(flag) => [
+            <td key="s"><Badge tone={severityTone(flag.severity)}>{flag.severity}</Badge></td>,
+            <td key="k" className="mono">{flag.kind}</td>,
+            <td key="c" className="mono">{flag.column ?? "—"}</td>,
+            <td key="d" className="muted">{flag.detail}</td>,
+          ]}
+        />
+      )}
+
+      <h4 style={{ marginTop: 14 }}>Duplicate rows</h4>
+      <dl className="kv">
+        <dt>Feature-duplicate rows</dt>
+        <dd>{fmtNum(duplicates.feature_duplicates)}</dd>
+        <dt>Exact duplicate rows</dt>
+        <dd>{fmtNum(duplicates.exact_rows)}</dd>
+        <dt>Conflicting labels</dt>
+        <dd>
+          {fmtNum(duplicates.conflicting_label_groups)} group(s) ·{" "}
+          {fmtNum(duplicates.conflicting_label_rows)} row(s){" "}
+          {duplicates.conflicting_label_groups > 0 && <Badge tone="err">leakage signal</Badge>}
+        </dd>
+      </dl>
+
+      {flags.outliers.length > 0 && (
+        <>
+          <h4 style={{ marginTop: 14 }}>Outliers (IQR and MAD)</h4>
+          <Table<OutlierRow>
+            columns={["Column", "IQR count", "IQR share", "MAD count", "MAD share"]}
+            rows={flags.outliers}
+            keyOf={(entry) => entry.column}
+            render={(entry) => [
+              <td key="c" className="mono">{entry.column}</td>,
+              <td key="i">{fmtNum(entry.iqr_count)}</td>,
+              <td key="ir">{pct(entry.iqr_rate)}</td>,
+              <td key="m">{fmtNum(entry.mad_count)}</td>,
+              <td key="mr">{pct(entry.mad_rate)}</td>,
+            ]}
+          />
+          <p className="hint">
+            IQR fences use 1.5 × IQR; MAD bounds use 3 × 1.4826 × MAD. MAD flags
+            nothing when the deviation is zero, so read both columns together.
+          </p>
+        </>
+      )}
+
+      <p className="hint">{flags.scope}</p>
+      <p className="hint">{flags.interpretation}</p>
+    </Card>
+  );
+}
+
+const MCAR_REASONS: Record<string, string> = {
+  no_missing_values: "No missing values in the numeric columns — nothing to test.",
+  fewer_than_two_columns_with_missing_values:
+    "Fewer than two numeric columns have missing values, so MCAR is not identifiable.",
+  too_few_rows: "Too few rows to estimate the covariance matrix.",
+  insufficient_patterns: "Too few distinct missingness patterns to identify the test.",
+  em_did_not_converge: "The EM estimate did not converge; no statistic reported.",
+  singular_pattern_covariance: "A pattern covariance was singular; no statistic reported.",
+  degenerate_covariance: "The covariance estimate was degenerate.",
+};
+
+function MissingMechanismCard({ mechanism }: { mechanism: MissingMechanism }) {
+  const mcar = mechanism.mcar;
+  const verdict = (() => {
+    if (!mcar || mcar.statistic === null || mcar.p_value === null) {
+      return <Badge tone="muted">not available</Badge>;
+    }
+    if (mcar.p_value < 0.01) return <Badge tone="warn">MCAR rejected (p &lt; 0.01)</Badge>;
+    if (mcar.p_value < 0.05) return <Badge tone="warn">weak evidence against MCAR (p &lt; 0.05)</Badge>;
+    return <Badge tone="ok">no rejection at 5%</Badge>;
+  })();
+
+  return (
+    <Card
+      title="Missing-data mechanism"
+      sub="Descriptive missingness structure plus Little's MCAR test on the numeric columns. A rejection says the complete-data distribution is not the whole story; it does not name a mechanism."
+    >
+      <dl className="kv">
+        <dt>Numeric columns tested</dt>
+        <dd className="mono">{mechanism.columns.length ? mechanism.columns.join(", ") : "—"}</dd>
+        <dt>Complete rows</dt>
+        <dd>{fmtNum(mechanism.complete_rows)} of {fmtNum(mechanism.rows)}</dd>
+        <dt>Little's MCAR</dt>
+        <dd>
+          {mcar && mcar.statistic !== null ? (
+            <>
+              χ² = {fmtNum(mcar.statistic)} · df = {fmtNum(mcar.df)} · p = {fmtSci(mcar.p_value)}{" "}
+              {verdict}
+            </>
+          ) : (
+            <>
+              {verdict}{" "}
+              <span className="muted">
+                {mcar?.reason ? (MCAR_REASONS[mcar.reason] ?? mcar.reason) : ""}
+              </span>
+            </>
+          )}
+        </dd>
+      </dl>
+
+      {mechanism.shifts.length > 0 && (
+        <>
+          <h4 style={{ marginTop: 14 }}>Mean shift by missingness</h4>
+          <Table<(typeof mechanism.shifts)[number]>
+            columns={["Missing column", "Numeric column", "Observed mean", "Missing mean", "Std. diff"]}
+            rows={mechanism.shifts.slice(0, 12)}
+            keyOf={(entry, index) => `${entry.missing_column}-${entry.numeric_column}-${index}`}
+            render={(entry) => [
+              <td key="m" className="mono">{entry.missing_column}</td>,
+              <td key="n" className="mono">{entry.numeric_column}</td>,
+              <td key="o">{num(entry.mean_observed, 4)}</td>,
+              <td key="x">{num(entry.mean_missing, 4)}</td>,
+              <td key="d">{num(entry.standardized_difference, 3)}</td>,
+            ]}
+          />
+          <p className="hint">
+            A large standardized difference means the other column behaves differently on
+            rows where this one is missing — a MAR-style signal, not proof of mechanism.
+          </p>
+        </>
+      )}
+
+      {mechanism.pattern_correlations.length > 0 && (
+        <>
+          <h4 style={{ marginTop: 14 }}>Missingness indicator correlation (φ)</h4>
+          <Table<(typeof mechanism.pattern_correlations)[number]>
+            columns={["Feature A", "Feature B", "φ"]}
+            rows={mechanism.pattern_correlations}
+            keyOf={(entry) => `${entry.feature_a}-${entry.feature_b}`}
+            render={(entry) => [
+              <td key="a" className="mono">{entry.feature_a}</td>,
+              <td key="b" className="mono">{entry.feature_b}</td>,
+              <td key="p">{num(entry.phi, 3)}</td>,
+            ]}
+          />
+        </>
+      )}
+
+      <p className="hint">{mechanism.interpretation}</p>
+    </Card>
+  );
+}
+
+function TypeAuditCard({ audit }: { audit: TypeAudit }) {
+  return (
+    <Card
+      title="Type audit"
+      sub="Columns whose stored dtype and values disagree: numeric-looking text, boolean text, date-like text, whitespace or case variants."
+    >
+      {audit.issues.length === 0 ? (
+        <p className="muted">No dtype/value mismatch found on the profiled sample.</p>
+      ) : (
+        <Table<(typeof audit.issues)[number]>
+          columns={["Severity", "Column", "Issue", "Detail", "Examples"]}
+          rows={audit.issues}
+          keyOf={(issue, index) => `${issue.column}-${issue.issue}-${index}`}
+          render={(issue) => [
+            <td key="s"><Badge tone={severityTone(issue.severity)}>{issue.severity}</Badge></td>,
+            <td key="c" className="mono">{issue.column}</td>,
+            <td key="i" className="mono">{issue.issue}</td>,
+            <td key="d" className="muted">{issue.detail}</td>,
+            <td key="e" className="mono">{issue.examples.join(", ")}</td>,
+          ]}
+        />
+      )}
+      <p className="hint">{audit.interpretation}</p>
     </Card>
   );
 }
@@ -1148,6 +1345,12 @@ export default function PreprocessingPage() {
           <AssociationsCard data={data} />
 
           <CollinearityCard multicollinearity={data.multicollinearity} />
+
+          <QualityFlagsCard flags={data.quality_flags} />
+
+          <MissingMechanismCard mechanism={data.missing_mechanism} />
+
+          <TypeAuditCard audit={data.type_audit} />
 
           <Card title="Data quality" sub="Computed on a bounded row sample; duplicates and constants are descriptive flags, not automatic exclusions.">
             {data.quality ? (

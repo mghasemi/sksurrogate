@@ -28,6 +28,7 @@ from SKSurrogate import (
 
 from ..config import settings
 from ..columns import drop_ignored, normalize_ignored_columns, read_ignored_columns
+from ..eda import missing_mechanism, quality_flags, semantic_audit
 from ..features import NumericFeatureError, numeric_train_xy
 from ..preprocessing import (
     CLIP_METHODS,
@@ -482,7 +483,10 @@ def preprocessing_overview(
     associations, rank associations, collinearity), with feature pairs capped at
     ``association_limit`` so the payload stays bounded on wide frames; exact
     target counts come from ``preprocessing.target_balance`` over the full
-    partition.
+    partition. Tier-2 diagnostics add ``quality_flags`` (identifiers,
+    near-duplicates, leakage hints, IQR/MAD outliers, duplicate labels),
+    ``missing_mechanism`` (mean shifts, indicator correlations, Little's MCAR)
+    and ``type_audit`` (dtype/value mismatches); see ``api/eda.py``.
     """
     if not settings.mltrace_db_path(task_name).exists():
         raise not_found("No dataset registered for task %r" % task_name)
@@ -532,6 +536,30 @@ def preprocessing_overview(
         distribution=(target_profile or {}).get("distribution"),
         max_classes=max_categories,
     )
+    # Tier-2 diagnostics. Each is independently bounded; a failure in one block
+    # must not blank the page, so they are computed defensively.
+    try:
+        quality_report = quality_flags(
+            frame,
+            target=target,
+            ignored=ignored,
+            target_associations=(profile or {}).get("target_associations"),
+            max_rows=max_rows,
+        )
+    except (TypeError, ValueError) as exc:
+        raise bad_request("Data-quality flags failed: %s" % exc)
+    try:
+        mechanism = missing_mechanism(
+            frame, target=target, ignored=ignored, max_rows=min(max_rows, 2000)
+        )
+    except (TypeError, ValueError) as exc:
+        raise bad_request("Missingness diagnostics failed: %s" % exc)
+    try:
+        audit = semantic_audit(
+            frame, target=target, ignored=ignored, max_rows=min(max_rows, 2000)
+        )
+    except (TypeError, ValueError) as exc:
+        raise bad_request("Type audit failed: %s" % exc)
 
     head = frame.head(max(preview_limit, 0))
     preview_records = head.astype(object).where(pd.notna(head), None).to_dict(orient="records")
@@ -562,6 +590,9 @@ def preprocessing_overview(
         "rank_associations": (profile or {}).get("rank_associations"),
         "multicollinearity": (profile or {}).get("multicollinearity"),
         "group_comparisons": (profile or {}).get("group_comparisons"),
+        "quality_flags": quality_report,
+        "missing_mechanism": mechanism,
+        "type_audit": audit,
         "preview": preview_records,
         "methods": IMPUTATION_METHODS,
         "clip_methods": CLIP_METHODS,
