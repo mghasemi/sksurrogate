@@ -118,6 +118,14 @@ For the API and UI, see the
 Run the web UI and API with Docker
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+A prebuilt image of the released version (v0.3.0) is published on Docker Hub as
+``mghasemi/sksurrogate`` (`overview <https://hub.docker.com/r/mghasemi/sksurrogate/>`_)::
+
+    docker run --rm -p 8013:8013 -v sksurrogate-data:/data mghasemi/sksurrogate:latest   # UI and API on http://localhost:8013
+
+Datasets, experiments, logs and model bundles live in the named volume mounted at
+``/data``; the image ships no user data.
+
 From a source checkout (Docker with Compose required)::
 
     docker compose --profile prod up --build -d   # UI and API on http://localhost:8013
