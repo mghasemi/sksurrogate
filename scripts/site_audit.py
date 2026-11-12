@@ -278,7 +278,10 @@ def main():
           os.path.exists(os.path.join(ROOT, "llms-full.txt"))
           and os.path.getsize(os.path.join(ROOT, "llms-full.txt")) > 4000,
           "%d bytes" % os.path.getsize(os.path.join(ROOT, "llms-full.txt")))
-    llms_urls = re.findall(r"https?://[^\s\)]+", llms)
+    # Strip end-of-sentence punctuation: llms.txt lines may follow a URL with
+    # "; " or ". " glued on (e.g. "...sksurrogate/; current release v0.3.0"),
+    # and the raw capture would 4xx against the host.
+    llms_urls = [u.rstrip(".,;:") for u in re.findall(r"https?://[^\s\)]+", llms)]
 
     # ---- 7. images ----------------------------------------------------
     img_tags = re.findall(r"<img\b[^>]*>", open(os.path.join(ROOT, "index.html")).read())
