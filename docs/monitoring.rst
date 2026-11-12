@@ -254,7 +254,8 @@ cross-partition comparison:
 
 * ``formal_tests`` — Anderson–Darling normality test per numeric feature column.
   The test reports the statistic and the **tabulated critical value nearest the
-  requested α** (0.751 at 5 % for the normal case) plus the rejection verdict. A
+  requested α** (about 0.75 at 5 %; SciPy's tabulated value varies slightly
+  with ``n``) plus the rejection verdict. A
   p-value is intentionally not reported on this code path: SciPy's
   ``method="interpolate"`` returns a value capped at the smallest tabulated
   significance (0.15), which reads like a p-value and is not one. The response's
@@ -305,6 +306,13 @@ cross-partition comparison:
 Formal tests live in the control plane only: ``dataset_profile`` keeps its
 descriptive contract, and every block that reports a p-value says so in its own
 name and caveat.
+
+Bounds for these blocks (defaults, all configurable per call except where noted):
+``formal_tests`` uses 2,000 sampled rows and at most 20 numeric columns;
+``effect_sizes`` uses 2,000 rows, the 3 largest groups, at most 8 numeric
+features, 300 bootstrap replicates and a 400-value per-group subsample;
+``stability`` uses 2,000 rows; ``partition_drift`` compares at most 50 features
+on 5,000 sampled rows per partition.
 
 Pre-flight checks for experiment submission
 -------------------------------------------

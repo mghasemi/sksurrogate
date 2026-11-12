@@ -90,9 +90,9 @@ The workflow at a glance
 The UI is organized around a task, which groups data, runs, bundles, registry
 history, inference records, and monitoring. The usual flow is:
 
-``Task → Datasets → Feature Analysis → Experiments → Evaluation → Explain →
-Model Bundles → Quality Gates → Registry & Deployment → Inference → Monitoring
-→ Retraining``
+``Task → Datasets → Data Preprocessing → Feature Analysis → Experiments →
+Evaluation → Explain → Model Bundles → Quality Gates → Registry & Deployment →
+Inference → Monitoring → Retraining``
 
 The sidebar groups pages by stage (Data, Model, Release, Operate). **Projects**
 groups the datasets, bundles and jobs of one investigation and shows which
@@ -195,29 +195,20 @@ balance matters; for grouped or time-ordered observations, select a splitter
 that preserves that structure rather than randomly mixing related or future
 observations across folds.
 
-Missing data and imputation
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Data page: profile, diagnostics and transformations
+---------------------------------------------------
 
-Open **Data Preprocessing**. Choose the stored partition to inspect. The page is
-organised in six tabs, and the selected tab is kept in the URL
-(``?tab=quality``), so a view survives a reload and can be linked:
+Open **Data Preprocessing** and choose the stored partition. The page is
+organised in six tabs, and the active tab is kept in the URL
+(``?tab=quality``), so a view survives a reload and can be linked. Only the
+active tab's cards are loaded, so the partition-drift comparison runs when that
+tab is opened rather than on every visit.
 
-* **Overview** — partition picker, per-column detected and implied types with
-  missing counts and complete-row share, the data-quality card (duplicate
-  rows/features, constant and all-missing columns, missingness patterns) and the
-  row preview with missing cells rendered as “—”.
-* **Distributions** — one row per active feature (quantile rails and categorical
-  bars, IQR outlier counts) and the target-analysis card.
-* **Relationships** — target and feature associations with the Pearson-only
-  heatmap, the Spearman/Kendall table, collinearity diagnostics, and the
-  bootstrap effect sizes between the largest target classes.
-* **Quality & missingness** — the data-quality flags, Little's MCAR block with
-  mean shifts, the dtype/value type audit, and the Anderson–Darling normality
-  tests.
-* **Stability & drift** — half-sample summary stability with the Markdown report
-  download, and the partition-drift comparison against another stored partition.
-* **Transform** — impute, clip/winsorize, deduplicate and preview categorical
-  encoding; every action previews first and writes a new partition.
+**Overview** — the partition picker, the per-column missing-data table (detected
+and implied types, missing counts and percentages, complete-row share, numeric
+quantiles or top categories), a data-quality card (duplicate rows/features,
+constant and all-missing columns, observed missingness patterns) and the row
+preview with missing cells rendered as “—”.
 
 .. figure:: images/ui-preprocessing.png
    :alt: Data Preprocessing page with the six-tab bar and the Overview tab
@@ -226,24 +217,15 @@ organised in six tabs, and the selected tab is kept in the URL
    The tab bar with **Overview** active: missing-data profile, data-quality flags
    and the row preview. Transformations live under **Transform**.
 
-The remaining tabs group the cards by question:
-
-* **Distributions** — one row per active feature. Numeric columns get a rail
-  spanning min → q25 → median → q75 → max with the IQR outlier count; categorical
-  columns get their most frequent levels as bars. The card states when the
-  profile was computed on a row sample.
-* **Target analysis** — exact class counts over the full partition with the
-  minority share, imbalance ratio and the fold count stratified k-fold can
-  actually reach (a class that occurs once blocks stratification). Regression
-  targets show shape statistics (skewness, excess kurtosis, IQR outlier rate)
-  and a two-valued 0/1 column is labelled classification-shaped rather than
-  treated as a regression target.
-* **Associations** — association with the target, each row naming its statistic
-  (Pearson, correlation ratio or Cramér's V), a Pearson-only heatmap of numeric
-  feature pairs, and a collapsible Spearman/Kendall table. **Collinearity** adds
-  variance inflation factors and the design-matrix condition number, with a
-  reading per row. These are descriptive diagnostics: the page never removes a
-  column automatically.
+**Distributions** — one row per active feature. Numeric columns get a rail
+spanning min → q25 → median → q75 → max with the IQR outlier count; categorical
+columns get their most frequent levels as bars. The card states when the profile
+was computed on a row sample. **Target analysis** reports exact class counts over
+the full partition with the minority share, imbalance ratio and the fold count
+stratified k-fold can actually reach (a class that occurs once blocks
+stratification); regression targets show shape statistics (skewness, excess
+kurtosis, IQR outlier rate) and a two-valued 0/1 column is labelled
+classification-shaped rather than treated as a regression target.
 
 .. figure:: images/preprocessing-eda.png
    :alt: Distributions, target analysis, association heatmap and collinearity cards
@@ -252,23 +234,33 @@ The remaining tabs group the cards by question:
    Distribution rails, exact target composition, association heatmap and VIF
    table for a registered partition; every card states its sampling scope.
 
-Under **Quality & missingness**, three diagnostic cards turn the profile into review decisions:
+**Relationships** — **Associations** ranks the target association of each
+feature, naming its statistic (Pearson, correlation ratio or Cramér's V), and
+draws a Pearson-only heatmap of numeric feature pairs plus a collapsible
+Spearman/Kendall table. **Collinearity** adds variance inflation factors and the
+design-matrix condition number with a reading per row. **Effect sizes between
+groups** compares the largest target classes with Cohen's *d* and Cliff's δ and
+percentile bootstrap intervals, labelled as uncorrected per-comparison intervals;
+a numeric target says so instead of inventing classes. These are descriptive
+diagnostics: the page never removes a column automatically.
 
-* **Data-quality flags** — identifier-like columns (high distinct ratio or an
-  id/name hint; continuous measurements are not flagged), high-cardinality text
-  columns, quasi-constant columns, near-duplicate features (identical, equal
-  after rounding, or ``|r| ≥ 0.999``), leakage hints (near-perfect target
-  association, a feature constant inside a class, disjoint class ranges) and
-  duplicate feature rows carrying conflicting labels. It also tabulates IQR and
-  MAD outlier counts per numeric column.
-* **Missing-data mechanism** — missing-versus-observed mean shifts and
-  missingness-indicator correlations plus **Little's MCAR test** on the numeric
-  columns, with the statistic, degrees of freedom and p-value. When the test is
-  not identifiable the card says why (no missing values, fewer than two columns
-  with missingness, too few rows) instead of printing a number.
-* **Type audit** — numeric-looking text, mixed-type columns, boolean and
-  date-like text, leading/trailing whitespace and levels that differ only by
-  case, each with example values.
+**Quality & missingness** — **Data-quality flags** list identifier-like columns
+(high distinct ratio or an id/name hint; continuous measurements are not
+flagged), high-cardinality text columns, quasi-constant columns, near-duplicate
+features (identical, equal after rounding, or ``|r| ≥ 0.999``), leakage hints
+(near-perfect target association, a feature constant inside a class, disjoint
+class ranges) and duplicate feature rows carrying conflicting labels, plus IQR
+and MAD outlier counts per numeric column. **Missing-data mechanism** shows
+missing-versus-observed mean shifts and missingness-indicator correlations with
+**Little's MCAR test** (statistic, degrees of freedom, p-value); when the test is
+not identifiable the card says why (no missing values, fewer than two columns
+with missingness, too few rows) instead of printing a number. **Type audit**
+reports numeric-looking text, mixed-type columns, boolean and date-like text,
+whitespace and case-only level variants with example values.
+**Formal tests (Anderson–Darling)** print the statistic, the tabulated critical
+value at α = 0.05, the verdict and the caveat that a rejection at large *n* can be
+trivial; the p-value is omitted on this path because SciPy's interpolated p is
+capped at 0.15 and would read as a real number.
 
 .. figure:: images/preprocessing-flags.png
    :alt: Data-quality flags, missing-data mechanism and type audit cards
@@ -277,25 +269,14 @@ Under **Quality & missingness**, three diagnostic cards turn the profile into re
    Flags, Little's MCAR statistic and dtype/value mismatches; every entry names
    its column and no flag removes anything automatically.
 
-The **Stability & drift** and **Quality & missingness** tabs add the statistics:
-
-* **Formal tests (Anderson–Darling)** — one row per numeric feature with the
-  statistic, the tabulated critical value at α = 0.05, the verdict, and the
-  caveat that a rejection at large *n* can be trivial. The p-value is omitted on
-  this path because SciPy's interpolated p is capped at 0.15 and would read as a
-  real number.
-* **Effect sizes between groups** — Cohen's *d* and Cliff's δ between the largest
-  target classes (or a chosen grouping) with percentile bootstrap intervals,
-  labelled as uncorrected per-comparison intervals. A numeric target says so
-  instead of inventing classes.
-* **Partition drift** — pick another stored partition and compare: two-sample KS
-  and PSI per numeric feature (PSI ≥ 0.2 is badged), chi-square, Cramér's V and
-  total variation per categorical feature. Columns with more than 50 levels skip
-  the test.
-* **Summary stability** — each summary recomputed on two disjoint random halves,
-  expressed as a fraction of the column's IQR, with the effective sample size.
-  **Download EDA report (Markdown)** renders the whole page as a reproducible
-  file whose sections repeat their sampling scope.
+**Stability & drift** — **Summary stability** recomputes each summary on two
+disjoint random halves and expresses the difference as a fraction of the
+column's IQR, with the effective sample size; **Download EDA report (Markdown)**
+renders the whole page as a reproducible file whose sections repeat their
+sampling scope. **Partition drift** compares this partition with another stored
+partition: two-sample KS and PSI per numeric feature (PSI ≥ 0.2 is badged),
+chi-square homogeneity, Cramér's V and total variation per categorical feature;
+columns with more than 50 levels skip the test.
 
 .. figure:: images/preprocessing-tier3.png
    :alt: Formal tests, effect sizes, partition drift and summary stability
@@ -304,45 +285,40 @@ The **Stability & drift** and **Quality & missingness** tabs add the statistics:
    Anderson–Darling verdicts, bootstrap effect sizes by target class, KS/PSI
    drift against a holdout partition, and IQR-scaled half-sample stability.
 
-To impute, pick a method — drop rows, mean, median, most frequent, constant,
-K-nearest neighbours or iterative/MICE — and the columns to fill (the target is
-never imputed, and ignored columns are not offered). Use **Preview imputation**
-to compare before/after missing counts, distribution shift and the number of
-imputed cells without writing anything. **Save as new partition** writes the
-result under a new partition name (for example ``train_imputed``), records the
-imputation recipe in the task metadata and registers the CSV as a lineage
-artifact. The source partition is never modified, and a name that already exists
-is rejected.
+**Transform** — the write paths. Pick an imputation method — drop rows, mean,
+median, most frequent, constant, K-nearest neighbours or iterative/MICE — and the
+columns to fill (the target is never imputed, and ignored columns are not
+offered). Use **Preview imputation** to compare before/after missing counts,
+distribution shift and the number of imputed cells without writing anything.
+**Save as new partition** writes the result under a new partition name (for
+example ``train_imputed``), records the imputation recipe in the task metadata
+and registers the CSV as a lineage artifact. The source partition is never
+modified, and a name that already exists is rejected. **Duplicate rows** counts
+exact duplicate feature rows, flags groups whose target values disagree
+(contradictory labels or cross-split leakage), and states the consequences before
+removal: sample size change, target balance shift, numeric mean shifts and the
+optimistic cross-validation risk when identical rows straddle folds. **Preview
+removal** recomputes the impact; **Save deduplicated partition** writes a new
+partition with first/last-occurrence choice. **Categorical encoding preview**
+shows the exact matrix the model pipeline builds: numeric passthrough with median
+imputation, one-hot categories with an explicit “__MISSING__” level and
+unseen-category tolerance, datetime → epoch seconds, and per-column TF-IDF for
+declared text columns; it reports each column's detected kind, cardinality,
+output feature count and encoded names, plus the first encoded rows. The encoding
+is learned per training fold during cross-validation, so vocabularies can differ
+between folds. **Outlier clipping / winsorizing** offers IQR fences (Tukey
+multiplier), quantile winsorizing and z-score clipping: select numeric columns,
+preview the bounds, how many values each tail moves, and the before/after mean
+and standard deviation, then save a new partition. The target and ignored columns
+are refused, and non-numeric selections are rejected.
 
 Materialized imputation is a deliberate transformation of the data: experiments
 and cross-validation continue to use fold-local imputation on the original
 partition, so evaluate models on the original data unless you intentionally
 select the derived partition afterwards.
 
-**Duplicate rows** are reported next to the quality card. The page counts exact
-duplicate feature rows, flags groups whose target values disagree (contradictory
-labels or cross-split leakage), and states the consequences before removal:
-sample size change, target balance shift, numeric mean shifts and the optimistic
-cross-validation risk when identical rows straddle folds. **Preview removal**
-recomputes the impact; **Save deduplicated partition** writes a new partition
-with first/last-occurrence choice.
-
-**Categorical encoding preview** shows the exact matrix the model pipeline
-builds: numeric passthrough with median imputation, one-hot categories with an
-explicit “__MISSING__” level and unseen-category tolerance, datetime → epoch
-seconds, and per-column TF-IDF for declared text columns. It reports each
-column's detected kind, cardinality, output feature count and encoded names,
-plus the first encoded rows. The encoding is learned per training fold during
-cross-validation, so vocabularies can differ between folds.
-
-**Outlier clipping / winsorizing** offers IQR fences (Tukey multiplier),
-quantile winsorizing and z-score clipping. Select numeric columns, preview the
-bounds, how many values each tail moves, and the before/after mean and standard
-deviation, then save a new partition. The target and ignored columns are refused,
-and non-numeric selections are rejected.
-
 Experiment Design (external experiments)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+----------------------------------------
 
 **Experiment Design** is for design of experiments, not model selection. Use it
 when a run is expensive or slow (a physical experiment, an instrument
@@ -557,7 +533,7 @@ failure rather than treating it as a score.
    bundle has been created.
 
 Explain a model
-~~~~~~~~~~~~~~~
+---------------
 
 Open **Explain**, choose a bundle, and click **Explain model** for global model
 attribution by permutation importance (the score drop when a feature is

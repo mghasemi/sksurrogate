@@ -57,9 +57,16 @@ Once a run has finished, ``SKSurrogate`` explains *what* the fitted model depend
 - **Sensitivity analysis**: Sobol, Morris, and moment-independent δ indices quantify which
   inputs dominate output variance — useful for pruning expensive models or diagnosing a tuned
   pipeline. See the `sensitivity analysis guide <https://sksurrogate.readthedocs.io/en/latest/sensitivity.html>`_.
+- **Data diagnostics before a run**: the Data page profiles a registered partition —
+  distributions, target composition, target/feature associations, collinearity, identifier
+  and leakage flags, Little's MCAR, Anderson–Darling normality, bootstrap effect sizes,
+  half-sample stability, partition-to-partition drift — and exports the same tables as a
+  Markdown report. The Experiments page repeats the actionable findings as advisory
+  pre-flight checks, so a score is never read without its data caveats. See the
+  `monitoring guide <https://sksurrogate.readthedocs.io/en/latest/monitoring.html>`_.
 
-Both are descriptive, model-attributive analyses: they quantify how the learned response depends
-on its inputs, not causal effects.
+All of these are descriptive analyses: the model-attribution views show how the learned response
+depends on its inputs, and the data diagnostics describe the partition — none of them is a causal claim.
 
 Observe what a run did
 ----------------------

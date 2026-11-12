@@ -234,8 +234,10 @@ dataset fingerprints stay valid.
 
 Ignored columns are dropped wherever a stored partition becomes a feature matrix:
 experiments, pipeline optimization, baselines, explanations, sensitivity and
-correlation analysis, dataset profiles, nested CV, diagnostic curves, monitoring
-drift, synthetic generation and the LLM research-synthesis facts. They are still
+correlation analysis, dataset profiles, the Data-page EDA statistics (the
+missing-data table still lists ignored columns, badged) and pre-flight rules,
+nested CV, diagnostic curves, monitoring drift, synthetic generation and the LLM
+research-synthesis facts. They are still
 returned by the partition preview (so the UI can show and restore them). Bundles
 keep the schema they were trained with: retrain after changing the list before
 serving through those bundles.

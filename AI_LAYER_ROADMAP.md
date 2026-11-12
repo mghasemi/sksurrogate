@@ -100,7 +100,7 @@ scope or status. Review-specific recommendations and follow-up decisions from
 | Fold-safe preprocessing and column routing | Partial | AML's candidate preprocessing is fold-local, with `FoldLocalDataPreprocessor` available (P0.2). The legacy eager `DataPreprocess.encode()` workflow remains distinct and is documented as unsafe to fit before CV. High-cardinality/text improvements are not included in this completed fix. |
 | Search cost and surrogate robustness | Partial | Hilbert numerical guards and surrogate diagnostics are implemented (P0.3). The previous real-workload probe mislabeled the library's default GP arm as Hilbert; the benchmark now injects and records Hilbert explicitly, and corrected real-workload comparisons are documented. Component profiling is complete; optimization remains P1.2. |
 | Ensembling, TabPFN, and pruning integrations | Deferred | A bounded holdout-selected ensemble probe (P1.8) showed only a small, inconsistent gain; do not ship a production ensemble API without representative evidence. Do not add heavyweight dependencies by default. |
-| EDA and data intelligence | Partial | P2.1 adds bounded mixed-type dataset profiles and registered-partition API access, with exploratory/non-causal caveats. Unit inference and document extraction remain deferred. |
+| EDA and data intelligence | Partial | P2.1's bounded profile is now surfaced and extended: the tabbed Data page shows distributions, target composition, associations, collinearity, identifier/leakage flags, Little's MCAR, a type audit, Anderson–Darling tests, bootstrap effect sizes, half-sample stability and partition drift, with a Markdown export; `/api/datasets/{task}/preflight` feeds advisory submit-time checks. Formal tests stay out of `dataset_profile`. Unit inference and document extraction remain deferred. |
 | Evaluation uncertainty and statistical comparison | Partial | Nested/repeated evaluation and interval summaries already exist. P1.4 adds paired repeat-score bootstrap intervals/effect sizes and split-conformal regression. The repeated-CV comparison contract is explicitly descriptive (not nominal-coverage inference under dependent repeats); independent-unit inferential methods remain future work. |
 | Explanations and diagnostic plots | Partial | Sensitivity analysis and P1.4 diagnostics exist; P1.5 adds bounded permutation importance, partial-dependence/ICE plots, accumulated local effects, reference-subset stability summaries, and exact ordered-occlusion row explanations. SHAP remains a separately evaluated, deferred optional integration; ICE stability and inline serving-row explanations are not part of the API contract. |
 | Additional scientific problem classes | Partial | P3 adds chronological splitter-level nested evaluation, quantile regression scoring/learning curves, and a Python split-conformalized quantile interval helper; full forecasting protocols, survival analysis, and UI/API interval integration remain deferred. |
@@ -439,9 +439,9 @@ are specified. The current bounded result and reproduction command are in
 
 #### P2.1 Add a useful scientific EDA entry point
 
-- **Status:** Complete — added a bounded mixed-type profile helper and a
-  registered-partition API endpoint with target inference and partition
-  fingerprints.
+- **Status:** Complete — bounded mixed-type profile helper, registered-partition
+  API endpoint with target inference and partition fingerprints, and (2026-11-12)
+  a tabbed Data page plus advisory pre-flight checks that surface it.
 - [x] Provide a bounded dataset profile covering distributions, missingness,
   target balance/distribution, associations, and potential redundancy.
 - [x] Extend profile summaries with robust numeric statistics, IQR outlier
@@ -457,8 +457,12 @@ are specified. The current bounded result and reproduction command are in
   datasets.
 - [x] Present findings as diagnostic signals, not proof of leakage, causation,
   or scientific mechanisms.
-- [x] Reuse existing registered-dataset and API flows; no separate UI was
-  needed for this API-scoped change.
+- [x] Reuse existing registered-dataset and API flows.
+- [x] Surface the profile in the UI as a tabbed Data page (Overview, Distributions,
+  Relationships, Quality & missingness, Stability & drift, Transform), with the
+  active tab URL-synced.
+- [x] Add advisory pre-flight checks for experiment submission
+  (``GET /api/datasets/{task}/preflight``); the run is never blocked.
 
 **Done when:** a user can inspect data quality and basic target/feature
 relationships before launching model search, with tests for mixed data.
@@ -480,6 +484,31 @@ default/opaque scoring or missing fingerprints. Follow-up validation passed
 127 tests across optimized paths, dataset-profile endpoints, time-series, and
 quantile evaluation suites; Sphinx HTML, Python compilation, Pylance checks,
 and whitespace checks passed.
+
+**2026-11-12 — EDA follow-up (Tiers 1–4 + tabbed UI):** the bounded profile is
+now the payload behind a tabbed Data Preprocessing page
+(``GET /api/datasets/{task}/{partition}/preprocessing``) and three new blocks
+live in ``api/eda.py`` and ``api/preflight.py``:
+
+- ``quality_flags`` (identifiers, high-cardinality, quasi-constants,
+  near-duplicates, leakage hints, IQR + MAD outliers, conflicting duplicate
+  labels), ``missing_mechanism`` (mean shifts, indicator φ, Little's MCAR) and
+  ``semantic_audit`` (dtype/value mismatches);
+- ``formal_tests`` (Anderson–Darling per numeric column, tabulated critical
+  values — SciPy's interpolated p is capped at 0.15 and is not reported),
+  ``effect_sizes`` (Cohen's *d* and Cliff's δ with percentile bootstrap
+  intervals), ``stability`` (IQR-scaled half-sample differences) and
+  ``partition_drift`` (KS + PSI; χ² homogeneity + Cramér's V + total variation),
+  plus ``GET .../eda-report`` rendering the payload as Markdown;
+- ``submit_preflight`` served as ``GET /api/datasets/{task}/preflight`` and shown
+  as an advisory card on Experiments (``blocking`` is always ``false``).
+
+Commits ``3163eb6``, ``9cbd5c0``, ``d17ed2d``, ``927e1cf``, ``cb5daad``.
+Verification: 653 tests passed; ``npm run build`` clean; Sphinx HTML builds with
+0 warnings; live browser runs on seeded tasks for every card, tab and the
+pre-flight banner. Not shipped from this list: hexbin/LOESS bivariate plots
+(deferred, no chart primitive) and any inferential claim beyond the two named
+tests.
 
 #### P2.2 Improve scientific provenance and result export
 
