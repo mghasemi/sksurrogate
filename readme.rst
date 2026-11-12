@@ -124,7 +124,11 @@ A prebuilt image of the released version (v0.3.0) is published on Docker Hub as
     docker run --rm -p 8013:8013 -v sksurrogate-data:/data mghasemi/sksurrogate:latest   # UI and API on http://localhost:8013
 
 Datasets, experiments, logs and model bundles live in the named volume mounted at
-``/data``; the image ships no user data.
+``/data``; the image ships no user data. On first use ``docker run`` pulls the image
+automatically; to upgrade an existing deployment to a new release, re-pull first —
+``run`` will not refresh a cached copy (or pin a version tag such as ``v0.3.0``)::
+
+    docker pull mghasemi/sksurrogate:latest
 
 From a source checkout (Docker with Compose required)::
 
