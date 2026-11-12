@@ -737,7 +737,7 @@ VIDEO_ID = "XY6Hj8PFP-Q"
 VIDEO_URL = "https://www.youtube.com/watch?v=" + VIDEO_ID
 VIDEO_EMBED = "https://www.youtube-nocookie.com/embed/" + VIDEO_ID
 VIDEO_THUMB = "https://i.ytimg.com/vi/" + VIDEO_ID + "/maxresdefault.jpg"
-VIDEO_TITLE = "Introducing SKSurrogate"
+VIDEO_TITLE = "How SKSurrogate Constructs and Evaluates ML Pipelines"
 VIDEO_UPLOADED = "2026-11-12T17:18:33Z"
 VIDEO_DURATION = "PT7M24S"
 VIDEO_LENGTH_TEXT = "7 min 24 s"
@@ -779,6 +779,7 @@ def videos(rel):
         composed, how the search decides what to try next, and how a candidate earns its place in a
         registered bundle. Longer than a changelog entry, shorter than a paper.</p>
 
+      <h2 class="video-title">%s</h2>
       <div class="videofacade-wrap">
         <a class="videofacade" href="%s" data-vid="%s" data-title="%s">
           <img src="%s" alt="Title frame of the %s walkthrough" width="1280" height="720" loading="lazy">
@@ -847,7 +848,7 @@ def videos(rel):
           f.parentNode.replaceChild(frame, f);
         });
       })();
-      </script>''' % (crumb(rel, "videos"), VIDEO_URL, VIDEO_ID, VIDEO_TITLE, VIDEO_THUMB, VIDEO_TITLE,
+      </script>''' % (crumb(rel, "videos"), VIDEO_TITLE, VIDEO_URL, VIDEO_ID, VIDEO_TITLE, VIDEO_THUMB, VIDEO_TITLE,
                       VIDEO_LENGTH_TEXT, VIDEO_URL,
                       L(rel, "/benchmarks/"), L(rel, "/quickstart/"), L(rel, "/concepts/"),
                       CHANNEL_URL, CHANNEL_SUBSCRIBE, VIDEO_EMBED)
