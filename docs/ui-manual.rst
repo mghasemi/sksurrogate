@@ -220,6 +220,28 @@ and cross-validation continue to use fold-local imputation on the original
 partition, so evaluate models on the original data unless you intentionally
 select the derived partition afterwards.
 
+**Duplicate rows** are reported next to the quality card. The page counts exact
+duplicate feature rows, flags groups whose target values disagree (contradictory
+labels or cross-split leakage), and states the consequences before removal:
+sample size change, target balance shift, numeric mean shifts and the optimistic
+cross-validation risk when identical rows straddle folds. **Preview removal**
+recomputes the impact; **Save deduplicated partition** writes a new partition
+with first/last-occurrence choice.
+
+**Categorical encoding preview** shows the exact matrix the model pipeline
+builds: numeric passthrough with median imputation, one-hot categories with an
+explicit “__MISSING__” level and unseen-category tolerance, datetime → epoch
+seconds, and per-column TF-IDF for declared text columns. It reports each
+column's detected kind, cardinality, output feature count and encoded names,
+plus the first encoded rows. The encoding is learned per training fold during
+cross-validation, so vocabularies can differ between folds.
+
+**Outlier clipping / winsorizing** offers IQR fences (Tukey multiplier),
+quantile winsorizing and z-score clipping. Select numeric columns, preview the
+bounds, how many values each tail moves, and the before/after mean and standard
+deviation, then save a new partition. The target and ignored columns are refused,
+and non-numeric selections are rejected.
+
 .. figure:: images/ui-preprocessing.png
    :alt: Data Preprocessing page with missing-data overview and imputation controls
    :width: 100%

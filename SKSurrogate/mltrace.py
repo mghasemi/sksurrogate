@@ -744,6 +744,7 @@ class mltrack(object):
         tables = [Task, TaskMetadata, MLModel, Metrics, Saved, Plots, Data, Weights]
         for tbl in tables:
             tbl._meta.database.init(self.db_name)
+        MLTRACK_DB.connect(reuse_if_open=True)
         MLTRACK_DB.create_tables(tables)
         res = Task.select().where((Task.name == task) | (Task.task_id == task_id))
         if len(res) > 0:
@@ -795,9 +796,17 @@ class mltrack(object):
                 pass
 
     def __del__(self):
-        """Ensure SQLite connections are closed when the tracker is garbage collected."""
+        """Close only this instance's sqlite handle.
+
+        The shared Peewee database is process-wide: closing it from a garbage-
+        collected tracker can tear down a connection another request is using.
+        Explicit :meth:`close` remains responsible for the shared handle.
+        """
         try:
-            self.close()
+            conn = getattr(self, "conn", None)
+            if conn is not None:
+                conn.close()
+            self.conn = None
         except Exception:
             pass
 

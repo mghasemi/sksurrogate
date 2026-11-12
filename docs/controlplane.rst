@@ -168,6 +168,34 @@ dataset fingerprints stay valid.
     ``imputation_history`` entry records the recipe. The source partition is
     never modified and an existing output name answers **409**.
 
+``GET /api/datasets/{task_name}/{partition}/encoding-preview``
+    Query ``sample_rows`` (default 1000) and ``max_outputs`` (default 40). Fits
+    the same ``FoldLocalDataPreprocessor`` used by model pipelines on a bounded
+    sample and returns the encoded feature names, a preview matrix, per-column
+    kind/cardinality/output names and the fold-local caveats. Read-only.
+
+``POST /api/datasets/{task_name}/clip``
+    Body ``{"partition", "method", "columns"?, "params"?, "output_partition"?,
+    "preview_only"?}``. Methods: ``iqr`` (``factor``), ``quantile`` (``lower``,
+    ``upper``), ``zscore`` (``threshold``). Numeric features only; the target and
+    ignored columns are refused with **400**. The report gives bounds, tail
+    counts, clipped share and before/after moments. Saving writes a **new**
+    partition, a ``clipping_history`` recipe and registry lineage; an existing
+    output name answers **409**.
+
+``GET /api/datasets/{task_name}/{partition}/duplicates``
+    Query ``max_rows`` (default 20000; ``0`` = full frame). Counts exact
+    feature-duplicate rows/groups, full-row duplicates, groups with conflicting
+    target values, and the distributional impact of removal (target balance,
+    numeric means), plus explicit warnings about sample change, balance shift
+    and cross-validation leakage. Read-only.
+
+``POST /api/datasets/{task_name}/deduplicate``
+    Body ``{"partition", "columns"?, "keep", "output_partition"?,
+    "preview_only"?}``. ``keep`` is ``first``/``last``. Returns the same impact
+    report; saving writes a **new** partition with a ``deduplication_history``
+    recipe and registry lineage. Source untouched; existing output → **409**.
+
 ``PUT /api/datasets/{task_name}/ignored-columns``
     Body ``{"columns": ["Surname", "Geography"]}`` replaces the list and returns
     ``ignored_columns``, ``effective_features`` and ``effective_feature_count``.

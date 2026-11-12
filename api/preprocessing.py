@@ -360,9 +360,522 @@ def impute_partition(
     return result, report
 
 
+class ClipError(ValueError):
+    """Caller-facing outlier-clipping validation error (mapped to HTTP 400)."""
+
+
+#: Ordered clipping catalogue exposed to the UI.
+CLIP_METHODS = [
+    {
+        "name": "iqr",
+        "label": "IQR fences (Q1 − k·IQR, Q3 + k·IQR)",
+        "params": [
+            {"name": "factor", "kind": "float", "default": 1.5, "min": 0.1, "max": 10.0,
+             "help": "Tukey multiplier k; 1.5 is the classic fence, 3.0 flags only far outliers."}
+        ],
+    },
+    {
+        "name": "quantile",
+        "label": "Quantile winsorizing",
+        "params": [
+            {"name": "lower", "kind": "float", "default": 0.01, "min": 0.0, "max": 0.49,
+             "help": "Lower tail quantile; 0.01 clips the bottom 1%."},
+            {"name": "upper", "kind": "float", "default": 0.99, "min": 0.51, "max": 1.0,
+             "help": "Upper tail quantile; 0.99 clips the top 1%."},
+        ],
+    },
+    {
+        "name": "zscore",
+        "label": "Z-score clipping",
+        "params": [
+            {"name": "threshold", "kind": "float", "default": 3.0, "min": 0.5, "max": 10.0,
+             "help": "Clip values whose absolute z-score exceeds this threshold."}
+        ],
+    },
+]
+
+_CLIP_METHOD_NAMES = {method["name"] for method in CLIP_METHODS}
+
+
+def _as_float(params, name, default, minimum, maximum):
+    value = (params or {}).get(name, default)
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        raise ClipError("%s must be a number" % name)
+    if not (minimum <= value <= maximum):
+        raise ClipError("%s must be between %s and %s" % (name, minimum, maximum))
+    return value
+
+
+def _clip_bounds(series, method, params):
+    """Return finite ``(lower, upper)`` clipping bounds for one numeric column."""
+    values = pd.to_numeric(series, errors="coerce").dropna()
+    if values.empty:
+        raise ClipError("column %r has no numeric values to clip" % series.name)
+    if method == "iqr":
+        factor = _as_float(params, "factor", 1.5, 0.1, 10.0)
+        q1 = float(values.quantile(0.25))
+        q3 = float(values.quantile(0.75))
+        iqr = q3 - q1
+        return q1 - factor * iqr, q3 + factor * iqr
+    if method == "quantile":
+        lower = _as_float(params, "lower", 0.01, 0.0, 0.49)
+        upper = _as_float(params, "upper", 0.99, 0.51, 1.0)
+        if not lower < upper:
+            raise ClipError("lower must be smaller than upper")
+        return float(values.quantile(lower)), float(values.quantile(upper))
+    if method == "zscore":
+        threshold = _as_float(params, "threshold", 3.0, 0.5, 10.0)
+        mean = float(values.mean())
+        std = float(values.std())
+        if not math.isfinite(std) or std <= 0:
+            raise ClipError("column %r has zero variance; z-score clipping is undefined" % series.name)
+        return mean - threshold * std, mean + threshold * std
+    raise ClipError(
+        "method must be one of %s (got %r)"
+        % (", ".join(method["name"] for method in CLIP_METHODS), method)
+    )
+
+
+def _validate_clip_selection(frame, *, target, ignored, columns):
+    ignored = set(ignored or [])
+    available = [
+        column
+        for column in frame.columns
+        if column != target and column not in ignored and _is_numeric(frame[column])
+    ]
+    if columns is None:
+        selected = available
+    else:
+        if not isinstance(columns, (list, tuple)) or not all(isinstance(c, str) for c in columns):
+            raise ClipError("columns must be a list of column names")
+        selected = []
+        for column in columns:
+            if column not in frame.columns:
+                raise ClipError("Unknown column %r" % column)
+            if column == target:
+                raise ClipError("The target column %r cannot be clipped" % column)
+            if column in ignored:
+                raise ClipError(
+                    "Column %r is ignored for this dataset; re-enable it before clipping" % column
+                )
+            if column not in available:
+                raise ClipError(
+                    "Column %r is not numeric; outlier clipping applies to numeric features only"
+                    % column
+                )
+            if column not in selected:
+                selected.append(column)
+    if not selected:
+        raise ClipError("No numeric feature columns were selected")
+    return selected
+
+
+def clip_partition(frame, *, target, ignored, method, columns=None, params=None):
+    """Winsorize numeric features and return ``(frame, report)``.
+
+    Values below/above the column's bounds are replaced by the bounds. The report
+    states the bounds, how many values each tail clipped, and the change in the
+    column's marginal distribution.
+    """
+    if method not in _CLIP_METHOD_NAMES:
+        raise ClipError(
+            "method must be one of %s (got %r)"
+            % (", ".join(entry["name"] for entry in CLIP_METHODS), method)
+        )
+    if target not in frame.columns:
+        raise ClipError("target column %r is not present in the partition" % target)
+    selected = _validate_clip_selection(frame, target=target, ignored=ignored, columns=columns)
+    result = frame.copy()
+    per_column = {}
+    total_clipped = 0
+    for column in selected:
+        series = result[column]
+        lower, upper = _clip_bounds(series, method, params)
+        if not (math.isfinite(lower) and math.isfinite(upper)):
+            raise ClipError("column %r produced non-finite clipping bounds" % column)
+        values = pd.to_numeric(series, errors="coerce")
+        below = int((values < lower).sum())
+        above = int((values > upper).sum())
+        clipped = below + above
+        total_clipped += clipped
+        result[column] = values.clip(lower=lower, upper=upper)
+        per_column[column] = {
+            "lower": _finite(lower),
+            "upper": _finite(upper),
+            "clipped_low": below,
+            "clipped_high": above,
+            "clipped": clipped,
+            "clipped_pct": float(clipped / max(int(values.notna().sum()), 1)),
+            "before": _numeric_summary(frame[column]),
+            "after": _numeric_summary(result[column]),
+        }
+    return result, {
+        "method": method,
+        "params": dict(params or {}),
+        "columns": selected,
+        "rows": int(len(frame)),
+        "cells_clipped": int(total_clipped),
+        "columns_report": per_column,
+    }
+
+
+def _target_distribution(series):
+    """Compact JSON-safe target distribution for the duplicate-impact report."""
+    counts = series.dropna()
+    if _is_numeric(counts) and counts.nunique() > 10:
+        return {"kind": "numeric", "summary": _numeric_summary(counts)}
+    values = _top_values(counts, limit=12)
+    return {"kind": "categorical", "values": values}
+
+
+def _distribution_delta(before, after):
+    """Largest absolute change in a categorical/numeric marginal."""
+    if before.get("kind") == "categorical":
+        before_map = {entry["value"]: entry["share"] for entry in before.get("values", [])}
+        after_map = {entry["value"]: entry["share"] for entry in after.get("values", [])}
+        deltas = []
+        for value in set(before_map) | set(after_map):
+            deltas.append((value, after_map.get(value, 0.0) - before_map.get(value, 0.0)))
+        if not deltas:
+            return {"value": None, "share_before": 0.0, "share_after": 0.0, "delta": 0.0}
+        value, delta = max(deltas, key=lambda item: abs(item[1]))
+        return {
+            "value": value,
+            "share_before": before_map.get(value, 0.0),
+            "share_after": after_map.get(value, 0.0),
+            "delta": delta,
+        }
+    before_mean = (before.get("summary") or {}).get("mean")
+    after_mean = (after.get("summary") or {}).get("mean")
+    if before_mean is None or after_mean is None:
+        return None
+    return {
+        "value": "mean",
+        "share_before": before_mean,
+        "share_after": after_mean,
+        "delta": after_mean - before_mean,
+    }
+
+
+def duplicate_analysis(
+    frame,
+    *,
+    target,
+    ignored,
+    columns=None,
+    keep="first",
+    max_rows=20000,
+    random_state=0,
+):
+    """Assess exact duplicate rows and the distributional cost of removing them.
+
+    Duplicates are judged on the **feature** columns, not on the target: rows with
+    identical features but different labels are the dangerous case (leakage across
+    a random split or contradictory labels), and full-row duplicates are reported
+    separately. The report is descriptive only; ``drop_duplicate_rows`` performs
+    the removal.
+    """
+    ignored = set(ignored or [])
+    if target not in frame.columns:
+        raise ClipError("target column %r is not present in the partition" % target)
+    available = [column for column in frame.columns if column != target and column not in ignored]
+    if columns is None:
+        features = available
+    else:
+        if not isinstance(columns, (list, tuple)) or not all(isinstance(c, str) for c in columns):
+            raise ClipError("columns must be a list of column names")
+        features = []
+        for column in columns:
+            if column not in frame.columns:
+                raise ClipError("Unknown column %r" % column)
+            if column == target:
+                raise ClipError("The target column cannot be part of the duplicate key")
+            if column in ignored:
+                raise ClipError("Column %r is ignored for this dataset" % column)
+            if column not in features:
+                features.append(column)
+    if not features:
+        raise ClipError("No feature columns available to define duplicate rows")
+    if keep not in {"first", "last"}:
+        raise ClipError("keep must be 'first' or 'last'")
+
+    sampled = False
+    working = frame
+    if max_rows and len(frame) > max_rows > 0:
+        working = frame.sample(max_rows, random_state=random_state)
+        sampled = True
+
+    duplicate_mask = working.duplicated(subset=features, keep=False)
+    duplicate_groups = int(working.loc[duplicate_mask, features].drop_duplicates().shape[0])
+    duplicate_rows = int(duplicate_mask.sum())
+    removable_mask = working.duplicated(subset=features, keep=keep)
+    removable = int(removable_mask.sum())
+    full_duplicate_rows = int(working.duplicated(keep=False).sum())
+
+    conflicting_groups = 0
+    conflicting_rows = 0
+    if target in working.columns and duplicate_rows:
+        grouped = working.loc[duplicate_mask].groupby(features, dropna=False)[target].nunique(dropna=True)
+        conflicting_groups = int((grouped > 1).sum())
+        if conflicting_groups:
+            conflicting_keys = set(grouped[grouped > 1].index)
+            keys = list(working.loc[duplicate_mask, features].itertuples(index=False, name=None))
+            conflicting_rows = int(sum(1 for key in keys if key in conflicting_keys))
+
+    deduplicated = working.drop_duplicates(subset=features, keep=keep)
+    rows_before = int(len(working))
+    rows_after = int(len(deduplicated))
+    removed = rows_before - rows_after
+    target_before = _target_distribution(working[target])
+    target_after = _target_distribution(deduplicated[target])
+    target_delta = _distribution_delta(target_before, target_after)
+
+    numeric_shift = {}
+    for column in features:
+        if _is_numeric(working[column]):
+            before = _numeric_summary(working[column])
+            after = _numeric_summary(deduplicated[column])
+            if before and after and before.get("mean") is not None and after.get("mean") is not None:
+                change = after["mean"] - before["mean"]
+                numeric_shift[column] = {
+                    "before": before,
+                    "after": after,
+                    "mean_delta": change,
+                    "mean_delta_pct": (
+                        change / abs(before["mean"]) if before["mean"] not in (None, 0) else None
+                    ),
+                }
+
+    warnings = []
+    if removed:
+        warnings.append(
+            "Removing %d of %d rows (%.1f%%) changes the sample: every statistic, split "
+            "and model fitted afterwards describes the deduplicated data, not the "
+            "partition you registered."
+            % (removed, rows_before, 100.0 * removed / max(rows_before, 1))
+        )
+    if target_delta and abs(target_delta.get("delta") or 0.0) >= 0.005:
+        if target_before.get("kind") == "categorical":
+            warnings.append(
+                "The target balance shifts: class %r goes from %.1f%% to %.1f%% (%+.1f pp), "
+                "so accuracy and threshold-based metrics will move with it."
+                % (
+                    target_delta.get("value"),
+                    100.0 * (target_delta.get("share_before") or 0.0),
+                    100.0 * (target_delta.get("share_after") or 0.0),
+                    100.0 * (target_delta.get("delta") or 0.0),
+                )
+            )
+        else:
+            warnings.append(
+                "The target mean shifts from %.6g to %.6g (%+.2f%%), which changes the "
+                "baseline and the residual scale."
+                % (
+                    target_delta.get("share_before") or 0.0,
+                    target_delta.get("share_after") or 0.0,
+                    100.0 * ((target_delta.get("delta") or 0.0) / abs(target_delta.get("share_before") or 1.0)),
+                )
+            )
+    significant_feature = [
+        (column, stats)
+        for column, stats in numeric_shift.items()
+        if stats["mean_delta_pct"] is not None and abs(stats["mean_delta_pct"]) >= 0.05
+    ]
+    if significant_feature:
+        column, stats = max(significant_feature, key=lambda item: abs(item[1]["mean_delta_pct"]))
+        warnings.append(
+            "Feature %r mean moves by %+.1f%% (%.6g → %.6g); the marginal distribution "
+            "of the deduplicated data is not the registered one."
+            % (column, 100.0 * stats["mean_delta_pct"], stats["before"]["mean"], stats["after"]["mean"])
+        )
+    if conflicting_groups:
+        warnings.append(
+            "%d duplicate feature group(s), covering %d rows, carry differing target values. "
+            "These are contradictory labels or cross-split leakage: random cross-validation "
+            "on the original data is optimistically biased, and deduplication keeps one "
+            "arbitrary label per group."
+            % (conflicting_groups, conflicting_rows)
+        )
+    if duplicate_rows:
+        warnings.append(
+            "Duplicates are a split hazard: if identical feature rows land in both training "
+            "and validation folds, the validation score is not an out-of-sample estimate. "
+            "Deduplicate before splitting or use a grouped splitter."
+        )
+    if sampled:
+        warnings.append(
+            "The duplicate profile was computed on a random sample of %d rows; counts are "
+            "scaled to the sample, not the full partition." % rows_before
+        )
+
+    return {
+        "features": features,
+        "keep": keep,
+        "target": target,
+        "sampled": sampled,
+        "rows_before": rows_before,
+        "rows_after": rows_after,
+        "rows_removed": removed,
+        "rows_removed_pct": float(removed / max(rows_before, 1)),
+        "duplicate_rows": duplicate_rows,
+        "duplicate_groups": duplicate_groups,
+        "removable_rows": removable,
+        "full_duplicate_rows": full_duplicate_rows,
+        "conflicting_label_groups": conflicting_groups,
+        "conflicting_label_rows": conflicting_rows,
+        "target_before": target_before,
+        "target_after": target_after,
+        "target_shift": target_delta,
+        "numeric_shift": numeric_shift,
+        "warnings": warnings,
+    }
+
+
+def drop_duplicate_rows(frame, *, target, ignored, columns=None, keep="first", max_rows=20000):
+    """Drop exact feature-duplicate rows and return ``(frame, report)``."""
+    report = duplicate_analysis(
+        frame,
+        target=target,
+        ignored=ignored,
+        columns=columns,
+        keep=keep,
+        max_rows=max_rows,
+    )
+    if report["sampled"]:
+        raise ClipError(
+            "Refusing to remove duplicates from a sampled profile; raise max_rows or "
+            "pass explicit feature columns"
+        )
+    result = frame.drop_duplicates(subset=report["features"], keep=keep).copy()
+    report["rows_after"] = int(len(result))
+    report["rows_removed"] = int(len(frame) - len(result))
+    report["rows_removed_pct"] = float(report["rows_removed"] / max(len(frame), 1))
+    return result, report
+
+
+def encoding_preview(frame, *, target, ignored, sample_rows=1000, max_outputs=40, random_state=0):
+    """Show how the modeling pipeline encodes the active feature columns.
+
+    A ``FoldLocalDataPreprocessor`` is fitted on a bounded sample, so the reported
+    feature names and the previewed matrix are exactly what a model sees — with
+    the important caveat that in cross-validation this vocabulary is re-learned
+    inside every training fold.
+    """
+    import numpy as np
+
+    from SKSurrogate.DataProcess import FoldLocalDataPreprocessor, _is_declared_text_dtype
+
+    ignored = set(ignored or [])
+    features = [column for column in frame.columns if column != target and column not in ignored]
+    if not features:
+        raise ImputationError("No active feature columns to encode")
+    sample = frame[features]
+    sampled = False
+    if sample_rows and len(sample) > sample_rows > 0:
+        sample = sample.sample(sample_rows, random_state=random_state)
+        sampled = True
+    try:
+        preprocessor = FoldLocalDataPreprocessor()
+        matrix = preprocessor.fit_transform(sample)
+        names = list(preprocessor.get_feature_names_out())
+        groups = list(preprocessor.transformer_.transformers_)
+    except Exception as exc:  # pragma: no cover - surfaced verbatim to the UI
+        raise ImputationError("Could not fit the encoding preview: %s" % exc)
+
+    column_names = list(frame.columns)
+    per_column_outputs = {column: [] for column in features}
+    for _name, transformer, columns in groups:
+        positions = [columns] if isinstance(columns, (int, np.integer)) else list(columns)
+        labels = [column_names[int(pos)] if isinstance(pos, (int, np.integer)) else str(pos) for pos in positions]
+        try:
+            subnames = [str(entry) for entry in transformer.get_feature_names_out()]
+        except Exception:
+            subnames = []
+        if len(labels) == 1:
+            per_column_outputs[labels[0]].extend(subnames)
+        elif len(subnames) == len(labels):
+            for label, subname in zip(labels, subnames):
+                per_column_outputs[label].append(subname)
+        else:
+            for label in labels:
+                token = label + "_"
+                per_column_outputs[label].extend(
+                    subname for subname in subnames if subname.split("__")[-1].startswith(token)
+                )
+
+    per_column = []
+    for column in features:
+        series = frame[column]
+        dtype = series.dtype
+        if pd.api.types.is_datetime64_any_dtype(dtype):
+            kind, encoding = "datetime", "Epoch seconds + median imputation"
+        elif _is_declared_text_dtype(dtype):
+            kind, encoding = "text", "Per-column TF-IDF features"
+        elif pd.api.types.is_bool_dtype(dtype) or not pd.api.types.is_numeric_dtype(dtype):
+            kind, encoding = "categorical", "One-hot (missing → “__MISSING__”, unseen → all zeros)"
+        else:
+            kind, encoding = "numeric", "Passthrough + median imputation"
+        outputs = list(per_column_outputs.get(column, []))
+        per_column.append(
+            {
+                "column": column,
+                "dtype": str(dtype),
+                "kind": kind,
+                "encoding": encoding,
+                "cardinality": int(series.nunique(dropna=True)),
+                "missing": int(series.isna().sum()),
+                "output_feature_count": len(outputs),
+                "output_columns": outputs[:20],
+                "output_columns_truncated": max(len(outputs) - 20, 0),
+                "high_cardinality": bool(
+                    kind in {"categorical", "text"} and series.nunique(dropna=True) > 50
+                ),
+            }
+        )
+
+    dense = matrix[:8]
+    if hasattr(dense, "toarray"):
+        dense = dense.toarray()
+    dense = np.asarray(dense)
+    shown = names[:max_outputs]
+    preview = [
+        {name: _finite(row[index]) if _is_numeric(pd.Series(row)) else str(row[index])
+         for index, name in enumerate(shown)}
+        for row in dense
+    ]
+    return {
+        "input_features": features,
+        "input_feature_count": len(features),
+        "output_features": names,
+        "output_feature_count": len(names),
+        "shown_output_features": shown,
+        "preview": preview,
+        "per_column": per_column,
+        "sampled": sampled,
+        "sample_rows": int(len(sample)),
+        "notes": [
+            "Encoding is learned per training fold in cross-validation, not once on the "
+            "whole partition; categorical vocabularies and text vocabularies can differ "
+            "between folds, and unseen categories at prediction time are ignored.",
+            "Missing numeric values are median-imputed, missing categories become an "
+            "explicit “__MISSING__” level, and datetimes become epoch seconds.",
+            "Declared text columns (pandas StringDtype) receive TF-IDF features; plain "
+            "object columns are treated as categorical.",
+        ],
+    }
+
+
 __all__ = [
+    "CLIP_METHODS",
+    "ClipError",
     "ImputationError",
     "METHODS",
+    "clip_partition",
+    "duplicate_analysis",
+    "drop_duplicate_rows",
+    "encoding_preview",
     "impute_partition",
     "missing_overview",
 ]

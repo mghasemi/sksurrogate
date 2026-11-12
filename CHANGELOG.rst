@@ -22,6 +22,25 @@ Data Preprocessing page
 * Endpoints: ``GET /api/datasets/{task}/{partition}/preprocessing`` and
   ``POST /api/datasets/{task}/impute``.
 
+Categorical encoding, outlier clipping and duplicate removal
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Categorical encoding preview** (`GET .../encoding-preview`): fits the
+  fold-local model preprocessor on a bounded sample and reports the exact
+  encoded feature names, per-column kind/cardinality and the first encoded rows,
+  with explicit notes that vocabularies are learned inside each training fold.
+* **Outlier clipping / winsorizing** (`POST /api/datasets/{task}/clip`): IQR
+  fences, quantile winsorizing and z-score clipping with preview-before-save,
+  per-column bounds/tail counts/share and before/after moments; saves a new
+  partition with ``clipping_history`` lineage.
+* **Duplicate rows** (`GET .../duplicates`, `POST /api/datasets/{task}/deduplicate`):
+  exact feature-duplicate counts, conflicting-label groups, and warnings about
+  sample change, target-balance shift, numeric mean shifts and cross-validation
+  leakage before removal; preview or save a deduplicated partition with
+  ``deduplication_history`` lineage.
+* Fixed a tracker lifecycle bug where garbage-collected trackers closed the
+  process-wide Peewee database mid-request (``Cannot operate on a closed database``).
+
 Per-user data reset
 ~~~~~~~~~~~~~~~~~~~
 

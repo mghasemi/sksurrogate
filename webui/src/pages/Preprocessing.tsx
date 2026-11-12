@@ -2,11 +2,18 @@ import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+  clipDataset,
+  deduplicateDataset,
   getDatasetMetadata,
+  getDuplicates,
+  getEncodingPreview,
   getPreprocessing,
   imputeDataset,
 } from "../api/client";
 import type {
+  ClipReport,
+  DuplicateAnalysis,
+  EncodingPreview,
   ImputationReport,
   PreprocessingColumn,
   PreprocessingOverview,
@@ -92,6 +99,427 @@ function ReportView({ report }: { report: ImputationReport }) {
         </>
       )}
     </>
+  );
+}
+
+function TargetDistribution({ distribution }: { distribution: DuplicateAnalysis["target_before"] }) {
+  if (distribution.kind === "categorical") return <>{topLine(distribution.values ?? null)}</>;
+  return <>{summaryLine(distribution.summary ?? null)}</>;
+}
+
+function EncodingCard({ task, partition }: { task: string; partition: string }) {
+  const previewQ = useQuery<EncodingPreview>({
+    queryKey: ["encoding-preview", task, partition],
+    queryFn: () => getEncodingPreview(task, partition),
+    enabled: !!task && !!partition,
+  });
+  const data = previewQ.data;
+  return (
+    <Card
+      title="Categorical encoding preview"
+      sub="The exact feature matrix the model pipeline builds from this partition. Learned inside each training fold, not once on the whole dataset."
+    >
+      {previewQ.isLoading && <Loading />}
+      {previewQ.isError && <ErrorNote error={previewQ.error} />}
+      {data && (
+        <>
+          <dl className="kv">
+            <dt>Input features</dt>
+            <dd>{fmtNum(data.input_feature_count)}</dd>
+            <dt>Encoded features</dt>
+            <dd>
+              {fmtNum(data.output_feature_count)}
+              {data.sampled && <span className="muted"> · vocabulary learned on {fmtNum(data.sample_rows)} sampled rows</span>}
+            </dd>
+          </dl>
+          <Table<(typeof data.per_column)[number]>
+            columns={["Column", "Detected kind", "Encoding", "Levels", "Output features", "Encoded names"]}
+            rows={data.per_column}
+            keyOf={(entry) => entry.column}
+            render={(entry) => [
+              <td key="c" className="mono">
+                {entry.column}{" "}
+                {entry.high_cardinality && <Badge tone="warn">high cardinality</Badge>}
+              </td>,
+              <td key="k">{entry.kind}</td>,
+              <td key="e">{entry.encoding}</td>,
+              <td key="l">
+                {fmtNum(entry.cardinality)}
+                {entry.missing > 0 && <span className="muted"> · {fmtNum(entry.missing)} missing</span>}
+              </td>,
+              <td key="o">{fmtNum(entry.output_feature_count)}</td>,
+              <td key="n" className="mono muted">
+                {entry.output_columns.length ? entry.output_columns.join(", ") : "—"}
+                {entry.output_columns_truncated > 0 && ` … (+${entry.output_columns_truncated})`}
+              </td>,
+            ]}
+          />
+          {data.preview.length > 0 && (
+            <>
+              <h4 style={{ marginTop: 14 }}>Encoded rows (first {data.preview.length})</h4>
+              <Table<Record<string, unknown>>
+                columns={data.shown_output_features.slice(0, 12)}
+                rows={data.preview}
+                keyOf={(_, index) => index}
+                render={(row) =>
+                  data.shown_output_features.slice(0, 12).map((name) => (
+                    <td key={name} className="mono">
+                      {row[name] === null || row[name] === undefined
+                        ? "—"
+                        : typeof row[name] === "number"
+                          ? num(row[name] as number, 3)
+                          : String(row[name])}
+                    </td>
+                  ))
+                }
+              />
+              {data.output_feature_count > 12 && (
+                <p className="hint">Showing 12 of {fmtNum(data.output_feature_count)} encoded columns.</p>
+              )}
+            </>
+          )}
+          <ul className="hint" style={{ marginTop: 10 }}>
+            {data.notes.map((note) => <li key={note}>{note}</li>)}
+          </ul>
+        </>
+      )}
+    </Card>
+  );
+}
+
+function DuplicatesCard({
+  task,
+  partition,
+  qc,
+}: {
+  task: string;
+  partition: string;
+  qc: ReturnType<typeof useQueryClient>;
+}) {
+  const duplicatesQ = useQuery<DuplicateAnalysis>({
+    queryKey: ["duplicates", task, partition],
+    queryFn: () => getDuplicates(task, partition),
+    enabled: !!task && !!partition,
+  });
+  const [keep, setKeep] = useState<"first" | "last">("first");
+  const [outputName, setOutputName] = useState(`${partition}_deduplicated`);
+  useEffect(() => setOutputName(`${partition}_deduplicated`), [partition]);
+
+  const previewMut = useMutation({
+    mutationFn: () => deduplicateDataset(task, { partition, keep, preview_only: true }),
+  });
+  const saveMut = useMutation({
+    mutationFn: () => deduplicateDataset(task, { partition, keep, output_partition: outputName.trim() || null }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["dataset-meta", task] });
+      qc.invalidateQueries({ queryKey: ["preprocessing", task] });
+      qc.invalidateQueries({ queryKey: ["duplicates", task, partition] });
+    },
+  });
+  const report = saveMut.data ?? previewMut.data ?? duplicatesQ.data;
+  const analysis = duplicatesQ.data;
+
+  return (
+    <Card
+      title="Duplicate rows"
+      sub="Exact duplicate feature rows, their target consistency and what removing them would change. Removal is never silent: read the warnings first."
+    >
+      {duplicatesQ.isLoading && <Loading />}
+      {duplicatesQ.isError && <ErrorNote error={duplicatesQ.error} />}
+      {analysis && (
+        <>
+          <dl className="kv">
+            <dt>Duplicate rows</dt>
+            <dd>
+              {fmtNum(analysis.duplicate_rows)} in {fmtNum(analysis.duplicate_groups)} group(s) ·{" "}
+              {fmtNum(analysis.removable_rows)} removable
+            </dd>
+            <dt>Full-row duplicates</dt>
+            <dd>{fmtNum(analysis.full_duplicate_rows)}</dd>
+            <dt>Conflicting labels</dt>
+            <dd>
+              {fmtNum(analysis.conflicting_label_groups)} group(s), {fmtNum(analysis.conflicting_label_rows)} rows
+              {analysis.conflicting_label_groups > 0 && <Badge tone="err">label contradiction</Badge>}
+            </dd>
+            <dt>Target before → after</dt>
+            <dd>
+              <TargetDistribution distribution={analysis.target_before} /> →{" "}
+              <TargetDistribution distribution={analysis.target_after} />
+            </dd>
+            <dt>Rows before → after</dt>
+            <dd>
+              {fmtNum(analysis.rows_before)} → {fmtNum(analysis.rows_after)} (
+              {fmtNum(analysis.rows_removed)} removed, {pct(analysis.rows_removed_pct)})
+            </dd>
+          </dl>
+
+          {analysis.warnings.length > 0 && (
+            <div className="warn-note" style={{ marginTop: 8 }}>
+              <strong>Implications of removing duplicates</strong>
+              <ul style={{ margin: "6px 0 0 18px" }}>
+                {analysis.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+              </ul>
+            </div>
+          )}
+
+          {Object.keys(analysis.numeric_shift).length > 0 && (
+            <>
+              <h4 style={{ marginTop: 14 }}>Numeric feature shift</h4>
+              <Table<string>
+                columns={["Feature", "Mean before → after", "Relative shift"]}
+                rows={Object.keys(analysis.numeric_shift)}
+                keyOf={(column) => column}
+                render={(column) => {
+                  const shift = analysis.numeric_shift[column];
+                  return [
+                    <td key="c" className="mono">{column}</td>,
+                    <td key="m">{num(shift.before?.mean)} → {num(shift.after?.mean)}</td>,
+                    <td key="d">
+                      {shift.mean_delta_pct === null
+                        ? "—"
+                        : `${shift.mean_delta_pct > 0 ? "+" : ""}${(shift.mean_delta_pct * 100).toFixed(2)}%`}
+                    </td>,
+                  ];
+                }}
+              />
+            </>
+          )}
+
+          <div className="row" style={{ marginTop: 12 }}>
+            <div className="field fixed" style={{ flex: "0 1 180px", minWidth: 140 }}>
+              <label>Keep</label>
+              <select value={keep} onChange={(e) => setKeep(e.target.value as "first" | "last")}>
+                <option value="first">first occurrence</option>
+                <option value="last">last occurrence</option>
+              </select>
+            </div>
+            <div className="field fixed" style={{ flex: "0 1 260px", minWidth: 200 }}>
+              <label>Output partition</label>
+              <input value={outputName} onChange={(e) => setOutputName(e.target.value)} spellCheck={false} />
+              <span className="hint">Written as a new partition; the source is never modified.</span>
+            </div>
+          </div>
+          {previewMut.isError && <ErrorNote error={previewMut.error} />}
+          {saveMut.isError && <ErrorNote error={saveMut.error} />}
+          <div className="row">
+            <button className="btn" onClick={() => previewMut.mutate()} disabled={previewMut.isPending || saveMut.isPending}>
+              {previewMut.isPending ? "Computing…" : "Preview removal"}
+            </button>
+            <button
+              className="btn primary"
+              onClick={() => saveMut.mutate()}
+              disabled={previewMut.isPending || saveMut.isPending || analysis.rows_removed === 0}
+            >
+              {saveMut.isPending ? "Saving…" : "Save deduplicated partition"}
+            </button>
+          </div>
+          {saveMut.data?.written && (
+            <div className="success-note">
+              Wrote partition <code>{saveMut.data.output_partition}</code>
+              {saveMut.data.dataset_fingerprint && (
+                <> · fingerprint <code>{saveMut.data.dataset_fingerprint.slice(0, 16)}…</code></>
+              )}
+            </div>
+          )}
+          {report && report !== analysis && (
+            <>
+              <h4 style={{ marginTop: 14 }}>{report.written ? "Saved result" : "Preview"}</h4>
+              <dl className="kv">
+                <dt>Rows</dt>
+                <dd>{fmtNum(report.rows_before)} → {fmtNum(report.rows_after)}</dd>
+                <dt>Removed</dt>
+                <dd>{fmtNum(report.rows_removed)} ({pct(report.rows_removed_pct)})</dd>
+              </dl>
+            </>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
+function ClipCard({
+  task,
+  partition,
+  overview,
+  qc,
+}: {
+  task: string;
+  partition: string;
+  overview: PreprocessingOverview;
+  qc: ReturnType<typeof useQueryClient>;
+}) {
+  const [method, setMethod] = useState(overview.clip_methods[0]?.name ?? "iqr");
+  const activeMethod = overview.clip_methods.find((entry) => entry.name === method);
+  const [values, setValues] = useState<Record<string, string>>({});
+  const numericColumns = useMemo(
+    () =>
+      overview.missing.columns.filter(
+        (column) => !column.is_target && !column.ignored && column.numeric_summary !== null,
+      ),
+    [overview],
+  );
+  const [selected, setSelected] = useState<string[]>([]);
+  const [outputName, setOutputName] = useState(`${partition}_clipped`);
+
+  useEffect(() => {
+    setSelected(numericColumns.map((column) => column.column));
+  }, [numericColumns]);
+
+  useEffect(() => {
+    setOutputName(`${partition}_clipped`);
+    setValues({});
+  }, [partition, method]);
+
+  const params = useMemo(() => {
+    const result: Record<string, number> = {};
+    for (const param of activeMethod?.params ?? []) {
+      const raw = values[param.name];
+      const parsed = raw === undefined || raw === "" ? Number(param.default ?? 0) : Number(raw);
+      result[param.name] = parsed;
+    }
+    return result;
+  }, [activeMethod, values]);
+
+  const previewMut = useMutation({
+    mutationFn: () =>
+      clipDataset(task, { partition, method, columns: selected, params, preview_only: true }),
+  });
+  const saveMut = useMutation({
+    mutationFn: () =>
+      clipDataset(task, {
+        partition,
+        method,
+        columns: selected,
+        params,
+        output_partition: outputName.trim() || null,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["dataset-meta", task] });
+      qc.invalidateQueries({ queryKey: ["preprocessing", task] });
+    },
+  });
+  const report: ClipReport | null = saveMut.data ?? previewMut.data ?? null;
+
+  return (
+    <Card
+      title="Outlier clipping / winsorizing"
+      sub="Cap extreme numeric values at robust bounds. Clipping changes the tails, so the preview reports how many values move and how the mean and standard deviation shift."
+    >
+      {numericColumns.length === 0 ? (
+        <p className="muted">No numeric feature columns to clip.</p>
+      ) : (
+        <>
+          <div className="row">
+            <div className="field fixed" style={{ flex: "0 1 340px", minWidth: 260 }}>
+              <label>Method</label>
+              <select value={method} onChange={(e) => setMethod(e.target.value)}>
+                {overview.clip_methods.map((entry) => (
+                  <option key={entry.name} value={entry.name}>{entry.label}</option>
+                ))}
+              </select>
+            </div>
+            {(activeMethod?.params ?? []).map((param) => (
+              <div key={param.name} className="field fixed" style={{ flex: "0 1 170px", minWidth: 130 }}>
+                <label>{param.name}</label>
+                <input
+                  type="number"
+                  min={param.min}
+                  max={param.max}
+                  step="any"
+                  value={values[param.name] ?? String(param.default ?? "")}
+                  onChange={(e) => setValues((current) => ({ ...current, [param.name]: e.target.value }))}
+                />
+                {param.help && <span className="hint">{param.help}</span>}
+              </div>
+            ))}
+            <div className="field fixed" style={{ flex: "0 1 260px", minWidth: 200 }}>
+              <label>Output partition</label>
+              <input value={outputName} onChange={(e) => setOutputName(e.target.value)} spellCheck={false} />
+            </div>
+          </div>
+
+          <h4 style={{ marginTop: 12 }}>Numeric columns</h4>
+          <Table<PreprocessingColumn>
+            columns={["", "Column", "Median", "IQR range", "Min / max"]}
+            rows={numericColumns}
+            keyOf={(column) => column.column}
+            render={(column) => [
+              <td key="sel">
+                <input
+                  type="checkbox"
+                  aria-label={`Clip ${column.column}`}
+                  checked={selected.includes(column.column)}
+                  onChange={() =>
+                    setSelected((current) =>
+                      current.includes(column.column)
+                        ? current.filter((name) => name !== column.column)
+                        : [...current, column.column],
+                    )
+                  }
+                />
+              </td>,
+              <td key="c" className="mono">{column.column}</td>,
+              <td key="m">{num(column.numeric_summary?.q50)}</td>,
+              <td key="q">
+                {num(column.numeric_summary?.q25)} … {num(column.numeric_summary?.q75)}
+              </td>,
+              <td key="r">{num(column.numeric_summary?.min)} / {num(column.numeric_summary?.max)}</td>,
+            ]}
+          />
+
+          {previewMut.isError && <ErrorNote error={previewMut.error} />}
+          {saveMut.isError && <ErrorNote error={saveMut.error} />}
+          <div className="row">
+            <button
+              className="btn"
+              onClick={() => previewMut.mutate()}
+              disabled={selected.length === 0 || previewMut.isPending || saveMut.isPending}
+            >
+              {previewMut.isPending ? "Computing…" : "Preview clipping"}
+            </button>
+            <button
+              className="btn primary"
+              onClick={() => saveMut.mutate()}
+              disabled={selected.length === 0 || previewMut.isPending || saveMut.isPending}
+            >
+              {saveMut.isPending ? "Saving…" : "Save clipped partition"}
+            </button>
+          </div>
+          {saveMut.data?.written && (
+            <div className="success-note">
+              Wrote partition <code>{saveMut.data.output_partition}</code>
+              {saveMut.data.dataset_fingerprint && (
+                <> · fingerprint <code>{saveMut.data.dataset_fingerprint.slice(0, 16)}…</code></>
+              )}
+            </div>
+          )}
+          {report && (
+            <>
+              <h4 style={{ marginTop: 14 }}>
+                {report.written ? "Saved result" : "Preview"} · {report.method} · {fmtNum(report.cells_clipped)} values clipped
+              </h4>
+              <Table<string>
+                columns={["Column", "Bounds", "Clipped low / high", "Share", "Mean before → after", "Std before → after"]}
+                rows={report.columns}
+                keyOf={(column) => column}
+                render={(column) => {
+                  const stats = report.columns_report[column];
+                  return [
+                    <td key="c" className="mono">{column}</td>,
+                    <td key="b">{num(stats.lower)} … {num(stats.upper)}</td>,
+                    <td key="n">{fmtNum(stats.clipped_low)} / {fmtNum(stats.clipped_high)}</td>,
+                    <td key="s">{pct(stats.clipped_pct)}</td>,
+                    <td key="m">{num(stats.before?.mean)} → {num(stats.after?.mean)}</td>,
+                    <td key="d">{num(stats.before?.std)} → {num(stats.after?.std)}</td>,
+                  ];
+                }}
+              />
+            </>
+          )}
+        </>
+      )}
+    </Card>
   );
 }
 
@@ -343,6 +771,10 @@ export default function PreprocessingPage() {
             )}
           </Card>
 
+          <DuplicatesCard task={task} partition={partition} qc={qc} />
+
+          <EncodingCard task={task} partition={partition} />
+
           <Card title="Dataset preview" sub={`First ${fmtNum(data.preview.length)} rows of the stored partition. “—” is a missing value.`}>
             <Table<Record<string, unknown>>
               columns={data.columns}
@@ -479,6 +911,8 @@ export default function PreprocessingPage() {
               </>
             )}
           </Card>
+
+          <ClipCard task={task} partition={partition} overview={data} qc={qc} />
         </>
       )}
     </div>

@@ -200,3 +200,120 @@ def test_target_missing_rows_can_be_dropped(client):
     assert report["target_missing_before"] == 1
     assert report["target_missing_after"] == 0
     assert report["rows_after"] == 7
+
+
+def test_encoding_preview_reports_fold_local_matrix(client):
+    _register(client)
+    response = client.get(f"/api/datasets/{TASK}/train/encoding-preview")
+    assert response.status_code == 200, response.text
+    report = response.json()
+    assert report["input_feature_count"] == 3
+    assert report["output_feature_count"] >= 3
+    per_column = {entry["column"]: entry for entry in report["per_column"]}
+    assert per_column["x"]["kind"] == "numeric"
+    assert per_column["cat"]["kind"] == "categorical"
+    assert per_column["cat"]["cardinality"] == 2
+    assert any(name.endswith("cat_a") for name in per_column["cat"]["output_columns"])
+    assert report["preview"]
+    assert any("per training fold" in note for note in report["notes"])
+
+
+def _register_clipped(client):
+    frame = pd.DataFrame(
+        {
+            "x": [1.0, 2.0, 3.0, 4.0, 100.0, -100.0, 5.0, 6.0],
+            "z": [1, 2, 3, 4, 5, 6, 7, 8],
+            "cat": list("aabbccdd"),
+            "y": [1, 0, 1, 0, 1, 0, 1, 0],
+        }
+    )
+    _register(client, frame)
+
+
+def test_outlier_clipping_preview_and_save(client):
+    _register_clipped(client)
+    source = (settings.task_dataset_dir(TASK) / "train.csv").read_text()
+    preview = client.post(
+        f"/api/datasets/{TASK}/clip",
+        json={"partition": "train", "method": "iqr", "preview_only": True},
+    )
+    assert preview.status_code == 200, preview.text
+    report = preview.json()
+    assert report["written"] is False
+    assert report["cells_clipped"] >= 2
+    stats = report["columns_report"]["x"]
+    assert stats["clipped_low"] == 1 and stats["clipped_high"] == 1
+    assert stats["after"]["max"] < 100 and stats["after"]["min"] > -100
+    assert not (settings.task_dataset_dir(TASK) / "train_clipped.csv").exists()
+    assert (settings.task_dataset_dir(TASK) / "train.csv").read_text() == source
+
+    saved = client.post(
+        f"/api/datasets/{TASK}/clip",
+        json={
+            "partition": "train",
+            "method": "iqr",
+            "columns": ["x"],
+            "output_partition": "train_clipped",
+        },
+        )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["dataset_fingerprint"]
+    clipped = pd.read_csv(settings.task_dataset_dir(TASK) / "train_clipped.csv")
+    assert clipped["x"].max() < 100 and clipped["x"].min() > -100
+    with open_tracker(TASK) as tracker:
+        history = tracker.GetMetadata()["clipping_history"]
+    assert history[-1]["output_partition"] == "train_clipped"
+    assert history[-1]["cells_clipped"] >= 2
+
+    # Categorical columns cannot be winsorized and the target is refused.
+    for columns in (["cat"], ["y"]):
+        rejected = client.post(
+            f"/api/datasets/{TASK}/clip",
+            json={"partition": "train", "method": "iqr", "columns": columns, "preview_only": True},
+        )
+        assert rejected.status_code == 400
+
+
+def test_duplicate_analysis_warns_about_balance_and_leakage(client):
+    frame = pd.DataFrame(
+        {
+            "a": [1, 1, 1, 2, 2, 3, 3, 3],
+            "b": ["u", "u", "u", "v", "v", "w", "w", "w"],
+            "y": [0, 1, 0, 0, 0, 1, 0, 1],
+        }
+    )
+    _register(client, frame)
+    response = client.get(f"/api/datasets/{TASK}/train/duplicates")
+    assert response.status_code == 200, response.text
+    report = response.json()
+    assert report["duplicate_rows"] == 8
+    assert report["duplicate_groups"] == 3
+    assert report["rows_removed"] == 5
+    assert report["conflicting_label_groups"] == 2
+    assert report["conflicting_label_rows"] == 6
+    joined = " ".join(report["warnings"]).lower()
+    assert "balance" in joined
+    assert "split hazard" in joined
+    assert "contradictory" in joined
+
+    preview = client.post(
+        f"/api/datasets/{TASK}/deduplicate",
+        json={"partition": "train", "preview_only": True},
+    )
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["rows_after"] == 3
+    assert not (settings.task_dataset_dir(TASK) / "train_deduplicated.csv").exists()
+
+    saved = client.post(
+        f"/api/datasets/{TASK}/deduplicate",
+        json={"partition": "train", "output_partition": "train_dedup"},
+    )
+    assert saved.status_code == 200, saved.text
+    deduped = pd.read_csv(settings.task_dataset_dir(TASK) / "train_dedup.csv")
+    assert len(deduped) == 3
+    assert len(pd.read_csv(settings.task_dataset_dir(TASK) / "train.csv")) == 8
+    with open_tracker(TASK) as tracker:
+        history = tracker.GetMetadata()["deduplication_history"]
+    assert history[-1]["output_partition"] == "train_dedup"
+    assert history[-1]["rows_removed"] == 5
+

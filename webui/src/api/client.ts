@@ -481,6 +481,117 @@ export interface PreprocessingOverview {
   profile_features_truncated: number;
   preview: Array<Record<string, unknown>>;
   methods: ImputationMethod[];
+  clip_methods: ClipMethod[];
+}
+
+export interface ClipMethod {
+  name: string;
+  label: string;
+  params: Array<{
+    name: string;
+    kind: "float";
+    default?: number;
+    min?: number;
+    max?: number;
+    help?: string;
+  }>;
+}
+
+export interface EncodingColumn {
+  column: string;
+  dtype: string;
+  kind: "numeric" | "categorical" | "datetime" | "text";
+  encoding: string;
+  cardinality: number;
+  missing: number;
+  output_feature_count: number;
+  output_columns: string[];
+  output_columns_truncated: number;
+  high_cardinality: boolean;
+}
+
+export interface EncodingPreview {
+  input_features: string[];
+  input_feature_count: number;
+  output_features: string[];
+  output_feature_count: number;
+  shown_output_features: string[];
+  preview: Array<Record<string, unknown>>;
+  per_column: EncodingColumn[];
+  sampled: boolean;
+  sample_rows: number;
+  notes: string[];
+}
+
+export interface ClipColumnReport {
+  lower: number | null;
+  upper: number | null;
+  clipped_low: number;
+  clipped_high: number;
+  clipped: number;
+  clipped_pct: number;
+  before: PreprocessingColumn["numeric_summary"];
+  after: PreprocessingColumn["numeric_summary"];
+}
+
+export interface ClipReport {
+  task_name?: string;
+  partition?: string;
+  output_partition?: string;
+  written?: boolean;
+  method: string;
+  params: Record<string, unknown>;
+  columns: string[];
+  rows: number;
+  cells_clipped: number;
+  columns_report: Record<string, ClipColumnReport>;
+  dataset_fingerprint?: string | null;
+}
+
+export interface DuplicateTargetDistribution {
+  kind: "categorical" | "numeric";
+  values?: Array<{ value: string; count: number; share: number }>;
+  summary?: PreprocessingColumn["numeric_summary"];
+}
+
+export interface DuplicateAnalysis {
+  task_name?: string;
+  partition?: string;
+  features: string[];
+  keep: "first" | "last";
+  target: string;
+  sampled: boolean;
+  rows_before: number;
+  rows_after: number;
+  rows_removed: number;
+  rows_removed_pct: number;
+  duplicate_rows: number;
+  duplicate_groups: number;
+  removable_rows: number;
+  full_duplicate_rows: number;
+  conflicting_label_groups: number;
+  conflicting_label_rows: number;
+  target_before: DuplicateTargetDistribution;
+  target_after: DuplicateTargetDistribution;
+  target_shift: {
+    value: string | null;
+    share_before: number;
+    share_after: number;
+    delta: number;
+  } | null;
+  numeric_shift: Record<
+    string,
+    {
+      before: PreprocessingColumn["numeric_summary"];
+      after: PreprocessingColumn["numeric_summary"];
+      mean_delta: number | null;
+      mean_delta_pct: number | null;
+    }
+  >;
+  warnings: string[];
+  written?: boolean;
+  output_partition?: string;
+  dataset_fingerprint?: string | null;
 }
 
 export interface ImputationReport {
@@ -531,6 +642,46 @@ export interface ImputeRequest {
 /** Compute an imputed copy (preview_only) or write it as a NEW partition. */
 export const imputeDataset = (task: string, body: ImputeRequest) =>
   post<ImputationReport>(`/api/datasets/${encodeURIComponent(task)}/impute`, body);
+
+export const getEncodingPreview = (
+  task: string,
+  partition: string,
+  sampleRows = 1000,
+  maxOutputs = 40,
+) =>
+  get<EncodingPreview>(
+    `/api/datasets/${encodeURIComponent(task)}/${encodeURIComponent(partition)}/encoding-preview?sample_rows=${sampleRows}&max_outputs=${maxOutputs}`,
+  );
+
+export interface ClipRequest {
+  partition: string;
+  method: string;
+  columns?: string[] | null;
+  params?: Record<string, unknown>;
+  output_partition?: string | null;
+  preview_only?: boolean;
+}
+
+/** Winsorize numeric features; preview_only computes the report without writing. */
+export const clipDataset = (task: string, body: ClipRequest) =>
+  post<ClipReport>(`/api/datasets/${encodeURIComponent(task)}/clip`, body);
+
+export const getDuplicates = (task: string, partition: string, maxRows = 20000) =>
+  get<DuplicateAnalysis>(
+    `/api/datasets/${encodeURIComponent(task)}/${encodeURIComponent(partition)}/duplicates?max_rows=${maxRows}`,
+  );
+
+export interface DeduplicateRequest {
+  partition: string;
+  columns?: string[] | null;
+  keep?: "first" | "last";
+  output_partition?: string | null;
+  preview_only?: boolean;
+}
+
+/** Drop exact feature-duplicate rows; always returns the impact report. */
+export const deduplicateDataset = (task: string, body: DeduplicateRequest) =>
+  post<DuplicateAnalysis>(`/api/datasets/${encodeURIComponent(task)}/deduplicate`, body);
 
 export const previewDataset = (task: string, partition: string, limit = 20) =>
   get<DatasetPreview>(

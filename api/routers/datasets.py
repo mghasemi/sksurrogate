@@ -29,7 +29,18 @@ from SKSurrogate import (
 from ..config import settings
 from ..columns import drop_ignored, normalize_ignored_columns, read_ignored_columns
 from ..features import NumericFeatureError, numeric_train_xy
-from ..preprocessing import METHODS as IMPUTATION_METHODS, ImputationError, impute_partition, missing_overview
+from ..preprocessing import (
+    CLIP_METHODS,
+    METHODS as IMPUTATION_METHODS,
+    ClipError,
+    ImputationError,
+    clip_partition,
+    drop_duplicate_rows,
+    duplicate_analysis,
+    encoding_preview,
+    impute_partition,
+    missing_overview,
+)
 from ..safety import safe_segment
 from ..deps import bad_request, current_principal, finite_or_none as _finite, not_found, open_tracker, unprocessable, task_access
 
@@ -521,6 +532,7 @@ def preprocessing_overview(
         "profile_features_truncated": max(len(active) - len(profile_features), 0),
         "preview": preview_records,
         "methods": IMPUTATION_METHODS,
+        "clip_methods": CLIP_METHODS,
     }
 
 
@@ -653,6 +665,282 @@ def impute_dataset(task_name: str, body: ImputeRequest):
         "dataset_fingerprint": fingerprint,
         **report,
     }
+
+
+def _write_derived_partition(
+    task_name,
+    tracker,
+    frame,
+    target,
+    *,
+    output,
+    source_partition,
+    kind,
+    history_key,
+    history_entry,
+    artifact_meta=None,
+):
+    """Write ``frame`` as ``output`` and record lineage for a derived partition.
+
+    Caller must hold the tracker open; this keeps a single SQLite connection per
+    request and makes the metadata update atomic with the partition registration.
+    """
+    output_path = settings.task_dataset_dir(task_name) / (safe_segment(output, "partition") + ".csv")
+    frame.to_csv(output_path, index=False)
+    tracker.RegisterData(
+        frame,
+        target,
+        partition=output,
+        source_uri="%s:%s" % (kind, source_partition),
+    )
+    splits = tracker.dataset_splits()
+    fingerprint = (splits.get(output) or {}).get("fingerprint")
+    metadata = tracker.GetMetadata()
+    history = list(metadata.get(history_key) or [])
+    history.append(
+        {
+            "source_partition": source_partition,
+            "output_partition": output,
+            "actor": current_principal().username,
+            **history_entry,
+        }
+    )
+    tracker.UpdateMetadata({history_key: history[-50:]})
+    try:
+        ModelRegistry(settings.registry_dir).register_dataset(
+            task_name,
+            fingerprint,
+            output_path,
+            metadata={
+                "partition": output,
+                "source": kind,
+                "source_partition": source_partition,
+                **(artifact_meta or {}),
+            },
+        )
+    except Exception:  # pragma: no cover - lineage is auxiliary
+        pass
+    return output_path, fingerprint
+
+
+def _dataset_partition_frame(task_name, partition):
+    if not settings.mltrace_db_path(task_name).exists():
+        raise not_found("No dataset registered for task %r" % task_name)
+    csv_path = settings.task_dataset_dir(task_name) / (safe_segment(partition, "partition") + ".csv")
+    if not csv_path.exists():
+        raise not_found("No dataset partition %r stored for task %r" % (partition, task_name))
+    return csv_path, pd.read_csv(csv_path)
+
+
+def _derived_output(task_name, partition, requested, default_suffix):
+    output = requested or (partition + default_suffix)
+    _validate_partition_name(output)
+    if output == partition:
+        raise bad_request("output_partition must differ from the source partition")
+    output_path = settings.task_dataset_dir(task_name) / (safe_segment(output, "partition") + ".csv")
+    if output_path.exists():
+        raise HTTPException(
+            status_code=409,
+            detail="Partition %r already exists; choose a new output partition name" % output,
+        )
+    return output, output_path
+
+
+class ClipRequest(BaseModel):
+    """Winsorize numeric features into a NEW partition."""
+
+    partition: str = "train"
+    method: str
+    columns: list[str] | None = None
+    params: dict = {}
+    output_partition: str | None = None
+    preview_only: bool = False
+
+
+@router.post("/{task_name}/clip")
+def clip_dataset(task_name: str, body: ClipRequest):
+    """Clip numeric features at robust bounds; preview or write a new partition."""
+    csv_path, frame = _dataset_partition_frame(task_name, body.partition)
+    if not body.preview_only:
+        output, _output_path = _derived_output(
+            task_name, body.partition, body.output_partition, "_clipped"
+        )
+    else:
+        output = body.output_partition or (body.partition + "_clipped")
+        _validate_partition_name(output)
+    with open_tracker(task_name) as tracker:
+        metadata = tracker.GetMetadata()
+        target = metadata.get("target_name")
+        ignored = metadata.get("ignored_columns") or []
+        try:
+            result, report = clip_partition(
+                frame,
+                target=target,
+                ignored=ignored,
+                method=body.method,
+                columns=body.columns,
+                params=body.params,
+            )
+        except ClipError as exc:
+            raise bad_request(str(exc))
+        if body.preview_only:
+            return {
+                "task_name": task_name,
+                "partition": body.partition,
+                "output_partition": output,
+                "written": False,
+                **report,
+            }
+        output_path, fingerprint = _write_derived_partition(
+            task_name,
+            tracker,
+            result,
+            target,
+            output=output,
+            source_partition=body.partition,
+            kind="clipped",
+            history_key="clipping_history",
+            history_entry={
+                "method": report["method"],
+                "columns": report["columns"],
+                "params": report["params"],
+                "rows": report["rows"],
+                "cells_clipped": report["cells_clipped"],
+            },
+            artifact_meta={
+                "method": report["method"],
+                "columns": report["columns"],
+            },
+        )
+    return {
+        "task_name": task_name,
+        "partition": body.partition,
+        "output_partition": output,
+        "written": True,
+        "csv_path": str(output_path),
+        "dataset_fingerprint": fingerprint,
+        **report,
+    }
+
+
+class DeduplicateRequest(BaseModel):
+    """Drop exact feature-duplicate rows into a NEW partition."""
+
+    partition: str = "train"
+    columns: list[str] | None = None
+    keep: str = "first"
+    output_partition: str | None = None
+    preview_only: bool = False
+
+
+@router.post("/{task_name}/deduplicate")
+def deduplicate_dataset(task_name: str, body: DeduplicateRequest):
+    """Remove exact duplicate rows; always reports the distributional impact."""
+    csv_path, frame = _dataset_partition_frame(task_name, body.partition)
+    if not body.preview_only:
+        output, _output_path = _derived_output(
+            task_name, body.partition, body.output_partition, "_deduplicated"
+        )
+    else:
+        output = body.output_partition or (body.partition + "_deduplicated")
+        _validate_partition_name(output)
+    with open_tracker(task_name) as tracker:
+        metadata = tracker.GetMetadata()
+        target = metadata.get("target_name")
+        ignored = metadata.get("ignored_columns") or []
+        try:
+            result, report = drop_duplicate_rows(
+                frame,
+                target=target,
+                ignored=ignored,
+                columns=body.columns,
+                keep=body.keep,
+                max_rows=0,
+            )
+        except ClipError as exc:
+            raise bad_request(str(exc))
+        if body.preview_only:
+            return {
+                "task_name": task_name,
+                "partition": body.partition,
+                "output_partition": output,
+                "written": False,
+                **report,
+            }
+        output_path, fingerprint = _write_derived_partition(
+            task_name,
+            tracker,
+            result,
+            target,
+            output=output,
+            source_partition=body.partition,
+            kind="deduplicated",
+            history_key="deduplication_history",
+            history_entry={
+                "features": report["features"],
+                "keep": report["keep"],
+                "rows_before": report["rows_before"],
+                "rows_after": report["rows_after"],
+                "rows_removed": report["rows_removed"],
+                "conflicting_label_groups": report["conflicting_label_groups"],
+            },
+            artifact_meta={
+                "keep": report["keep"],
+                "rows_removed": report["rows_removed"],
+            },
+        )
+    return {
+        "task_name": task_name,
+        "partition": body.partition,
+        "output_partition": output,
+        "written": True,
+        "csv_path": str(output_path),
+        "dataset_fingerprint": fingerprint,
+        **report,
+    }
+
+
+@router.get("/{task_name}/{partition}/duplicates")
+def duplicate_rows(task_name: str, partition: str, max_rows: int = 20000):
+    """Describe exact duplicate rows and what removing them would change."""
+    _csv_path, frame = _dataset_partition_frame(task_name, partition)
+    with open_tracker(task_name) as tracker:
+        metadata = tracker.GetMetadata()
+    target = metadata.get("target_name")
+    ignored = metadata.get("ignored_columns") or []
+    try:
+        report = duplicate_analysis(
+            frame, target=target, ignored=ignored, max_rows=max_rows
+        )
+    except ClipError as exc:
+        raise bad_request(str(exc))
+    return {"task_name": task_name, "partition": partition, **report}
+
+
+@router.get("/{task_name}/{partition}/encoding-preview")
+def encoding_preview_route(
+    task_name: str,
+    partition: str,
+    sample_rows: int = 1000,
+    max_outputs: int = 40,
+):
+    """Show the feature matrix the model pipeline builds from this partition."""
+    _csv_path, frame = _dataset_partition_frame(task_name, partition)
+    with open_tracker(task_name) as tracker:
+        metadata = tracker.GetMetadata()
+    target = metadata.get("target_name")
+    ignored = metadata.get("ignored_columns") or []
+    try:
+        report = encoding_preview(
+            frame,
+            target=target,
+            ignored=ignored,
+            sample_rows=sample_rows,
+            max_outputs=max_outputs,
+        )
+    except ImputationError as exc:
+        raise bad_request(str(exc))
+    return {"task_name": task_name, "partition": partition, **report}
 
 
 @router.get("/{task_name}/{partition}/preview")
