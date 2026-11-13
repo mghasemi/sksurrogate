@@ -24,7 +24,9 @@
 <script type="application/ld+json">
 {"@context": "https://schema.org", "@type": "VideoObject", "name": "How SKSurrogate Constructs and Evaluates ML Pipelines", "description": "A walkthrough of how SKSurrogate composes an ML pipeline and how the search evaluates it: surrogate-based modelling and evolutionary search (EOA) over the combinatorial space of pipeline structures, fold-local preprocessing, out-of-fold stacking, and an evaluation protocol — nested cross-validation, learning curves, interpretability read-outs — carried through to a registered bundle.", "thumbnailUrl": ["https://i.ytimg.com/vi/XY6Hj8PFP-Q/maxresdefault.jpg"], "uploadDate": "2026-11-12T17:18:33Z", "duration": "PT7M24S", "embedUrl": "https://www.youtube-nocookie.com/embed/XY6Hj8PFP-Q", "contentUrl": "https://www.youtube.com/watch?v=XY6Hj8PFP-Q", "url": "https://www.youtube.com/watch?v=XY6Hj8PFP-Q", "isPartOf": {"@id": "https://sksurrogate.com/#website"}, "publisher": {"@type": "Organization", "name": "SKSurrogate", "url": "https://sksurrogate.com/"}}
 </script>
-</head>
+<script type="application/ld+json">
+{"@context": "https://schema.org", "@type": "VideoObject", "name": "SKSurrogate: how evolutionary search builds an ML pipeline", "description": "A focused explainer on the search itself: why exhaustive enumeration and random sampling both fail in the combinatorial space of pipeline structure, and how the population-based evolutionary loop — initialization, evaluation and culling, elitism, crossover between two parent structures, mutation under stagnation, convergence and ranking — walks it instead.", "thumbnailUrl": ["https://i.ytimg.com/vi/6gYcl8x0Qlw/maxresdefault.jpg"], "uploadDate": "2026-11-13T02:40:16Z", "duration": "PT6M20S", "embedUrl": "https://www.youtube-nocookie.com/embed/6gYcl8x0Qlw", "contentUrl": "https://www.youtube.com/watch?v=6gYcl8x0Qlw", "url": "https://www.youtube.com/watch?v=6gYcl8x0Qlw", "isPartOf": {"@id": "https://sksurrogate.com/#website"}, "publisher": {"@type": "Organization", "name": "SKSurrogate", "url": "https://sksurrogate.com/"}}
+</script></head>
 <body class="sub">
 
 <header class="topbar">
@@ -62,6 +64,17 @@
           <a href="https://www.youtube.com/watch?v=XY6Hj8PFP-Q" target="_blank" rel="noopener">watch on YouTube ↗</a></p>
       </div>
 
+      <h2 class="video-title">SKSurrogate: how evolutionary search builds an ML pipeline</h2>
+      <div class="videofacade-wrap">
+        <a class="videofacade" href="https://www.youtube.com/watch?v=6gYcl8x0Qlw" data-vid="6gYcl8x0Qlw" data-title="SKSurrogate: how evolutionary search builds an ML pipeline">
+          <img src="https://i.ytimg.com/vi/6gYcl8x0Qlw/maxresdefault.jpg" alt="Title frame of the SKSurrogate: how evolutionary search builds an ML pipeline walkthrough" width="1280" height="720" loading="lazy">
+          <span class="video-play">Play</span>
+          <span class="video-len">6:20</span>
+        </a>
+        <p class="video-meta">13 November 2026 · 6 min 20 s ·
+          <a href="https://www.youtube.com/watch?v=6gYcl8x0Qlw" target="_blank" rel="noopener">watch on YouTube ↗</a></p>
+      </div>
+
       <div class="prose">
         <h2>What the first walkthrough covers</h2>
         <p>SKSurrogate does not search a grid and return a winner. It fits a response surface to the
@@ -81,6 +94,16 @@
           <li><strong>The artifact.</strong> A registered bundle carrying its data identity and
             evaluation record, not just a fitted object.</li>
         </ul>
+
+        <h2>The search explainer</h2>
+        <p>The second video follows the search loop itself. It starts where the combinatorial
+          argument lands — estimator and transformer choices across N pipeline steps, a space that
+          grows multiplicatively with every added step, so that even a modest toolkit a few steps
+          deep spans millions of structures — then shows why exhaustive enumeration and random
+          sampling both fail there. The rest is the population-based loop in motion: a random initial
+          population of assembled pipelines, evaluation and culling, elitism, crossover between two
+          parent structures, mutation when the population stagnates — until convergence along a
+          performance gradient, then termination and ranking of what survived.</p>
 
         <h2>What it is not</h2>
         <p>A benchmark result. The numbers that decide whether this beats a given baseline live on
@@ -107,17 +130,18 @@
 
       <script>
       (function () {
-        var f = document.querySelector('.videofacade');
-        if (!f) return;
-        f.addEventListener('click', function (ev) {
-          ev.preventDefault();
-          var frame = document.createElement('iframe');
-          frame.className = 'video-embed';
-          frame.src = 'https://www.youtube-nocookie.com/embed/XY6Hj8PFP-Q?autoplay=1&rel=0';
-          frame.title = f.getAttribute('data-title') || 'SKSurrogate walkthrough';
-          frame.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
-          frame.allowFullscreen = true;
-          f.parentNode.replaceChild(frame, f);
+        var facades = document.querySelectorAll('.videofacade');
+        Array.prototype.forEach.call(facades, function (f) {
+          f.addEventListener('click', function (ev) {
+            ev.preventDefault();
+            var frame = document.createElement('iframe');
+            frame.className = 'video-embed';
+            frame.src = 'https://www.youtube-nocookie.com/embed/' + f.getAttribute('data-vid') + '?autoplay=1&rel=0';
+            frame.title = f.getAttribute('data-title') || 'SKSurrogate walkthrough';
+            frame.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
+            frame.allowFullscreen = true;
+            f.parentNode.replaceChild(frame, f);
+          });
         });
       })();
       </script>

@@ -741,6 +741,16 @@ VIDEO_TITLE = "How SKSurrogate Constructs and Evaluates ML Pipelines"
 VIDEO_UPLOADED = "2026-11-12T17:18:33Z"
 VIDEO_DURATION = "PT7M24S"
 VIDEO_LENGTH_TEXT = "7 min 24 s"
+
+EOA_ID = "6gYcl8x0Qlw"
+EOA_URL = "https://www.youtube.com/watch?v=" + EOA_ID
+EOA_EMBED = "https://www.youtube-nocookie.com/embed/" + EOA_ID
+EOA_THUMB = "https://i.ytimg.com/vi/" + EOA_ID + "/maxresdefault.jpg"
+EOA_TITLE = "SKSurrogate: how evolutionary search builds an ML pipeline"
+EOA_UPLOADED = "2026-11-13T02:40:16Z"
+EOA_DURATION = "PT6M20S"
+EOA_LENGTH_TEXT = "6 min 20 s"
+
 CHANNEL_URL = "https://www.youtube.com/channel/UC3ymiGRojwNJygRZC-212WA"
 CHANNEL_SUBSCRIBE = CHANNEL_URL + "?sub_confirmation=1"
 
@@ -750,26 +760,39 @@ VIDEO_DESC = ("A walkthrough of how SKSurrogate composes an ML pipeline and how 
               "stacking, and an evaluation protocol — nested cross-validation, learning curves, "
               "interpretability read-outs — carried through to a registered bundle.")
 
+EOA_DESC = ("A focused explainer on the search itself: why exhaustive enumeration and random "
+            "sampling both fail in the combinatorial space of pipeline structure, and how the "
+            "population-based evolutionary loop — initialization, evaluation and culling, elitism, "
+            "crossover between two parent structures, mutation under stagnation, convergence and "
+            "ranking — walks it instead.")
+
 
 def videos_jsonld():
     import json as _json
-    data = {
-        "@context": "https://schema.org",
-        "@type": "VideoObject",
-        "name": VIDEO_TITLE,
-        "description": VIDEO_DESC,
-        "thumbnailUrl": [VIDEO_THUMB],
-        "uploadDate": VIDEO_UPLOADED,
-        "duration": VIDEO_DURATION,
-        "embedUrl": VIDEO_EMBED,
-        "contentUrl": VIDEO_URL,
-        "url": VIDEO_URL,
-        "isPartOf": {"@id": SITE_ROOT + "/#website"},
-        "publisher": {"@type": "Organization", "name": "SKSurrogate",
-                      "url": SITE_ROOT + "/"},
-    }
-    return ('<script type="application/ld+json">\n%s\n</script>\n'
-            % _json.dumps(data, ensure_ascii=False))
+    out = []
+    for title, desc, thumb, up, dur, emb, url in (
+            (VIDEO_TITLE, VIDEO_DESC, VIDEO_THUMB, VIDEO_UPLOADED, VIDEO_DURATION,
+             VIDEO_EMBED, VIDEO_URL),
+            (EOA_TITLE, EOA_DESC, EOA_THUMB, EOA_UPLOADED, EOA_DURATION,
+             EOA_EMBED, EOA_URL)):
+        data = {
+            "@context": "https://schema.org",
+            "@type": "VideoObject",
+            "name": title,
+            "description": desc,
+            "thumbnailUrl": [thumb],
+            "uploadDate": up,
+            "duration": dur,
+            "embedUrl": emb,
+            "contentUrl": url,
+            "url": url,
+            "isPartOf": {"@id": SITE_ROOT + "/#website"},
+            "publisher": {"@type": "Organization", "name": "SKSurrogate",
+                          "url": SITE_ROOT + "/"},
+        }
+        out.append('<script type="application/ld+json">\n%s\n</script>'
+                   % _json.dumps(data, ensure_ascii=False))
+    return "\n".join(out)
 
 
 def videos(rel):
@@ -787,6 +810,17 @@ def videos(rel):
           <span class="video-len">7:24</span>
         </a>
         <p class="video-meta">12 November 2026 · %s ·
+          <a href="%s" target="_blank" rel="noopener">watch on YouTube ↗</a></p>
+      </div>
+
+      <h2 class="video-title">%s</h2>
+      <div class="videofacade-wrap">
+        <a class="videofacade" href="%s" data-vid="%s" data-title="%s">
+          <img src="%s" alt="Title frame of the %s walkthrough" width="1280" height="720" loading="lazy">
+          <span class="video-play">Play</span>
+          <span class="video-len">6:20</span>
+        </a>
+        <p class="video-meta">13 November 2026 · %s ·
           <a href="%s" target="_blank" rel="noopener">watch on YouTube ↗</a></p>
       </div>
 
@@ -809,6 +843,16 @@ def videos(rel):
           <li><strong>The artifact.</strong> A registered bundle carrying its data identity and
             evaluation record, not just a fitted object.</li>
         </ul>
+
+        <h2>The search explainer</h2>
+        <p>The second video follows the search loop itself. It starts where the combinatorial
+          argument lands — estimator and transformer choices across N pipeline steps, a space that
+          grows multiplicatively with every added step, so that even a modest toolkit a few steps
+          deep spans millions of structures — then shows why exhaustive enumeration and random
+          sampling both fail there. The rest is the population-based loop in motion: a random initial
+          population of assembled pipelines, evaluation and culling, elitism, crossover between two
+          parent structures, mutation when the population stagnates — until convergence along a
+          performance gradient, then termination and ranking of what survived.</p>
 
         <h2>What it is not</h2>
         <p>A benchmark result. The numbers that decide whether this beats a given baseline live on
@@ -835,23 +879,26 @@ def videos(rel):
 
       <script>
       (function () {
-        var f = document.querySelector('.videofacade');
-        if (!f) return;
-        f.addEventListener('click', function (ev) {
-          ev.preventDefault();
-          var frame = document.createElement('iframe');
-          frame.className = 'video-embed';
-          frame.src = '%s?autoplay=1&rel=0';
-          frame.title = f.getAttribute('data-title') || 'SKSurrogate walkthrough';
-          frame.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
-          frame.allowFullscreen = true;
-          f.parentNode.replaceChild(frame, f);
+        var facades = document.querySelectorAll('.videofacade');
+        Array.prototype.forEach.call(facades, function (f) {
+          f.addEventListener('click', function (ev) {
+            ev.preventDefault();
+            var frame = document.createElement('iframe');
+            frame.className = 'video-embed';
+            frame.src = 'https://www.youtube-nocookie.com/embed/' + f.getAttribute('data-vid') + '?autoplay=1&rel=0';
+            frame.title = f.getAttribute('data-title') || 'SKSurrogate walkthrough';
+            frame.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
+            frame.allowFullscreen = true;
+            f.parentNode.replaceChild(frame, f);
+          });
         });
       })();
       </script>''' % (crumb(rel, "videos"), VIDEO_TITLE, VIDEO_URL, VIDEO_ID, VIDEO_TITLE, VIDEO_THUMB, VIDEO_TITLE,
                       VIDEO_LENGTH_TEXT, VIDEO_URL,
+                      EOA_TITLE, EOA_URL, EOA_ID, EOA_TITLE, EOA_THUMB, EOA_TITLE,
+                      EOA_LENGTH_TEXT, EOA_URL,
                       L(rel, "/benchmarks/"), L(rel, "/quickstart/"), L(rel, "/concepts/"),
-                      CHANNEL_URL, CHANNEL_SUBSCRIBE, VIDEO_EMBED)
+                      CHANNEL_URL, CHANNEL_SUBSCRIBE)
 
 
 
