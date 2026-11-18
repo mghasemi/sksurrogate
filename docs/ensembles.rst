@@ -263,8 +263,12 @@ Two nesting decisions are load-bearing:
   calibration is "likely to be incorrect"; outside, the calibrator sees the fold's own rows.
   The structure is pinned by a test and the absence of the warning is pinned end to end.
 * ``ensemble=True`` (one calibrator per fold) is the wrong default here: the calibration
-  would be refitted per bagging batch. ``ensemble="auto"`` keeps scikit-learn's behaviour,
-  and the other two tokens map to ``per_fold`` / ``single`` explicitly.
+  would be refitted per bagging batch. ``ensemble="auto"`` means scikit-learn's own default
+  *for the installed build* and the other two tokens map to ``per_fold`` / ``single``
+  explicitly. ``auto`` is resolved from the installed scikit-learn rather than hard-coded:
+  before 1.6 that argument accepts only a boolean (default ``True``), from 1.6 on it also
+  accepts the literal ``"auto"``, so a request stays portable across the versions this
+  package supports.
 
 Calibration is classification-only and is refused for regression members. What is recorded
 is a **before/after pair on identical folds** — the Brier score and the log loss of the
@@ -273,6 +277,12 @@ is a measurement rather than an assertion: an overconfident tree improves sharpl
 well-calibrated logistic member barely moves, and both are honest outcomes. Calibration
 changes probabilities, not decisions, so an accuracy-style metric may barely move while log
 loss falls.
+
+Two cases are reported rather than silently approximated. A member exposing only
+``decision_function`` (no ``predict_proba``) is perfectly calibratable, but Brier score and
+log loss are probability metrics, so that member is recorded as calibrated *without* a
+before/after pair instead of substituting a decision-function scale under the same column
+name. A member exposing neither response is refused at submit time by name.
 
 Optimized member weights (``weight_optimization``)
 --------------------------------------------------
@@ -295,6 +305,14 @@ bagging and boosting. Stacking is refused, because its meta-learner already lear
 combination and a weight vector would be silently ignored. An explicit ``weights`` parameter
 and ``weight_optimization`` are mutually exclusive for the same reason — the optimized vector
 would replace the typed one without saying so.
+
+What the fit records is the vector, the strategy, the folds the vector was fitted on, the
+budget the search spent (``samples`` or ``rounds``; ``null`` for the deterministic
+least-squares fit), the members it dropped, and the objective it reached. The objective is
+``null`` when the search could not evaluate any candidate at all — a scorer that returns a
+non-finite value, which is what scikit-learn's own scorers do on a degenerate fold. That case
+leaves the uniform vector in place and reports no objective rather than a number that is not
+valid JSON.
 
 The honest estimate (``honest_cv``)
 -----------------------------------

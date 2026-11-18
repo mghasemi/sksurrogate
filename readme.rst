@@ -100,7 +100,14 @@ voting, averaging, stacking, bagging and boosting over a selection of models —
 library (``SKSurrogate.ensembling``), the ``/api/ensembles`` routes or the web UI's
 **Ensembles** page. The result is an ordinary bundle, so the same evaluation, registry and
 serving paths apply to it; its reported scores carry the caveat that member selection was made
-on the same data. See the
+on the same data.
+
+A combination can then be refined: every member's probabilities can be **calibrated**
+(Platt/isotonic, with the Brier score and log loss recorded before and after on identical
+folds), the member **weights can be fitted** on out-of-fold member output (a convex simplex
+least-squares, a random search over the task's metric, or Caruana greedy selection), and the
+whole procedure can be re-priced by an **honest nested estimate** that refits the members, the
+calibration and the weight search inside every outer fold. See the
 `combining-models guide <https://sksurrogate.readthedocs.io/en/latest/ensembles.html>`_.
 
 Quick start

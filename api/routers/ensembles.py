@@ -201,7 +201,10 @@ def _validate_combination_options(body):
         for name, value in (("folds", folds), ("inner_folds", inner)):
             if isinstance(value, bool) or not isinstance(value, int) or value < 2:
                 raise bad_request("honest_cv.%s must be an integer of at least 2." % name)
-    if body.calibration and body.weight_optimization and body.method == "stacking":
+    # Stacking learns its own combination in the final estimator, so a member weight vector
+    # would be ignored. Checked here for the fast answer; the core refuses it too, and with
+    # the same wording, so a direct library call cannot slip past.
+    if body.weight_optimization and body.method == "stacking":
         raise bad_request(
             "Stacking learns its own combination in the final estimator, so member "
             "weights do not apply; optimize weights with voting, averaging, bagging or "

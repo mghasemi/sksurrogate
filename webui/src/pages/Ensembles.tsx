@@ -823,8 +823,15 @@ function EnsembleDetailView({ detail }: { detail: EnsembleDetail }) {
       {ensemble.weight_optimization && (
         <p className="muted">
           Weights fitted by <code>{ensemble.weight_optimization.strategy}</code> against{" "}
-          {ensemble.weight_optimization.objective_name} → objective{" "}
-          <span className="mono">{fmtNum(ensemble.weight_optimization.objective)}</span>
+          {ensemble.weight_optimization.objective_name}
+          {ensemble.weight_optimization.objective === null ? (
+            <> — no objective: the search could not score a single candidate, so the uniform vector stands.</>
+          ) : (
+            <>
+              {" "}
+              → objective <span className="mono">{fmtNum(ensemble.weight_optimization.objective)}</span>
+            </>
+          )}
           {ensemble.weight_optimization.folds !== null && ` over ${ensemble.weight_optimization.folds} out-of-fold splits`}
           {ensemble.weight_optimization.dropped.length > 0 &&
             ` · dropped: ${ensemble.weight_optimization.dropped.join(", ")}`}

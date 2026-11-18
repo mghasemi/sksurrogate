@@ -3411,7 +3411,8 @@ export interface EnsembleCalibrationReport {
 export interface EnsembleWeightReport {
   weights: number[];
   strategy: string;
-  objective: number;
+  /** Null when a degenerate search left no usable objective (never a non-finite number). */
+  objective: number | null;
   objective_name: string;
   folds: number | null;
   budget: Record<string, number> | null;

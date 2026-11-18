@@ -73,6 +73,16 @@ Calibrating members, optimizing weights, pricing the search
   server's schema and disables what the request would refuse; the detail view
   adds the weight column, the calibration before/after table and the
   nested-versus-optimistic gap.
+* Three robustness fixes found while auditing the above. ``ensemble="auto"`` for
+  the calibrator is resolved against the *installed* scikit-learn instead of being
+  hard-coded: that argument accepts only a boolean before 1.6 (so a literal
+  ``"auto"`` made every calibration call fail at the declared ``scikit-learn>=1.5``
+  floor) and names its default from 1.6 on. A member exposing only
+  ``decision_function`` is reported as calibrated *without* a Brier/log-loss pair
+  rather than surfacing a ``predict_proba`` AttributeError for a member whose
+  calibration worked. And a weight search that could not score any candidate now
+  reports ``objective: null`` instead of ``-Infinity``/``NaN``, which was not valid
+  JSON in the job result.
 
 Serving a pinned model
 ~~~~~~~~~~~~~~~~~~~~~~

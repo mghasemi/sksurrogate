@@ -74,6 +74,7 @@ documented rather than rejected.
 
 from __future__ import annotations
 
+import inspect
 import math
 from typing import Any
 
@@ -144,9 +145,9 @@ DEFAULT_STACKING_FINAL_ESTIMATOR = {
 CALIBRATION_METHODS = ("sigmoid", "isotonic")
 
 #: How ``CalibratedClassifierCV`` builds its calibrators, as user-facing tokens.
-#: scikit-learn's own default is ``"auto"`` (which means *per fold* for an ordinary
-#: estimator, and a single frozen one otherwise), so it is exposed as a choice rather
-#: than left implicit.
+#: scikit-learn's own default is exposed as ``"auto"`` rather than left implicit, and it is
+#: resolved against the *installed* build (a boolean ``True`` before scikit-learn 1.6, the
+#: literal ``"auto"`` from 1.6 on) instead of being hard-coded.
 CALIBRATION_ENSEMBLE_TOKENS = {"auto": "auto", "per_fold": True, "single": False}
 
 #: How an optimized weight vector is found. ``least_squares`` minimises the squared error
@@ -803,19 +804,42 @@ def member_scores(members, X, y, *, cv=5, scoring=None, n_jobs=None):
 # --------------------------------------------------------------------------- #
 
 
-def _resolve_calibration_ensemble(value):
-    """Turn an ``ensemble`` token (``auto``/``per_fold``/``single``) into sklearn's value."""
+def _installed_calibration_ensemble_default():
+    """``CalibratedClassifierCV``'s own default for ``ensemble`` in the *installed* build.
+
+    The value is not a constant across the versions this package supports: scikit-learn 1.5
+    accepts only a boolean (default ``True``), while 1.6 added ``"auto"`` and made it the
+    default. Reading the signature keeps the ``"auto"`` token meaning "whatever this build
+    does by default" instead of a literal that a 1.5 install refuses
+    (``InvalidParameterError: The 'ensemble' parameter … must be an instance of 'bool'``).
+    """
+    try:
+        default = inspect.signature(CalibratedClassifierCV.__init__).parameters["ensemble"].default
+    except (KeyError, TypeError, ValueError):  # pragma: no cover - defensive
+        return True
+    return True if default is inspect.Parameter.empty else default
+
+
+def _resolve_calibration_ensemble(value) -> Any:
+    """Turn an ``ensemble`` token (``auto``/``per_fold``/``single``) into sklearn's value.
+
+    ``auto`` resolves against the installed build rather than a version string, so the same
+    request works on a boolean-only scikit-learn and on one that names the default. The
+    return type is deliberately unannotated beyond ``Any``: the accepted type of this
+    argument changed from ``bool`` to ``str`` between scikit-learn versions.
+    """
     if isinstance(value, bool):
         return value
     if value is None:
-        return "auto"
+        return _installed_calibration_ensemble_default()
     token = str(value).strip().lower()
     if token not in CALIBRATION_ENSEMBLE_TOKENS:
         raise EnsembleError(
             "Calibration 'ensemble' must be one of %s."
             % ", ".join(sorted(CALIBRATION_ENSEMBLE_TOKENS))
         )
-    return CALIBRATION_ENSEMBLE_TOKENS[token]
+    resolved = CALIBRATION_ENSEMBLE_TOKENS[token]
+    return _installed_calibration_ensemble_default() if resolved == "auto" else resolved
 
 
 def calibrate_member(estimator, *, method="sigmoid", cv=5, ensemble="auto", n_jobs=None):
@@ -834,10 +858,12 @@ def calibrate_member(estimator, *, method="sigmoid", cv=5, ensemble="auto", n_jo
     :param method: ``"sigmoid"`` (Platt scaling, the default: safe on few rows) or
         ``"isotonic"`` (more flexible, needs enough samples per fold to avoid step noise).
     :param cv: folds used to produce the calibrator's held-out scores (at least 2).
-    :param ensemble: ``"auto"`` (scikit-learn's own default: one calibrator per fold for an
-        ordinary estimator), ``"per_fold"`` to force that, or ``"single"`` to fit one
-        calibrator on the cross-validated scores (the classic Platt/isotonic construction).
-        ``True``/``False`` are accepted as synonyms of the last two.
+    :param ensemble: ``"auto"`` (scikit-learn's own default *for the installed build*: one
+        calibrator per fold for an ordinary estimator), ``"per_fold"`` to force that, or
+        ``"single"`` to fit one calibrator on the cross-validated scores (the classic
+        Platt/isotonic construction). ``True``/``False`` are accepted as synonyms of the
+        last two. ``"auto"`` is resolved at call time, so a scikit-learn that only accepts
+        a boolean is served correctly.
     """
     if method not in CALIBRATION_METHODS:
         raise EnsembleError(
@@ -924,6 +950,17 @@ def calibration_report(members, X, y, *, cv=5, method="sigmoid", ensemble="auto"
     for name, estimator in members:
         entry = {"member": name, "method": method, "cv": cv}
         try:
+            if not hasattr(estimator, "predict_proba"):
+                # A member with only a decision function is calibratable, but Brier score and
+                # log loss are probability metrics: substituting a decision-function scale
+                # would report a different quantity under the same column name.
+                entry["error"] = (
+                    "Brier score and log loss need a probability response "
+                    "(predict_proba); this member exposes decision_function only, so it is "
+                    "calibrated without a before/after metric."
+                )
+                report.append(entry)
+                continue
             raw = cross_val_predict(clone(estimator), X, y, cv=cv, method="predict_proba")
             calibrated = cross_val_predict(
                 calibrate_member(estimator, method=method, cv=cv, ensemble=ensemble, n_jobs=n_jobs),
@@ -1176,7 +1213,11 @@ def optimize_weights(
     return {
         "weights": [float(weight) for weight in weights],
         "strategy": strategy,
-        "objective": float(objective),
+        # A degenerate search (every candidate scoring identically, or a scorer returning a
+        # non-finite value) leaves the uniform vector in place and no usable objective.
+        # Reporting ±inf here would emit `-Infinity`, which is not valid JSON, into the job
+        # result — the objective is the one field allowed to be absent instead.
+        "objective": objective if math.isfinite(objective) else None,
         "objective_name": objective_name,
         "folds": cv if isinstance(cv, int) else getattr(cv, "get_n_splits", lambda: None)(),
         "budget": budget,
@@ -1486,8 +1527,9 @@ def calibration_and_weight_options(family):
                 {"name": "ensemble", "type": "choice",
                  "choices": sorted(CALIBRATION_ENSEMBLE_TOKENS), "default": "auto",
                  "label": "Calibrators",
-                 "help": "auto (scikit-learn's default) or per_fold average one calibrator per fold; "
-                         "single fits one calibrator on the cross-validated scores."},
+                 "help": "auto (scikit-learn's own default for the installed build) or per_fold "
+                         "average one calibrator per fold; single fits one calibrator on the "
+                         "cross-validated scores."},
             ],
             "note": (
                 "Calibration is applied to each member's outermost form and refitted inside "

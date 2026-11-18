@@ -575,6 +575,58 @@ def test_calibration_reports_a_member_failure_instead_of_raising():
     assert "error" in report[0]
 
 
+def test_calibration_report_explains_a_missing_probability_metric():
+    """A decision-function member is calibratable, but Brier/log loss are not available.
+
+    The report must say that, rather than surfacing sklearn's own ``predict_proba``
+    AttributeError for a member whose calibration worked.
+    """
+    frame = _frame()
+    report = calibration_report(
+        [("svc", _member(LinearSVC()))], frame[COLUMNS], frame["y_cls"], cv=2
+    )
+    entry = report[0]
+    assert "predict_proba" in entry["error"]
+    assert "decision_function only" in entry["error"]
+    # No half-computed metric is reported alongside it.
+    assert "brier_after" not in entry
+
+
+def test_a_degenerate_weight_search_reports_no_objective_rather_than_infinity(monkeypatch):
+    """±inf (or NaN) in the job result would be invalid JSON, so the objective is dropped.
+
+    The reproducible case is a scorer that cannot score any candidate — scikit-learn's own
+    scorers return NaN on a degenerate fold — which leaves the uniform vector in place and no
+    usable objective.
+    """
+    import json
+
+    import sklearn.metrics
+
+    frame = _weighting_frame()
+
+    class _Unscorable:
+        """A scorer that never produces a usable value, as a degenerate fold's would not."""
+
+        def __call__(self, estimator, X, y):  # noqa: ANN001, ARG002 - test double
+            return float("nan")
+
+    # ``optimize_weights`` resolves ``get_scorer`` from this module at call time.
+    monkeypatch.setattr(sklearn.metrics, "get_scorer", lambda name: _Unscorable())
+
+    for strategy, extra in (("greedy", {"rounds": 4}), ("dirichlet", {"samples": 10})):
+        result = optimize_weights(
+            _cls_members(), frame[COLUMNS], frame["y_cls"], cv=4, strategy=strategy,
+            scoring="accuracy", **extra,
+        )
+        assert result["objective"] is None
+        # The uniform vector is the honest answer when nothing could be scored.
+        assert abs(sum(result["weights"]) - 1.0) < 1e-6
+        assert result["dropped"] == []
+        # And the payload a job would carry is valid JSON, not `-Infinity`/`NaN`.
+        assert json.loads(json.dumps(result, allow_nan=False))["objective"] is None
+
+
 class _ScoresLessClassifier(ClassifierMixin, BaseEstimator):
     """A classifier with neither probabilities nor a decision function.
 
@@ -604,6 +656,8 @@ def test_calibration_members_refuses_regression_and_unscorable_members():
 
 
 def test_calibration_method_and_folds_are_validated():
+    from SKSurrogate.ensembling import _installed_calibration_ensemble_default
+
     member = _member(LogisticRegression(max_iter=200))
     with pytest.raises(EnsembleError, match="Unknown calibration method"):
         calibrate_member(member, method="platt")
@@ -611,11 +665,53 @@ def test_calibration_method_and_folds_are_validated():
         calibrate_member(member, cv=1)
     with pytest.raises(EnsembleError, match="must be one of"):
         calibrate_member(member, ensemble="sometimes")
-    # The three tokens resolve to scikit-learn's own values.
-    assert calibrate_member(member, ensemble="auto").ensemble == "auto"
+    # The three tokens resolve to scikit-learn's own values, and "auto" resolves against
+    # the *installed* build: scikit-learn 1.5 accepts only a boolean here, so hard-coding
+    # the literal "auto" would make calibration unusable at the declared dependency floor.
     assert calibrate_member(member, ensemble="per_fold").ensemble is True
     assert calibrate_member(member, ensemble="single").ensemble is False
     assert calibrate_member(member, ensemble=False).ensemble is False
+    assert calibrate_member(member, ensemble="auto").ensemble == _installed_calibration_ensemble_default()
+    # And whatever it resolved to is a value this build actually accepts.
+    frame = _frame()
+    calibrated = calibrate_member(member, ensemble="auto")
+    calibrated.fit(frame[COLUMNS], frame["y_cls"])
+    assert calibrated.predict_proba(frame[COLUMNS].head(3)).shape == (3, 2)
+
+
+def test_auto_calibration_ensemble_survives_a_boolean_only_scikit_learn(monkeypatch):
+    """A boolean-only build (scikit-learn 1.5) must still be served.
+
+    The resolution reads the installed signature instead of comparing versions, so pinning
+    the signature to what 1.5 declares is enough to exercise that path.
+    """
+    import inspect as _inspect
+
+    from sklearn.calibration import CalibratedClassifierCV as _CalibratedClassifierCV
+
+    from SKSurrogate import ensembling
+    from SKSurrogate.ensembling import _installed_calibration_ensemble_default
+
+    real_signature = _inspect.signature
+
+    def fake_signature(callable_):  # noqa: ANN001 - test double
+        signature = real_signature(callable_)
+        if callable_ is _CalibratedClassifierCV.__init__:
+            parameters = [
+                parameter.replace(default=True) if parameter.name == "ensemble" else parameter
+                for parameter in signature.parameters.values()
+            ]
+            return signature.replace(parameters=parameters)
+        return signature
+
+    monkeypatch.setattr(ensembling.inspect, "signature", fake_signature)
+    assert _installed_calibration_ensemble_default() is True
+    assert ensembling._resolve_calibration_ensemble("auto") is True
+    # The other tokens are unaffected: they were booleans before and after.
+    assert ensembling._resolve_calibration_ensemble("per_fold") is True
+    assert ensembling._resolve_calibration_ensemble("single") is False
+    monkeypatch.undo()
+    assert ensembling._resolve_calibration_ensemble("auto") == _installed_calibration_ensemble_default()
 
 
 def test_calibration_is_wrapped_outside_the_resampling_wrapper():
