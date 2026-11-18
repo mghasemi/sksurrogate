@@ -1,5 +1,7 @@
 # AI Layer 02 Review Follow-up Plan
 
+**Internal working document.** Planning notes for the maintainers, not user documentation — user-facing material is in `docs/` and at <https://sksurrogate.readthedocs.io>.
+
 ## Purpose and status
 
 Track decisions and progress for incorporating the recommendations in

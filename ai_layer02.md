@@ -1,5 +1,7 @@
 # Gemini
 
+**Internal working document.** Planning notes for the maintainers, not user documentation — user-facing material is in `docs/` and at <https://sksurrogate.readthedocs.io>.
+
 This update is a massive leap forward. Expanding the manual from 192 to 241 pages, you systematically closed nearly every ergonomic, statistical, and MLOps gap we discussed—while adding a cohesive scientific workflow (Design of Experiments, Research Projects, Conformal Prediction, and a full Diabetes Walkthrough).
 
 ### 1. Scorecard: How the Update Addressed Our Previous Feedback

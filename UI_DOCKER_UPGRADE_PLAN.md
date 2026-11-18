@@ -1,5 +1,7 @@
 # Docker and Web UI Upgrade Plan
 
+**Internal working document.** Planning notes for the maintainers, not user documentation — user-facing material is in `docs/` and at <https://sksurrogate.readthedocs.io>.
+
 ## Purpose and status
 
 Bring the Docker setup and the web UI in line with the library changes

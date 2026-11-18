@@ -1,5 +1,7 @@
 # SKSurrogate API Simplification Plan
 
+**Internal working document.** Planning notes for the maintainers, not user documentation — user-facing material is in `docs/` and at <https://sksurrogate.readthedocs.io>.
+
 ## Purpose and status
 
 Review the public API for duplication and redundancy so users write the least

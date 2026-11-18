@@ -1,5 +1,7 @@
 # SKSurrogate Scientific Workflow Roadmap
 
+**Internal working document.** Planning notes for the maintainers, not user documentation — user-facing material is in `docs/` and at <https://sksurrogate.readthedocs.io>.
+
 ## Purpose and status
 
 Turn the recommendations in [`ailayer.md`](./ailayer.md) into a practical,

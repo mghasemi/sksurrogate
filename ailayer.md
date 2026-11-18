@@ -1,5 +1,7 @@
 # Gemini:
 
+**Internal working document.** Planning notes for the maintainers, not user documentation — user-facing material is in `docs/` and at <https://sksurrogate.readthedocs.io>.
+
 A close reading of the **SKSurrogate v0.2.0** documentation—especially the code reference (Chapter 23), the UI manual (Chapter 15), and the benchmark post-mortems (Chapters 24–26)—shows a library with unusually strong MLOps bones and admirable scientific honesty, but several friction points that hold back day-to-day data scientists.
 
 To make SKSurrogate much more appealing and scientist-friendly, the biggest gaps to close fall into five areas:
