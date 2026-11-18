@@ -10,20 +10,30 @@ nothing about ensembles.
 Methods and what they mean here
 -------------------------------
 
-======================== ============================================ ==============================================
-method                   classification                               regression
-======================== ============================================ ==============================================
-``voting``               ``VotingClassifier`` (majority label vote,    ``VotingRegressor`` (unweighted mean)
-                         ``voting="hard"`` by default)
-``averaging``            ``VotingClassifier(voting="soft")`` (mean of  ``VotingRegressor`` (unweighted mean)
-                         the members' class probabilities)
-``stacking``             ``StackingClassifier`` with a final estimator ``StackingRegressor`` with a final estimator
-                         refitted on out-of-fold member predictions    refitted on out-of-fold member predictions
-``bagging``              ``VotingClassifier(voting="soft")`` over one    ``VotingRegressor`` over one
-                         ``BaggingClassifier`` **per member**          ``BaggingRegressor`` **per member**
-``boosting``             ``VotingClassifier(voting="soft")`` over one    ``VotingRegressor`` over one
-                         ``AdaBoostClassifier`` **per member**         ``AdaBoostRegressor`` **per member**
-======================== ============================================ ==============================================
+.. list-table::
+   :header-rows: 1
+   :widths: 12 44 44
+
+   * - method
+     - classification
+     - regression
+   * - ``voting``
+     - ``VotingClassifier``; majority label vote unless soft voting is requested
+     - ``VotingRegressor``; unweighted mean of predictions
+   * - ``averaging``
+     - ``VotingClassifier(voting="soft")``; mean of the members' class probabilities
+     - ``VotingRegressor``; unweighted mean of predictions
+   * - ``stacking``
+     - ``StackingClassifier`` with a final estimator refitted on out-of-fold member
+       predictions
+     - ``StackingRegressor`` with a final estimator refitted on out-of-fold member
+       predictions
+   * - ``bagging``
+     - one ``BaggingClassifier`` per member, then soft voting over the bagged members
+     - one ``BaggingRegressor`` per member, then averaging
+   * - ``boosting``
+     - one ``AdaBoostClassifier`` per member, then soft voting over the boosted members
+     - one ``AdaBoostRegressor`` per member, then averaging
 
 Three properties of scikit-learn are worth stating, because they decide the design
 and are not obvious from the class names:
@@ -202,7 +212,17 @@ def method_catalogue(family):
     }
     entries = []
     for method in ENSEMBLE_METHODS:
-        parameters = _parameters_for(method, family)
+        parameters = list(_parameters_for(method, family))
+        if method == "stacking" and family in STACKING_FINAL_ESTIMATORS:
+            # A free-text parameter the caller can only get wrong: publish the
+            # family's accepted names (and its default) so a UI renders a dropdown.
+            default = DEFAULT_STACKING_FINAL_ESTIMATOR[family]
+            parameters = [
+                {**spec, "choices": sorted(STACKING_FINAL_ESTIMATORS[family]), "default": default}
+                if spec["name"] == "final_estimator"
+                else spec
+                for spec in parameters
+            ]
         applies = True
         if method == "stacking":
             applies = family in STACKING_FINAL_ESTIMATORS

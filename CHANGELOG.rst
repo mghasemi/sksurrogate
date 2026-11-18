@@ -4,6 +4,39 @@ Changelog
 [Unreleased]
 ------------
 
+Combining trained models
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+* New ``SKSurrogate.ensembling``: combine a selection of trained bundles into one
+  scikit-learn meta-estimator — ``voting`` (hard/soft + positional weights),
+  ``averaging``, ``stacking`` (configurable final estimator and folds), ``bagging``
+  and ``boosting``. Bagging and boosting give every selected member its own
+  resampling/reweighting wrapper and aggregate the wrappers, so each member
+  contributes; the result is an ordinary ``ModelBundle``, so registration, serving,
+  learning curves, diagnostic curves, nested CV and the run report consume it
+  unchanged.
+* New **Ensembles** page and ``/api/ensembles`` routes: ``methods`` (the combiners
+  that apply to the task's problem family, with their parameter schema),
+  ``candidates`` (selectable models), ``fit`` (background job, ``kind: ensemble``),
+  list and per-version detail. Requests are validated at submit time — unknown
+  member (404), duplicate or mixed-family members, unknown method/parameter, soft
+  voting without ``predict_proba``, classification boosting without sample-weight
+  support, more than twelve members (400) — so a rejection is never a failed job.
+* Scores are reported two-sided: ``cv_score`` is out-of-fold on the task's stored
+  splitter (member rows use the same folds), while ``train_score`` is the refit
+  score and is flagged optimistic. Every response and every stored bundle carries
+  the caveat that member selection was made on this same data, so the comparison is
+  jointly optimistic and nested CV remains the honest estimate.
+* Two core fixes the combination depends on, both pinned by tests: ``ArrayAsFrame``
+  now infers dtypes when it rebuilds a frame from a positional array (a mixed-type
+  matrix is an object array, so a frame-first encoder fitted on one classified every
+  numeric column as categorical — measured 3 columns expanding to 423, and a bagged
+  member scoring AUC 0.55 against 0.95 for the same member fitted on the frame), and
+  ``preprocesses_frames`` now sees through aggregating meta-estimators, so nested CV
+  no longer stacks a second encoder in front of an ensemble's members.
+* Documented in ``docs/ensembles.rst`` (new chapter), the UI manual's *Combine
+  models into an ensemble* section, and the model-bundle chapter's cross-link.
+
 Serving a pinned model
 ~~~~~~~~~~~~~~~~~~~~~~
 

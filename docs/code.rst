@@ -36,6 +36,9 @@ The package also exposes the major implementation modules for advanced users:
 .. automodule:: SKSurrogate.modelbundle
    :members:
 
+.. automodule:: SKSurrogate.ensembling
+   :members:
+
 .. automodule:: SKSurrogate.inference
    :members:
 

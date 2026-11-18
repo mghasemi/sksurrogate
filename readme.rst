@@ -95,6 +95,14 @@ card on the Inference page that sets, replaces and stops it. See the
 `inference guide <https://sksurrogate.readthedocs.io/en/latest/inference.html>`_ and the
 `control-plane guide <https://sksurrogate.readthedocs.io/en/latest/controlplane.html>`_.
 
+Trained bundles can also be combined into one model with scikit-learn's own meta-estimators —
+voting, averaging, stacking, bagging and boosting over a selection of models — from the
+library (``SKSurrogate.ensembling``), the ``/api/ensembles`` routes or the web UI's
+**Ensembles** page. The result is an ordinary bundle, so the same evaluation, registry and
+serving paths apply to it; its reported scores carry the caveat that member selection was made
+on the same data. See the
+`combining-models guide <https://sksurrogate.readthedocs.io/en/latest/ensembles.html>`_.
+
 Quick start
 -----------
 ``SurrogateRandomCV`` is a drop-in for ``RandomizedSearchCV``; ranges can be written as plain

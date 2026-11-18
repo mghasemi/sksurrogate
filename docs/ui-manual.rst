@@ -91,8 +91,8 @@ The UI is organized around a task, which groups data, runs, bundles, registry
 history, inference records, and monitoring. The usual flow is:
 
 ``Task → Datasets → Data Preprocessing → Feature Analysis → Experiments →
-Evaluation → Explain → Model Bundles → Quality Gates → Registry & Deployment →
-Inference → Monitoring → Retraining``
+Ensembles → Evaluation → Explain → Model Bundles → Quality Gates → Registry &
+Deployment → Inference → Monitoring → Retraining``
 
 The sidebar groups pages by stage (Data, Model, Release, Operate). **Projects**
 groups the datasets, bundles and jobs of one investigation and shows which
@@ -506,6 +506,50 @@ checkpoints and project artifacts. Rename or clear the name later with
 
    Search-space editor and experiment settings. The run controls continue
    below the visible portion of the screen.
+
+Combine models into an ensemble
+-------------------------------
+
+Open **Ensembles** to combine the task's trained models with scikit-learn's own
+meta-estimators. The **Members** table lists every stored bundle and registered
+version — including ensembles you have already built, which then appear as
+``ensemble · <method>`` — with its family, stored score and source. Tick the models
+to combine; the ``#`` column records the selection order, because weights are
+applied positionally.
+
+In **Combination**, choose the method (**Voting**, **Averaging**, **Stacking**,
+**Bagging**, **Boosting**), the metric the comparison is scored by, and — from the
+schema the server publishes for that method — its parameters: voting mode and
+weights, the stacking meta-learner and fold count, bagging resamples and sample
+fraction, boosting rounds and learning rate. **Register as candidate** additionally
+puts the result into the model registry as a candidate version; without it the
+ensemble is stored as an unregistered bundle, exactly like an experiment's output.
+
+**Fit ensemble** submits a background job (``kind: ensemble``) and the tracker
+reports it live. When it finishes, the **Ensembles** table shows the combination
+with its method, member count, out-of-fold CV score and refit training score;
+**Details** opens the member-versus-ensemble comparison, computed on the same folds
+for every row.
+
+Read the score note above that table before interpreting it: the members were
+fitted and tuned on this same data, so their CV scores and the ensemble's are
+jointly optimistic, and the nested-CV evaluation below is the estimate that
+accounts for the selection. A rejection — a member selected twice, mixed families,
+soft voting with a member that cannot predict probabilities, classification
+boosting with a member that cannot take sample weights, or more than twelve
+members — is reported in the page and no job is started.
+
+.. figure:: images/ui-ensembles.png
+   :alt: Ensembles page with the member picker, the combination controls, the stored ensembles and the member-versus-ensemble comparison
+   :width: 100%
+
+   Combining two trained models with stacking. The member rows are positional;
+   the comparison table lists each member's out-of-fold score next to the
+   ensemble's own.
+
+Evaluate a combination exactly like any other model: select its version on the
+**Evaluation** page for learning curves and classification diagnostics, or run
+**Nested CV** on it for an estimate that accounts for member selection.
 
 5. Evaluate candidate models
 ----------------------------
