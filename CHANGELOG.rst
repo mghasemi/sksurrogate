@@ -4,6 +4,11 @@ Changelog
 [Unreleased]
 ------------
 
+Explain page
+~~~~~~~~~~~~
+
+* Prediction intervals on classifier bundles now return guidance instead of a terse error: ``POST /api/evaluation/{task}/{model}/intervals`` answers 422 with an explanation that the selected bundle is a classification model, that split-conformal prediction intervals are only defined for numeric regression targets, and to select or train a regression bundle (e.g. via Baselines) instead. The Explain page recognizes this refusal and renders it as an informational note rather than an error banner; other interval failures still surface as errors.
+
 Serving a pinned model
 ~~~~~~~~~~~~~~~~~~~~~~
 

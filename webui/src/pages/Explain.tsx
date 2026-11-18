@@ -13,7 +13,7 @@ import {
   YAxis,
 } from "recharts";
 
-import { computeAle, explainBundle, explainRow, getIntervals, listBundles } from "../api/client";
+import { ApiError, computeAle, explainBundle, explainRow, getIntervals, listBundles } from "../api/client";
 import { LineageRail } from "../components/LineageRail";
 import { Card, EmptyState, ErrorNote, Loading, Stat, fmtNum, fmtPct, fmtSci } from "../components/ui";
 import { useTask } from "../lib/task-context";
@@ -69,6 +69,14 @@ export default function ExplainPage() {
 
   const importance = (explainMut.data?.importance ?? []).slice(0, 15);
   const intervals = intervalMut.data;
+  // The server refuses intervals for classifier bundles with an explanation of
+  // why and what to do instead. That refusal is expected guidance rather than a
+  // failure, so recognize it (via its stable wording) and render it as a note.
+  const intervalsUnsuitableModel =
+    intervalMut.isError &&
+    intervalMut.error instanceof ApiError &&
+    intervalMut.error.status === 422 &&
+    /prediction intervals are only defined/i.test(intervalMut.error.message);
   const pdpStability = explainMut.data?.partial_dependence_stability;
   const pdpStabilityFor = (feature: string) =>
     pdpStability?.curves?.find((curve) => curve.feature === feature);
@@ -547,7 +555,15 @@ export default function ExplainPage() {
                 />
               </div>
             </div>
-            {intervalMut.isError && <ErrorNote error={intervalMut.error} />}
+            {intervalsUnsuitableModel ? (
+              <p className="hint">
+                This bundle is a <strong>classification</strong> model, so prediction intervals
+                don't apply — they're only defined for numeric regression targets. Select or train
+                a regression bundle and try again.
+              </p>
+            ) : intervalMut.isError ? (
+              <ErrorNote error={intervalMut.error} />
+            ) : null}
             {intervals && (
               <>
                 <div className="grid cols-3">

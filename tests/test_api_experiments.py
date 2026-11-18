@@ -345,7 +345,13 @@ def test_explain_intervals_and_project_summary(client):
 def test_intervals_reject_classifier(client):
     _register(client, "cls")
     version, _ = _quick_bundle(client, "cls", "classification")
-    assert client.post("/api/evaluation/cls/%s/intervals" % version, json={}).status_code == 422
+    response = client.post("/api/evaluation/cls/%s/intervals" % version, json={})
+    assert response.status_code == 422
+    # The refusal should read as guidance: what the model is and how to proceed.
+    detail = response.json()["detail"]
+    assert "is a Classification model" in detail
+    assert "only defined for numeric regression targets" in detail
+    assert "Select or train a regression bundle" in detail
 
 
 def test_design_endpoints(client):
