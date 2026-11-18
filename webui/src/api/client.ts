@@ -1152,6 +1152,21 @@ export interface TargetStats {
 export const getTargetStats = (task: string) =>
   get<TargetStats>(`/api/datasets/${encodeURIComponent(task)}/target-stats`);
 
+/** Response of re-pointing a registered dataset's target column. */
+export interface SetTargetResponse {
+  task_name: string;
+  target: string;
+  previous_target: string | null;
+  dataset_feature_count: number;
+  effective_features: string[];
+  effective_feature_count: number;
+  weights_stored: string[];
+}
+
+/** Re-point which registered column downstream analysis predicts. */
+export const setDatasetTarget = (task: string, target: string) =>
+  put<SetTargetResponse>(`/api/datasets/${encodeURIComponent(task)}/target`, { target });
+
 /* ------------------------------------------------------------------ */
 /* Bundles                                                             */
 /* ------------------------------------------------------------------ */

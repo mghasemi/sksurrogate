@@ -116,6 +116,12 @@ class IgnoredColumnsRequest(BaseModel):
     columns: list[str] = []
 
 
+class SetTargetRequest(BaseModel):
+    """Re-point the registered dataset's prediction target column."""
+
+    target: str
+
+
 class DatasetProfileRequest(BaseModel):
     partition: str = "train"
     target: str | None = None
@@ -235,6 +241,83 @@ def set_ignored_columns(task_name: str, body: IgnoredColumnsRequest):
         "ignored_columns": normalized,
         "effective_features": effective,
         "effective_feature_count": len(effective),
+    }
+
+
+@router.put("/{task_name}/target")
+def set_dataset_target(task_name: str, body: SetTargetRequest):
+    """Re-point the registered dataset's prediction target column.
+
+    A metadata-only change: the stored partitions, schema and fingerprint are
+    untouched (so the choice is reversible), but every downstream modeling path
+    that reads ``target_name`` — experiments, pipeline optimization, baselines,
+    sensitivity/correlation analysis, dataset profiles, EDA and target statistics
+    — now treats ``body.target`` as the column to predict. The target must be an
+    existing column and cannot currently be ignored.
+    """
+    if not settings.mltrace_db_path(task_name).exists():
+        raise not_found("No dataset registered for task %r" % task_name)
+    with open_tracker(task_name) as tracker:
+        metadata = tracker.GetMetadata()
+        known = metadata.get("dataset_columns") or []
+        if body.target not in known:
+            raise bad_request("target column %r not found in the registered dataset" % body.target)
+        if body.target in set(metadata.get("ignored_columns") or []):
+            raise bad_request(
+                "cannot set an ignored column (%r) as target; re-enable it first"
+                % body.target
+            )
+        current = metadata.get("target_name")
+        tracker.SetTarget(body.target)
+        # The stored Pearson/variance weightings were computed against the old
+        # target; reseed them so the "Consensus top features" card does not keep
+        # correlating features with the previous target. Best-effort like
+        # registration — a weighting failure must never fail a target change.
+        weights_stored: list[str] = []
+        try:
+            part = metadata.get("dataset_partition")
+            part = None if part in (None, "default") else part
+            frame = tracker.get_dataframe(partition=part)
+            try:
+                projection = numeric_train_xy(frame, body.target)
+            except NumericFeatureError:
+                projection = None
+            if projection is not None:
+                ignored_set = set(metadata.get("ignored_columns") or [])
+                feature_columns = [
+                    column for column in projection.columns if column not in ignored_set
+                ]
+                data = pd.DataFrame(projection.X, columns=projection.columns)
+                if ignored_set:
+                    data = pd.DataFrame(data[feature_columns])
+                values = pd.Series(projection.y)
+                if feature_columns:
+                    tracker.PersistWeights(
+                        {
+                            "pearson": [data[column].corr(values) for column in feature_columns],
+                            "variance": [data[column].var() for column in feature_columns],
+                        },
+                        features=feature_columns,
+                    )
+                    weights_stored = ["pearson", "variance"]
+        except Exception:  # pragma: no cover - auxiliary; never fail a re-target
+            weights_stored = []
+    with open_tracker(task_name) as tracker:
+        metadata = tracker.GetMetadata()
+        effective = [
+            column
+            for column in (metadata.get("dataset_columns") or [])
+            if column != body.target
+            and column not in set(metadata.get("ignored_columns") or [])
+        ]
+    return {
+        "task_name": task_name,
+        "target": body.target,
+        "previous_target": current,
+        "dataset_feature_count": len(effective),
+        "effective_features": effective,
+        "effective_feature_count": len(effective),
+        "weights_stored": weights_stored,
     }
 
 

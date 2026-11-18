@@ -160,6 +160,22 @@ Ignored dataset columns
   nested-CV path. Stored weights for ignored features are filtered from the
   heatmap and consensus ranking.
 
+Editable target column
+~~~~~~~~~~~~~~~~~~~~~~
+
+* The target is no longer locked at registration. ``PUT
+  /api/datasets/{task}/target`` re-points which registered column downstream
+  analysis predicts (``{target: "<column>"}``, 400 for an unknown or currently
+  ignored column, 404 without a registered dataset). It updates both the tracker
+  ``Task.target`` row and the metadata ``target_name``/``dataset_feature_count``,
+  and reseeds the Pearson/variance weightings against the new target so the
+  consensus ranking stays consistent. The stored partitions, schema and
+  fingerprint are untouched — metadata-only and reversible.
+* The Datasets page clarifies the initial choice — **Target column (what to
+  predict)** with a hint naming what it feeds — and the **Registered metadata**
+  card now has a **Change** control to edit the target after upload instead of
+  re-uploading the CSV.
+
 Human names for jobs and model versions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

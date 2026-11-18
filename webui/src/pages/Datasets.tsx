@@ -16,6 +16,7 @@ import {
   previewDataset,
   registerDataset,
   setDatasetCV,
+  setDatasetTarget,
   setIgnoredColumns,
   validateDataset,
   ApiError,
@@ -220,6 +221,19 @@ export default function DatasetsPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["dataset-cv", task, dataRevision] }),
   });
 
+  // Edit the registered prediction target (metadata-only re-point).
+  const [editingTarget, setEditingTarget] = useState(false);
+  const [targetDraft, setTargetDraft] = useState("");
+  const setTargetMut = useMutation({
+    mutationFn: (newTarget: string) => setDatasetTarget(task, newTarget),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["dataset-meta", task] });
+      qc.invalidateQueries({ queryKey: ["target-stats", task] });
+      setDataRevision((revision) => revision + 1);
+      setEditingTarget(false);
+    },
+  });
+
   const cvOptions = cvQ.data?.options ?? [];
   // Preselect the splitter matching the stored spec's type when available.
   const storedType =
@@ -302,7 +316,7 @@ export default function DatasetsPage() {
       <Card title="Register a partition" sub="Upload, review the inferred schema, then commit the CSV as a task partition.">
         <div className="row">
           <div className="field fixed" style={{ flex: "0 1 260px", minWidth: 180 }}>
-            <label>Target column</label>
+            <label>Target column (what to predict)</label>
             {inspected ? (
               <select value={target} onChange={(e) => setTarget(e.target.value)}>
                 <option value="">— select —</option>
@@ -315,6 +329,11 @@ export default function DatasetsPage() {
             ) : (
               <input value={target} readOnly placeholder="Choose after inspecting the CSV" spellCheck={false} />
             )}
+            <span className="hint muted" style={{ fontSize: 11.5, marginTop: 3 }}>
+              {inspected && target
+                ? `Downstream statistical analysis (feature analysis, correlations, EDA) and experiments all predict this column.`
+                : "Select the column to predict after inspecting the CSV."}
+            </span>
           </div>
           <div className="field fixed" style={{ flex: "0 1 160px", minWidth: 120 }}>
             <label>Partition</label>
@@ -589,7 +608,53 @@ export default function DatasetsPage() {
           <>
             <dl className="kv">
               <dt>Target</dt>
-              <dd>{metaQ.data.target_name ?? "—"}</dd>
+              <dd>
+                {editingTarget ? (
+                  <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                    <select
+                      aria-label="New target column"
+                      value={targetDraft}
+                      onChange={(e) => setTargetDraft(e.target.value)}
+                    >
+                      <option value="">— select column to predict —</option>
+                      {(metaQ.data!.dataset_columns ?? []).map((column) => (
+                        <option key={column} value={column}>{column}</option>
+                      ))}
+                    </select>
+                    <button
+                      className="btn primary"
+                      disabled={!targetDraft || targetDraft === metaQ.data!.target_name || setTargetMut.isPending}
+                      onClick={() => targetDraft && setTargetMut.mutate(targetDraft)}
+                    >
+                      {setTargetMut.isPending ? "Saving…" : "Save target"}
+                    </button>
+                    <button className="btn" disabled={setTargetMut.isPending} onClick={() => setEditingTarget(false)}>
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <span className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                    <span>{metaQ.data.target_name ?? "—"}</span>
+                    <button className="btn" onClick={() => {
+                      setTargetDraft(metaQ.data!.target_name ?? "");
+                      setEditingTarget(true);
+                    }}>
+                      Change
+                    </button>
+                  </span>
+                )}
+              </dd>
+              {setTargetMut.isError && (
+                <dd className="error-note" style={{ gridColumn: "2" }}>
+                  {setTargetMut.error instanceof Error ? setTargetMut.error.message : String(setTargetMut.error)}
+                </dd>
+              )}
+              {setTargetMut.isSuccess && !editingTarget && (
+                <dd className="success-note" style={{ gridColumn: "2" }}>
+                  Target changed to <code>{setTargetMut.data.target}</code> (was{" "}
+                  {setTargetMut.data.previous_target ?? "—"}). Downstream analyses and features are re-pointed.
+                </dd>
+              )}
               <dt>Fingerprint</dt>
               <dd className="mono">{metaQ.data.dataset_fingerprint ?? "—"}</dd>
               <dt>Feature count</dt>

@@ -150,6 +150,14 @@ Open **Datasets**. For each CSV partition:
 5. Click **Commit dataset**. The API registers the partition and schema,
    calculates a dataset fingerprint, and stores the CSV under the task.
 
+Once registered, the target column is not locked. The **Registered metadata**
+card shows the current target with a **Change** control: re-point which column
+downstream analysis predicts (experiments, feature analysis, correlations, EDA,
+target statistics) without re-uploading the CSV. The stored partitions, schema
+and fingerprint are untouched — the change is metadata-only and reversible —
+and the Pearson/variance feature weights are reseeded against the new target.
+The new target must be an existing column and cannot currently be ignored.
+
 Use the same target and compatible feature columns across partitions. For the
 tutorial, register the training file as ``train`` and the second file as
 ``validation``. In a real workflow, keep validation data separate from
