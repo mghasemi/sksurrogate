@@ -176,6 +176,17 @@ Editable target column
   card now has a **Change** control to edit the target after upload instead of
   re-uploading the CSV.
 
+Regularized Greedy Forest (rgf-python)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* ``rgf.sklearn.RGFClassifier`` (and the rest of the ``RGF`` family) is now a
+  supported, installed estimator: ``rgf-python>=3.12.0`` was added to
+  ``requirements.txt`` and ``setup.py`` ``install_requires`` so search-space
+  configs naming ``rgf.sklearn.*`` resolve in ``aml.types()`` instead of
+  failing the whole experiment job. ``FastRGF`` variants need the separate
+  ``FastRGF`` executables (not shipped here); the standard ``RGFClassifier`` /
+  ``RGFRegressor`` estimators work out of the box.
+
 Human names for jobs and model versions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
