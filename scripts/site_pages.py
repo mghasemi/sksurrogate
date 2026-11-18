@@ -379,8 +379,10 @@ def contact(rel):
           to book. The software is MIT-licensed and self-service by design.</p>
 
         <h2>This website</h2>
-        <p>The site is static HTML with no cookies, no analytics and no third-party trackers, and it
-          serves its own fonts. Pages are served by GitHub Pages, which may log requests under
+        <p>The site is static HTML with no cookies and no advertising or cross-site trackers, and it
+          serves its own fonts. Page views and Core Web Vitals are measured by Cloudflare Web
+          Analytics, which is injected at the edge, sets no cookies and cannot follow you across
+          sites. Pages are served by GitHub Pages, which may log requests under
           <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement" target="_blank" rel="noopener">GitHub's
           privacy statement</a>. Nothing else is collected.</p>
         <p>The <a href="%s">videos page</a> is the one exception, and only after you act: no third-party
