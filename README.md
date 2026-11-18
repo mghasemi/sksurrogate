@@ -75,6 +75,10 @@ consistency (every indexable page listed, every `noindex` page excluded, `<lastm
 ≤ 40 lines; `<img>` width/height/alt and lazy-loading; image payload < 350 KB; OG card dimensions;
 no Google Fonts requests; orphan detection; and the homepage copy hash.
 
+`<lastmod>` is per file, not per build: `build_site.py` takes each page's own last commit date and
+uses today only for files with uncommitted changes. Never stamp every URL with the build date —
+an over-reported `lastmod` is how a sitemap teaches Google to ignore the field.
+
 Two checks need a rendering engine and are done in a browser instead:
 
 - **390 px overflow:** `document.documentElement.scrollWidth === clientWidth` on all 16 pages

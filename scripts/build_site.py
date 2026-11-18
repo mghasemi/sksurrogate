@@ -228,14 +228,30 @@ def main():
         written.append(("/blog/honest-benchmark/", target, False))
         print("wrote", os.path.relpath(target, ROOT))
 
-    # sitemap: only indexable pages, with lastmod from the repo's HEAD date
+    # sitemap: only indexable pages, with lastmod from each file's own last change.
+    # A single HEAD date for every URL tells Google nothing about what actually moved,
+    # and an over-reported lastmod is how a sitemap teaches crawlers to ignore the field.
+    import datetime as dt
     import subprocess
-    try:
-        lastmod = subprocess.check_output(["git", "log", "-1", "--format=%cs"],
-                                          cwd=ROOT).decode().strip()
-    except Exception:
-        lastmod = "2026-11-10"
-    entries = [("/", lastmod)] + [(p, lastmod) for p, _, noindex in written if not noindex]
+
+    def _git(*args):
+        try:
+            return subprocess.check_output(["git"] + list(args), cwd=ROOT,
+                                           stderr=subprocess.DEVNULL).decode().strip()
+        except Exception:
+            return ""
+
+    head_date = _git("log", "-1", "--format=%cs") or "2026-11-10"
+
+    def file_lastmod(relpath):
+        # uncommitted change == about to be published today
+        if _git("status", "--porcelain", "--", relpath):
+            return dt.date.today().isoformat()
+        return _git("log", "-1", "--format=%cs", "--", relpath) or head_date
+
+    entries = [("/", file_lastmod("index.html"))]
+    entries += [(p, file_lastmod(os.path.relpath(t, ROOT)))
+                for p, t, noindex in written if not noindex]
     lines = ['<?xml version="1.0" encoding="UTF-8"?>',
              '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
     for path, lm in entries:
