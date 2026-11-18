@@ -188,6 +188,12 @@ def compute_learning_curve(
     (falling back to scikit-learn's default 3-fold convention), for training-set
     fractions spread evenly between 10% and 100%. Non-finite scores (e.g. a fold
     that could not be fitted) become ``None`` so the UI renders a gap.
+
+    Features are sliced to the bundle's recorded schema and passed as a
+    DataFrame, so bundles whose first step is a named-column encoder (the
+    explicit cat_cols path) keep working; when a schema column no longer exists
+    in the partition this raises a clear per-bundle error instead of failing
+    every fold.
     """
     import numpy as np
     from sklearn.model_selection import learning_curve
@@ -220,8 +226,23 @@ def compute_learning_curve(
     frame = load_partition(task_name, train_partition)
     if target not in frame.columns:
         raise bad_request("Partition %r of task %r has no target column %r" % (train_partition, task_name, target))
-    feature_columns = [column for column in frame.columns if column != target]
-    X = frame[feature_columns].values
+
+    # Fit on the bundle's own feature schema rather than whatever columns the
+    # partition currently carries, and keep it a DataFrame: bundles from the
+    # explicit cat_cols path start with named-column encoders that cannot be
+    # fitted positionally, so an ndarray input fails every fold. When no schema
+    # was recorded (legacy bundles) fall back to every non-target column.
+    schema_columns = [column for column in (bundle.schema or {}) if column != target]
+    if schema_columns:
+        missing = [column for column in schema_columns if column not in frame.columns]
+        if missing:
+            raise bad_request(
+                "Bundle %r expects feature columns absent from partition %r: %s"
+                % (bundle.model_version, train_partition, ", ".join(missing))
+            )
+        X = frame[schema_columns]
+    else:
+        X = frame[[column for column in frame.columns if column != target]]
     y = frame[target].values
 
     cv = get_stored_cv(task_name)

@@ -216,6 +216,22 @@ Nested CV accepts cat_cols bundles without a second encoder
   a second, double-encoding wrapper (regression test in
   ``tests/test_mixed_type_experiments.py``).
 
+Learning curves respect cat_cols bundles
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The Evaluation page's metric tabs failed every bundle trained through the
+  explicit ``cat_cols`` path: scikit-learn's ``learning_curve`` retrains the
+  pipeline on each fold, and with a numpy array as input its internal
+  cross-validation strips column names, so
+  ``category_encoders.one_hot.OneHotEncoder(cols=[...])`` raised ``X does not
+  contain the columns listed in cols: ['<feature>']`` and all folds failed.
+  The learning-curve endpoint now feeds a DataFrame sliced to the bundle's own
+  recorded schema (falling back to every non-target column for legacy bundles)
+  instead of positional values, so named columns reach the encoder on every
+  fold. A partition missing schema features answers HTTP 400 naming them.
+  Regression tests in ``tests/test_phase1_endpoints.py`` pin both a
+  classification and a regression cat_cols bundle through the endpoint.
+
 Human names for jobs and model versions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
