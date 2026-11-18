@@ -3282,3 +3282,142 @@ export const adoptOrphans = (kind: "task" | "project", userId?: number) =>
     "/api/access/adopt",
     { kind, user_id: userId },
   );
+
+/* ------------------------------------------------------------------ */
+/* Ensembles: combining the task's trained models                      */
+/* ------------------------------------------------------------------ */
+
+/** One parameter of a combiner, as the server describes it. */
+export interface EnsembleParameterSpec {
+  name: string;
+  type: "floats" | "choice" | "integer" | "float" | "boolean" | "string";
+  default: unknown;
+  label?: string;
+  help?: string;
+  min?: number;
+  max?: number;
+  choices?: string[];
+}
+
+export interface EnsembleMethod {
+  value: string;
+  label: string;
+  description: string;
+  aggregation: string;
+  minimum_members: number;
+  parameters: EnsembleParameterSpec[];
+  available: boolean;
+}
+
+export interface EnsembleMethodsResponse {
+  task_name: string;
+  family: "Classification" | "Regression" | null;
+  max_members: number;
+  methods: EnsembleMethod[];
+  /** The selection-bias caveat that qualifies every score this page shows. */
+  caveats: string[];
+}
+
+export interface EnsembleCandidate {
+  model_version: string;
+  label: string | null;
+  family: "Classification" | "Regression" | null;
+  metrics: Record<string, number | null> | null;
+  created_at: string;
+  is_ensemble: boolean;
+  source: "bundle" | "registry";
+  ensemble?: {
+    method: string | null;
+    family: string | null;
+    aggregation: string | null;
+    member_count: number;
+    scores: Record<string, unknown> | null;
+  } | null;
+}
+
+export interface EnsembleMemberScore {
+  model_version: string;
+  label: string | null;
+  source: string;
+  family: string | null;
+  metrics: Record<string, number | null> | null;
+  cv_mean: number | null;
+  cv_std: number | null;
+  cv_folds: (number | null)[] | null;
+  error: string | null;
+}
+
+export interface EnsembleRecord {
+  model_version: string;
+  label: string | null;
+  created_at: string;
+  metrics: Record<string, number | null> | null;
+  source: string;
+  method: string | null;
+  family: string | null;
+  aggregation: string | null;
+  member_count: number;
+  scores: Record<string, unknown> | null;
+}
+
+export interface EnsembleDetail {
+  task_name: string;
+  model_version: string;
+  label: string | null;
+  created_at: string;
+  schema: Record<string, { dtype: string }>;
+  metrics: Record<string, number | null>;
+  ensemble: {
+    schema: string;
+    method: string;
+    family: string;
+    parameters: Record<string, unknown>;
+    aggregation: string;
+    members: EnsembleMemberScore[];
+    scoring: string;
+    cv: Record<string, unknown>;
+    scores: {
+      train_score: number | null;
+      cv_score: number | null;
+      cv_score_std: number | null;
+      cv_folds: (number | null)[];
+      cv_error: string | null;
+    };
+    caveats: string[];
+  };
+}
+
+export interface FitEnsembleRequest {
+  members: string[];
+  method: string;
+  params?: Record<string, unknown>;
+  train_partition?: string;
+  scoring?: string | null;
+  random_state?: number | null;
+  label?: string | null;
+  register?: boolean;
+}
+
+export const getEnsembleMethods = (task: string) =>
+  get<EnsembleMethodsResponse>(`/api/ensembles/${encodeURIComponent(task)}/methods`);
+
+export const getEnsembleCandidates = (task: string) =>
+  get<{ task_name: string; candidates: EnsembleCandidate[] }>(
+    `/api/ensembles/${encodeURIComponent(task)}/candidates`,
+  );
+
+export const listEnsembles = (task: string) =>
+  get<{ task_name: string; ensembles: EnsembleRecord[] }>(
+    `/api/ensembles/${encodeURIComponent(task)}`,
+  );
+
+export const getEnsemble = (task: string, modelVersion: string) =>
+  get<EnsembleDetail>(
+    `/api/ensembles/${encodeURIComponent(task)}/${encodeURIComponent(modelVersion)}`,
+  );
+
+export const fitEnsemble = (task: string, body: FitEnsembleRequest) =>
+  post<{ job_id: string; display_name?: string | null; status: string }>(
+    `/api/ensembles/${encodeURIComponent(task)}/fit`,
+    body,
+  );

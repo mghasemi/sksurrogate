@@ -13,6 +13,7 @@ import {
   Gauge,
   Lightbulb,
   LayoutDashboard,
+  Layers,
   LineChart,
   ListChecks,
   Menu,
@@ -39,6 +40,7 @@ const PreprocessingPage = lazy(() => import("./pages/Preprocessing"));
 const FeatureAnalysisPage = lazy(() => import("./pages/FeatureAnalysis"));
 const ExperimentsPage = lazy(() => import("./pages/Experiments"));
 const EvaluationPage = lazy(() => import("./pages/Evaluation"));
+const EnsemblesPage = lazy(() => import("./pages/Ensembles"));
 const BundlesPage = lazy(() => import("./pages/Bundles"));
 const QualityGatesPage = lazy(() => import("./pages/QualityGates"));
 const RegistryPage = lazy(() => import("./pages/Registry"));
@@ -84,6 +86,7 @@ const NAV_GROUPS: Array<{ label: string; items: NavEntry[] }> = [
     label: "2. Model",
     items: [
       { to: "/experiments", label: "Experiments", icon: FlaskConical },
+      { to: "/ensembles", label: "Ensembles", icon: Layers },
       { to: "/evaluation", label: "Evaluation", icon: LineChart },
       { to: "/explain", label: "Explain", icon: Lightbulb },
       { to: "/bundles", label: "Model Bundles", icon: Boxes },
@@ -124,6 +127,7 @@ const TITLES: Record<string, string> = {
   "/features": "Feature Analysis",
   "/experiments": "Experiments",
   "/evaluation": "Evaluation",
+  "/ensembles": "Ensembles",
   "/bundles": "Model Bundles",
   "/quality-gates": "Quality Gates",
   "/registry": "Registry & Deployment",
@@ -317,6 +321,7 @@ function Shell() {
             <Route path="/features" element={<FeatureAnalysisPage />} />
             <Route path="/experiments" element={<ExperimentsPage />} />
             <Route path="/evaluation" element={<EvaluationPage />} />
+            <Route path="/ensembles" element={<EnsemblesPage />} />
             <Route path="/bundles" element={<BundlesPage />} />
             <Route path="/quality-gates" element={<QualityGatesPage />} />
             <Route path="/registry" element={<RegistryPage />} />
