@@ -128,6 +128,11 @@ class Settings:
         return self.root / "settings"
 
     @property
+    def serving_dir(self):
+        """Serving pins: which model each task is currently serving (``api.serving``)."""
+        return self.root / "serving"
+
+    @property
     def compute_settings_path(self):
         """Persisted compute budget (see :mod:`api.compute`)."""
         return self.settings_dir / "compute.json"
@@ -145,6 +150,7 @@ class Settings:
             self.checkpoints_dir,
             self.projects_dir,
             self.settings_dir,
+            self.serving_dir,
         ):
             directory.mkdir(parents=True, exist_ok=True)
         return self
@@ -173,6 +179,10 @@ class Settings:
 
     def job_record_path(self, job_id):
         return self.jobs_dir / (safe_segment(job_id, "job id") + ".json")
+
+    def task_serving_path(self, task_name):
+        """The serving-pin document for one task (see :mod:`api.serving`)."""
+        return self.serving_dir / (safe_segment(task_name, "task name") + ".json")
 
     def task_checkpoint_dir(self, task_name, job_id):
         return (

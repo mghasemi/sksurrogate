@@ -119,3 +119,81 @@ dependency-check asymmetry: the control plane loads bundles with
 ``strict_dependencies=False`` and leaves compatibility to the deployment
 environment, while the library, CLI, and WSGI adapter default to strict
 checks.
+
+Serving a pinned model
+======================
+
+The endpoints above make the caller choose a model on every call. A deployment
+usually wants the opposite: declare once which model a task serves, then let
+clients score without naming anything. That declaration is a **serving pin**,
+stored per task under the API storage root; it is also what the web UI's top bar
+reports.
+
+``POST /api/serving/{task_name}``
+    Body ``{"model_version": "<id>"}`` **or** ``{"alias": "production"}`` —
+    exactly one; the other, or neither, answers **400** — plus an optional
+    ``"note"``. The model must resolve (unregistered bundle file, registered
+    version, or registry alias), so a typo answers **404** at declaration time
+    instead of failing later on every scored request. Deciding which model is
+    served is an edit on the task, so the acting identity is recorded with the
+    pin. The response is the status payload below.
+
+``GET /api/serving/{task_name}``
+    ``{"active", "resolve_mode", "requested", "model_version", "note",
+    "started_at", "started_by", "updated_at", "resolve_error", "history"}``.
+    A task that was never configured answers ``active: false`` rather than 404:
+    the UI's question "is this task serving?" is a data question, not an error
+    path. ``requested`` is what the operator pinned, ``model_version`` the
+    model the pin resolves to *now* (they differ for an alias pin), and
+    ``history`` is the append-only sequence of ``start`` / ``replace`` / ``stop``
+    events with actor and timestamp.
+
+``GET /api/serving``
+    Active pins across every task the caller may see, as
+    ``{"serving": [...], "count": n}`` — summaries only. This is what a UI or
+    monitor polls to declare that the system is serving a model.
+
+``DELETE /api/serving/{task_name}``
+    Stops serving. The pin stays in ``history``; **409** when nothing is being
+    served.
+
+``POST /api/serving/{task_name}/predict``
+    The serving endpoint. Body ``{"rows" | "partition", "request_id"?,
+    "preflight"?}`` — note the absence of ``model_version``/``alias``: the pin
+    decides. A task that is not serving answers **409**, so a client can never
+    be silently scored by a model it did not ask for. Predictions, input
+    projection (``ignored_columns``), pre-flight and monitoring behave exactly
+    as in the per-request endpoint above — both routers share one prediction
+    core, so they cannot drift. The response adds ``resolve_mode`` and
+    ``requested`` beside the resolved ``model_version``, so a caller can tell
+    which model answered even when an alias moved underneath it.
+
+.. code-block:: console
+
+   curl -s -X POST http://127.0.0.1:8013/api/serving/customer-churn \\
+     -H "Content-Type: application/json" -d '{"alias": "production"}'
+   curl -s -X POST http://127.0.0.1:8013/api/serving/customer-churn/predict \\
+     -H "Content-Type: application/json" \\
+     -d '{"rows": [{"tenure": 24, "monthly": 71.3}]}'
+
+Two resolution modes
+--------------------
+
+``resolve_mode`` follows from what you pinned, and the difference is the point:
+
+* ``version`` — the pin names an exact model version. A named alias used this
+  way is frozen to the version it pointed at when the pin was created. Later
+  registry promotions and rollbacks do **not** change what is served.
+* ``alias`` — the pin names a registry pointer (a lifecycle alias such as
+  ``production``, or a named alias). Every serving request re-resolves it, so a
+  later promotion or rollback **does** change what is served without touching
+  the pin. The status read reports the version the alias currently resolves to,
+  and ``resolve_error`` reports (while leaving the pin in place) that the
+  pointer's target has disappeared.
+
+Every serving request appends the same monitoring record as the per-request
+path, keyed to the *served* model version, so Monitoring's serving summary
+covers both surfaces. Serving through the control plane inherits its
+``strict_dependencies=False`` bundle loading described above; to run a single
+bundle with strict dependency checks and no control-plane state, use the
+standalone ``SKSurrogate.serve`` WSGI adapter instead.

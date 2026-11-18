@@ -55,6 +55,7 @@ from .routers import (
     registry,
     retraining,
     sensitivity,
+    serving,
     settings as settings_router,
     sharing,
     synthdata,
@@ -334,6 +335,7 @@ app.include_router(bundles.router)
 app.include_router(quality_gates.router)
 app.include_router(registry.router)
 app.include_router(inference.router)
+app.include_router(serving.router)
 app.include_router(monitoring.router)
 app.include_router(projects.router)
 app.include_router(sensitivity.router)

@@ -313,6 +313,47 @@ Aliases resolve wherever a version id is accepted: ``ModelRegistry.load`` /
 file matches, and ``alias`` also accepts a named alias). Every set/delete is
 appended to the registry history and audit log with the acting identity.
 
+Serving a pinned model
+======================
+
+The inference endpoints resolve a model per request. A **serving pin** is the
+deployment counterpart: one stored declaration per task of *which* model it
+serves, so clients — and the web UI — can score and report on a model without
+naming one every time. The full contract (resolution modes, response fields,
+409 semantics) is in :doc:`inference`; the routes are:
+
+``GET /api/serving``
+    Active pins across the tasks the caller may see, summaries only, as
+    ``{"serving": [...], "count": n}``. A list surface, so it filters through
+    the ACL rather than the router-level task dependency (this route has no
+    task in its path).
+
+``GET /api/serving/{task_name}``
+    The pin for one task, with the ``model_version`` it resolves to *now*, the
+    ``resolve_mode`` (``version`` is frozen; ``alias`` follows the registry, so
+    a promotion or rollback changes what is served), ``resolve_error`` when an
+    active pin no longer resolves, and the append-only pin ``history``. A task
+    that was never configured answers ``active: false``, not 404.
+
+``POST /api/serving/{task_name}``
+    Body ``{"model_version" | "alias", "note"?}`` — exactly one. The model must
+    resolve (unregistered bundle file, registered version, or alias) or the
+    declaration answers 404. Requires edit access to the task, and records the
+    acting identity.
+
+``DELETE /api/serving/{task_name}``
+    Stops serving; 409 when nothing is being served.
+
+``POST /api/serving/{task_name}/predict``
+    The serving endpoint: same body and behaviour as
+    ``POST /api/inference/{task_name}/predict`` except that it carries no model
+    field (the pin decides) and answers 409 while the task is not serving. Both
+    endpoints share one prediction core, and both append the same monitoring
+    record, keyed to the model that answered.
+
+Pins live under ``<API home>/serving/<task>.json`` beside the other control-plane
+state (registry index, job records, run settings).
+
 Pausing, stopping and resuming
 ==============================
 

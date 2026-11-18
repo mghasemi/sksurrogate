@@ -310,6 +310,13 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), #7c5cff); border-radius: 5px; }
 
 .muted { color: var(--muted); font-size: 12.5px; }
+
+/* Serving pin history (Inference page) */
+.pin-history {
+  list-style: none; margin: 8px 0 0; padding: 0;
+  display: grid; gap: 6px; font-size: 12.5px;
+}
+.pin-history li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .loading { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; padding: 10px 0; }
 .spin { animation: spin 0.9s linear infinite; }
 
@@ -434,9 +441,21 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .topbar-jobs:hover { text-decoration: none; border-color: var(--accent); }
 .topbar-jobs .pulse { width: 8px; height: 8px; }
 
+/* Serving declaration: present whenever a task has a serving pin. */
+.topbar-serving {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 5px 11px; border-radius: 999px; font-size: 12px; font-weight: 500;
+  color: var(--text); border: 1px solid rgba(52, 211, 153, 0.45); background: rgba(52, 211, 153, 0.12);
+}
+.topbar-serving:hover { text-decoration: none; border-color: var(--ok); }
+.topbar-serving .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+.topbar-serving.warn { border-color: rgba(251, 191, 36, 0.45); background: rgba(251, 191, 36, 0.12); }
+.topbar-serving.warn .dot { background: var(--warn); }
+
 @media (max-width: 600px) {
   .topbar-jobs-text { display: none; }
   .topbar-jobs { padding: 5px 9px; }
+  .topbar-serving { padding: 5px 9px; }
 }
 
 /* Indeterminate variant: the search has no honest denominator to report. */

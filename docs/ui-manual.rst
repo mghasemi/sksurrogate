@@ -112,7 +112,10 @@ The **Dashboard** summarizes API health, background jobs, monitoring alerts,
 and links to the main pipeline stages. Use the **Task** picker in the top bar
 to select an existing task or choose **+ Add new task…** and enter a short,
 stable name such as ``customer-churn``. The new name is held in the browser
-until you create task data or run a task operation.
+until you create task data or run a task operation. The top bar also carries
+the live indicators: a job pill while searches or jobs are queued/running, a
+``Serving <version> · <task>`` pill while the system is serving a model (see
+step 9), and the API connection state.
 
 .. figure:: images/ui-dashboard.png
    :alt: SKSurrogate Dashboard with task selector and pipeline stage links
@@ -705,7 +708,39 @@ include candidate, validated, staging, production, and archived.
 9. Run online or batch inference
 --------------------------------
 
-On **Inference**, explicitly resolve a model by version or registry alias.
+The card at the top of **Inference** is the **Serving** declaration: the one
+place that says *which model this task serves*, as opposed to which model a
+single request should use. Pick a model version or a registry alias and click
+**Serve this model**. While a model is served the top bar shows a
+``Serving <version> · <task>`` pill on every page, and the card shows the
+resolved version, the resolve mode, when and by whom it was pinned, and the pin
+history. **Replace served model** changes the pin; **Stop serving** ends the
+declaration (the history keeps the record, so nothing is silently forgotten).
+
+Which mode is in force is stated on the card, and it decides what a later
+promotion does:
+
+* **Model version** freezes that exact version — later registry promotions
+  leave the served model alone.
+* **Registry alias** follows the pointer — a later promotion or rollback of
+  that alias changes the model the serving endpoint uses. The card shows the
+  version the alias currently resolves to, not just the alias name.
+
+**Score through the served model** exercises the deployment endpoint
+``POST /api/serving/{task}/predict``: the payload contains no model id at all,
+which is exactly what a deployment client sends, and the answer names the model
+that replied. The button stays disabled while nothing is served — a client must
+never be quietly scored by a different model.
+
+.. figure:: images/ui-serving.png
+   :alt: Serving card with an alias pin, its resolved version and pin history
+   :width: 100%
+
+   The Serving card declares the model this task serves; the top bar repeats
+   the declaration on every page.
+
+The cards below it resolve a model *per request*: for a single call, explicitly
+resolve a model by version or registry alias.
 For a quick request, choose a stored partition or enter JSON rows and click
 **Run prediction**. Turn on **Validate before run** to check the input
 against the task's registered data schema before prediction. Review the
