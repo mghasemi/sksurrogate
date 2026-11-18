@@ -360,7 +360,18 @@ class ArrayAsFrame(TransformerMixin, BaseEstimator):
                 "ArrayAsFrame expected %d feature column(s); got shape %r"
                 % (len(names), array.shape)
             )
-        return pandas.DataFrame(array, columns=pandas.Index(names))
+        frame = pandas.DataFrame(array, columns=pandas.Index(names))
+        # A mixed-type matrix is an *object* array, so every rebuilt column would
+        # start as ``object`` dtype. That is not cosmetic: a DataFrame-first
+        # preprocessor decides per column whether it is numeric or categorical from
+        # the dtype it sees, so fitting one on a positional array classified every
+        # numeric column as categorical (measured: a 3-column frame expanded to 423
+        # one-hot columns) and the fitted encoder then disagreed with the same
+        # pipeline fitted on a real frame. ``infer_objects`` restores the numeric
+        # dtypes (and leaves genuine text columns as ``object``), which is what makes
+        # "fit on the frame" and "fit on ``frame.to_numpy()``" the same model — the
+        # contract bagging and the learning-curve helper rely on.
+        return frame.infer_objects()
 
 
 def frame_tolerant(estimator, columns=None):
@@ -400,10 +411,17 @@ def preprocesses_frames(estimator):
     whether a candidate still needs an encoder in front of it: a bundle trained
     from a preset already carries one, and stacking a second encoder on top fed
     the pipeline an already-encoded matrix.
+
+    An aggregating meta-estimator (voting, stacking, bagging, boosting, or a
+    single-estimator wrapper such as
+    :class:`~SKSurrogate.ensembling.SampleWeightRouter`) is a frame-preprocessing
+    estimator exactly when every member it fits is one — otherwise nested
+    cross-validation wraps the whole ensemble in a second encoder and each member's
+    own encoder then receives an already-encoded matrix.
     """
     steps = getattr(estimator, "steps", None)
     if not steps:
-        return False
+        return _aggregated_preprocesses_frames(estimator)
     first_step = steps[0][1]
     if isinstance(first_step, ArrayAsFrame):
         steps = steps[1:]
@@ -411,6 +429,36 @@ def preprocesses_frames(estimator):
             return False
         first_step = steps[0][1]
     return isinstance(first_step, FoldLocalDataPreprocessor)
+
+
+def _declared_members(estimator):
+    """The base estimators a meta-estimator declares, as a flat tuple (may be empty).
+
+    Covers scikit-learn's aggregators — ``estimators`` as ``(name, estimator)``
+    pairs on voting/stacking, a bare list on ``AdaBoost*`` — and its
+    single-estimator wrappers (``estimator`` on bagging/boosting bases), so one
+    predicate answers for a whole ensemble regardless of how it was assembled.
+    """
+    members = getattr(estimator, "estimators", None)
+    if members is None:
+        single = getattr(estimator, "estimator", None)
+        if single is None:
+            return ()
+        return (single,)
+    resolved = []
+    for entry in members:
+        if isinstance(entry, tuple) and len(entry) == 2:
+            resolved.append(entry[1])
+        else:
+            resolved.append(entry)
+    return tuple(resolved)
+
+
+def _aggregated_preprocesses_frames(estimator):
+    members = _declared_members(estimator)
+    if not members:
+        return False
+    return all(preprocesses_frames(member) for member in members)
 
 
 class DataPreprocess(object):

@@ -52,6 +52,20 @@ from .monitoring import (
 from .retraining import RetrainingJob
 from .synthdat import SynthData
 from .design import latin_hypercube, suggest_next_point
+from .ensembling import (
+    ENSEMBLE_METHODS,
+    EnsembleError,
+    SampleWeightRouter,
+    aggregation_label,
+    build_ensemble,
+    cross_validated_scores,
+    member_scores,
+    method_catalogue,
+    problem_family_of,
+    resolve_family,
+    supports_sample_weight,
+    validate_params,
+)
 
 __version__ = "0.3.0"
 
@@ -122,4 +136,16 @@ __all__ = [
     "np2df",
     "load_bundle",
     "save_bundle",
+    "ENSEMBLE_METHODS",
+    "EnsembleError",
+    "SampleWeightRouter",
+    "build_ensemble",
+    "cross_validated_scores",
+    "member_scores",
+    "method_catalogue",
+    "problem_family_of",
+    "resolve_family",
+    "supports_sample_weight",
+    "validate_params",
+    "aggregation_label",
 ]
