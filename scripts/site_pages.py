@@ -504,7 +504,7 @@ def concept_surrogate(rel):
 
 
 def concept_conformal(rel):
-    return '''%s
+    return (r'''@CRUMB@
       <h1>What is a split-conformal prediction interval?</h1>
       <p class="lede">A split-conformal interval is a prediction interval built from the residuals
         of a model on a calibration set that was not used to fit it. It comes with a finite-sample
@@ -512,13 +512,13 @@ def concept_conformal(rel):
         ways worth knowing before you report a number.</p>
       <p class="chiprow"><span class="chip">guarantee: marginal</span>
         <span class="chip">requires: exchangeability</span>
-        <span class="chip">calibration ≠ training</span></p>
+        <span class="chip">calibration &ne; training</span></p>
       <div class="prose">
         <h2>The procedure</h2>
         <p>Split the labelled data into a training part and a disjoint calibration part. Fit the
           estimator on the training part only. Compute absolute residuals on the calibration part.
           Take the finite-sample corrected empirical quantile of those residuals, and report
-          the predicted value ± <code>q</code> for each test point. In SKSurrogate this is
+          the predicted value &plusmn; <code>q</code> for each test point. In SKSurrogate this is
           <code>split_conformal_regression_interval(regressor, X_train, y_train, X_calibration,
           y_calibration, X_test, alpha=0.1)</code>. The estimator is cloned and fitted only on the
           training data, and the function does not accept test labels — by construction, the interval
@@ -544,15 +544,65 @@ def concept_conformal(rel):
           <code>None</code> if any interval is unbounded — a detail that matters when a model is
           badly miscalibrated.</p>
 
+        <h2>A measured run</h2>
+        <p>Ridge regression on scikit-learn's diabetes dataset — 442 rows, ten features, target
+          standard deviation 77.0. One seeded permutation fixes a 280-row fit set, an 80-row
+          calibration set and an 82-row held-out set; every row below is one call to
+          <code>split_conformal_regression_interval</code> followed by
+          <code>prediction_interval_diagnostics</code> on those same held-out rows.</p>
+        <table>
+          <thead><tr><th>&alpha;</th><th>nominal</th><th>n<sub>cal</sub></th><th>q</th>
+            <th>covered</th><th>empirical</th><th>Wilson 95%</th><th>mean width</th>
+            <th>Winkler</th></tr></thead>
+          <tbody>
+            <tr><td>0.20</td><td>80%</td><td>80</td><td>75.6</td><td>68&thinsp;/&thinsp;82</td>
+              <td>82.9%</td><td>73.4&ndash;89.5%</td><td>151.2</td><td>195.8</td></tr>
+            <tr><td>0.10</td><td>90%</td><td>80</td><td>85.2</td><td>69&thinsp;/&thinsp;82</td>
+              <td>84.1%</td><td>74.7&ndash;90.5%</td><td>170.4</td><td>227.9</td></tr>
+            <tr><td>0.05</td><td>95%</td><td>80</td><td>97.6</td><td>74&thinsp;/&thinsp;82</td>
+              <td>90.2%</td><td>81.9&ndash;95.0%</td><td>195.2</td><td>247.8</td></tr>
+            <tr><td>0.01</td><td>99%</td><td>80</td><td>&infin;</td><td>82&thinsp;/&thinsp;82</td>
+              <td>100%</td><td>95.5&ndash;100%</td><td>unbounded</td><td>&mdash;</td></tr>
+          </tbody>
+        </table>
+        <p>Read the first three rows as one story: empirical coverage lands inside every Wilson band,
+          so the run is <em>consistent</em> with the guarantee and does not confirm it. At 82 held-out
+          points the three bands overlap heavily — this sample cannot tell an 80% interval from a 95%
+          one, and a narrower calibration set makes that worse, not better. What the numbers do show
+          cleanly is the trade the method asks you to make: raising nominal coverage from 80% to 95%
+          widens the correction from 75.6 to 97.6, and the mean interval from 151 to 195, on a target
+          whose values span 25 to 346.</p>
+        <p>The last row is the honest failure mode, and it is not a bug. The corrected quantile needs
+          the rank &#8968;(n+1)(1&minus;&alpha;)&#8969; = &#8968;81 &times; 0.99&#8969; = 81, which exceeds the 80
+          calibration points available. Rather than interpolate a number the data cannot support, the
+          function returns an infinite correction: every interval is unbounded, coverage is 100% by
+          construction, and width and interval score are reported as missing. Dropping the calibration
+          set to 40 points reproduces the same result. "99% coverage from 80 calibration rows" is a
+          request the method cannot meet, and the API says so.</p>
+        <pre>import numpy as np
+from sklearn.datasets import load_diabetes
+from sklearn.linear_model import Ridge
+from SKSurrogate.mltrace import (prediction_interval_diagnostics,
+                                 split_conformal_regression_interval)
+
+X, y = load_diabetes(return_X_y=True)
+idx = np.random.default_rng(0).permutation(len(y))
+fit, cal, test = idx[:280], idx[280:360], idx[360:]
+
+out = split_conformal_regression_interval(
+    Ridge(alpha=1.0), X[fit], y[fit], X[cal], y[cal], X[test], alpha=0.10)
+diag = prediction_interval_diagnostics(y[test], out["lower"], out["upper"], alpha=0.10)
+diag["empirical_coverage"], diag["mean_interval_width"]   # 0.8415, 170.37</pre>
+
         <h2>Conformalized quantile regression</h2>
         <p>When two conditional-quantile estimators are available — typically at
-          <code>α/2</code> and <code>1−α/2</code> — the conformal correction can widen or narrow the base
-          interval according to the calibration residuals
+          <code>&alpha;/2</code> and <code>1&minus;&alpha;/2</code> — the conformal correction can widen or
+          narrow the base interval according to the calibration residuals
           (<code>split_conformal_quantile_interval</code>). Predicted bounds are ordered before
           calibration, and the result includes an <code>empty_interval_mask</code>: a negative
           correction can produce an empty set when the corrected lower bound exceeds the upper one.
           The correction is infinite when the requested rank exceeds the calibration size, which is
-          the honest answer to "you asked for 99.9&nbsp;%% coverage from 40 calibration points".</p>
+          the honest answer to "you asked for 99.9&nbsp;% coverage from 40 calibration points".</p>
 
         <h2>Limitations to state when you report one</h2>
         <ul>
@@ -567,13 +617,14 @@ def concept_conformal(rel):
           the deployed model bundle and its interval diagnostics are described in the
           <a href="https://sksurrogate.readthedocs.io/en/latest/controlplane.html" target="_blank" rel="noopener">control-plane guide</a>.
           The measurement half of the workflow — what a single split can and cannot tell you — is on
-          <a href="%s">nested cross-validation</a>.</p>
-      </div>''' % (crumb(rel, "concepts <span>/</span> conformal intervals"),
-                   L(rel, "/concepts/nested-cross-validation/"))
+          <a href="@OTHER@">nested cross-validation</a>.</p>
+      </div>'''
+            .replace("@CRUMB@", crumb(rel, "concepts <span>/</span> conformal intervals"))
+            .replace("@OTHER@", L(rel, "/concepts/nested-cross-validation/")))
 
 
 def concept_nested(rel):
-    return '''%s
+    return (r'''@CRUMB@
       <h1>What is nested cross-validation?</h1>
       <p class="lede">Nested cross-validation keeps the step that <em>chooses</em> a model separate
         from the step that <em>estimates</em> its generalisation error. The inner loop selects;
@@ -607,6 +658,56 @@ def concept_nested(rel):
           <code>SurrogateRandomCV</code> / <code>AML</code>; the evaluation asks how that result
           behaves on partitions it never touched.</p>
 
+        <h2>A measured run</h2>
+        <p>Two estimators on scikit-learn's diabetes dataset — 442 rows, ten features — with a 280-row
+          training partition and the remaining 82 rows held out for the final validation score.
+          Inner CV of 3, outer CV of 5, five repeats, scoring by the estimator's own
+          <code>score</code> (R&sup2; for a regressor). Every number comes from
+          <code>nested_cv_evaluation</code>; the fold scores below are its <code>outer_scores</code>.</p>
+        <table>
+          <thead><tr><th>estimator</th><th>outer fold R&sup2;</th><th>mean outer</th>
+            <th>five repeat means</th><th>95% CI</th><th>final validation</th></tr></thead>
+          <tbody>
+            <tr><td>Ridge(&alpha;=1.0)</td>
+              <td>0.341&thinsp;&middot;&thinsp;0.345&thinsp;&middot;&thinsp;0.427&thinsp;&middot;&thinsp;0.415&thinsp;&middot;&thinsp;0.314</td>
+              <td>0.389</td>
+              <td>0.368&ndash;0.398</td><td>0.379&ndash;0.400</td><td>0.328</td></tr>
+            <tr><td>KNeighbors(9)</td>
+              <td>0.484&thinsp;&middot;&thinsp;0.421&thinsp;&middot;&thinsp;0.393&thinsp;&middot;&thinsp;0.364&thinsp;&middot;&thinsp;0.342</td>
+              <td>0.428</td>
+              <td>0.401&ndash;0.454</td><td>0.410&ndash;0.446</td><td>0.341</td></tr>
+          </tbody>
+        </table>
+        <p>Three things in that table are worth more than the headline score. First, the outer folds
+          for ridge span 0.314 to 0.427 — a spread of 0.113 around a mean of 0.389. A single split
+          inside that range would have looked perfectly defensible and could have been off by
+          &plusmn;0.06 without anyone noticing. Second, the final validation score for ridge (0.328)
+          falls <em>below</em> the repeated-CV interval [0.379, 0.400]. That is not a contradiction
+          and not a failed run: the interval describes how the procedure scores on average across
+          repeats, while one 82-row holdout is a single draw with its own sampling error. Quoting the
+          interval as a bound on that holdout would be the mistake. Third, k-nearest neighbours leads
+          ridge by 0.039 on the outer estimate with non-overlapping intervals — a ranking the repeats
+          support — but the gap collapses to 0.013 on the untouched partition (0.341 against 0.328).
+          The comparison is about the procedure on the distribution the folds came from; the deployment
+          decision is a different question, and this is what it looks like when they disagree.</p>
+        <pre>import pandas as pd
+from sklearn.datasets import load_diabetes
+from sklearn.linear_model import Ridge
+from SKSurrogate import mltrack
+
+X, y = load_diabetes(return_X_y=True)
+cols = [f"x{i}" for i in range(X.shape[1])]
+train = pd.DataFrame(X[:280], columns=cols); train["target"] = y[:280]
+val = pd.DataFrame(X[280:], columns=cols);   val["target"] = y[280:]
+
+tracker = mltrack("nested-cv-demo", db_name="nested.db")
+tracker.RegisterData(train, "target", partition="train")
+tracker.RegisterData(val, "target", partition="validation")
+result = tracker.nested_cv_evaluation(Ridge(alpha=1.0), inner_cv=3, outer_cv=5,
+                                      train_partition="train",
+                                      validation_partition="validation", repeats=5)
+result["mean_outer_score"], result["confidence_interval"]   # 0.3891, [0.3785, 0.3998]</pre>
+
         <h2>Reading the result honestly</h2>
         <p>Results carry an evaluation protocol: registered partition fingerprints, the CV splitter
           specification, the repeat seed policy, the preprocessing path, the scoring identity and
@@ -633,11 +734,15 @@ def concept_nested(rel):
         <h2>What it does not settle</h2>
         <p>Nested CV estimates the procedure's error on the distribution your folds were drawn from.
           It says nothing about a shifted deployment population, and it does not produce prediction
-          intervals — that is <a href="%s">split conformal</a>. Reporting one number from one split
+          intervals — that is <a href="@OTHER@">split conformal</a>. Reporting one number from one split
           is still the most common way to overstate a result; the API reference is in the
-          <a href="https://sksurrogate.readthedocs.io/en/latest/mltrace.html" target="_blank" rel="noopener">tracking and evaluation guide</a>.</p>
-      </div>''' % (crumb(rel, "concepts <span>/</span> nested cross-validation"),
-                   L(rel, "/concepts/conformal-intervals/"))
+          <a href="https://sksurrogate.readthedocs.io/en/latest/mltrace.html" target="_blank" rel="noopener">tracking and evaluation guide</a>,
+          and the same protocol underlies the
+          <a href="@BENCH@">honest benchmark</a>.</p>
+      </div>'''
+            .replace("@CRUMB@", crumb(rel, "concepts <span>/</span> nested cross-validation"))
+            .replace("@OTHER@", L(rel, "/concepts/conformal-intervals/"))
+            .replace("@BENCH@", L(rel, "/benchmarks/")))
 
 # ----------------------------------------------------------------------- faq
 FAQ_QA = [

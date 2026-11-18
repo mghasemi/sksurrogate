@@ -79,6 +79,56 @@
           <code>SurrogateRandomCV</code> / <code>AML</code>; the evaluation asks how that result
           behaves on partitions it never touched.</p>
 
+        <h2>A measured run</h2>
+        <p>Two estimators on scikit-learn's diabetes dataset — 442 rows, ten features — with a 280-row
+          training partition and the remaining 82 rows held out for the final validation score.
+          Inner CV of 3, outer CV of 5, five repeats, scoring by the estimator's own
+          <code>score</code> (R&sup2; for a regressor). Every number comes from
+          <code>nested_cv_evaluation</code>; the fold scores below are its <code>outer_scores</code>.</p>
+        <table>
+          <thead><tr><th>estimator</th><th>outer fold R&sup2;</th><th>mean outer</th>
+            <th>five repeat means</th><th>95% CI</th><th>final validation</th></tr></thead>
+          <tbody>
+            <tr><td>Ridge(&alpha;=1.0)</td>
+              <td>0.341&thinsp;&middot;&thinsp;0.345&thinsp;&middot;&thinsp;0.427&thinsp;&middot;&thinsp;0.415&thinsp;&middot;&thinsp;0.314</td>
+              <td>0.389</td>
+              <td>0.368&ndash;0.398</td><td>0.379&ndash;0.400</td><td>0.328</td></tr>
+            <tr><td>KNeighbors(9)</td>
+              <td>0.484&thinsp;&middot;&thinsp;0.421&thinsp;&middot;&thinsp;0.393&thinsp;&middot;&thinsp;0.364&thinsp;&middot;&thinsp;0.342</td>
+              <td>0.428</td>
+              <td>0.401&ndash;0.454</td><td>0.410&ndash;0.446</td><td>0.341</td></tr>
+          </tbody>
+        </table>
+        <p>Three things in that table are worth more than the headline score. First, the outer folds
+          for ridge span 0.314 to 0.427 — a spread of 0.113 around a mean of 0.389. A single split
+          inside that range would have looked perfectly defensible and could have been off by
+          &plusmn;0.06 without anyone noticing. Second, the final validation score for ridge (0.328)
+          falls <em>below</em> the repeated-CV interval [0.379, 0.400]. That is not a contradiction
+          and not a failed run: the interval describes how the procedure scores on average across
+          repeats, while one 82-row holdout is a single draw with its own sampling error. Quoting the
+          interval as a bound on that holdout would be the mistake. Third, k-nearest neighbours leads
+          ridge by 0.039 on the outer estimate with non-overlapping intervals — a ranking the repeats
+          support — but the gap collapses to 0.013 on the untouched partition (0.341 against 0.328).
+          The comparison is about the procedure on the distribution the folds came from; the deployment
+          decision is a different question, and this is what it looks like when they disagree.</p>
+        <pre>import pandas as pd
+from sklearn.datasets import load_diabetes
+from sklearn.linear_model import Ridge
+from SKSurrogate import mltrack
+
+X, y = load_diabetes(return_X_y=True)
+cols = [f"x{i}" for i in range(X.shape[1])]
+train = pd.DataFrame(X[:280], columns=cols); train["target"] = y[:280]
+val = pd.DataFrame(X[280:], columns=cols);   val["target"] = y[280:]
+
+tracker = mltrack("nested-cv-demo", db_name="nested.db")
+tracker.RegisterData(train, "target", partition="train")
+tracker.RegisterData(val, "target", partition="validation")
+result = tracker.nested_cv_evaluation(Ridge(alpha=1.0), inner_cv=3, outer_cv=5,
+                                      train_partition="train",
+                                      validation_partition="validation", repeats=5)
+result["mean_outer_score"], result["confidence_interval"]   # 0.3891, [0.3785, 0.3998]</pre>
+
         <h2>Reading the result honestly</h2>
         <p>Results carry an evaluation protocol: registered partition fingerprints, the CV splitter
           specification, the repeat seed policy, the preprocessing path, the scoring identity and
@@ -107,7 +157,9 @@
           It says nothing about a shifted deployment population, and it does not produce prediction
           intervals — that is <a href="../../concepts/conformal-intervals/">split conformal</a>. Reporting one number from one split
           is still the most common way to overstate a result; the API reference is in the
-          <a href="https://sksurrogate.readthedocs.io/en/latest/mltrace.html" target="_blank" rel="noopener">tracking and evaluation guide</a>.</p>
+          <a href="https://sksurrogate.readthedocs.io/en/latest/mltrace.html" target="_blank" rel="noopener">tracking and evaluation guide</a>,
+          and the same protocol underlies the
+          <a href="../../benchmarks/">honest benchmark</a>.</p>
       </div>
 </main>
 
