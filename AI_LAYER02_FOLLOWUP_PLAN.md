@@ -4,8 +4,10 @@
 
 ## Purpose and status
 
-Track decisions and progress for incorporating the recommendations in
-[`ai_layer02.md`](./ai_layer02.md) into SKSurrogate. This is a living intake
+Track decisions and progress for incorporating the recommendations in the
+AI Layer 02 review transcript into SKSurrogate. The transcript itself is retained
+privately by the maintainer and is no longer tracked in this repository (it was an
+internal review note; see `AI_LAYER_ROADMAP.md` for its origin). This is a living intake
 and follow-up document; update the status and progress log as work is verified
 or completed.
 

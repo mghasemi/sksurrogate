@@ -4,8 +4,10 @@
 
 ## Purpose and status
 
-Turn the recommendations in [`ailayer.md`](./ailayer.md) into a practical,
-prioritized plan for making SKSurrogate more useful to scientists. This is a
+Turn the recommendations in the two AI review transcripts into a practical,
+prioritized plan for making SKSurrogate more useful to scientists. The transcripts
+themselves are retained privately by the maintainer and are no longer tracked in this
+repository; this roadmap is what the project publishes. This is a
 living plan: update task status and the progress log whenever implementation
 work starts, changes direction, or is completed.
 
@@ -80,7 +82,7 @@ implementation and tests before extending them:
 This roadmap is not a replacement for the MLOps or UI plans. Coordinate work
 with them and update both documents when an implementation changes their
 scope or status. Review-specific recommendations and follow-up decisions from
-[`ai_layer02.md`](./ai_layer02.md) are tracked in
+the second review transcript are tracked in
 [`AI_LAYER02_FOLLOWUP_PLAN.md`](./AI_LAYER02_FOLLOWUP_PLAN.md).
 
 ## Prioritized plan
