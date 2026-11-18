@@ -48,9 +48,10 @@ branch at the branch root by GitHub Pages.
    BibTeX. `@software` needs BibLaTeX, hence the `@misc` twin. Validate with `biber --tool` and
    `bibtex` before shipping.
 5. **Structured data must match visible content.** Homepage: `SoftwareApplication` + `Person` +
-   `WebSite` + two `Dataset` nodes. Post: `BlogPosting`. Other pages: `WebPage`. Update
-   `softwareVersion` when PyPI actually serves that version — it is **0.2.0** while the footer strip
-   says v0.3.0 (tag pushed, no GitHub Release yet; owner decision pending).
+   `WebSite` + two `Dataset` nodes. Post: `BlogPosting`. Other pages: `WebPage`. `softwareVersion`
+   tracks the version PyPI actually serves — **0.3.0** since 2026-11-18, matching the footer strip.
+   The version strings that remain at `0.2.0` are deliberate: `/cite/` and the benchmark post quote
+   the *archived* software deposit (`10.5281/zenodo.23631823`), which is a v0.2.0 record.
 6. **Grid children need `min-width:0`** (see the `.hero>*, .rail>*` rule). Without it a wide `<pre>`
    or table expands the whole grid past the viewport — that is what broke 390 px before.
 
@@ -60,7 +61,7 @@ branch at the branch root by GitHub Pages.
 python scripts/build_site.py        # regenerate the nine pages + sitemap.xml
 python scripts/make_llms_full.py    # regenerate llms-full.txt from index.html
 python scripts/make_og_card.py      # regenerate assets/og-card.png (1200x630)
-python scripts/site_audit.py        # 33 checks, PASS/FAIL, non-zero exit on failure
+python scripts/site_audit.py        # 37 checks, PASS/FAIL, non-zero exit on failure
 python scripts/site_audit.py --live # + HEAD-check the published URLs
 ```
 
@@ -76,22 +77,33 @@ no Google Fonts requests; orphan detection; and the homepage copy hash.
 
 Two checks need a rendering engine and are done in a browser instead:
 
-- **390 px overflow:** `document.documentElement.scrollWidth === clientWidth` on all 12 pages
-  (verified at 390 and 360 px).
+- **390 px overflow:** `document.documentElement.scrollWidth === clientWidth` on all 16 pages
+  (verified at 390 and 360 px, 2026-11-18 — the earlier count of 12 predates `/videos/`, the four
+  concept pages and `/vs-optuna/`). Wide tables and `<pre>` blocks stay inside their scroll
+  wrappers, so the document itself never overflows.
 - **1440 px fidelity:** section heights and pixels compared against a pre-change render. Sections
   are identical; only `footer` grew (+63 px) because the brief adds Blog/FAQ/Cite/About/Roadmap/
-  Quickstart links to it.
+  Quickstart links to it. The copy hash in `scripts/fixtures/index_text.sha256` keeps that true
+  for every later change.
+
+Both rendering-dependent checks were re-run by serving this branch tree locally and driving a real
+browser (the site is identical to what Pages serves, so the same bytes are measured either way).
+
+Read the Docs serves every page this site links: all 14 were HEAD-checked 200 on 2026-11-18
+(including `walkthrough`, `experiment-design`, `research-projects`, `inference` and
+`auth-and-sharing`, which the previous note listed as 404s).
 
 ## Known gaps (owner/advisor input needed)
 
 - `vs-optuna/` is a `noindex` shell: the head-to-head copy is still pending.
 - Concept-page copy was drafted from `readme.rst`, `docs/surrogate.rst`, `docs/mltrace.rst` and the
   benchmark post, then reviewed by the owner before it shipped; new claims need the same treatment.
-- Read the Docs currently publishes only `intro`, `surrogate`, `dataproc`, `mltrace`, `controlplane`,
-  `ui-manual`, `monitoring`, `benchmarks`, `blog-honest-benchmark`; the readme links to
-  `walkthrough.html`, `experiment-design.html` and `research-projects.html`, which 404 on the
-  published build. The site links only pages that resolve — fix RTD separately.
-- Version strip (v0.3.0) vs PyPI (0.2.0): untouched by design.
+- The frozen homepage `#qs` block still carries `# v0.2.0, PyPI (v0.3.0 at launch)`; PyPI now serves
+  0.3.0, so that parenthetical is spent. Changing it means deliberately re-freezing the copy hash
+  (Editing rule 1) — owner decision, not a metadata fix.
+- The cited software archive (`10.5281/zenodo.23631823`) is the **v0.2.0** deposit, quoted on
+  purpose by `/cite/` and the benchmark post. A new cut needs its own Zenodo DOI before those pages
+  can move.
 
 ## Update procedure
 
