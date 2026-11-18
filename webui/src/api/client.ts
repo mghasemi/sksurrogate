@@ -1524,6 +1524,92 @@ export const predictBatch = (task: string, body: PredictRequest) =>
   post<PredictBatchResponse>(`/api/inference/${encodeURIComponent(task)}/predict-batch`, body);
 
 /* ------------------------------------------------------------------ */
+/* Serving (which model a task serves)                                 */
+/* ------------------------------------------------------------------ */
+
+/** ``version`` freezes an exact model; ``alias`` follows the registry pointer. */
+export type ServingResolveMode = "version" | "alias";
+
+export interface ServingEvent {
+  event: "start" | "replace" | "stop";
+  resolve_mode: ServingResolveMode;
+  /** What the operator pinned: a version id or an alias name. */
+  requested: string;
+  model_version: string | null;
+  note: string | null;
+  actor: string | null;
+  at: string;
+}
+
+/**
+ * The serving pin for one task.
+ *
+ * ``requested`` is the operator's choice, ``model_version`` the model it
+ * resolves to *now* — for an alias pin these differ, and a promotion changes
+ * the latter without touching the pin.
+ */
+export interface ServingPin {
+  task_name: string;
+  active: boolean;
+  resolve_mode: ServingResolveMode | null;
+  requested: string | null;
+  model_version: string | null;
+  note: string | null;
+  started_at: string | null;
+  started_by: string | null;
+  updated_at: string | null;
+  /** Set when an active pin no longer resolves (e.g. the alias lost its target). */
+  resolve_error: string | null;
+  history: ServingEvent[];
+}
+
+export interface ServingListResponse {
+  serving: ServingPin[];
+  count: number;
+}
+
+export interface StartServingRequest {
+  /** Exactly one of ``model_version`` / ``alias`` — the API answers 400 otherwise. */
+  model_version?: string | null;
+  alias?: string | null;
+  note?: string | null;
+}
+
+export interface ServedPredictRequest {
+  partition?: string | null;
+  rows?: Array<Record<string, unknown>> | null;
+  request_id?: string | null;
+  preflight?: boolean;
+}
+
+export interface ServedPredictResponse {
+  task_name: string;
+  model_version: string;
+  resolve_mode: ServingResolveMode | null;
+  requested: string | null;
+  request_id: string;
+  predictions: Array<number | string>;
+  metrics: InferenceMetrics;
+  ignored_columns: string[];
+}
+
+/** Active servings across tasks — summaries only; backs the top-bar indicator. */
+export const listServing = () => get<ServingListResponse>("/api/serving");
+
+export const getServing = (task: string) =>
+  get<ServingPin>(`/api/serving/${encodeURIComponent(task)}`);
+
+export const startServing = (task: string, body: StartServingRequest) =>
+  post<ServingPin>(`/api/serving/${encodeURIComponent(task)}`, body);
+
+export const stopServing = (task: string) =>
+  del<ServingPin>(`/api/serving/${encodeURIComponent(task)}`);
+
+/** Score through the served model: the caller sends no model id (409 when idle). */
+export const predictServed = (task: string, body: ServedPredictRequest) =>
+  post<ServedPredictResponse>(`/api/serving/${encodeURIComponent(task)}/predict`, body);
+
+/* ------------------------------------------------------------------ */
 /* Monitoring                                                          */
 /* ------------------------------------------------------------------ */
 

@@ -26,6 +26,7 @@ import {
 import { listTasks } from "./api/client";
 import { Badge, Loading } from "./components/ui";
 import { GlobalJobIndicator } from "./components/GlobalJobIndicator";
+import { ServingIndicator } from "./components/ServingIndicator";
 import { AuthProvider, useAuth, useUsername } from "./lib/auth-context";
 import { TaskProvider, useTask } from "./lib/task-context";
 import { useHealth } from "./lib/hooks";
@@ -264,6 +265,7 @@ function Topbar({ onMenu }: { onMenu: () => void }) {
         )}
       </label>
       <GlobalJobIndicator />
+      <ServingIndicator />
       <span className={`health-dot${healthOk ? " ok" : ""}`}>
         <span className="dot" />
         {healthOk === null ? "checking…" : healthOk ? "API online" : "API offline"}
