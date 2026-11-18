@@ -59,6 +59,22 @@ def _wait_live(job_id, timeout=10.0):
     raise AssertionError("job never became live")
 
 
+def _wait_not_live(job_id, timeout=10.0):
+    """Poll until the worker thread has unwound and the job left ``_live``.
+
+    Liveness is process-local and cleared in the worker's ``finally`` — *after*
+    the record has already been written with its terminal status — so a single
+    ``is_live`` read straight after ``_wait`` races the runner. Observed as a
+    CI-only failure on a loaded box (5+ minute suite), not reproducible locally.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not job_manager.is_live(job_id):
+            return True
+        time.sleep(0.02)
+    raise AssertionError("job stayed live after it finished")
+
+
 def _stoppable(seconds=10.0):
     """A job body that keeps working until the stop flag is observed."""
 
@@ -156,7 +172,9 @@ def test_pause_marks_the_job_paused_and_keeps_it_resumable(client):
     assert record["status"] == "paused"
     assert record["stop"]["mode"] == "pause"
     assert record["resumable"] is True
-    assert not job_manager.is_live(job_id)
+    # Liveness clears only once the worker thread unwinds (see _wait_not_live),
+    # so this must be polled rather than read once.
+    _wait_not_live(job_id)
     # A paused job is no longer advertised as active.
     assert client.get("/api/jobs/active").json()["count"] == 0
 

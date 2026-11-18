@@ -14,6 +14,11 @@ Two regressions are pinned here:
   built from unpinned requirements, so it had 1.6 while the dev venv still had
   1.5: the same code path returned weights locally and raised ``KeyError:
   'delta'`` in Docker.
+* **pandas 3 string dtype** — pandas 3 makes ``str`` the default dtype for
+  string columns, so a dtype *label* recorded in a report reads ``str`` there
+  and ``object`` on pandas 2. Assert the reported exclusion set (the contract),
+  never the label spelling; CI installs unpinned dependencies, so this file has
+  already been the canary for two version drifts.
 """
 
 import importlib.util
@@ -84,7 +89,11 @@ def test_projection_excludes_object_columns_and_keeps_booleans():
     projection = numeric_train_xy(_mixed_frame(), "Exited")
     assert projection.columns == ["RowNumber", "CreditScore", "Age", "Balance", "HasCrCard"]
     assert projection.excluded_names == ["Surname", "Geography", "Gender"]
-    assert projection.excluded[0]["dtype"] == "object"
+    # The dtype *label* is not stable across pandas majors: a string column
+    # reads back as ``object`` on pandas 2 and as ``str`` (the new default
+    # string dtype) on pandas 3. The contract under test is which columns are
+    # excluded and why, not the spelling of the label.
+    assert projection.excluded[0]["dtype"] in {"object", "str"}
     assert projection.X.dtype == np.float64
     assert projection.X.shape == (120, 5)
 
