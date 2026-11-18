@@ -395,11 +395,17 @@ def preprocesses_frames(estimator):
     """Whether ``estimator`` already turns a raw frame into model input.
 
     True when the first step of a pipeline is a
-    :class:`FoldLocalDataPreprocessor`, directly or behind the
-    :class:`ArrayAsFrame` adapter. Nested cross-validation uses this to decide
-    whether a candidate still needs an encoder in front of it: a bundle trained
-    from a preset already carries one, and stacking a second encoder on top fed
-    the pipeline an already-encoded matrix.
+    :class:`FoldLocalDataPreprocessor` — directly, behind the
+    :class:`ArrayAsFrame` adapter, or as a ``category_encoders`` column-wise
+    encoder whose ``cols`` are named columns. Nested cross-validation uses this
+    to decide whether a candidate still needs an encoder in front of it: a
+    bundle trained from a preset already carries one, and stacking a second
+    encoder on top fed the pipeline an already-encoded matrix. The
+    ``category_encoders`` check matters because ``AML``'s ``cat_cols`` path
+    builds ``OneHotEncoder(cols=...)`` first, which requires a DataFrame input
+    (named columns) — double-wrapping it behind ``FoldLocalDataPreprocessor``
+    handed it a numpy matrix and it crashed with
+    ``X does not contain the columns listed in cols``.
     """
     steps = getattr(estimator, "steps", None)
     if not steps:
@@ -410,7 +416,15 @@ def preprocesses_frames(estimator):
         if not steps:
             return False
         first_step = steps[0][1]
-    return isinstance(first_step, FoldLocalDataPreprocessor)
+    if isinstance(first_step, FoldLocalDataPreprocessor):
+        return True
+    # category_encoders encoders (``cat_cols`` path) work on named columns and
+    # thus also expect a raw frame; treat them as already preprocessing.
+    try:
+        from category_encoders.utils import BaseEncoder as CategoryEncoder
+    except Exception:  # pragma: no cover - optional dep absent
+        return False
+    return isinstance(first_step, CategoryEncoder)
 
 
 class DataPreprocess(object):

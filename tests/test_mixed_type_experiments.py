@@ -214,6 +214,31 @@ def test_preprocesses_frames_detects_existing_encoding():
     assert preprocesses_frames(tolerant) is True
 
 
+def test_preprocesses_frames_detects_category_encoders_first():
+    """A cat_cols bundle starts with a DataFrame-first category encoder.
+
+    ``AML``'s ``cat_cols`` path prepends ``category_encoders.one_hot.
+    OneHotEncoder(cols=[...])``, which needs named columns at fit. Nested CV must
+    see this as \"already preprocessing frames\"; otherwise it stacks a
+    ``FoldLocalDataPreprocessor`` in front, which emits a numpy matrix and the
+    inner encoder crashes with ``X does not contain the columns listed in
+    cols``.
+    """
+    from category_encoders.one_hot import OneHotEncoder
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import Pipeline
+
+    encoded = Pipeline(
+        [
+            ("categorical_encoder", OneHotEncoder(cols=["spr_risk_level"])),
+            ("clf", LogisticRegression(max_iter=400)),
+        ]
+    )
+    assert preprocesses_frames(encoded) is True
+    # A raw estimator is still not considered frame-preprocessing.
+    assert preprocesses_frames(LogisticRegression()) is False
+
+
 def test_nested_cv_accepts_a_bundle_that_already_encodes(client):
     """Nested CV wrapped a second encoder around preset bundles.
 

@@ -200,6 +200,22 @@ Mid-pipeline samplers accepted in search pipelines
   ``fit_resample``, so sampler-first pipelines validate and fit instead of
   crashing the search. Regression tests in ``tests/test_mid_pipeline_sampler.py``.
 
+Nested CV accepts cat_cols bundles without a second encoder
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Nested cross-validation on a bundle trained through the explicit
+  ``cat_cols`` path crashed with ``X does not contain the columns listed in
+  cols: ['spr_risk_level']``. ``AML``'s ``cat_cols`` path builds the pipeline
+  with ``category_encoders.one_hot.OneHotEncoder(cols=[...])`` first, which
+  needs a DataFrame (named columns) at fit. ``nested_cv_evaluation`` did not
+  recognise that as "already preprocessing frames", so it stacked a
+  ``FoldLocalDataPreprocessor`` in front; that step emits a numpy matrix and
+  the inner encoder could not recover the named columns. ``preprocesses_frames``
+  now also returns ``True`` for pipelines whose first step is a
+  ``category_encoders`` encoder, so the candidate gets the raw frame instead of
+  a second, double-encoding wrapper (regression test in
+  ``tests/test_mixed_type_experiments.py``).
+
 Human names for jobs and model versions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
