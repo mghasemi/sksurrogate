@@ -7,7 +7,7 @@ Changelog
 Explain page
 ~~~~~~~~~~~~
 
-* Prediction intervals on classifier bundles now return guidance instead of a terse error: ``POST /api/evaluation/{task}/{model}/intervals`` answers 422 with an explanation that the selected bundle is a classification model, that split-conformal prediction intervals are only defined for numeric regression targets, and to select or train a regression bundle (e.g. via Baselines) instead. The Explain page recognizes this refusal and renders it as an informational note rather than an error banner; other interval failures still surface as errors.
+* Prediction intervals on classifier bundles now return guidance instead of a terse error: ``POST /api/evaluation/{task}/{model}/intervals`` answers 422 with an explanation that the selected bundle is a classification model, that split-conformal prediction intervals are only defined for numeric regression targets, and to select or train a regression bundle (e.g. via Baselines) instead. The refusal is also tagged with the stable machine-readable code ``intervals_require_regression_bundle`` in the ``X-Reason`` response header so clients can branch on it without parsing the human-facing detail text; the web UI client surfaces that code on its error objects. The Explain page recognizes this refusal (by code, or by wording against older servers) and renders it as an informational note rather than an error banner; other interval failures still surface as errors.
 
 Serving a pinned model
 ~~~~~~~~~~~~~~~~~~~~~~

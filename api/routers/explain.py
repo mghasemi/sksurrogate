@@ -703,7 +703,8 @@ def prediction_intervals(task_name: str, model_version: str, body: IntervalReque
             "Model version %r is a %s model; prediction intervals are only defined for "
             "numeric regression targets. Select or train a regression bundle (for example "
             "via the Baselines page) and compute intervals on that model instead."
-            % (model_version, family if family else "non-regression")
+            % (model_version, family if family else "non-regression"),
+            reason="intervals_require_regression_bundle",
         )
     X, y = _features_and_target(task_name, body.train_partition)
     rng = np.random.RandomState(body.random_state)

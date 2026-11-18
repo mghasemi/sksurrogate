@@ -64,9 +64,12 @@ function authHeaders(): Record<string, string> {
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** Machine-readable reason code from the server's ``X-Reason`` header, if sent. */
+  reason?: string;
+  constructor(status: number, message: string, reason?: string) {
     super(message);
     this.status = status;
+    if (reason) this.reason = reason;
   }
 }
 
@@ -116,7 +119,10 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     } catch {
       /* non-JSON error body */
     }
-    throw new ApiError(res.status, `${method} ${path} -> ${res.status}: ${detail}`);
+    // Machine-readable refusal code for UIs to branch on (e.g. prediction
+    // intervals requested against a classification bundle).
+    const reason = res.headers.get("X-Reason") ?? undefined;
+    throw new ApiError(res.status, `${method} ${path} -> ${res.status}: ${detail}`, reason);
   }
   return (await res.json()) as T;
 }

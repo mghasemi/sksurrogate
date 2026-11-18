@@ -352,6 +352,9 @@ def test_intervals_reject_classifier(client):
     assert "is a Classification model" in detail
     assert "only defined for numeric regression targets" in detail
     assert "Select or train a regression bundle" in detail
+    # The refusal is machine-readable too, so clients can branch on it without
+    # parsing the human-facing text.
+    assert response.headers["X-Reason"] == "intervals_require_regression_bundle"
 
 
 def test_design_endpoints(client):

@@ -176,8 +176,12 @@ def bad_request(message):
     return HTTPException(status_code=400, detail=message)
 
 
-def unprocessable(message):
-    return HTTPException(status_code=422, detail=message)
+def unprocessable(message, reason=None):
+    """422 Unprocessable Entity; ``reason`` optionally tags the response with a stable
+    machine-readable code (``X-Reason`` header) so clients can branch on it without
+    parsing the human-facing detail text."""
+    headers = {"X-Reason": str(reason)} if reason else None
+    return HTTPException(status_code=422, detail=message, headers=headers)
 
 
 def resolve_bundle(task_name, *, model_version=None, alias=None, strict_dependencies=False):
