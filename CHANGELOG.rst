@@ -187,6 +187,19 @@ Regularized Greedy Forest (rgf-python)
   ``FastRGF`` executables (not shipped here); the standard ``RGFClassifier`` /
   ``RGFRegressor`` estimators work out of the box.
 
+Mid-pipeline samplers accepted in search pipelines
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* A search space containing ``imblearn.over_sampling.SMOTE`` could abort the
+  whole experiment job with ``Pipeline intermediate step 'stp_0' must implement
+  fit and transform``. The structure validator enforced the sklearn rule that
+  every intermediate step has ``transform``, but a legitimate ``[SMOTE,
+  estimator]`` pipeline uses ``imblearn.pipeline.Pipeline``, which routes the
+  sampler through ``fit_resample`` (SMOTE has no ``transform``). The validator
+  now accepts an intermediate step that implements either ``transform`` or
+  ``fit_resample``, so sampler-first pipelines validate and fit instead of
+  crashing the search. Regression tests in ``tests/test_mid_pipeline_sampler.py``.
+
 Human names for jobs and model versions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
