@@ -6,6 +6,7 @@ import {
   Boxes,
   ClipboardCheck,
   Cpu,
+  Eraser,
   Database,
   FolderKanban,
   FlaskConical,
@@ -23,7 +24,10 @@ import {
 } from "lucide-react";
 
 import { listTasks } from "./api/client";
-import { Loading } from "./components/ui";
+import { Badge, Loading } from "./components/ui";
+import { GlobalJobIndicator } from "./components/GlobalJobIndicator";
+import { ServingIndicator } from "./components/ServingIndicator";
+import { AuthProvider, useAuth, useUsername } from "./lib/auth-context";
 import { TaskProvider, useTask } from "./lib/task-context";
 import { useHealth } from "./lib/hooks";
 
@@ -31,6 +35,7 @@ import { useHealth } from "./lib/hooks";
 // only pays for the shell + the first route (see docs/HANDOFF.md next steps).
 const DashboardPage = lazy(() => import("./pages/Dashboard"));
 const DatasetsPage = lazy(() => import("./pages/Datasets"));
+const PreprocessingPage = lazy(() => import("./pages/Preprocessing"));
 const FeatureAnalysisPage = lazy(() => import("./pages/FeatureAnalysis"));
 const ExperimentsPage = lazy(() => import("./pages/Experiments"));
 const EvaluationPage = lazy(() => import("./pages/Evaluation"));
@@ -46,6 +51,7 @@ const SettingsPage = lazy(() => import("./pages/Settings"));
 const ProjectsPage = lazy(() => import("./pages/Projects"));
 const ExplainPage = lazy(() => import("./pages/Explain"));
 const DesignPage = lazy(() => import("./pages/Design"));
+const LoginPage = lazy(() => import("./pages/Login"));
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
@@ -69,6 +75,7 @@ const NAV_GROUPS: Array<{ label: string; items: NavEntry[] }> = [
     label: "1. Data",
     items: [
       { to: "/datasets", label: "Datasets", icon: Database },
+      { to: "/preprocessing", label: "Data Preprocessing", icon: Eraser },
       { to: "/features", label: "Feature Analysis", icon: Sigma },
       { to: "/design", label: "Experiment Design", icon: Ruler },
     ],
@@ -113,6 +120,7 @@ const TITLES: Record<string, string> = {
   "/design": "Experiment Design",
   "/explain": "Explain",
   "/datasets": "Datasets",
+  "/preprocessing": "Data Preprocessing",
   "/features": "Feature Analysis",
   "/experiments": "Experiments",
   "/evaluation": "Evaluation",
@@ -155,6 +163,36 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
         </nav>
       ))}
     </aside>
+  );
+}
+
+/**
+ * Who the server thinks we are. In open (unauthenticated) mode it says so
+ * explicitly rather than inventing a user; with enforcement on it shows the
+ * account and offers sign-out.
+ */
+function IdentityChip() {
+  const { me, status, logout } = useAuth();
+  const username = useUsername();
+  if (!status) return null;
+  if (!status.auth_enforced) {
+    return (
+      <span className="muted" style={{ fontSize: 12 }}>
+        <Badge tone="warn">no auth</Badge>
+      </span>
+    );
+  }
+  if (!me || me.source === "anonymous") return null;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+      <Badge tone={me.is_admin ? "info" : "muted"}>
+        {username}
+        {me.is_admin ? " · admin" : ""}
+      </Badge>
+      <button type="button" className="btn" onClick={() => void logout()}>
+        Sign out
+      </button>
+    </span>
   );
 }
 
@@ -226,10 +264,13 @@ function Topbar({ onMenu }: { onMenu: () => void }) {
           </select>
         )}
       </label>
+      <GlobalJobIndicator />
+      <ServingIndicator />
       <span className={`health-dot${healthOk ? " ok" : ""}`}>
         <span className="dot" />
         {healthOk === null ? "checking…" : healthOk ? "API online" : "API offline"}
       </span>
+      <IdentityChip />
     </header>
   );
 }
@@ -237,11 +278,26 @@ function Topbar({ onMenu }: { onMenu: () => void }) {
 function Shell() {
   const [navOpen, setNavOpen] = useState(false);
   const location = useLocation();
+  const { loading, needsLogin } = useAuth();
 
-  // Close the off-canvas sidebar whenever the route changes.
+  // Close the off-canvas sidebar whenever the route changes. Declared before
+  // the login gate so the hook order is identical in every render.
   useEffect(() => {
     setNavOpen(false);
   }, [location.pathname]);
+
+  // The login gate sits above every route: with authentication enforced and no
+  // session, no page is mounted and no page-level query is issued.
+  if (loading) {
+    return <Loading label="Checking session…" />;
+  }
+  if (needsLogin) {
+    return (
+      <Suspense fallback={<Loading label="Loading…" />}>
+        <LoginPage />
+      </Suspense>
+    );
+  }
 
   return (
     <div className={`shell${navOpen ? " nav-open" : ""}`}>
@@ -257,6 +313,7 @@ function Shell() {
             <Route path="/design" element={<DesignPage />} />
             <Route path="/explain" element={<ExplainPage />} />
             <Route path="/datasets" element={<DatasetsPage />} />
+            <Route path="/preprocessing" element={<PreprocessingPage />} />
             <Route path="/features" element={<FeatureAnalysisPage />} />
             <Route path="/experiments" element={<ExperimentsPage />} />
             <Route path="/evaluation" element={<EvaluationPage />} />
@@ -280,11 +337,13 @@ function Shell() {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <TaskProvider>
-        <BrowserRouter>
-          <Shell />
-        </BrowserRouter>
-      </TaskProvider>
+      <AuthProvider>
+        <TaskProvider>
+          <BrowserRouter>
+            <Shell />
+          </BrowserRouter>
+        </TaskProvider>
+      </AuthProvider>
     </QueryClientProvider>
   );
 }

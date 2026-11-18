@@ -237,6 +237,11 @@ def test_explain_intervals_and_project_summary(client):
         "train_fingerprint": client.get("/api/datasets/reg").json()["partitions"]["train"]["fingerprint"],
         "row_count": 120,
         "feature_columns": ["a", "b", "c"],
+        # Numeric-only projection: this fixture is all-numeric, so nothing is
+        # excluded and no row is dropped. Non-numeric partitions are covered in
+        # tests/test_sensitivity_numeric.py.
+        "excluded_columns": [],
+        "rows_dropped": 0,
     }
 
     correlation = client.get("/api/sensitivity/reg/correlation-matrix").json()

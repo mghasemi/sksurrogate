@@ -40,6 +40,17 @@ from ._logutil import emit, get_logger
 logger = get_logger(__name__)
 
 
+class SearchStopped(Exception):
+    """Raised inside a search when its ``stop_check`` asks it to stop.
+
+    Deliberately **not** a ``ValueError``: the optimization loop treats a
+    ``ValueError`` raised by the objective as a failed candidate and carries on
+    (see the surrogate-exploit branch in ``SurrogateSearch.__iterate``), while
+    a stop request must unwind the whole search. Callers that own a checkpoint
+    catch this, persist state, and offer a resume.
+    """
+
+
 class BaseSample(object):
     """
     This is the base class for various sampling methods.
@@ -963,6 +974,7 @@ class SurrogateRandomCV(BaseSearchCV):
             param_distributions=None,
             n_iter=None,
             callbacks=None,
+            stop_check=None,
     ):
         resolved_continue = _resolve_continue_flag(Continue, continue_)
         if param_distributions is not None and params is not None and params != param_distributions:
@@ -1013,6 +1025,9 @@ class SurrogateRandomCV(BaseSearchCV):
         self.conditional = conditional if isinstance(conditional, dict) else dict(conditional)
         self.random_state = random_state
         self.callbacks = callbacks
+        #: Optional ``Callable[[], bool]``; returns True when the caller wants
+        #: the search to stop at the next safe point (a candidate boundary).
+        self.stop_check = stop_check
         self.bounds = []
         if self.cpu_limit is not None:
             limit = int(self.cpu_limit)
@@ -1322,6 +1337,8 @@ class SurrogateRandomCV(BaseSearchCV):
         def obj(x):
             from time import perf_counter
 
+            if self.stop_check is not None and self.stop_check():
+                raise SearchStopped("Search stopped by request")
             started = perf_counter()
             cand_params = {}
             _idx = 0

@@ -35,6 +35,28 @@ def safe_segment(value, field="name"):
     return value
 
 
+def normalize_label(value, field="label", max_length=80):
+    """Return a cleaned, stored human label, or ``None`` to fall back to an auto name.
+
+    Labels never touch the filesystem, so they may contain spaces and punctuation,
+    but they are persisted to JSON job records and rendered in the UI: control
+    characters are rejected and the length is bounded. ``None`` and blank strings
+    mean "no custom name" and clear a previously set label.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise UnsafeName("%s must be a string" % field)
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    if len(cleaned) > max_length:
+        raise UnsafeName("%s must be at most %d characters" % (field, max_length))
+    if any(ord(character) < 32 or ord(character) == 127 for character in cleaned):
+        raise UnsafeName("%s must not contain control characters" % field)
+    return cleaned
+
+
 def contained_path(root, segment, suffix="", field="path segment"):
     """Join ``segment`` under ``root`` and prove the result cannot escape it.
 

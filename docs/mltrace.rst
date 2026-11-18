@@ -212,7 +212,16 @@ the supplied estimator, then evaluates it on the untouched validation partition.
 It does not search among estimators or tune hyperparameters. Mixed-type
 DataFrame features are preprocessed inside each training fold; unseen categories
 are ignored at scoring time rather than being used to build the fold's category
-vocabulary. Numeric DataFrames and arrays retain their direct numeric path. The
+vocabulary. Numeric DataFrames and arrays retain their direct numeric path.
+
+An estimator that already encodes frames is used as-is: when its first pipeline
+step is a ``FoldLocalDataPreprocessor`` (directly or behind the
+``ArrayAsFrame`` adapter that API bundles carry), no second encoder is wrapped
+around it. Without that check a preset bundle received an already-encoded
+matrix and its own preprocessor rejected it
+(``ArrayAsFrame expected 13 feature column(s); got shape ()``).
+``DataProcess.preprocesses_frames(estimator)`` answers the question for any
+caller. The
 result identifies its preprocessing path and stores fold-level predictions and
 metrics, mean outer scores, repeated-CV confidence intervals, and the final
 validation score in task metadata. Group-aware splitters preserve group labels

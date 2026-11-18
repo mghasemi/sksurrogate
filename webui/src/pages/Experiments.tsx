@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import {
   CartesianGrid,
   ResponsiveContainer,
@@ -17,14 +17,16 @@ import {
   STACKING_COMPONENT,
   getProject,
   getPresets,
+  getPreflight,
   getScoringOptions,
   optimizePipeline,
   runExperiment,
 } from "../api/client";
-import type { ExperimentResult, ParamSpec, RunExperimentRequest, SearchSpace } from "../api/client";
-import { Card, ErrorNote, Table, Tabs, fmtNum } from "../components/ui";
+import type { ExperimentResult, JobRecord, ParamSpec, RunExperimentRequest, SearchSpace } from "../api/client";
+import { Badge, Card, ErrorNote, Table, Tabs, fmtNum } from "../components/ui";
 import { JobTracker } from "../components/JobTracker";
 import { ScoringSelect } from "../components/ScoringSelect";
+import { fmtElapsed, useElapsed } from "../lib/hooks";
 import { useTask } from "../lib/task-context";
 
 function defaultConfigJson(): string {
@@ -123,6 +125,9 @@ interface PipelineJob {
   taskName: string;
 }
 
+/** Job statuses that mean "an experiment is still occupying a worker". */
+const ACTIVE_JOB_STATUSES = new Set(["queued", "running"]);
+
 export default function ExperimentsPage() {
   const { task } = useTask();
   const qc = useQueryClient();
@@ -153,10 +158,59 @@ export default function ExperimentsPage() {
   const [surrogateItrs, setSurrogateItrs] = useState(20);
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobTask, setJobTask] = useState<string | null>(null);
+  const [experimentLabel, setExperimentLabel] = useState("");
+  const [submittedName, setSubmittedName] = useState<string | null>(null);
   const [result, setResult] = useState<ExperimentResult | null>(null);
   const [pipelineJobs, setPipelineJobs] = useState<PipelineJob[]>([]);
 
   const [configError, setConfigError] = useState<string | null>(null);
+
+  /**
+   * Minimal snapshot of the experiment job so the banner above the fold can
+   * show it. Kept as plain strings (not the whole record) and only replaced on
+   * a real change, so the 1.5 s job poll does not re-render this whole page.
+   */
+  const [activeJob, setActiveJob] = useState<{
+    status: string;
+    displayName?: string;
+    createdAt: string;
+    updatedAt: string;
+  } | null>(null);
+  const experimentActive = Boolean(activeJob && ACTIVE_JOB_STATUSES.has(activeJob.status));
+  const activeElapsed = useElapsed(
+    activeJob?.createdAt,
+    activeJob && !experimentActive ? activeJob.updatedAt : null,
+  );
+  const handleJobStatus = useCallback((job: JobRecord) => {
+    setActiveJob((previous) => {
+      if (
+        previous &&
+        previous.status === job.status &&
+        previous.displayName === job.display_name &&
+        previous.createdAt === job.created_at &&
+        previous.updatedAt === job.updated_at
+      ) {
+        return previous;
+      }
+      return {
+        status: job.status,
+        displayName: job.display_name,
+        createdAt: job.created_at,
+        updatedAt: job.updated_at,
+      };
+    });
+  }, []);
+  /** Bring the live tracker into view right after a submission. */
+  const scrollToTracker = () => {
+    document.getElementById("experiment-job")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+  // Fire after the tracker has actually mounted (a state update plus paint), so
+  // the anchor exists; tying this to `jobId` beats a timer inside onSuccess.
+  useEffect(() => {
+    if (!jobId) return;
+    const timer = window.setTimeout(scrollToTracker, 250);
+    return () => window.clearTimeout(timer);
+  }, [jobId]);
   const linkProjectJobMut = useMutation({
     mutationFn: ({
       completedJobId,
@@ -208,6 +262,13 @@ export default function ExperimentsPage() {
   const availableBackends = backendOptionsQ.data?.backends ?? ["local"];
 
   const presetsQ = useQuery({ queryKey: ["experiment-presets"], queryFn: getPresets, staleTime: Infinity });
+  const preflightQ = useQuery({
+    queryKey: ["preflight", task],
+    queryFn: () => getPreflight(task, "train"),
+    enabled: !!task,
+    retry: false,
+    staleTime: 60_000,
+  });
   const presetInfo = presetsQ.data?.presets.find((p) => p.value === preset);
   const parsed = useMemo(() => parseSpace(configJson), [configJson]);
   const warnings = useMemo(
@@ -230,12 +291,14 @@ export default function ExperimentsPage() {
         forbidden: parsed.forbidden,
         backend,
         strategy: engine,
+        label: experimentLabel.trim() || null,
       };
       return { ...(await runExperiment(task, body)), taskName: task };
     },
     onSuccess: (res) => {
       setJobId(res.job_id);
       setJobTask(res.taskName);
+      setSubmittedName(res.display_name ?? null);
       setResult(null);
       qc.invalidateQueries({ queryKey: ["jobs"] });
     },
@@ -249,12 +312,14 @@ export default function ExperimentsPage() {
         length: budget,
         scoring: quickScoring || presetInfo?.default_scoring,
         random_state: 0,
+        label: experimentLabel.trim() || null,
       })),
       taskName: task,
     }),
     onSuccess: (res) => {
       setJobId(res.job_id);
       setJobTask(res.taskName);
+      setSubmittedName(res.display_name ?? null);
       setResult(null);
       qc.invalidateQueries({ queryKey: ["jobs"] });
     },
@@ -262,7 +327,7 @@ export default function ExperimentsPage() {
 
   const optimizeMut = useMutation({
     mutationFn: async ({ seq }: { seq: string[] }) => ({
-      ...(await optimizePipeline(task, { seq })),
+      ...(await optimizePipeline(task, { seq, label: experimentLabel.trim() || null })),
       taskName: task,
     }),
     onSuccess: (res, vars) => {
@@ -320,6 +385,28 @@ export default function ExperimentsPage() {
         <span className="desc">Find the best model for task “{task || "…"}” — runs as a background job</span>
       </div>
 
+      {experimentActive && (
+        <div className="run-banner" role="status" aria-live="polite">
+          <span className={`pulse${activeJob?.status === "queued" ? " queued" : ""}`} />
+          <strong>{activeJob?.status === "queued" ? "Experiment queued" : "Experiment running"}</strong>
+          {(submittedName ?? activeJob?.displayName) && (
+            <span className="muted">“{submittedName ?? activeJob?.displayName}”</span>
+          )}
+          <span className="muted">
+            {fmtElapsed(activeElapsed)} elapsed{jobId ? ` · job ${jobId.slice(0, 8)}…` : ""}
+          </span>
+          <span className="spacer" />
+          <button className="btn" type="button" onClick={scrollToTracker}>
+            Live progress
+          </button>
+          {jobId && (
+            <Link className="btn" to={`/logs?job=${jobId}`}>
+              Logs
+            </Link>
+          )}
+        </div>
+      )}
+
       {projectId && (
         <Card title="Research project">
           {projectQ.isLoading && <p className="muted">Loading project…</p>}
@@ -336,6 +423,48 @@ export default function ExperimentsPage() {
 
       {!task && <div className="error-note">Pick a task name in the top bar first.</div>}
 
+      <div className="field" style={{ maxWidth: 420 }}>
+        <label>Experiment name (optional)</label>
+        <input
+          value={experimentLabel}
+          onChange={(e) => setExperimentLabel(e.target.value)}
+          placeholder={task ? `${task} experiment` : "e.g. baseline EOA"}
+          maxLength={80}
+          spellCheck={false}
+        />
+        <span className="hint">
+          Shown instead of the job id in the tracker, the Jobs page and Logs. The produced model
+          bundle stores the same name.
+        </span>
+      </div>
+
+      {task && preflightQ.data && preflightQ.data.messages.length > 0 && (
+        <Card
+          title="Pre-flight checks"
+          sub="Advisory only — the experiment still runs. Findings echo the Data page diagnostics and name the columns they concern."
+        >
+          {preflightQ.data.messages.map((message) => (
+            <div
+              key={message.code}
+              className={message.severity === "warn" ? "warn-note" : "hint"}
+              style={{ marginBottom: 8 }}
+            >
+              <Badge tone={message.severity === "warn" ? "warn" : message.severity === "err" ? "err" : "info"}>
+                {message.severity}
+              </Badge>{" "}
+              {message.message}
+              {message.columns.length > 0 && (
+                <span className="mono"> — {message.columns.join(", ")}</span>
+              )}
+            </div>
+          ))}
+          <p className="hint">
+            {fmtNum(preflightQ.data.effective_rows)} complete rows across{" "}
+            {fmtNum(preflightQ.data.active_features)} active feature(s). {preflightQ.data.scope}
+          </p>
+        </Card>
+      )}
+
       <Tabs
         tabs={[
           { id: "quick", label: "Quick start" },
@@ -347,7 +476,7 @@ export default function ExperimentsPage() {
 
       {mode === "quick" && (
         <Card title="Quick start" sub="Pick the kind of problem and a time budget. No search space to write — a bounded, safe search is used.">
-          <div className="row">
+          <div className="row top">
             <div className="field">
               <label>Problem type</label>
               <select value={preset} onChange={(e) => setPreset(e.target.value as "classification" | "regression")}>
@@ -372,8 +501,12 @@ export default function ExperimentsPage() {
             />
           </div>
           {quickMut.isError && <ErrorNote error={quickMut.error} />}
-          <button className="btn primary" disabled={!task || quickMut.isPending} onClick={() => quickMut.mutate()}>
-            {quickMut.isPending ? "Submitting…" : "Find best model"}
+          <button
+            className="btn primary"
+            disabled={!task || quickMut.isPending || experimentActive}
+            onClick={() => quickMut.mutate()}
+          >
+            {quickMut.isPending ? "Submitting…" : experimentActive ? "Experiment running…" : "Find best model"}
           </button>
           <p className="muted">
             Need your own search space, stacking or forbidden rules? Switch to the <b>Advanced</b> tab.
@@ -425,8 +558,9 @@ export default function ExperimentsPage() {
       >
         <div className="row">
           <div className="field">
-            <label>Length (trials)</label>
+            <label>Max pipeline length</label>
             <input type="number" min={1} value={length} onChange={(e) => setLength(Number(e.target.value))} />
+            <span className="hint">Maximum number of components in a generated pipeline — not a trial count.</span>
           </div>
           <div className="field">
             <label>Max generation</label>
@@ -490,16 +624,24 @@ export default function ExperimentsPage() {
 
         {runMut.isError && <ErrorNote error={runMut.error} />}
 
-        <button className="btn primary" disabled={!task || runMut.isPending} onClick={onSubmit}>
-          {runMut.isPending ? "Submitting…" : "Start experiment"}
+        <button className="btn primary" disabled={!task || runMut.isPending || experimentActive} onClick={onSubmit}>
+          {runMut.isPending ? "Submitting…" : experimentActive ? "Experiment running…" : "Start experiment"}
         </button>
       </Card>
       </>)}
 
       {jobId && (
-        <>
+        <div id="experiment-job">
           <JobTracker
             jobId={jobId}
+            onStatus={handleJobStatus}
+            onResume={(resumedId) => {
+              // Resume submits a new job that continues from the old
+              // checkpoint; follow that job rather than the paused record.
+              setJobId(resumedId);
+              setResult(null);
+              setActiveJob(null);
+            }}
             onResult={(r) => {
               setResult(r as unknown as ExperimentResult);
               if (projectId && jobTask) {
@@ -517,7 +659,7 @@ export default function ExperimentsPage() {
             <code>top_pipelines</code>, <code>pareto</code> and the full <code>evaluation_history</code>. The new
             bundle appears under Model Bundles.
           </p>
-        </>
+        </div>
       )}
 
       {result && (

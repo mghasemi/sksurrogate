@@ -26,6 +26,7 @@ Welcome to SKSurrogate's documentation!
    inference
    monitoring
    controlplane
+   auth-and-sharing
    ui-manual
    walkthrough
    phase9

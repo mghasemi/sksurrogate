@@ -82,10 +82,14 @@ Dask execution
 --------------
 
 ``DaskExecutionBackend`` uses a Dask-compatible client for asynchronous execution
-while retaining the local durable trial store for lifecycle state. Dask is an
-optional dependency and is not imported when an already-created client is
-injected. This keeps local installations lightweight and makes the adapter easy
-to test or integrate with an existing Dask scheduler.
+while retaining the local durable trial store for lifecycle state. Dask is
+imported lazily and is not touched at all when an already-created client is
+injected; the control-plane image installs ``dask[distributed]`` from
+``requirements.txt`` (also available as the ``dask`` extra in ``setup.py``), so
+the API can dispatch to it out of the box, while a bare source install keeps
+working without it. When the API creates a cluster for a job it sizes it from
+the compute budget (see :doc:`controlplane`) rather than dask's core-count
+default.
 
 .. code-block:: python
 
@@ -296,8 +300,8 @@ Safety and boundaries
 =====================
 
 Callable serialization and bundle loading execute Python objects and therefore
-must only consume trusted artifacts. Dask is optional and must be installed in
-the environment that creates a client. The execution backends provide durable
+must only consume trusted artifacts. Dask must be installed in the environment
+that creates a client (the API image includes it). The execution backends provide durable
 state and dispatch semantics, but they do not provide distributed locking across
 separate filesystem mounts or replace scheduler-level authentication and
 network security. Approval identities are recorded as supplied; integrating an

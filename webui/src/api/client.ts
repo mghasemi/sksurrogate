@@ -85,6 +85,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   if (body !== undefined) headers["Content-Type"] = "application/json";
   const res = await fetch(`${base()}${path}`, {
     method,
+    // The browser session is an HttpOnly cookie; same-origin calls attach it by
+    // default, and "include" also covers an explicitly configured API base.
+    credentials: "include",
     headers: Object.keys(headers).length ? headers : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
@@ -92,8 +95,24 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     let detail = res.statusText;
     try {
       const data = (await res.json()) as { detail?: unknown };
-      if (typeof data.detail === "string") detail = data.detail;
-      else if (data.detail !== undefined) detail = JSON.stringify(data.detail);
+      if (typeof data.detail === "string") {
+        detail = data.detail;
+      } else if (Array.isArray(data.detail)) {
+        // FastAPI/pydantic validation errors arrive as a list of
+        // {loc, msg, type}; JSON-dumping that into an error note is unreadable
+        // and hides which field was wrong, so render "field: message" pairs.
+        detail = data.detail
+          .map((item) => {
+            const entry = item as { loc?: unknown[]; msg?: string };
+            const field = Array.isArray(entry.loc)
+              ? entry.loc.filter((part) => part !== "body").join(".")
+              : "";
+            return `${field || "request"}: ${entry.msg ?? JSON.stringify(item)}`;
+          })
+          .join("; ");
+      } else if (data.detail !== undefined) {
+        detail = JSON.stringify(data.detail);
+      }
     } catch {
       /* non-JSON error body */
     }
@@ -104,26 +123,59 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 const get = <T>(path: string) => request<T>("GET", path);
 const post = <T>(path: string, body?: unknown) => request<T>("POST", path, body ?? {});
+const put = <T>(path: string, body?: unknown) => request<T>("PUT", path, body ?? {});
+const patch = <T>(path: string, body?: unknown) => request<T>("PATCH", path, body ?? {});
+const del = <T>(path: string) => request<T>("DELETE", path);
 
 /* ------------------------------------------------------------------ */
 /* Shared shapes                                                       */
 /* ------------------------------------------------------------------ */
 
+export type JobStatus =
+  | "queued"
+  | "running"
+  | "paused"
+  | "cancelled"
+  | "interrupted"
+  | "completed"
+  | "failed";
+
 export interface JobRecord {
   job_id: string;
   task_name: string;
+  /** Human name: the user's custom `label`, or the API's auto-generated fallback. */
+  display_name?: string;
+  /** User-chosen name; null means the auto name is used. */
+  label?: string | null;
+  /** Set when the job was renamed after submission. */
+  aliased_at?: string | null;
+  aliased_by?: string | null;
   kind: "sensitivity" | "experiment" | "retraining" | string;
   backend?: "local" | "dask";
-  status: "queued" | "running" | "completed" | "failed";
+  status: JobStatus;
   created_at: string;
   updated_at: string;
+  /** Refreshed every ~10 s while a job is live; stale means the worker stalled. */
+  heartbeat_at?: string | null;
   result: Record<string, unknown> | null;
   error: string | null;
+  /** Present when the job can be resumed (saved request + checkpoint). */
+  resumable?: boolean;
+  /** Set while a stop request is pending / once it was honoured. */
+  stop?: { mode: "pause" | "cancel"; requested_by?: string | null; requested_at?: string | null; stopped_at?: string | null };
+  stop_requested_at?: string | null;
+  stop_mode?: "pause" | "cancel" | null;
+  stop_requested_by?: string | null;
+  paused_at?: string | null;
+  cancelled_at?: string | null;
+  interrupted_at?: string | null;
 }
 
 export interface BundleSummary {
   task_name: string;
   model_version: string;
+  /** Optional human name stored with the bundle at training time. */
+  label?: string | null;
   created_at: string;
   schema: Record<string, { dtype: string }>;
   metrics: Record<string, number>;
@@ -188,6 +240,8 @@ export interface RegisterDatasetResponse {
   dataset_schema: Record<string, unknown> | null;
   dataset_deduced_types?: Record<string, string>;
   deduced_types: Record<string, string>;
+  /** Columns marked ignored at registration time. */
+  ignored_columns?: string[];
   /** Name-based PII / sensitive-column scan of the uploaded frame (Phase 2.4). */
   sensitive_scan?: SensitiveScanReport;
 }
@@ -200,8 +254,30 @@ export interface DatasetMetadata {
   dataset_schema: Record<string, unknown> | null;
   dataset_deduced_types?: Record<string, string> | null;
   dataset_feature_count: number | null;
+  /** Columns excluded from experiments, analyses and other modeling paths. */
+  ignored_columns?: string[] | null;
+  /** `dataset_feature_count` minus the ignored feature columns. */
+  effective_feature_count?: number | null;
   partitions: Record<string, PartitionInfo>;
 }
+
+export interface IgnoredColumnsResponse {
+  task_name: string;
+  target: string | null;
+  ignored_columns: string[];
+  effective_features: string[];
+  effective_feature_count: number;
+}
+
+/**
+ * Replace the task's ignored-column list. Ignored columns stay in the stored
+ * CSV but are dropped by experiments, analyses, profiles and synthetic data.
+ */
+export const setIgnoredColumns = (task: string, columns: string[]) =>
+  put<IgnoredColumnsResponse>(
+    `/api/datasets/${encodeURIComponent(task)}/ignored-columns`,
+    { columns },
+  );
 
 export interface DatasetPreview {
   task_name: string;
@@ -296,7 +372,12 @@ export async function registerDataset(
   target: string,
   partition: string,
   file: File,
-  options?: { type_overrides?: Record<string, string>; binarize_label?: boolean },
+  options?: {
+    type_overrides?: Record<string, string>;
+    binarize_label?: boolean;
+    /** Feature columns excluded from every modeling path for this task. */
+    ignored_columns?: string[];
+  },
 ): Promise<RegisterDatasetResponse> {
   const form = new FormData();
   form.append("target", target);
@@ -304,6 +385,9 @@ export async function registerDataset(
   form.append("file", file);
   if (options?.type_overrides && Object.keys(options.type_overrides).length) {
     form.append("type_overrides", JSON.stringify(options.type_overrides));
+  }
+  if (options?.ignored_columns?.length) {
+    form.append("ignored_columns", JSON.stringify(options.ignored_columns));
   }
   if (options?.binarize_label) form.append("binarize_label", "true");
   return (await uploadDataset(
@@ -314,6 +398,669 @@ export async function registerDataset(
 
 export const getDatasetMetadata = (task: string) =>
   get<DatasetMetadata>(`/api/datasets/${encodeURIComponent(task)}`);
+
+/* ------------------------------------------------------------------ */
+/* Data preprocessing                                                  */
+/* ------------------------------------------------------------------ */
+
+export interface PreprocessingColumn {
+  column: string;
+  dtype: string;
+  deduced_type?: string | null;
+  ignored: boolean;
+  is_target: boolean;
+  missing: number;
+  missing_pct: number;
+  unique: number;
+  constant: boolean;
+  all_missing: boolean;
+  numeric_summary: {
+    count: number;
+    mean: number | null;
+    std: number | null;
+    min: number | null;
+    q25: number | null;
+    q50: number | null;
+    q75: number | null;
+    max: number | null;
+  } | null;
+  top_values: Array<{ value: string; count: number; share: number }> | null;
+}
+
+export interface ImputationMethod {
+  name: string;
+  label: string;
+  numeric_only: boolean;
+  params: Array<{
+    name: string;
+    kind: "string" | "int";
+    required?: boolean;
+    default?: unknown;
+    min?: number;
+    max?: number;
+    help?: string;
+  }>;
+}
+
+export interface PreprocessingOverview {
+  task_name: string;
+  partition: string;
+  target: string;
+  rows: number;
+  columns: string[];
+  ignored_columns: string[];
+  deduced_types: Record<string, string>;
+  missing: {
+    rows: number;
+    columns: PreprocessingColumn[];
+    total_cells: number;
+    missing_cells: number;
+    missing_pct: number;
+    rows_with_any_missing: number;
+    rows_with_any_missing_pct: number;
+    complete_rows: number;
+    complete_pct: number;
+    target_missing: number;
+  };
+  quality: {
+    duplicate_rows: { count: number; rate: number; scope: string };
+    constant_features: string[];
+    all_missing_features: string[];
+    duplicate_features: Array<{ feature: string; duplicate_of: string }>;
+    scope: string;
+  } | null;
+  missingness_patterns: {
+    method: string;
+    pattern_limit: number;
+    patterns: Array<{ missing_features: string[]; count: number; proportion: number }>;
+    other_count: number;
+    scope: string;
+  } | null;
+  target_profile: Record<string, unknown> | null;
+  row_sampling: Record<string, unknown> | null;
+  profile_features_truncated: number;
+  /* EDA blocks forwarded from SKSurrogate.dataset_profile (Tier 1). */
+  column_profiles: EdaColumn[];
+  feature_count: number | null;
+  feature_limit: number | null;
+  target_associations: AssociationEntry[];
+  feature_associations: FeatureAssociationEntry[];
+  feature_associations_truncated: number;
+  association_limit: number;
+  rank_associations: RankAssociations | null;
+  multicollinearity: Multicollinearity | null;
+  group_comparisons: Record<string, unknown> | null;
+  target_composition: TargetComposition | null;
+  quality_flags: QualityFlags;
+  missing_mechanism: MissingMechanism;
+  type_audit: TypeAudit;
+  formal_tests: FormalTests;
+  effect_sizes: EffectSizes;
+  stability: StabilityReport;
+  preview: Array<Record<string, unknown>>;
+  methods: ImputationMethod[];
+  clip_methods: ClipMethod[];
+}
+
+/** Anderson-Darling normality tests (``api/eda.py::formal_tests``). */
+export interface FormalTests {
+  rows: number;
+  sampled: boolean;
+  alpha: number;
+  method: string;
+  scope: string;
+  caveat: string;
+  columns: Array<{
+    column: string;
+    n: number;
+    statistic: number | null;
+    p_value: number | null;
+    critical_value: number | null;
+    significance_level?: number;
+    rejects_normality: boolean | null;
+    reason: string | null;
+  }>;
+}
+
+/** Standardized effect sizes with bootstrap intervals. */
+export interface EffectSizes {
+  grouping: string | null;
+  rows?: number;
+  sampled?: boolean;
+  groups?: Array<{ label: string; rows: number }>;
+  bootstrap?: number;
+  subsample?: number;
+  scope?: string;
+  interpretation: string;
+  reason?: string | null;
+  comparisons: Array<{
+    feature: string;
+    group_a: string;
+    group_b: string;
+    n_a?: number;
+    n_b?: number;
+    cohens_d: number | null;
+    cohens_d_ci: [number, number] | null;
+    cliffs_delta: number | null;
+    cliffs_delta_ci: [number, number] | null;
+    median_difference?: number;
+    direction: string | null;
+  }>;
+}
+
+/** Summary-statistic stability between two random halves. */
+export interface StabilityReport {
+  rows: number;
+  sampled?: boolean;
+  half_rows?: number;
+  effective_rows: number;
+  reason?: string;
+  scope?: string;
+  interpretation: string;
+  max_relative_difference: number | null;
+  columns: Array<{
+    column: string;
+    kind: string;
+    scale?: number;
+    max_share_difference?: number;
+    relative_differences?: Record<string, number>;
+    max_relative_difference: number;
+  }>;
+}
+
+/** Advisory pre-flight report for a pending experiment submission. */
+export interface PreflightMessage {
+  code: string;
+  severity: "info" | "warn" | "err";
+  message: string;
+  columns: string[];
+}
+
+export interface PreflightReport {
+  task_name: string;
+  partition: string;
+  rows: number;
+  sampled: boolean;
+  target: string;
+  active_features: number;
+  effective_rows: number;
+  complete_rows: number;
+  messages: PreflightMessage[];
+  warnings: PreflightMessage[];
+  hints: PreflightMessage[];
+  has_warnings: boolean;
+  blocking: false;
+  scope: string;
+  thresholds: Record<string, number>;
+  interpretation: string;
+}
+
+/** Partition-to-partition drift report. */
+export interface PartitionDrift {
+  task_name: string;
+  partition: string;
+  reference: string;
+  target: string | null;
+  reference_rows: number;
+  current_rows: number;
+  sampled: boolean;
+  scope: string;
+  caveats: string[];
+  numeric: Array<{
+    column: string;
+    n_reference?: number;
+    n_current?: number;
+    ks_statistic?: number;
+    ks_p_value?: number;
+    psi?: number;
+    mean_reference?: number;
+    mean_current?: number;
+    shift_in_pooled_sd?: number;
+    reason: string | null;
+  }>;
+  categorical: Array<{
+    column: string;
+    chi2?: number;
+    p_value?: number;
+    cramers_v?: number | null;
+    total_variation?: number;
+    levels?: number;
+    reason: string | null;
+  }>;
+}
+
+/** Tier-2 data-quality diagnostics (``api/eda.py::quality_flags``). */
+export interface QualityFlag {
+  kind: string;
+  severity: "info" | "warn" | "err";
+  column: string | null;
+  detail: string;
+}
+
+export interface OutlierRow {
+  column: string;
+  count: number;
+  median: number | null;
+  iqr_count: number;
+  iqr_rate: number;
+  iqr_lower_fence: number | null;
+  iqr_upper_fence: number | null;
+  mad: number;
+  mad_bound: number;
+  mad_count: number;
+  mad_rate: number;
+}
+
+export interface QualityFlags {
+  rows: number;
+  sampled: boolean;
+  scope: string;
+  feature_count: number;
+  identifier_columns: Array<{
+    column: string;
+    unique_ratio: number;
+    distinct: number;
+    reason: string;
+  }>;
+  high_cardinality: Array<{ column: string; unique_ratio: number; levels: number }>;
+  quasi_constant: Array<{ column: string; top_value: string; top_share: number }>;
+  date_like_columns: Array<{ column: string; unique_ratio: number }>;
+  numeric_text_columns: Array<{ column: string; unique_ratio: number }>;
+  near_duplicate_columns: Array<{
+    feature: string;
+    duplicate_of: string;
+    method: string;
+    value?: number;
+  }>;
+  leakage: QualityFlag[];
+  outliers: OutlierRow[];
+  duplicates: {
+    exact_rows: number;
+    feature_duplicates: number;
+    conflicting_label_groups: number;
+    conflicting_label_rows: number;
+  };
+  flags: QualityFlag[];
+  thresholds: Record<string, number>;
+  interpretation: string;
+}
+
+/** Missingness structure plus Little's MCAR test (``api/eda.py``). */
+export interface MissingMechanism {
+  rows: number;
+  sampled: boolean;
+  columns: string[];
+  complete_rows: number;
+  scope: string;
+  shifts: Array<{
+    missing_column: string;
+    numeric_column: string;
+    mean_observed: number;
+    mean_missing: number;
+    standardized_difference: number;
+    rows_missing: number;
+  }>;
+  shifts_truncated: number;
+  pattern_correlations: Array<{ feature_a: string; feature_b: string; phi: number }>;
+  pattern_correlations_truncated: number;
+  mcar: {
+    statistic: number | null;
+    df: number | null;
+    p_value: number | null;
+    reason: string | null;
+    patterns?: number;
+    rows?: number;
+    columns?: number;
+    method?: string;
+  } | null;
+  interpretation: string;
+}
+
+/** Dtype/value mismatches (``api/eda.py::semantic_audit``). */
+export interface TypeAudit {
+  rows: number;
+  sampled: boolean;
+  scope: string;
+  issues: Array<{
+    column: string;
+    issue: string;
+    detail: string;
+    examples: string[];
+    severity: string;
+  }>;
+  interpretation: string;
+}
+
+/** Numeric distribution block returned by ``dataset_profile``. */
+export interface EdaNumericDistribution {
+  count: number;
+  non_finite_count: number;
+  mean: number | null;
+  std: number | null;
+  min: number | null;
+  q25: number | null;
+  median: number | null;
+  q75: number | null;
+  max: number | null;
+  median_absolute_deviation: number | null;
+  skewness: number | null;
+  excess_kurtosis: number | null;
+  iqr_outlier_count: number;
+  iqr_outlier_rate: number | null;
+  iqr_lower_fence: number | null;
+  iqr_upper_fence: number | null;
+}
+
+export interface EdaCategoricalDistribution {
+  count: number;
+  unique: number;
+  top: Array<{ value: string; count: number; proportion: number }>;
+  other_count: number;
+}
+
+/** One profiled feature column, as returned by ``dataset_profile``. */
+export interface EdaColumn {
+  column: string;
+  dtype: string;
+  kind: "numeric" | "categorical";
+  missing_count: number;
+  missing_rate: number;
+  unique_count: number;
+  constant: boolean;
+  all_missing: boolean;
+  distribution: EdaNumericDistribution | EdaCategoricalDistribution;
+}
+
+export interface AssociationEntry {
+  feature: string;
+  method: string;
+  value: number | null;
+}
+
+export interface FeatureAssociationEntry {
+  feature_a: string;
+  feature_b: string;
+  method: string;
+  value: number | null;
+}
+
+export interface RankAssociations {
+  target: Array<{ feature: string; method: string; value: number; n: number }>;
+  features: Array<{
+    feature_a: string;
+    feature_b: string;
+    method: string;
+    value: number;
+    n: number;
+  }>;
+  interpretation: string;
+}
+
+export interface Multicollinearity {
+  numeric_features: string[];
+  complete_case_rows: number;
+  condition_number: number | null;
+  condition_number_reason?: string;
+  vif: Array<{
+    feature: string;
+    value: number | null;
+    r_squared: number;
+    reason?: string;
+  }>;
+  scope: string;
+  interpretation: string;
+}
+
+/**
+ * Exact target composition. ``categorical`` carries class counts and the fold
+ * count stratified k-fold can actually reach; ``numeric`` carries shape
+ * statistics only (``binary_like`` flags a 0/1 float column).
+ */
+export type TargetComposition =
+  | {
+      kind: "categorical";
+      rows: number;
+      missing: number;
+      distinct_classes: number;
+      classes: Array<{ label: string; count: number; share: number }>;
+      classes_truncated: number;
+      min_class_count?: number;
+      max_class_count?: number;
+      minority_share?: number;
+      imbalance_ratio?: number | null;
+      recommended_folds?: number | null;
+      stratification_feasible?: boolean;
+      scope: string;
+      interpretation: string;
+    }
+  | {
+      kind: "numeric";
+      rows: number;
+      missing: number;
+      distinct_values: number;
+      binary_like: boolean;
+      distribution: EdaNumericDistribution | null;
+      scope: string;
+      interpretation: string;
+    };
+
+export interface ClipMethod {
+  name: string;
+  label: string;
+  params: Array<{
+    name: string;
+    kind: "float";
+    default?: number;
+    min?: number;
+    max?: number;
+    help?: string;
+  }>;
+}
+
+export interface EncodingColumn {
+  column: string;
+  dtype: string;
+  kind: "numeric" | "categorical" | "datetime" | "text";
+  encoding: string;
+  cardinality: number;
+  missing: number;
+  output_feature_count: number;
+  output_columns: string[];
+  output_columns_truncated: number;
+  high_cardinality: boolean;
+}
+
+export interface EncodingPreview {
+  input_features: string[];
+  input_feature_count: number;
+  output_features: string[];
+  output_feature_count: number;
+  shown_output_features: string[];
+  preview: Array<Record<string, unknown>>;
+  per_column: EncodingColumn[];
+  sampled: boolean;
+  sample_rows: number;
+  notes: string[];
+}
+
+export interface ClipColumnReport {
+  lower: number | null;
+  upper: number | null;
+  clipped_low: number;
+  clipped_high: number;
+  clipped: number;
+  clipped_pct: number;
+  before: PreprocessingColumn["numeric_summary"];
+  after: PreprocessingColumn["numeric_summary"];
+}
+
+export interface ClipReport {
+  task_name?: string;
+  partition?: string;
+  output_partition?: string;
+  written?: boolean;
+  method: string;
+  params: Record<string, unknown>;
+  columns: string[];
+  rows: number;
+  cells_clipped: number;
+  columns_report: Record<string, ClipColumnReport>;
+  dataset_fingerprint?: string | null;
+}
+
+export interface DuplicateTargetDistribution {
+  kind: "categorical" | "numeric";
+  values?: Array<{ value: string; count: number; share: number }>;
+  summary?: PreprocessingColumn["numeric_summary"];
+}
+
+export interface DuplicateAnalysis {
+  task_name?: string;
+  partition?: string;
+  features: string[];
+  keep: "first" | "last";
+  target: string;
+  sampled: boolean;
+  rows_before: number;
+  rows_after: number;
+  rows_removed: number;
+  rows_removed_pct: number;
+  duplicate_rows: number;
+  duplicate_groups: number;
+  removable_rows: number;
+  full_duplicate_rows: number;
+  conflicting_label_groups: number;
+  conflicting_label_rows: number;
+  target_before: DuplicateTargetDistribution;
+  target_after: DuplicateTargetDistribution;
+  target_shift: {
+    value: string | null;
+    share_before: number;
+    share_after: number;
+    delta: number;
+  } | null;
+  numeric_shift: Record<
+    string,
+    {
+      before: PreprocessingColumn["numeric_summary"];
+      after: PreprocessingColumn["numeric_summary"];
+      mean_delta: number | null;
+      mean_delta_pct: number | null;
+    }
+  >;
+  warnings: string[];
+  written?: boolean;
+  output_partition?: string;
+  dataset_fingerprint?: string | null;
+}
+
+export interface ImputationReport {
+  task_name: string;
+  partition: string;
+  output_partition: string;
+  written: boolean;
+  method: string;
+  columns: string[];
+  rows_before: number;
+  rows_after: number;
+  rows_dropped: number;
+  missing_before: Record<string, number>;
+  missing_after: Record<string, number>;
+  cells_imputed: number;
+  target_missing_before: number;
+  target_missing_after: number;
+  numeric_shift: Record<
+    string,
+    { before: PreprocessingColumn["numeric_summary"]; after: PreprocessingColumn["numeric_summary"] }
+  >;
+  categorical_shift: Record<
+    string,
+    {
+      before: Array<{ value: string; count: number; share: number }>;
+      after: Array<{ value: string; count: number; share: number }>;
+    }
+  >;
+  dataset_fingerprint?: string | null;
+  csv_path?: string;
+}
+
+export const getPreprocessing = (task: string, partition: string) =>
+  get<PreprocessingOverview>(
+    `/api/datasets/${encodeURIComponent(task)}/${encodeURIComponent(partition)}/preprocessing`,
+  );
+
+/** Feature-level shift between a partition and a reference partition. */
+export const getPartitionDrift = (task: string, partition: string, reference: string) =>
+  get<PartitionDrift>(
+    `/api/datasets/${encodeURIComponent(task)}/${encodeURIComponent(partition)}/partition-drift` +
+      `?reference=${encodeURIComponent(reference)}`,
+  );
+
+/** Self-contained Markdown EDA report (rendered server-side). */
+export const getEdaReport = (task: string, partition: string) =>
+  get<{ task_name: string; partition: string; generated_at: string; markdown: string }>(
+    `/api/datasets/${encodeURIComponent(task)}/${encodeURIComponent(partition)}/eda-report`,
+  );
+
+/** Advisory pre-flight warnings/hints for a pending experiment run. */
+export const getPreflight = (task: string, partition = "train") =>
+  get<PreflightReport>(
+    `/api/datasets/${encodeURIComponent(task)}/preflight?partition=${encodeURIComponent(partition)}`,
+  );
+
+export interface ImputeRequest {
+  partition: string;
+  method: string;
+  columns?: string[] | null;
+  params?: Record<string, unknown>;
+  output_partition?: string | null;
+  preview_only?: boolean;
+  drop_missing_target?: boolean;
+}
+
+/** Compute an imputed copy (preview_only) or write it as a NEW partition. */
+export const imputeDataset = (task: string, body: ImputeRequest) =>
+  post<ImputationReport>(`/api/datasets/${encodeURIComponent(task)}/impute`, body);
+
+export const getEncodingPreview = (
+  task: string,
+  partition: string,
+  sampleRows = 1000,
+  maxOutputs = 40,
+) =>
+  get<EncodingPreview>(
+    `/api/datasets/${encodeURIComponent(task)}/${encodeURIComponent(partition)}/encoding-preview?sample_rows=${sampleRows}&max_outputs=${maxOutputs}`,
+  );
+
+export interface ClipRequest {
+  partition: string;
+  method: string;
+  columns?: string[] | null;
+  params?: Record<string, unknown>;
+  output_partition?: string | null;
+  preview_only?: boolean;
+}
+
+/** Winsorize numeric features; preview_only computes the report without writing. */
+export const clipDataset = (task: string, body: ClipRequest) =>
+  post<ClipReport>(`/api/datasets/${encodeURIComponent(task)}/clip`, body);
+
+export const getDuplicates = (task: string, partition: string, maxRows = 20000) =>
+  get<DuplicateAnalysis>(
+    `/api/datasets/${encodeURIComponent(task)}/${encodeURIComponent(partition)}/duplicates?max_rows=${maxRows}`,
+  );
+
+export interface DeduplicateRequest {
+  partition: string;
+  columns?: string[] | null;
+  keep?: "first" | "last";
+  output_partition?: string | null;
+  preview_only?: boolean;
+}
+
+/** Drop exact feature-duplicate rows; always returns the impact report. */
+export const deduplicateDataset = (task: string, body: DeduplicateRequest) =>
+  post<DuplicateAnalysis>(`/api/datasets/${encodeURIComponent(task)}/deduplicate`, body);
 
 export const previewDataset = (task: string, partition: string, limit = 20) =>
   get<DatasetPreview>(
@@ -617,14 +1364,42 @@ export interface RegistryHistoryEntry {
   timestamp: string;
 }
 
+export interface RegistryAliasEntry {
+  model_version: string;
+  created_at: string;
+  created_by?: string | null;
+}
+
 export interface RegistrySummary {
   task_name: string;
+  /** Lifecycle pointers rewritten by promote/rollback (candidate, production, latest…). */
   aliases: Record<string, string>;
+  /** User-chosen names pointing at immutable versions. */
+  named_aliases: Record<string, RegistryAliasEntry>;
   versions: Record<string, string>;
 }
 
 export const registrySummary = (task: string) =>
   get<RegistrySummary>(`/api/registry/${encodeURIComponent(task)}/summary`);
+
+export interface RegistryAliasesResponse {
+  task_name: string;
+  aliases: Record<string, RegistryAliasEntry>;
+}
+
+export const listRegistryAliases = (task: string) =>
+  get<RegistryAliasesResponse>(`/api/registry/${encodeURIComponent(task)}/aliases`);
+
+export const setRegistryAlias = (task: string, name: string, modelVersion: string) =>
+  post<{ task_name: string; name: string } & RegistryAliasEntry>(
+    `/api/registry/${encodeURIComponent(task)}/aliases`,
+    { name, model_version: modelVersion },
+  );
+
+export const deleteRegistryAlias = (task: string, name: string) =>
+  del<{ task_name: string; name: string; model_version: string }>(
+    `/api/registry/${encodeURIComponent(task)}/aliases/${encodeURIComponent(name)}`,
+  );
 
 export const registryHistory = (task: string) =>
   get<{ task_name: string; history: RegistryHistoryEntry[] }>(`/api/registry/${encodeURIComponent(task)}/history`);
@@ -747,6 +1522,92 @@ export interface PredictBatchResponse {
 
 export const predictBatch = (task: string, body: PredictRequest) =>
   post<PredictBatchResponse>(`/api/inference/${encodeURIComponent(task)}/predict-batch`, body);
+
+/* ------------------------------------------------------------------ */
+/* Serving (which model a task serves)                                 */
+/* ------------------------------------------------------------------ */
+
+/** ``version`` freezes an exact model; ``alias`` follows the registry pointer. */
+export type ServingResolveMode = "version" | "alias";
+
+export interface ServingEvent {
+  event: "start" | "replace" | "stop";
+  resolve_mode: ServingResolveMode;
+  /** What the operator pinned: a version id or an alias name. */
+  requested: string;
+  model_version: string | null;
+  note: string | null;
+  actor: string | null;
+  at: string;
+}
+
+/**
+ * The serving pin for one task.
+ *
+ * ``requested`` is the operator's choice, ``model_version`` the model it
+ * resolves to *now* — for an alias pin these differ, and a promotion changes
+ * the latter without touching the pin.
+ */
+export interface ServingPin {
+  task_name: string;
+  active: boolean;
+  resolve_mode: ServingResolveMode | null;
+  requested: string | null;
+  model_version: string | null;
+  note: string | null;
+  started_at: string | null;
+  started_by: string | null;
+  updated_at: string | null;
+  /** Set when an active pin no longer resolves (e.g. the alias lost its target). */
+  resolve_error: string | null;
+  history: ServingEvent[];
+}
+
+export interface ServingListResponse {
+  serving: ServingPin[];
+  count: number;
+}
+
+export interface StartServingRequest {
+  /** Exactly one of ``model_version`` / ``alias`` — the API answers 400 otherwise. */
+  model_version?: string | null;
+  alias?: string | null;
+  note?: string | null;
+}
+
+export interface ServedPredictRequest {
+  partition?: string | null;
+  rows?: Array<Record<string, unknown>> | null;
+  request_id?: string | null;
+  preflight?: boolean;
+}
+
+export interface ServedPredictResponse {
+  task_name: string;
+  model_version: string;
+  resolve_mode: ServingResolveMode | null;
+  requested: string | null;
+  request_id: string;
+  predictions: Array<number | string>;
+  metrics: InferenceMetrics;
+  ignored_columns: string[];
+}
+
+/** Active servings across tasks — summaries only; backs the top-bar indicator. */
+export const listServing = () => get<ServingListResponse>("/api/serving");
+
+export const getServing = (task: string) =>
+  get<ServingPin>(`/api/serving/${encodeURIComponent(task)}`);
+
+export const startServing = (task: string, body: StartServingRequest) =>
+  post<ServingPin>(`/api/serving/${encodeURIComponent(task)}`, body);
+
+export const stopServing = (task: string) =>
+  del<ServingPin>(`/api/serving/${encodeURIComponent(task)}`);
+
+/** Score through the served model: the caller sends no model id (409 when idle). */
+export const predictServed = (task: string, body: ServedPredictRequest) =>
+  post<ServedPredictResponse>(`/api/serving/${encodeURIComponent(task)}/predict`, body);
 
 /* ------------------------------------------------------------------ */
 /* Monitoring                                                          */
@@ -949,6 +1810,22 @@ export interface SensitivityJobResult {
   top_feature_names: string[];
   /** One weight per entry of `feature_columns`; null where the value was not finite. */
   weights: Array<number | null>;
+  /** Which SALib estimator produced the weights (delta-mmnt only). */
+  estimator?: string | null;
+  /** Column this run was persisted under in the task's ``weights`` table. */
+  weights_column?: string;
+  /** False when the run's weights could not be stored (analysis still valid). */
+  weights_stored?: boolean;
+  storage_error?: string | null;
+  evaluation_protocol?: {
+    train_partition: string;
+    train_fingerprint: string | null;
+    row_count: number;
+    feature_columns: string[];
+    /** Non-numeric columns excluded from the analysis. */
+    excluded_columns?: Array<{ column: string; dtype: string }>;
+    rows_dropped?: number;
+  };
   interpretation?: {
     category: "input_sensitivity";
     measure: string;
@@ -971,6 +1848,11 @@ export function asSensitivityResult(result: unknown): SensitivityJobResult | nul
     top_feature_names: r.top_feature_names ?? [],
     weights: r.weights,
     interpretation: r.interpretation,
+    estimator: r.estimator ?? null,
+    weights_column: r.weights_column,
+    weights_stored: r.weights_stored,
+    storage_error: r.storage_error ?? null,
+    evaluation_protocol: r.evaluation_protocol,
   };
 }
 
@@ -979,6 +1861,9 @@ export interface CorrelationThresholdResult {
   feature_columns: string[];
   kept_feature_names: string[];
   dropped_feature_names: string[];
+  /** Non-numeric columns: Pearson correlation is undefined for them. */
+  excluded_feature_names?: string[];
+  rows_dropped?: number;
 }
 
 export const runCorrelationThreshold = (task: string, threshold = 0.7, trainPartition = "train") =>
@@ -1031,9 +1916,25 @@ export interface TopFeaturesResponse {
   num?: number;
   /** Number of weighting columns the consensus was computed over. */
   weightings?: number;
+  /** Names of those weighting columns (e.g. ``sobol``, ``pearson``). */
+  weight_columns?: string[];
   /** [feature, appearances] pairs, most frequent first. Empty when unavailable. */
   features: Array<[string, number]>;
 }
+
+/** Recompute and store the dataset-level weightings (Pearson, variance). */
+export const computeBaseWeights = (task: string, trainPartition = "train") =>
+  post<{
+    task_name: string;
+    partition: string;
+    weights_columns: string[];
+    feature_count: number;
+    row_count: number;
+    excluded_columns: Array<{ column: string; dtype: string }>;
+    rows_dropped: number;
+  }>(
+    `/api/sensitivity/${encodeURIComponent(task)}/base-weights?train_partition=${encodeURIComponent(trainPartition)}`,
+  );
 
 export const getTopFeatures = (task: string, num = 10) =>
   get<TopFeaturesResponse>(
@@ -1259,6 +2160,8 @@ export interface RunExperimentRequest {
   /** Disallowed parameter combinations, e.g. [["penalty", "l1"]] or [["max_depth", 1]]. */
   forbidden?: Array<[string, unknown]> | null;
   backend?: "local" | "dask";
+  /** Optional human name for the job and the produced bundle. */
+  label?: string | null;
 }
 
 export interface ExperimentTopPipeline {
@@ -1285,7 +2188,10 @@ export interface ExperimentResult {
 }
 
 export const runExperiment = (task: string, body: RunExperimentRequest) =>
-  post<{ job_id: string; status: string }>(`/api/experiments/${encodeURIComponent(task)}/run`, body);
+  post<{ job_id: string; display_name?: string; status: string }>(
+    `/api/experiments/${encodeURIComponent(task)}/run`,
+    body,
+  );
 
 /** Optimize one explicit pipeline structure (no search over structures). */
 export interface OptimizePipelineRequest {
@@ -1296,6 +2202,8 @@ export interface OptimizePipelineRequest {
   random_state?: number | null;
   owner?: string | null;
   run_id?: string | null;
+  /** Optional human name for the job and the produced bundle. */
+  label?: string | null;
 }
 
 export interface OptimizePipelineResult {
@@ -1306,7 +2214,10 @@ export interface OptimizePipelineResult {
 }
 
 export const optimizePipeline = (task: string, body: OptimizePipelineRequest) =>
-  post<{ job_id: string; status: string }>(`/api/experiments/${encodeURIComponent(task)}/optimize-pipeline`, body);
+  post<{ job_id: string; display_name?: string; status: string }>(
+    `/api/experiments/${encodeURIComponent(task)}/optimize-pipeline`,
+    body,
+  );
 
 /** A small, safe default search space (subset of the library's default_config). */
 export const DEFAULT_EXPERIMENT_CONFIG: SearchSpace = {
@@ -1365,8 +2276,108 @@ export const listJobs = (task?: string) =>
 
 export const getJob = (jobId: string) => get<JobRecord>(`/api/jobs/${encodeURIComponent(jobId)}`);
 
+/**
+ * Slim job descriptor for the always-on activity indicator. The full
+ * `/api/jobs` payload carries results (and their evaluation histories), which
+ * is far too heavy to poll from the top bar.
+ */
+export interface ActiveJobSummary {
+  job_id: string;
+  task_name: string;
+  display_name?: string;
+  kind: string;
+  backend?: string | null;
+  status: "queued" | "running";
+  created_at: string;
+  updated_at: string;
+  log_counts?: Partial<LogCounts> | null;
+}
+
+/** Queued/running jobs visible to the caller (newest first). */
+export const listActiveJobs = (task?: string) =>
+  get<{ jobs: ActiveJobSummary[]; count: number }>(
+    `/api/jobs/active${task ? `?task_name=${encodeURIComponent(task)}` : ""}`,
+  );
+
+/* ------------------------------------------------------------------ */
+/* Compute budget                                                      */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Server-side limit on how much CPU background jobs may use. Every value is
+ * capped by `cores`, which the server reads from its own CPU affinity.
+ */
+export interface ComputeSettingsValues {
+  /** Concurrent background jobs. */
+  job_workers: number;
+  /** Total fold-worker processes, shared by all jobs (joblib pool width). */
+  job_threads: number;
+  /** BLAS/OpenMP threads per job thread. */
+  blas_threads: number;
+  /** Processes in the local Dask cluster. */
+  dask_workers: number;
+  /** Threads per Dask worker. */
+  dask_threads: number;
+}
+
+export interface ComputeSettingsSnapshot {
+  cores: number;
+  values: ComputeSettingsValues;
+  defaults: ComputeSettingsValues;
+  budget: {
+    used: number;
+    available: number;
+    reserved_blas: number;
+    fold_workers: number;
+    summary: string;
+    dask_summary: string;
+  };
+}
+
+export const getComputeSettings = () => get<ComputeSettingsSnapshot>("/api/settings/compute");
+
+export const updateComputeSettings = (values: ComputeSettingsValues) =>
+  put<ComputeSettingsSnapshot>("/api/settings/compute", values);
+
+/** Result of a destructive per-user reset (files/jobs/bytes removed). */
+export interface ResetResult {
+  tasks: string[];
+  projects: string[];
+  jobs: number;
+  log_files: number;
+  files: number;
+  bytes: number;
+  skipped_shared: { tasks: string[]; projects: string[] };
+  open_mode: boolean;
+}
+
+/**
+ * Erase every task/project this account owns, with all derived artifacts.
+ * `confirm` must be `reset <username>` (or `reset everything` on an open
+ * single-user server); the API checks it before deleting anything.
+ */
+export const resetMyData = (confirm: string, includeShared = false) =>
+  post<ResetResult>("/api/settings/reset", {
+    confirm,
+    include_shared: includeShared,
+  });
+
 export const resumeJob = (jobId: string) =>
   post<{ job_id: string; status: string }>(`/api/jobs/${encodeURIComponent(jobId)}/resume`);
+
+/**
+ * Give a job a human-readable label, or clear it with `null` to fall back to
+ * the API's auto name. The `job_id` remains the identity for every route.
+ */
+export const renameJob = (jobId: string, label: string | null) =>
+  patch<JobRecord>(`/api/jobs/${encodeURIComponent(jobId)}`, { label });
+
+/**
+ * Ask a live job to stop at its next candidate boundary. `pause` keeps the
+ * checkpoint so it can be resumed later; `cancel` abandons the run.
+ */
+export const stopJob = (jobId: string, mode: "pause" | "cancel") =>
+  post<JobRecord>(`/api/jobs/${encodeURIComponent(jobId)}/stop`, { mode });
 
 /** Subscribe to a job's WebSocket progress stream. Returns an unsubscribe fn. */
 export function subscribeToJob(
@@ -1414,6 +2425,10 @@ export interface LogEntry {
   /** Sampling phase of the trial: init | explore | surrogate_exploit. */
   phase?: string | null;
   status?: string | null;
+  /** Objective value of the trial, when the core reported one. */
+  score?: number | null;
+  /** Hyperparameters the trial evaluated (search-space names → values). */
+  params?: Record<string, unknown> | null;
   /** Full traceback, present on error entries raised from a job. */
   detail?: string;
 }
@@ -2129,4 +3144,141 @@ export const updateProjectHypothesisStatus = (
   post<Project>(
     `/api/projects/${encodeURIComponent(projectId)}/records/${encodeURIComponent(recordId)}/status`,
     { status },
+  );
+
+/* ------------------------------------------------------------------ */
+/* Identity, ownership and sharing                                     */
+/* ------------------------------------------------------------------ */
+
+export interface AuthStatus {
+  auth_enforced: boolean;
+  login_available: boolean;
+  bootstrap_required: boolean;
+  session_ttl_seconds: number;
+}
+
+export interface AuthUser {
+  user_id: number;
+  username: string;
+  is_admin: boolean;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** How the current request authenticated; `anonymous` means auth is not enforced. */
+export interface Principal {
+  user_id: number | null;
+  username: string;
+  is_admin: boolean;
+  source: "session" | "api_key" | "static" | "anonymous";
+  user: AuthUser | null;
+  auth_enforced: boolean;
+}
+
+export type AclRole = "viewer" | "editor" | "owner";
+
+export interface ApiKeyRecord {
+  id: number;
+  user_id: number;
+  name: string;
+  prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
+export interface ShareEntry {
+  user_id: number;
+  username: string | null;
+  is_active: boolean;
+  role: AclRole;
+  granted_by: number | null;
+  created_at: string;
+}
+
+export interface SharesPayload {
+  kind: string;
+  resource_id: string;
+  shares: ShareEntry[];
+  role?: AclRole;
+}
+
+const enc = encodeURIComponent;
+
+export const authStatus = () => get<AuthStatus>("/api/auth/status");
+export const currentPrincipal = () => get<Principal>("/api/auth/me");
+
+export const login = (username: string, password: string) =>
+  post<{ user: AuthUser; expires_in: number }>("/api/auth/login", { username, password });
+
+export const logout = () => post<{ ok: boolean }>("/api/auth/logout");
+
+export const changePassword = (currentPassword: string, newPassword: string) =>
+  post<{ ok: boolean }>("/api/auth/password", {
+    current_password: currentPassword,
+    new_password: newPassword,
+  });
+
+/** The caller's API keys. The secret itself is only ever returned by createApiKey. */
+export const listApiKeys = async (): Promise<ApiKeyRecord[]> =>
+  (await get<{ keys: ApiKeyRecord[] }>("/api/auth/keys")).keys;
+
+export const createApiKey = (name: string) =>
+  post<{ key: string; record: ApiKeyRecord }>("/api/auth/keys", { name });
+
+export const revokeApiKey = (keyId: number) =>
+  request<{ revoked: ApiKeyRecord }>("DELETE", `/api/auth/keys/${keyId}`);
+
+export const listUsers = async (): Promise<AuthUser[]> =>
+  (await get<{ users: AuthUser[] }>("/api/auth/users")).users;
+
+export const createUser = (username: string, password: string, isAdmin = false) =>
+  post<{ user: AuthUser }>("/api/auth/users", { username, password, is_admin: isAdmin });
+
+export const updateUser = (
+  userId: number,
+  patch: { is_active?: boolean; is_admin?: boolean; password?: string },
+) => request<{ user: AuthUser }>("PATCH", `/api/auth/users/${userId}`, patch);
+
+/** Tasks the caller can see, with their role — empty when auth is not enforced. */
+export const myTasks = () =>
+  get<{ tasks: Array<{ task_name: string; role: AclRole }>; auth_enforced: boolean }>(
+    "/api/access/tasks",
+  );
+
+export const myProjects = () =>
+  get<{ projects: Array<{ project_id: string; role: AclRole }>; auth_enforced: boolean }>(
+    "/api/access/projects",
+  );
+
+export const taskShares = (taskName: string) =>
+  get<SharesPayload>(`/api/access/tasks/${enc(taskName)}`);
+
+export const shareTask = (taskName: string, username: string, role: AclRole) =>
+  post<SharesPayload>(`/api/access/tasks/${enc(taskName)}/shares`, { username, role });
+
+export const unshareTask = (taskName: string, userId: number) =>
+  request<SharesPayload>(
+    "DELETE",
+    `/api/access/tasks/${enc(taskName)}/shares/${userId}`,
+  );
+
+export const projectShares = (projectId: string) =>
+  get<SharesPayload>(`/api/access/projects/${enc(projectId)}`);
+
+export const shareProject = (projectId: string, username: string, role: AclRole) =>
+  post<SharesPayload>(`/api/access/projects/${enc(projectId)}/shares`, { username, role });
+
+export const unshareProject = (projectId: string, userId: number) =>
+  request<SharesPayload>(
+    "DELETE",
+    `/api/access/projects/${enc(projectId)}/shares/${userId}`,
+  );
+
+/** Admin: give one account ownership of every unowned task/project. */
+export const adoptOrphans = (kind: "task" | "project", userId?: number) =>
+  post<{ kind: string; username: string; adopted: string[]; count: number }>(
+    "/api/access/adopt",
+    { kind, user_id: userId },
   );

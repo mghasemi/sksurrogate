@@ -189,7 +189,11 @@ export default function BundlesPage() {
                 Bundle {selected} {selected === bestVersion && <Badge tone="ok">★ best</Badge>}
               </>
             }
-            sub={detailQ.data?.created_at}
+            sub={
+              detailQ.data?.label
+                ? `${detailQ.data.label} · ${detailQ.data.created_at}`
+                : detailQ.data?.created_at
+            }
             actions={
               <>
                 <button

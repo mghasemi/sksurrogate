@@ -1,15 +1,15 @@
 """Bundle quality-gate endpoints, wrapping ``SKSurrogate.ci``."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from SKSurrogate import check_bundle_quality
 
 from ..config import settings
 from ..safety import safe_segment
-from ..deps import not_found
+from ..deps import not_found, task_access
 
-router = APIRouter(prefix="/api/quality-gates", tags=["quality-gates"])
+router = APIRouter(prefix="/api/quality-gates", tags=["quality-gates"], dependencies=[Depends(task_access)])
 
 
 class QualityGateRequest(BaseModel):

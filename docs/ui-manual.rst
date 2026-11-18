@@ -27,6 +27,16 @@ checkout. They are separate from using ``SKSurrogate`` as a Python library.
 Follow :doc:`controlplane` for dependency installation, service startup, API
 keys, CORS, and storage configuration. In brief:
 
+* **Signing in.** When the server enforces authentication
+  (``SKSURROGATE_REQUIRE_AUTH`` and an account, or a shared
+  ``SKSURROGATE_API_KEY``), the UI shows a sign-in screen instead of the app and
+  no page loads until you authenticate. The first administrator is created with
+  ``python -m api.auth_cli create-admin --username <you>`` or the one-shot
+  ``SKSURROGATE_ADMIN_USERNAME``/``SKSURROGATE_ADMIN_PASSWORD`` variables. With
+  neither switch set the deployment is open and single-user, and no sign-in is
+  asked for. Accounts, roles and sharing are described in
+  :doc:`auth-and-sharing`.
+
 1. From the repository root, install the API dependencies and start the API:
 
    .. code-block:: console
@@ -80,9 +90,9 @@ The workflow at a glance
 The UI is organized around a task, which groups data, runs, bundles, registry
 history, inference records, and monitoring. The usual flow is:
 
-``Task → Datasets → Feature Analysis → Experiments → Evaluation → Explain →
-Model Bundles → Quality Gates → Registry & Deployment → Inference → Monitoring
-→ Retraining``
+``Task → Datasets → Data Preprocessing → Feature Analysis → Experiments →
+Evaluation → Explain → Model Bundles → Quality Gates → Registry & Deployment →
+Inference → Monitoring → Retraining``
 
 The sidebar groups pages by stage (Data, Model, Release, Operate). **Projects**
 groups the datasets, bundles and jobs of one investigation and shows which
@@ -102,7 +112,10 @@ The **Dashboard** summarizes API health, background jobs, monitoring alerts,
 and links to the main pipeline stages. Use the **Task** picker in the top bar
 to select an existing task or choose **+ Add new task…** and enter a short,
 stable name such as ``customer-churn``. The new name is held in the browser
-until you create task data or run a task operation.
+until you create task data or run a task operation. The top bar also carries
+the live indicators: a job pill while searches or jobs are queued/running, a
+``Serving <version> · <task>`` pill while the system is serving a model (see
+step 9), and the API connection state.
 
 .. figure:: images/ui-dashboard.png
    :alt: SKSurrogate Dashboard with task selector and pipeline stage links
@@ -128,7 +141,11 @@ Open **Datasets**. For each CSV partition:
    sensitive-column scan. The scan reports pattern counts only; it does not
    expose matched cell contents. Inspection does not commit the file.
 4. Choose the **Target column**. Review the detected type of every column and
-   change any incorrect type before committing. If appropriate, enable
+   change any incorrect type before committing. If a column must not participate
+   in modeling — an identifier, a leaky field, a free-text note — set its type to
+   **ignore (exclude from work)**. The column is still stored (so it can be
+   restored later) but is dropped from every downstream experiment and analysis.
+   The target column cannot be ignored. If appropriate, enable
    **Binarize / ordinal-encode target labels** to encode target categories.
 5. Click **Commit dataset**. The API registers the partition and schema,
    calculates a dataset fingerprint, and stores the CSV under the task.
@@ -152,13 +169,27 @@ when a relaxed contract is intended.
 
    Dataset registration and the task-level cross-validation settings.
 
-After registration, review **Registered metadata** for the target, feature
-count, fingerprint, and partitions. Use **Target statistics** to inspect the
-target distribution. The optional **Synthetic data** card can generate a
-downloadable sample from a registered partition; choose the row count, source
-partition, marginal or joint distribution, and a generation type for each
-column. Synthetic output is a generated file, not a replacement for the
-registered source dataset.
+After registration, review **Registered metadata** for the target, effective
+feature count, ignored columns, fingerprint, and partitions. An **ignore** choice
+made at upload is listed there and can be changed at any time from **Column
+generation types** in the **Synthetic data** card: choosing **ignore (exclude
+from experiments)** persists a dataset-level exclusion, and choosing a real type
+restores the column. Excluded columns are dropped from experiments, pipeline
+optimization, baselines, sensitivity and correlation analysis, dataset profiles,
+nested CV, diagnostic curves, monitoring drift and synthetic generation; existing
+model bundles keep the schema they were trained with, so retrain after changing
+the ignore list. Use **Target statistics** to inspect the target distribution.
+The optional **Synthetic data** card can generate a downloadable sample from a
+registered partition; choose the row count, source partition, marginal or joint
+distribution, and a generation type for each column. Synthetic output is a
+generated file, not a replacement for the registered source dataset.
+
+.. figure:: images/ui-ignored-columns.png
+   :alt: Column generation types with one column marked ignore
+   :width: 100%
+
+   Marking a column ignored in the Column generation types table. The choice is
+   stored with the dataset and applied to every downstream analysis.
 
 Choose **Cross-validation partitioning** deliberately. The selected splitter
 and its parameters are stored for the task and reused by downstream
@@ -166,6 +197,160 @@ cross-validation. For classification, use a stratified splitter when class
 balance matters; for grouped or time-ordered observations, select a splitter
 that preserves that structure rather than randomly mixing related or future
 observations across folds.
+
+Data page: profile, diagnostics and transformations
+---------------------------------------------------
+
+Open **Data Preprocessing** and choose the stored partition. The page is
+organised in six tabs, and the active tab is kept in the URL
+(``?tab=quality``), so a view survives a reload and can be linked. Only the
+active tab's cards are loaded, so the partition-drift comparison runs when that
+tab is opened rather than on every visit.
+
+**Overview** — the partition picker, the per-column missing-data table (detected
+and implied types, missing counts and percentages, complete-row share, numeric
+quantiles or top categories), a data-quality card (duplicate rows/features,
+constant and all-missing columns, observed missingness patterns) and the row
+preview with missing cells rendered as “—”.
+
+.. figure:: images/ui-preprocessing.png
+   :alt: Data Preprocessing page with the six-tab bar and the Overview tab
+   :width: 100%
+
+   The tab bar with **Overview** active: missing-data profile, data-quality flags
+   and the row preview. Transformations live under **Transform**.
+
+**Distributions** — one row per active feature. Numeric columns get a rail
+spanning min → q25 → median → q75 → max with the IQR outlier count; categorical
+columns get their most frequent levels as bars. The card states when the profile
+was computed on a row sample. **Target analysis** reports exact class counts over
+the full partition with the minority share, imbalance ratio and the fold count
+stratified k-fold can actually reach (a class that occurs once blocks
+stratification); regression targets show shape statistics (skewness, excess
+kurtosis, IQR outlier rate) and a two-valued 0/1 column is labelled
+classification-shaped rather than treated as a regression target.
+
+.. figure:: images/preprocessing-eda.png
+   :alt: Distributions, target analysis, association heatmap and collinearity cards
+   :width: 100%
+
+   Distribution rails, exact target composition, association heatmap and VIF
+   table for a registered partition; every card states its sampling scope.
+
+**Relationships** — **Associations** ranks the target association of each
+feature, naming its statistic (Pearson, correlation ratio or Cramér's V), and
+draws a Pearson-only heatmap of numeric feature pairs plus a collapsible
+Spearman/Kendall table. **Collinearity** adds variance inflation factors and the
+design-matrix condition number with a reading per row. **Effect sizes between
+groups** compares the largest target classes with Cohen's *d* and Cliff's δ and
+percentile bootstrap intervals, labelled as uncorrected per-comparison intervals;
+a numeric target says so instead of inventing classes. These are descriptive
+diagnostics: the page never removes a column automatically.
+
+**Quality & missingness** — **Data-quality flags** list identifier-like columns
+(high distinct ratio or an id/name hint; continuous measurements are not
+flagged), high-cardinality text columns, quasi-constant columns, near-duplicate
+features (identical, equal after rounding, or ``|r| ≥ 0.999``), leakage hints
+(near-perfect target association, a feature constant inside a class, disjoint
+class ranges) and duplicate feature rows carrying conflicting labels, plus IQR
+and MAD outlier counts per numeric column. **Missing-data mechanism** shows
+missing-versus-observed mean shifts and missingness-indicator correlations with
+**Little's MCAR test** (statistic, degrees of freedom, p-value); when the test is
+not identifiable the card says why (no missing values, fewer than two columns
+with missingness, too few rows) instead of printing a number. **Type audit**
+reports numeric-looking text, mixed-type columns, boolean and date-like text,
+whitespace and case-only level variants with example values.
+**Formal tests (Anderson–Darling)** print the statistic, the tabulated critical
+value at α = 0.05, the verdict and the caveat that a rejection at large *n* can be
+trivial; the p-value is omitted on this path because SciPy's interpolated p is
+capped at 0.15 and would read as a real number.
+
+.. figure:: images/preprocessing-flags.png
+   :alt: Data-quality flags, missing-data mechanism and type audit cards
+   :width: 100%
+
+   Flags, Little's MCAR statistic and dtype/value mismatches; every entry names
+   its column and no flag removes anything automatically.
+
+**Stability & drift** — **Summary stability** recomputes each summary on two
+disjoint random halves and expresses the difference as a fraction of the
+column's IQR, with the effective sample size; **Download EDA report (Markdown)**
+renders the whole page as a reproducible file whose sections repeat their
+sampling scope. **Partition drift** compares this partition with another stored
+partition: two-sample KS and PSI per numeric feature (PSI ≥ 0.2 is badged),
+chi-square homogeneity, Cramér's V and total variation per categorical feature;
+columns with more than 50 levels skip the test.
+
+.. figure:: images/preprocessing-tier3.png
+   :alt: Formal tests, effect sizes, partition drift and summary stability
+   :width: 100%
+
+   Anderson–Darling verdicts, bootstrap effect sizes by target class, KS/PSI
+   drift against a holdout partition, and IQR-scaled half-sample stability.
+
+**Transform** — the write paths. Pick an imputation method — drop rows, mean,
+median, most frequent, constant, K-nearest neighbours or iterative/MICE — and the
+columns to fill (the target is never imputed, and ignored columns are not
+offered). Use **Preview imputation** to compare before/after missing counts,
+distribution shift and the number of imputed cells without writing anything.
+**Save as new partition** writes the result under a new partition name (for
+example ``train_imputed``), records the imputation recipe in the task metadata
+and registers the CSV as a lineage artifact. The source partition is never
+modified, and a name that already exists is rejected. **Duplicate rows** counts
+exact duplicate feature rows, flags groups whose target values disagree
+(contradictory labels or cross-split leakage), and states the consequences before
+removal: sample size change, target balance shift, numeric mean shifts and the
+optimistic cross-validation risk when identical rows straddle folds. **Preview
+removal** recomputes the impact; **Save deduplicated partition** writes a new
+partition with first/last-occurrence choice. **Categorical encoding preview**
+shows the exact matrix the model pipeline builds: numeric passthrough with median
+imputation, one-hot categories with an explicit “__MISSING__” level and
+unseen-category tolerance, datetime → epoch seconds, and per-column TF-IDF for
+declared text columns; it reports each column's detected kind, cardinality,
+output feature count and encoded names, plus the first encoded rows. The encoding
+is learned per training fold during cross-validation, so vocabularies can differ
+between folds. **Outlier clipping / winsorizing** offers IQR fences (Tukey
+multiplier), quantile winsorizing and z-score clipping: select numeric columns,
+preview the bounds, how many values each tail moves, and the before/after mean
+and standard deviation, then save a new partition. The target and ignored columns
+are refused, and non-numeric selections are rejected.
+
+Materialized imputation is a deliberate transformation of the data: experiments
+and cross-validation continue to use fold-local imputation on the original
+partition, so evaluate models on the original data unless you intentionally
+select the derived partition afterwards.
+
+Experiment Design (external experiments)
+----------------------------------------
+
+**Experiment Design** is for design of experiments, not model selection. Use it
+when a run is expensive or slow (a physical experiment, an instrument
+calibration, a simulation sweep) and you must decide which input combination to
+measure next. Model and hyperparameter search on a registered dataset belongs to
+**Experiments** instead.
+
+The page walks through three steps:
+
+1. **Variables** — list the continuous inputs you control with their safe
+   ``low``/``high`` bounds. With a task selected, the *Use ranges from the
+   current dataset* card lists its numeric feature columns (target and ignored
+   columns excluded, constant columns omitted) with observed minima/maxima;
+   select columns and import them as variables. Observed ranges describe the
+   data you already have — widen or tighten them using domain knowledge before
+   extrapolating.
+2. **Initial plan** — generate a space-filling Latin-hypercube design of the
+   requested size, download it as CSV, and run those points.
+3. **Suggest the next experiment** — paste one row per completed run as
+   ``input1, …, measured_result``. The surrogate proposes the point with the
+   lowest lower confidence bound, so the result is **minimized**: negate metrics
+   where larger is better. At least two runs are required; repeat after each
+   measurement.
+
+The page only proposes points — it does not execute experiments or read
+results from the dataset automatically. It supports finite continuous boxes and
+a single scalar objective; categorical factors, constraints, noise models and
+multi-objective goals are not yet supported, and you remain responsible for
+physical, ethical and operational constraints.
 
 3. Inspect and reduce features (optional)
 -----------------------------------------
@@ -222,6 +407,22 @@ model**. It runs a bounded random-forest / extra-trees search through
 ``AML(preset=...)`` with the surrogate strategy. Use the **Advanced** tab for
 full control, described next.
 
+A **Pre-flight checks** card sits above the tabs and lists what is about to
+distort the run: identifier-like columns that are still modeled, duplicate
+feature rows carrying conflicting labels, class imbalance, heavily missing
+columns, strong skew, and a small complete-case sample. The card is **advisory
+only** — the submit buttons stay enabled and the experiment runs; it exists so a
+score is never read without its data caveats. Its findings come from the same
+``GET /api/datasets/{task}/preflight`` route that the Data page diagnostics use,
+and it names the columns it is talking about.
+
+.. figure:: images/experiments-preflight.png
+   :alt: Experiments page with the advisory pre-flight checks card
+   :width: 100%
+
+   Pre-flight warnings for the selected task; warnings and hints are listed in
+   severity order and the run is never blocked.
+
 In **Advanced**, the page starts with a JSON search-space example. Each
 top-level key identifies a fully-qualified scikit-learn estimator class;
 parameter definitions specify real, integer, or categorical ranges. Validate
@@ -231,8 +432,10 @@ directives without hand-writing them.
 
 Then configure the run:
 
-1. Set the trial length, maximum generation, number of parents, and training
-   partition. Keep an experiment small for an initial smoke test.
+1. Set the maximum pipeline length, maximum generation, number of parents, and
+   training partition. The pipeline length bounds how many components a
+   generated pipeline may chain; it is not a trial count. Keep an experiment
+   small for an initial smoke test.
 2. Choose a scoring metric that matches the task and the business objective.
    The selected scorer is the objective the search optimizes.
 3. Choose **Evolutionary (EOA)** or **Surrogate-assisted** search. The latter
@@ -240,9 +443,31 @@ Then configure the run:
 4. **Search engine** selects ``AML.fit(strategy="eoa")`` (default) or
    ``strategy="surrogate"`` (surrogate search only; generation and parent
    settings are ignored).
-5. Keep the **Local** execution backend unless a Dask-enabled API environment
-   is available.
+5. **Execution backend** chooses **Local** (thread pool in the API process) or
+   **Dask**. The API image ships ``dask[distributed]``; a Dask job runs on a
+   local cluster sized by the compute budget and tears it down afterwards. The
+   option stays disabled when a source install lacks the package.
 6. Click **Start experiment**, then follow progress on the page or in **Jobs**.
+
+While a run is in flight the page is no longer silent:
+
+* a banner above the fold names the state (``Experiment running`` /
+  ``Experiment queued``), counts elapsed time and links to the live tracker and
+  the captured logs;
+* the top bar shows a pulsing **N jobs active** badge on every page, linking to
+  **Jobs**, and prefixes the browser tab title with the active job count;
+* the page pins its job card in view, which shows a pulsing status dot, elapsed
+  time, the number of trials evaluated, the latest sampling phase
+  (``init``/``explore``) and the best objective value so far;
+* the card's activity feed tails the captured log entries — one line per trial
+  with its status, score and the hyperparameters that were evaluated — so it is
+  visible what the search is currently trying. Errors and warnings are counted
+  next to the feed.
+
+Progress is shown as an indeterminate stripe, not a percentage: the search does
+not know in advance how many candidate pipelines it will evaluate. When a
+caller-supplied trial budget exists, ``JobTracker`` renders a determinate bar
+instead.
 
 The API builds an ``SKSurrogate.aml.AML`` search and uses
 ``SKSurrogate.eoa.EOA`` for evolutionary optimization; the surrogate path can
@@ -251,12 +476,29 @@ also use ``SurrogateRandomCV``. The optional ``stacking`` directive configures
 features. Conditional parameters and forbidden combinations constrain
 incompatible choices.
 
+A running search can be **paused** (checkpoint kept) or **stopped** — both from
+the job card on this page, from **Jobs**, or from the tracker that follows the
+run. Pausing freezes the elapsed clock and leaves the job ``paused``; **Resume**
+then submits a new job that continues from the saved checkpoint and returns its
+id. Only experiment and pipeline-optimization jobs can be paused, because only
+they carry a resumable checkpoint; other kinds can be cancelled but not resumed.
+A job that is only marked running because the API process died is shown as
+``interrupted`` and offers **Resume** when a checkpoint survived.
+
 When the job completes, inspect the score history, top pipelines, and
 score-versus-duration Pareto frontier. Use **Optimize this structure** to tune
 one of the returned component sequences. A completed search creates a bundle
 that appears in **Model Bundles**. Use **Jobs** to inspect job status and
 details; failed experiment jobs may offer a resume action when a checkpoint
 allows it.
+
+Give a run a name in **Experiment name (optional)** before starting it. The
+name replaces the machine job id in the run banner, the job tracker, the Jobs
+table and the Logs page, and it is stored on the produced bundle as well. Leaving
+it empty keeps the generated name (``experiment · <task> · <date time>``). The
+job id stays visible next to the name and remains the identity used by links,
+checkpoints and project artifacts. Rename or clear the name later with
+**Rename** on any job tracker.
 
 .. figure:: images/ui-experiments.png
    :alt: Experiments page with JSON search space and run controls
@@ -294,7 +536,7 @@ failure rather than treating it as a score.
    bundle has been created.
 
 Explain a model
-~~~~~~~~~~~~~~~
+---------------
 
 Open **Explain**, choose a bundle, and click **Explain model** for global model
 attribution by permutation importance (the score drop when a feature is
@@ -437,7 +679,12 @@ Open **Registry & Deployment**:
    aliases, lifecycle history, approval events, audit log, and lineage.
 4. If a production alias needs to point to another version, use **Rollback**
    to select the target model version and lifecycle alias.
-5. Use **Use in Inference** to open the selected registry alias in the
+5. Use **Model aliases** to give a version a stable, human-chosen name such as
+   ``baseline`` or ``credit-card-v2``. Unlike lifecycle aliases, a named alias is
+   not rewritten by promotion; it always points at the version you chose, is
+   resolvable by the API and the Python registry, and can be deleted without
+   touching the version. Every set/delete appears in the history and audit log.
+6. Use **Use in Inference** to open the selected registry alias in the
    Inference page.
 
 This workflow uses ``ModelRegistry`` and ``DeploymentApprovalGate`` from
@@ -453,15 +700,47 @@ include candidate, validated, staging, production, and archived.
 .. warning::
 
    Approver names in this UI are free-text entries, not verified user
-   identities. The current v1 control plane does not provide user accounts or
-   role-based authorization. Enabling the optional shared API key protects
-   access to the API but does not turn those names into authenticated
-   approvals.
+   identities. Accounts and task-level roles (``viewer``/``editor``/``owner``,
+   see :doc:`auth-and-sharing`) govern *who may promote at all*, but the
+   approval strings themselves are still typed by the caller and are not checked
+   against the signed-in account. Do not treat them as signed approvals.
 
 9. Run online or batch inference
 --------------------------------
 
-On **Inference**, explicitly resolve a model by version or registry alias.
+The card at the top of **Inference** is the **Serving** declaration: the one
+place that says *which model this task serves*, as opposed to which model a
+single request should use. Pick a model version or a registry alias and click
+**Serve this model**. While a model is served the top bar shows a
+``Serving <version> · <task>`` pill on every page, and the card shows the
+resolved version, the resolve mode, when and by whom it was pinned, and the pin
+history. **Replace served model** changes the pin; **Stop serving** ends the
+declaration (the history keeps the record, so nothing is silently forgotten).
+
+Which mode is in force is stated on the card, and it decides what a later
+promotion does:
+
+* **Model version** freezes that exact version — later registry promotions
+  leave the served model alone.
+* **Registry alias** follows the pointer — a later promotion or rollback of
+  that alias changes the model the serving endpoint uses. The card shows the
+  version the alias currently resolves to, not just the alias name.
+
+**Score through the served model** exercises the deployment endpoint
+``POST /api/serving/{task}/predict``: the payload contains no model id at all,
+which is exactly what a deployment client sends, and the answer names the model
+that replied. The button stays disabled while nothing is served — a client must
+never be quietly scored by a different model.
+
+.. figure:: images/ui-serving.png
+   :alt: Serving card with an alias pin, its resolved version and pin history
+   :width: 100%
+
+   The Serving card declares the model this task serves; the top bar repeats
+   the declaration on every page.
+
+The cards below it resolve a model *per request*: for a single call, explicitly
+resolve a model by version or registry alias.
 For a quick request, choose a stored partition or enter JSON rows and click
 **Run prediction**. Turn on **Validate before run** to check the input
 against the task's registered data schema before prediction. Review the
@@ -564,14 +843,69 @@ and retraining can run in the background; their job records remain visible
 after navigation. A failed experiment can expose a resume action when its
 checkpoint is usable.
 
-Use **Settings / Audit** to configure the API base URL and shared API key for
-this browser, and to review task registry audit events. Connection settings
-are browser-local; registry audit history is task data stored by the API. The
-**API connection** card also reports the server's authentication state when you
-open it: a warning if the server requires an API key that this browser has not
-stored, an error note if the stored key was rejected (401), and — when no key
-is stored at all — a reminder that the server runs without key enforcement.
-When a stored key is accepted, the card stays quiet.
+The **Name** column shows each job's human name rather than its id: the custom
+label submitted with an experiment, or a generated ``<kind> · <task> · <date
+time>`` name. Click a row and use **Rename** in the tracker to give any job a
+friendly name or clear it back to the generated one; the short job id stays
+visible beside the name because it remains the identity used by links,
+checkpoints and project artifacts. The same names appear in the run banner, the
+Experiments tracker and the Logs page job selector.
+
+The tracker shown for a selected job subscribes to the live status stream and
+tails the job's captured log entries. Its header carries **Pause**/**Stop**
+while the job runs and **Resume** once it is paused, interrupted or failed with
+a checkpoint; a live job whose heartbeat is older than 30 s is flagged as
+possibly stalled. Jobs whose API process died are marked ``interrupted`` at
+start-up, so the activity badge and the list only show work that is actually
+running. While the job runs, the tracker lists the most
+recent entries (trial index, phase, score and the evaluated hyperparameters)
+and counts warnings and errors. It also links to the full log view. The top-bar
+**N jobs active** badge is backed by ``GET /api/jobs/active``, a summaries-only
+endpoint that returns no results or resume payloads — keeping the four-second
+poll small regardless of how large the finished experiment results are.
+
+Use **Settings / Audit** to manage your identity and sharing, configure the API
+base URL for this browser, and review task registry audit events. Connection
+settings are browser-local; everything else is server state.
+
+* **Account** — your username and role, plus a password change. Changing the
+  password signs out your other sessions; the current one continues.
+* **API keys** — create a key for scripts and CI. The secret is displayed once
+  and never again: later listings show only its prefix, creation time and last
+  use. Revoking a key takes effect on the next request.
+* **Sharing** — the share list of the task selected in the top bar. Add a
+  username with ``viewer`` (read), ``editor`` (register, train, promote) or
+  ``owner`` (also sharing), or remove a grant. The last owner cannot be removed.
+  An administrator also sees **Adopt unowned tasks as me**, which assigns
+  material that predates accounts (idempotent).
+* **Users** (administrators only) — create accounts, disable them (which revokes
+  their sessions immediately), promote/demote and reset passwords. The last
+  active administrator cannot be disabled or demoted.
+* **API connection** — the API base URL and an optional shared key for
+  non-browser clients. The card reports the server's declared posture: whether
+  authentication is enforced, and whether a key is stored in this browser.
+* **Compute budget** — concurrent jobs, the total CV-fold worker pool, BLAS
+  threads per job, and the size of the local Dask cluster. The card shows the
+  server's core count and the arithmetic of the current budget; a combination
+  that exceeds the cores cannot be saved, and the API rejects it with 422 even
+  if the form is bypassed. Saved values apply to jobs submitted afterwards (a
+  running job keeps the limits it started with) and are recorded on each job
+  record, so a slow or fast run can always be traced back to its budget. Only an
+  administrator can change these values once authentication is enforced.
+* **Danger zone — reset my data** — permanently deletes every task and research
+  project you own, including datasets, bundles, registry versions, predictions,
+  monitoring records, checkpoints, jobs and their logs. The button stays
+  disabled until you type the confirmation phrase shown on the card
+  (``reset <username>``; ``reset everything`` on a server without
+  authentication). Resources shared with other users are kept by default; tick
+  **Also delete resources I own that are shared with other users** to include
+  them. A live job on one of your tasks blocks the reset (stop it first), and
+  accounts, sessions and API keys are never removed. Until you click
+  **Reload application**, cached pages may still show the old data.
+
+Only when the server runs without authentication do the identity cards show a
+note instead of controls. The contract behind them — endpoints, roles, the
+``404``-for-strangers rule, the audit file — is :doc:`auth-and-sharing`.
 
 Use **Logs** to read what a job actually did. The page lists captured entries
 newest first with time, severity badge, job, logger and message. Severity chips
@@ -602,6 +936,13 @@ contract is documented in :doc:`controlplane` and the level mapping in
 
    Filter captured job logs by severity, job, kind and text, then open an entry
    for its trial metadata or failure traceback.
+
+.. figure:: images/auth-settings.png
+   :alt: Settings page with Account, API keys, Sharing and Users cards
+   :width: 100%
+
+   Signed in as an administrator: password change, one API key, the current
+   task shared read-only with another account, and account management.
 
 .. figure:: images/ui-settings.png
    :alt: Settings page showing API connection and audit log

@@ -7,6 +7,7 @@ from .structsearch import (
     Categorical,
     HDReal,
     SurrogateRandomCV,
+    SearchStopped,
 )
 from .NpyProximation import (
     Infinitesimal,

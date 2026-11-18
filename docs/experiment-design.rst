@@ -47,8 +47,41 @@ The returned dictionary contains the proposed point, surrogate mean and
 standard deviation, acquisition value, observation and candidate-pool counts,
 kernel name and length scales, seed, direction, and a limitation statement. At
 most 500 observations, 100 dimensions, and 10,000 candidates are accepted.
+
+At least **two** observations are required: a GP fitted to a single point has no
+residual information, so the API rejects one-row payloads with HTTP 422 and the
+UI asks for a second run before sending anything. Sample and value counts must
+agree (HTTP 400 otherwise), every sample row must carry one value per variable,
+variable names must be unique, and each bound must be finite with
+``low < high`` — the web page checks the same conditions and states which
+variable is wrong.
 Candidate selection is not an objective evaluation; the caller decides whether
 and how to measure a proposed point.
+
+Using the page with a registered dataset
+========================================
+
+The **Experiment Design** page in the UI does not require a task, but when one is
+selected it offers a shortcut for step 1. *Use ranges from the current dataset*
+reads the chosen partition and lists numeric feature columns that actually vary,
+together with their observed minima and maxima. The target column and ignored
+columns are excluded, and constant columns are omitted because they cannot be
+design factors. Selecting columns and importing replaces the variable list with
+those names and ranges; edit them before generating a plan.
+
+The imported ranges are descriptive, not experimental guarantees: they describe
+the data already collected, which may never have explored the safe or
+interesting region. Widen a bound deliberately when the physics allows it,
+tighten it when values outside the observed range are unsafe, and drop any
+column you cannot manipulate independently (for example an identifier or a
+post-treatment measurement). Missing values in the column do not affect the
+range.
+
+The scalar result pasted into step 3 may be the dataset's target or any other
+measured metric; the page never reads outcomes from the registered dataset. If
+the dataset target is the quantity of interest, run the design points outside
+the platform, record the measured target for each row, then paste them back.
+Metrics where larger is better must be negated because the surrogate minimizes.
 
 Scope and limitations
 =====================

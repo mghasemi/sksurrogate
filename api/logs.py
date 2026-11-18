@@ -302,9 +302,11 @@ class _JobLogHandler(logging.Handler):
             detail = "".join(traceback.format_exception(*record.exc_info))
         if detail:
             fields["detail"] = str(detail)
-        for name in ("trial", "phase", "status", "task_name_extra"):
+        for name in ("trial", "phase", "status", "score", "params", "task_name_extra"):
             value = record.__dict__.get(name)
             if value is not None:
+                # ``params`` is a plain dict; json.dumps(default=str) keeps it
+                # serialisable even for numpy scalars coming from the search.
                 fields[name] = value
         try:
             self.store.append(
@@ -392,4 +394,12 @@ def trial_callback(event):
         message += " score=%s" % score
     if params:
         message += " params=%s" % json.dumps(params, default=str, sort_keys=True)
-    return log_event(level, message, trial=trial, phase=phase, status=status)
+    return log_event(
+        level,
+        message,
+        trial=trial,
+        phase=phase,
+        status=status,
+        score=score,
+        params=params,
+    )

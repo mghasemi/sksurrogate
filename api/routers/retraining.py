@@ -16,18 +16,18 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from SKSurrogate import ModelRegistry, RetrainingJob
 
 from ..config import settings
-from ..deps import bad_request, not_found, open_tracker
+from ..deps import bad_request, not_found, open_tracker, task_access
 from ..jobs import dask_available, job_manager
 from ..routers.experiments import ParamValue, _dump_config
 from ..training import fit_baseline_bundle, fit_experiment_bundle
 
-router = APIRouter(prefix="/api/retraining", tags=["retraining"])
+router = APIRouter(prefix="/api/retraining", tags=["retraining"], dependencies=[Depends(task_access)])
 
 
 class BaselineTrainerConfig(BaseModel):

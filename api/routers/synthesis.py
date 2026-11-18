@@ -9,9 +9,10 @@ provenance (``POST /api/projects/{project_id}/notes`` with
 ``source="generated"``).
 """
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
+from ..deps import project_access
 from ..jobs import job_manager
 from ..synthesis import (
     SynthesisError,
@@ -23,7 +24,7 @@ from ..synthesis import (
 from ..synthesis_facts import gather_facts
 from ..training import get_registered_target
 
-router = APIRouter(prefix="/api/synthesis", tags=["synthesis"])
+router = APIRouter(prefix="/api/synthesis", tags=["synthesis"], dependencies=[Depends(project_access)])
 
 
 class SynthesisRequest(BaseModel):

@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import {
   REGISTRY_STATES,
   deleteArtifacts,
+  deleteRegistryAlias,
   getRegistryArtifacts,
   listBundles,
   loadRegisteredBundle,
@@ -15,8 +16,9 @@ import {
   registrySummary,
   retryUnlessNotFound,
   rollbackBundle,
+  setRegistryAlias,
 } from "../api/client";
-import type { AuditEvent, RegistryArtifact, RegistryHistoryEntry } from "../api/client";
+import type { AuditEvent, RegistryAliasEntry, RegistryArtifact, RegistryHistoryEntry } from "../api/client";
 import { LineageRail } from "../components/LineageRail";
 import { Badge, Card, ErrorNote, Loading, StatusBadge, Table, fmtBytes, fmtNum } from "../components/ui";
 import { useTask } from "../lib/task-context";
@@ -145,6 +147,12 @@ export default function RegistryPage() {
         </Card>
       )}
 
+      <AliasCard
+        task={task}
+        versions={versions}
+        namedAliases={summaryQ.data?.named_aliases ?? {}}
+        onDone={invalidate}
+      />
       <RegisterCard task={task} versions={versions} onDone={() => { invalidate(); qc.invalidateQueries({ queryKey: ["bundles-list", task] }); }} />
       <PromoteCard task={task} versions={versions} onDone={invalidate} />
       <RollbackCard task={task} versions={versions} onDone={invalidate} />
@@ -323,6 +331,101 @@ function ArtifactCleanupCard({ task, versions, onDone }: { task: string; version
           )}
         </>
       )}
+    </Card>
+  );
+}
+
+function AliasCard({
+  task,
+  versions,
+  namedAliases,
+  onDone,
+}: {
+  task: string;
+  versions: string[];
+  namedAliases: Record<string, RegistryAliasEntry>;
+  onDone: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [version, setVersion] = useState("");
+
+  const setMut = useMutation({
+    mutationFn: () => {
+      const cleaned = name.trim();
+      if (!cleaned) throw new Error("Give the alias a name (lowercase letters, digits, '.', '_' or '-').");
+      if (!version) throw new Error("Pick the model version the alias should point at.");
+      return setRegistryAlias(task, cleaned, version);
+    },
+    onSuccess: () => {
+      setName("");
+      onDone();
+    },
+  });
+  const deleteMut = useMutation({
+    mutationFn: (alias: string) => deleteRegistryAlias(task, alias),
+    onSuccess: onDone,
+  });
+
+  const entries = Object.entries(namedAliases);
+
+  return (
+    <Card
+      title="Model aliases"
+      sub="Stable, human-chosen names for immutable model versions (e.g. “baseline”, “credit-card-v2”). Aliases are separate from the lifecycle states above and are recorded in the audit log."
+    >
+      {entries.length === 0 ? (
+        <p className="muted">No aliases yet — name a version below.</p>
+      ) : (
+        <Table<[string, RegistryAliasEntry]>
+          columns={["Alias", "Model version", "Created", "By", ""]}
+          rows={entries}
+          keyOf={([alias]) => alias}
+          render={([alias, entry]) => [
+            <td key="a" className="mono">{alias}</td>,
+            <td key="v" className="mono">
+              <code>{entry.model_version}</code>
+            </td>,
+            <td key="c" className="mono">{new Date(entry.created_at).toLocaleString()}</td>,
+            <td key="b">{entry.created_by ?? "—"}</td>,
+            <td key="x">
+              <button
+                className="btn"
+                disabled={deleteMut.isPending}
+                onClick={() => deleteMut.mutate(alias)}
+              >
+                Delete
+              </button>
+            </td>,
+          ]}
+        />
+      )}
+
+      <div className="row" style={{ marginTop: 12 }}>
+        <div className="field fixed" style={{ flex: "0 1 220px", minWidth: 170 }}>
+          <label>Alias name</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="baseline"
+            spellCheck={false}
+            maxLength={64}
+          />
+        </div>
+        <div className="field fixed" style={{ flex: "0 1 320px", minWidth: 240 }}>
+          <label>Model version</label>
+          <select value={version} onChange={(e) => setVersion(e.target.value)}>
+            <option value="">— select —</option>
+            {versions.map((v) => (
+              <option key={v}>{v}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+      {setMut.isError && <ErrorNote error={setMut.error} />}
+      {deleteMut.isError && <ErrorNote error={deleteMut.error} />}
+      <button className="btn primary" disabled={!task || setMut.isPending} onClick={() => setMut.mutate()}>
+        {setMut.isPending ? "Saving…" : "Save alias"}
+      </button>
     </Card>
   );
 }

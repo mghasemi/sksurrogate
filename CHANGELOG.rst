@@ -4,6 +4,402 @@ Changelog
 [Unreleased]
 ------------
 
+Serving a pinned model
+~~~~~~~~~~~~~~~~~~~~~~
+
+* New **serving pin**: declare once which trained/registered model a task
+  serves (``POST /api/serving/{task}``), score through it without naming a
+  model (``POST /api/serving/{task}/predict``, 409 while nothing is served),
+  read it back with the resolved version, resolve mode and append-only pin
+  history (``GET /api/serving/{task}``), list active pins
+  (``GET /api/serving``) and stop serving (``DELETE /api/serving/{task}``).
+  A ``version`` pin stays frozen across registry promotions; an ``alias`` pin
+  follows the pointer, so a promotion or rollback changes what is served.
+* The web UI **declares** the state instead of leaving it implicit: a
+  ``Serving <version> · <task>`` pill in the top bar on every page while a
+  model is served, and a **Serving** card on the Inference page to pin,
+  replace, stop and exercise the served endpoint.
+* The served path shares its prediction core with
+  ``POST /api/inference/{task}/predict`` (input projection, pre-flight
+  validation, monitoring record keyed to the answering model), so the two
+  surfaces cannot drift; both are documented in ``docs/inference.rst``.
+
+Data Preprocessing page
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* New **Data Preprocessing** page under “1. Data”: missing-data overview
+  (counts/percentages, complete rows, per-column detected and implied types,
+  numeric quantiles or top categories), a dataset preview with missing cells
+  marked, data-quality flags (duplicate rows/features, constant and all-missing
+  columns) and observed missingness patterns.
+* Materialized imputation: drop rows, mean, median, most frequent, constant,
+  KNN and iterative/MICE. A preview reports before/after missing counts, cells
+  imputed and distribution shift without writing. Saving creates a **new**
+  partition (source untouched), stores an ``imputation_history`` recipe and
+  registers the CSV for lineage; the target is never imputed, ignored columns
+  are refused, numeric-only methods validate dtypes, and an existing output name
+  answers 409.
+* Endpoints: ``GET /api/datasets/{task}/{partition}/preprocessing`` and
+  ``POST /api/datasets/{task}/impute``.
+* **Scientific EDA cards** on the same page: per-column distribution rails and
+  categorical bars with IQR outlier counts, exact target composition (class
+  counts, minority share, imbalance ratio, feasible stratified fold count) or
+  regression shape statistics, ranked target and feature associations with a
+  Pearson-only numeric heatmap plus a Spearman/Kendall table, and VIF /
+  condition-number collinearity diagnostics. The overview endpoint now forwards
+  ``column_profiles``, ``target_associations``, ``feature_associations``
+  (capped at ``association_limit``), ``rank_associations``,
+  ``multicollinearity`` and ``target_composition``; profile blocks are
+  descriptive and each card states its sampling scope.
+* **Tier-2 diagnostics** on the same page: data-quality flags (identifier and
+  high-cardinality columns, quasi-constant and near-duplicate features, leakage
+  hints, conflicting duplicate labels, IQR **and** MAD outlier counts),
+  missingness structure with Little's MCAR test (EM-estimated multivariate
+  normal, chi-square on missingness patterns, explicit refusal reasons), and a
+  type audit (numeric-looking text, mixed types, boolean/date-like text,
+  whitespace and case variants). New response blocks: ``quality_flags``,
+  ``missing_mechanism``, ``type_audit``; helpers live in ``api/eda.py``.
+* **Tier-3 statistics** on the same page: Anderson–Darling normality tests per
+  numeric column (tabulated critical values, verdict, caveat), Cohen's *d* and
+  Cliff's δ with percentile bootstrap intervals between the largest target
+  classes, IQR-scaled half-sample stability with the effective sample size, a new
+  ``GET .../partition-drift`` route (two-sample KS + PSI per numeric feature,
+  chi-square homogeneity + Cramér's V + total variation per categorical feature,
+  >50-level columns skipped), and ``GET .../eda-report`` returning a
+  self-contained Markdown report that the UI downloads as
+  ``eda-<task>-<partition>.md``. Formal tests stay out of ``dataset_profile``.
+* **Pre-flight checks before a run**: ``GET /api/datasets/{task}/preflight``
+  returns advisory warnings and hints (identifier columns still modeled,
+  conflicting duplicate labels, class imbalance, heavily missing columns, strong
+  skew, small complete-case sample, constants) with stable codes, named columns
+  and the thresholds used. The Experiments page renders them above the tabs and
+  **never blocks submission** (``blocking: false``).
+* **Notebook parity**: ``examples/notebooks/scientific_workflow.ipynb`` now
+  exports ``eda-formal-tests.csv``, ``eda-effect-sizes.csv``,
+  ``eda-stability.csv``, ``eda-quality-flags.csv`` and ``eda-report.md`` from
+  the same helpers the Data page uses, so the offline report and the UI cannot
+  drift apart.
+* **Tabbed Data Preprocessing page**: the twelve cards are grouped into
+  **Overview**, **Distributions**, **Relationships**, **Quality & missingness**,
+  **Stability & drift** and **Transform**. The active tab lives in the URL
+  (``?tab=quality``), so a view survives a reload and can be linked; only the
+  active tab's cards mount, so the drift query runs when its tab is opened.
+
+Categorical encoding, outlier clipping and duplicate removal
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Categorical encoding preview** (`GET .../encoding-preview`): fits the
+  fold-local model preprocessor on a bounded sample and reports the exact
+  encoded feature names, per-column kind/cardinality and the first encoded rows,
+  with explicit notes that vocabularies are learned inside each training fold.
+* **Outlier clipping / winsorizing** (`POST /api/datasets/{task}/clip`): IQR
+  fences, quantile winsorizing and z-score clipping with preview-before-save,
+  per-column bounds/tail counts/share and before/after moments; saves a new
+  partition with ``clipping_history`` lineage.
+* **Duplicate rows** (`GET .../duplicates`, `POST /api/datasets/{task}/deduplicate`):
+  exact feature-duplicate counts, conflicting-label groups, and warnings about
+  sample change, target-balance shift, numeric mean shifts and cross-validation
+  leakage before removal; preview or save a deduplicated partition with
+  ``deduplication_history`` lineage.
+* Fixed a tracker lifecycle bug where garbage-collected trackers closed the
+  process-wide Peewee database mid-request (``Cannot operate on a closed database``).
+* **Experiment Design** now explains its purpose and workflow in-page and can
+  seed design variables from the selected task's numeric feature ranges
+  (target/ignored/constant columns excluded, observed min/max imported, editable
+  bounds). Docs contrast DoE with model search and state the observed-range
+  caveat.
+* **Diagnostic curves** now slice the preferred partition by the **bundle's own
+  schema** and split it deterministically, instead of feeding the tracker's
+  current feature list to ``split_train``. Fixes a 500
+  (``ArrayAsFrame expected 13 feature column(s); got shape (1, 9)``) after
+  dataset columns were ignored post-training.
+
+Per-user data reset
+~~~~~~~~~~~~~~~~~~~
+
+* ``POST /api/settings/reset`` erases every task and research project the caller
+  owns, with all derivative artifacts: datasets, mltrace databases, bundles,
+  registry versions and index entries, predictions, monitoring records,
+  checkpoints, job records and per-job logs. Accounts, sessions and API keys are
+  kept.
+* Ownership is resolved from ``auth/acl.db``: only explicit ``owner`` grants are
+  removed, unowned legacy material is untouched, and resources shared with other
+  users are skipped unless ``include_shared`` is set. A live job on a scoped task
+  answers 409. In no-auth mode the single anonymous user owns everything, so the
+  reset wipes the local workspace.
+* The request requires a typed confirmation (``reset <username>`` or
+  ``reset everything``), records one ``account.reset`` audit event with counts,
+  and is exposed as a **Danger zone** card on Settings with a result summary.
+
+Synthetic generation handles text-binary columns
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* A two-value **string** column (``Gender`` = Female/Male) was detected as
+  ``binary`` and defaulted to SynthData's numeric ``bin`` type, which failed with
+  ``'<' not supported between instances of 'str' and 'float'``. String binary
+  columns now default to ``cat`` (backend and UI inference alike), the UI keeps
+  no stale per-column types across tasks, and an explicit ``bin``/``int``/``real``
+  override on a text column answers 400 with an actionable message instead of
+  crashing generation. Overrides for columns excluded by the dataset are ignored.
+
+Ignored dataset columns
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* The Datasets page type selectors (**Detected / selected type** during upload and
+  **Column generation types** in the Synthetic data card) gained an **ignore**
+  option. Ignoring is a dataset-level, reversible choice stored in the task
+  metadata: the column stays in the stored CSV, but every modeling path drops it.
+* ``PUT /api/datasets/{task}/ignored-columns`` replaces the list; registration
+  accepts an ``ignored_columns`` form field, and dataset metadata returns
+  ``ignored_columns`` plus ``effective_feature_count``. Unknown columns and the
+  target answer 400.
+* Enforcement is centralised in ``api/columns.py`` and applied by training
+  (`load_partition`), sensitivity/correlation analysis, dataset profiles, nested
+  CV, diagnostic curves, monitoring drift, synthetic generation and synthesis
+  facts. ``mltrack.nested_cv_evaluation`` accepts ``exclude_columns`` for the
+  nested-CV path. Stored weights for ignored features are filtered from the
+  heatmap and consensus ranking.
+
+Human names for jobs and model versions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Every job record now carries a ``display_name``: the user's ``label`` when one
+  was given, otherwise ``<kind> · <task> · <local date time>``. Experiment and
+  pipeline-optimization submissions accept an optional ``label``; the same name
+  is stored in the produced bundle's metadata and returned as
+  ``display_name`` in the submit response. ``PATCH /api/jobs/{id}`` renames an
+  existing job (or clears the label with ``null``) and records
+  ``aliased_at``/``aliased_by``; ``job_id`` stays the canonical identity.
+* ``ModelRegistry`` gained user-chosen named aliases, separate from the
+  lifecycle pointers: ``set_named_alias`` / ``named_aliases`` /
+  ``resolve_version`` / ``delete_named_alias``, backed by
+  ``GET|POST|DELETE /api/registry/{task}/aliases``. Aliases resolve in
+  ``load``/``load_version``, registry promotion and the inference endpoints
+  (``model_version`` falls back to the registry when no stored bundle file
+  matches). Names are validated lowercase slugs that cannot collide with
+  lifecycle states, and every set/delete is audited.
+* The web UI renders these names instead of truncated ids in the run banner,
+  the job tracker, the Jobs table, the Logs selectors, the Registry aliases
+  card, and the bundle detail heading.
+
+Pause, stop and resume jobs from the UI
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Nothing could stop a run once submitted: the job pool had no control path and
+  the searches had no cancellation hook. ``AML`` and ``SurrogateRandomCV`` now
+  take a ``stop_check`` callable and raise the new ``SearchStopped`` between
+  candidate evaluations; it is deliberately not a ``ValueError``, which the
+  optimizer already treats as a failed candidate.
+* ``POST /api/jobs/{id}/stop`` with ``pause`` or ``cancel``. Pausing keeps the
+  checkpoint and marks the job ``paused``; cancelling marks it ``cancelled``.
+  Requests are recorded on the record, are honoured for jobs still waiting in
+  the queue, and are rejected (409) for jobs this process does not own.
+* ``POST /api/jobs/{id}/resume`` now accepts ``paused`` and ``interrupted`` in
+  addition to ``failed``, and covers ``optimize_pipeline`` as well as
+  ``experiment``: pipeline jobs now save a re-submittable request, so both kinds
+  resume from the same checkpoint. The new job id is returned; the original
+  record stays as history.
+* The UI gained **Pause** / **Stop** while a job runs and **Resume** once it can
+  be resumed, on the job card, the Jobs table and the Experiments tracker.
+
+Job liveness is no longer inferred from the JSON record
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* A crashed API process left jobs displayed as ``running`` forever. The job
+  manager now keeps an in-memory registry of the jobs this process actually
+  owns: ``/api/jobs/active`` returns only live ids, ``GET /api/jobs/{id}`` and
+  the WebSocket stream rewrite a stale ``queued``/``running`` record to
+  ``interrupted``, and start-up reconciliation marks every leftover record
+  ``interrupted`` with an explanatory error.
+* Each live job refreshes ``heartbeat_at`` every 10 s; the tracker warns when a
+  job is still registered but has not reported for 30 s, which covers a hung
+  worker rather than a dead process.
+* New statuses ``paused`` / ``cancelled`` / ``interrupted`` are understood by the
+  Jobs filters, counts and badges.
+* The top-bar badge now polls in background tabs
+  (``refetchIntervalInBackground``); React Query otherwise pauses the interval
+  while the tab is hidden and a finished job keeps its "running" pill.
+
+Compute budget for background jobs
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The job pool and the search's fold pool multiplied into unbounded
+  parallelism: a hard-coded `ThreadPoolExecutor(max_workers=4)` combined with
+  `AML(n_jobs=-1)` could ask for `4 x cpu_count` workers, plus one BLAS thread
+  pool per job thread. New `api/compute.py` owns an explicit budget —
+  `job_workers`, `job_threads` (the *total* joblib pool, shared by all jobs),
+  `blas_threads`, `dask_workers`, `dask_threads` — with two enforced invariants:
+  `job_workers*blas_threads + job_threads <= cores` and
+  `dask_workers*dask_threads <= cores`. `cores` is
+  `sched_getaffinity`-derived, so cpusets are respected.
+* The budget is server state: `GET /api/settings/compute` reports it (with the
+  arithmetic), `PUT /api/settings/compute` persists it to
+  `<API home>/settings/compute.json` and rejects anything that does not fit with
+  422. A *Settings → Compute budget* card edits it; the card is admin-only once
+  authentication is enforced.
+* Enforcement is not advisory: the executor is built/resized from
+  `job_workers`; every job start exports `OMP_NUM_THREADS`/`MKL_NUM_THREADS`/…
+  at `blas_threads` (joblib honours a parent-set value, so loky workers inherit
+  it) and applies a process-wide `threadpoolctl` limit; `fit_experiment_bundle`
+  and `fit_pipeline_bundle` pass `n_jobs=job_threads` to `AML`, covering the
+  fold pool, `cross_val_score` and stacking. Verified against a live run:
+  `job_threads=2` produced at most two loky workers, each with
+  `OMP_NUM_THREADS=1`.
+* Each job record stores the budget it ran under (`compute`) and the values it
+  applied (`compute_applied`); bundles record `n_jobs` in their reproducibility
+  block. Settings apply to subsequently submitted jobs.
+* `dask[distributed]` is now installed by `requirements.txt` (and exposed as the
+  `dask` extra in `setup.py`), so the Dask backend works in the shipped image.
+  A Dask job now builds its `LocalCluster` with `dask_workers` /
+  `dask_threads` — previously `Client()` created one worker per core — and
+  closes it on completion.
+* Defaults preserve the previous capacity without oversubscribing:
+  `cores - job_workers` fold workers (28 on a 32-core host), one BLAS thread per
+  job slot, four job slots (clamped on small hosts).
+
+Live job activity in the UI
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* A running experiment looked inert: the page showed no spinner, the tracker
+  card sat below the fold, and the only cue was a static ``running`` badge.
+  ``JobTracker`` now pulses, counts elapsed time, tails the job's captured
+  entries and lists the trials being evaluated (index, phase, score and
+  hyperparameters). Progress is an indeterminate stripe — the search does not
+  know its trial count — with a determinate bar available when a caller passes
+  ``expectedTrials``.
+* The *Experiments* page shows a banner above the fold while its job is queued
+  or running (state, elapsed time, links to the tracker and logs), scrolls the
+  tracker into view on submission, and disables both run buttons until the job
+  finishes so a double click cannot start a second search.
+* The top bar carries an always-on **N jobs active** badge, on every page, that
+  links to *Jobs*; the browser tab title is prefixed while work is in flight.
+* New ``GET /api/jobs/active`` returns summaries only (no ``result``, no
+  ``resume`` payload) for queued/running jobs, so the badge's four-second poll
+  stays small even when finished experiments carry large evaluation histories.
+* Per-trial log entries now expose structured ``score`` and ``params`` fields
+  (the message text is unchanged), which is what the activity feed renders.
+* The *Advanced* run settings labelled ``length`` as "Length (trials)"; in
+  ``AML`` it caps the number of components in a generated pipeline. The control
+  is now "Max pipeline length" with a hint, and docs match.
+
+Experiments on mixed-type partitions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Starting an experiment on a dataset with a free-text column (a surname, an
+  address) failed with ``All candidate pipelines failed to produce a finite CV
+  score: ValueError: could not convert string to float: 'MacDonald'``. The API
+  handed ``AML`` an object array (``X.values``), and AML installs its
+  fold-local preprocessor only for a ``DataFrame``, so every candidate met raw
+  strings. ``fit_experiment_bundle`` and ``optimize_pipeline`` now pass the
+  frame, keeping the encoder inside each CV fold.
+* The *Advanced* tab (a caller-supplied search space) failed the same way: AML
+  installs an encoder only when ``cat_cols`` names the categorical columns.
+  ``fit_experiment_bundle`` and ``optimize_pipeline`` now detect them (still a
+  pipeline step, so fold-local) and record the choice as
+  ``configuration.cat_cols``.
+* Nested CV failed on any bundle trained from a preset
+  (``ArrayAsFrame expected 13 feature column(s); got shape ()``): the routine
+  wrapped its own fold-local preprocessor around an estimator that already
+  carried one, so the candidate was fitted on an encoded matrix. It now checks
+  ``DataProcess.preprocesses_frames`` and leaves such estimators alone — the
+  bundle's own preprocessor is still fitted per fold, so nothing leaks.
+* Reproducibility records named every pipeline step ``builtins.tuple``, because
+  ``Pipeline.steps`` yields ``(name, estimator)`` pairs and the recorder
+  stringified the pair. Experiments now record the step classes they actually
+  fitted.
+* New ``SKSurrogate.DataProcess.ArrayAsFrame`` and ``frame_tolerant``: a
+  DataFrame-first pipeline is prefixed with an adapter so partial dependence,
+  accumulated local effects, learning curves and legacy trackers can still
+  predict from positional arrays. ``_new_bundle`` applies it, so bundles accept
+  frames and arrays alike (both verified against the served model).
+
+Experiment design: suggest-next validation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* "Suggest the next experiment" answered HTTP 422 when the pasted results held a
+  single run (``samples``/``values`` need two observations) and could also send
+  ``null`` bounds when a numeric field was mid-edit, whose error surfaced as a
+  raw pydantic detail array. The page now validates the population of runs,
+  variable names and bounds itself and names the offending variable; the API
+  contract (422 below two observations, 400 for count/arity/bound problems) is
+  pinned in ``tests/test_design_endpoints.py``.
+* The web client renders FastAPI validation errors as ``field: message`` pairs
+  instead of a JSON dump, which applies to every endpoint, not just this one.
+
+Stored weightings and the consensus ranking
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* A completed sensitivity run now merges its weights into the task's tracking
+  database under a method column (``sobol`` / ``morris`` / ``delta_mmnt``), so
+  ``mltrack.RetrieveWeights``, ``mltrack.heatmap`` and ``mltrack.TopFeatures``
+  see it and the **Consensus top features** card actually updates. The job
+  result reports ``weights_column`` and ``weights_stored``; storing is auxiliary
+  and never invalidates a completed analysis.
+* New ``mltrack.PersistWeights`` (alias ``persist_weights``) merges externally
+  computed weights into the ``weights`` table — the API path needs it because
+  ``FeatureWeights`` reads an unpartitioned ``data`` table that registered tasks
+  do not have.
+* Registration seeds the table with feature-target Pearson and feature variance
+  for the numeric columns (reported as ``weights_stored``), and
+  ``POST /api/sensitivity/{task}/base-weights`` back-fills tasks registered
+  before that existed. The consensus card offers that action when it finds no
+  stored weighting.
+* The consensus card refetches when a run stores weights, and names the columns
+  it ranked over.
+
+Sensitivity analysis on mixed-type datasets
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Sensitivity runs (Sobol, Morris, delta) and correlation pruning no longer
+  crash on registered partitions with text columns — a churn CSV produced
+  ``ValueError: could not convert string to float: 'Hargrave'`` from the SVR
+  inside ``SensAprx``, and the equivalent numpy error from ``corrcoef`` for
+  pruning. ``api.features.numeric_train_xy`` projects a partition onto its
+  numeric columns, drops rows with non-finite values (reporting
+  ``rows_dropped``), and the results list the excluded columns; a partition with
+  no numeric feature answers HTTP 400 instead of failing as a background job.
+* ``SensAprx`` resolves the delta index across SALib versions: 1.6 replaced
+  ``delta`` with ``delta_balanced`` / ``delta_raw`` / ``delta_step``, so
+  docker-built containers raised ``KeyError: 'delta'`` while a 1.5 dev venv
+  worked. The estimator used is reported as ``estimator`` in the job result.
+* The Feature Analysis page labels the ranking as numeric-only, names the
+  excluded columns, and shows the same note under correlation pruning.
+
+Users, sessions and sharing
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **User accounts** (``api/auth.py``): username + password with scrypt digests,
+  server-side sessions in an ``HttpOnly; SameSite=Strict`` cookie (only token
+  digests are stored, so sessions are revocable), and per-user API keys shown
+  once at creation. Login is throttled per username and client address, unknown
+  usernames cost the same scrypt work, and failures never log the supplied
+  secret.
+* **Ownership and sharing** (``api/acl.py``): the task is the ACL unit with
+  ordered roles ``viewer`` < ``editor`` < ``owner``; projects own themselves.
+  Every task-scoped router enforces access through one router-level dependency,
+  list endpoints (``/api/tasks``, ``/api/projects``, ``/api/jobs``) are filtered,
+  strangers get 404 rather than 403, and ``POST /api/access/adopt`` lets an
+  administrator take ownership of pre-auth material.
+* **Endpoints**: ``/api/auth/{status,login,logout,me,password,keys,users}`` and
+  ``/api/access/{tasks,projects,adopt}``.
+* **First administrator**: ``python -m api.auth_cli create-admin`` or the
+  idempotent ``SKSURROGATE_ADMIN_USERNAME``/``SKSURROGATE_ADMIN_PASSWORD``
+  bootstrap; the Compose prod service forwards both plus
+  ``SKSURROGATE_SESSION_TTL`` and ``SKSURROGATE_SESSION_COOKIE_SECURE``.
+* **Web UI**: login gate above every route, an identity badge with sign-out in
+  the top bar, and Settings cards for account password, API keys, sharing of the
+  selected task (with adoption for admins) and user management.
+* **Compatibility**: with neither ``SKSURROGATE_API_KEY`` nor
+  ``SKSURROGATE_REQUIRE_AUTH`` the API stays open and single-user; the shared key
+  keeps working as an admin-equivalent break-glass principal.
+* **Audit trail** (``api/audit.py``): identity events (logins including denied and
+  throttled attempts, logouts, password changes, API-key creation/revocation,
+  account changes) are appended to ``logs/auth.jsonl`` and exposed to
+  administrators at ``GET /api/auth/audit``. Entries carry the key prefix and
+  username, never a password, session token or full key.
+* **Docs**: new :doc:`auth-and-sharing` chapter (toctree + control-plane
+  cross-link) and a Docker/readme paragraph on the new variables.
+
 API authentication
 ~~~~~~~~~~~~~~~~~~
 

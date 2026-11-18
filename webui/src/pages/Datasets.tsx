@@ -16,7 +16,9 @@ import {
   previewDataset,
   registerDataset,
   setDatasetCV,
+  setIgnoredColumns,
   validateDataset,
+  ApiError,
 } from "../api/client";
 import type {
   CVParamDef,
@@ -27,7 +29,7 @@ import type {
   RegisterDatasetResponse,
   SensitiveScanReport,
 } from "../api/client";
-import { Card, ErrorNote, Loading, Table, Badge, fmtNum } from "../components/ui";
+import { Card, EmptyState, ErrorNote, Loading, Table, Badge, fmtNum } from "../components/ui";
 import { useTask } from "../lib/task-context";
 
 const DATASET_TYPES = [
@@ -41,6 +43,9 @@ const DATASET_TYPES = [
   "label",
   "obsolete",
 ];
+
+/** Sentinel type: the column is stored but excluded from every modeling path. */
+const IGNORE_TYPE = "ignore";
 
 /** Human-readable label for a stored CV spec, e.g. "StratifiedKFold(n_splits=5)". */
 function describeCv(spec: CVSpec): string {
@@ -70,20 +75,41 @@ export default function DatasetsPage() {
   const [partition, setPartition] = useState("train");
   const [file, setFile] = useState<File | null>(null);
   const [typeOverrides, setTypeOverrides] = useState<Record<string, string>>({});
+  const [ignoredUpload, setIgnoredUpload] = useState<string[]>([]);
   const [binarizeLabel, setBinarizeLabel] = useState(false);
   const [validationPartition, setValidationPartition] = useState("train");
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // Bumped after a successful registration so every task-keyed query gets a NEW
+  // cache entry and therefore a fresh fetch. `invalidateQueries` alone was not
+  // enough: these queries are created when the task is first selected (before
+  // any dataset exists), answer 404, and — after React StrictMode's
+  // mount/unmount/mount cycle — end up pending with no observer that
+  // invalidation could re-trigger. Measured: no request followed the
+  // invalidation, so the metadata card stayed blank and the CV/target cards
+  // kept showing their pre-registration state.
+  const [dataRevision, setDataRevision] = useState(0);
+
   const metaQ = useQuery({
-    queryKey: ["dataset-meta", task],
-    queryFn: () => getDatasetMetadata(task),
+    queryKey: ["dataset-meta", task, dataRevision],
+    queryFn: async () => {
+      try {
+        return await getDatasetMetadata(task);
+      } catch (err) {
+        // 404 means "this task has no registered dataset yet" — a state, not a
+        // failure. Rendering it as an error made a fresh task look broken.
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
+      }
+    },
     enabled: !!task,
+    retry: false,
   });
 
   const [previewPartition, setPreviewPartition] = useState<string | null>(null);
   const previewQ = useQuery<DatasetPreview>({
-    queryKey: ["dataset-preview", task, previewPartition],
+    queryKey: ["dataset-preview", task, previewPartition, dataRevision],
     queryFn: () => previewDataset(task, previewPartition!),
     enabled: !!task && !!previewPartition,
   });
@@ -92,6 +118,7 @@ export default function DatasetsPage() {
     mutationFn: (upload: File) => inspectDataset(task, upload),
     onSuccess: (data: DatasetInspectResponse) => {
       setTypeOverrides(data.deduced_types);
+      setIgnoredUpload([]);
       setTarget(data.target_candidates[0] ?? data.columns[0] ?? "");
       setBinarizeLabel(false);
     },
@@ -122,12 +149,24 @@ export default function DatasetsPage() {
   const registerMut = useMutation({
     mutationFn: (vars: { target: string; partition: string; file: File }) =>
       registerDataset(task, vars.target, vars.partition, vars.file, {
-        type_overrides: typeOverrides,
+        type_overrides: Object.fromEntries(
+          Object.entries(typeOverrides).filter(([column]) => !ignoredUpload.includes(column)),
+        ),
+        ignored_columns: ignoredUpload,
         binarize_label: binarizeLabel,
       }),
     onSuccess: (registered) => {
+      // Every task-keyed query in this page must be invalidated, not just the
+      // metadata: the CV and preview cards mount as soon as a task is selected,
+      // so before the first registration they answer 404 ("No dataset
+      // registered for task ...") — and React Query keeps that cached error
+      // until the query is invalidated. Missing the CV key left a registered
+      // dataset showing a permanent 404 in the cross-validation card.
       qc.invalidateQueries({ queryKey: ["dataset-meta", task] });
       qc.invalidateQueries({ queryKey: ["target-stats", task] });
+      qc.invalidateQueries({ queryKey: ["dataset-cv", task] });
+      qc.invalidateQueries({ queryKey: ["dataset-preview", task] });
+      setDataRevision((revision) => revision + 1);
       if (projectId) {
         linkProjectPartitionMut.mutate({
           taskName: registered.task_name,
@@ -136,6 +175,7 @@ export default function DatasetsPage() {
       }
       setFile(null);
       setTypeOverrides({});
+      setIgnoredUpload([]);
       setBinarizeLabel(false);
       inspectMut.reset();
       validateMut.reset();
@@ -150,13 +190,26 @@ export default function DatasetsPage() {
     validateMut.reset();
     registerMut.reset();
     setTypeOverrides({});
+    setIgnoredUpload([]);
     setBinarizeLabel(false);
   };
 
+  // A 404 here is a *state*, not a failure: the task exists but has no dataset
+  // registered yet. Treating it as an error left the card either silent (a
+  // StrictMode double-mount cancels the first fetch, so the query can sit in
+  // "pending, not fetching") or stuck on a stale error after registering.
   const cvQ = useQuery({
-    queryKey: ["dataset-cv", task],
-    queryFn: () => getDatasetCV(task),
+    queryKey: ["dataset-cv", task, dataRevision],
+    queryFn: async () => {
+      try {
+        return await getDatasetCV(task);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
+      }
+    },
     enabled: !!task,
+    retry: false,
   });
   const [cvChoice, setCvChoice] = useState<string>("");
   // Editable constructor parameters of the selected splitter (raw input strings).
@@ -164,7 +217,7 @@ export default function DatasetsPage() {
   const setCvMut = useMutation({
     mutationFn: (vars: { spec: CVSpec; params?: Record<string, unknown> }) =>
       setDatasetCV(task, vars.spec, vars.params),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["dataset-cv", task] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["dataset-cv", task, dataRevision] }),
   });
 
   const cvOptions = cvQ.data?.options ?? [];
@@ -322,25 +375,52 @@ export default function DatasetsPage() {
                 const scan = inspected.sensitive_scan;
                 const isPii = scan?.pii_columns.includes(column) ?? false;
                 const isSensitive = scan?.sensitive_columns.includes(column) ?? false;
+                const isIgnored = ignoredUpload.includes(column);
                 return [
                   <td key="name" className="mono">{column}</td>,
                   <td key="type">
                     <select
                       aria-label={`Type for ${column}`}
-                      value={typeOverrides[column] ?? inspected.deduced_types[column] ?? "other"}
-                      onChange={(e) => setTypeOverrides((current) => ({ ...current, [column]: e.target.value }))}
+                      value={
+                        isIgnored
+                          ? IGNORE_TYPE
+                          : typeOverrides[column] ?? inspected.deduced_types[column] ?? "other"
+                      }
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        if (value === IGNORE_TYPE) {
+                          setIgnoredUpload((current) =>
+                            current.includes(column) ? current : [...current, column],
+                          );
+                          setTypeOverrides((current) => {
+                            const next = { ...current };
+                            delete next[column];
+                            return next;
+                          });
+                          return;
+                        }
+                        setIgnoredUpload((current) => current.filter((name) => name !== column));
+                        setTypeOverrides((current) => ({ ...current, [column]: value }));
+                      }}
                     >
                       {DATASET_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+                      <option value={IGNORE_TYPE} disabled={column === target}>ignore (exclude from work)</option>
                     </select>
                   </td>,
                   <td key="flags">
+                    {isIgnored && <Badge tone="warn">ignored</Badge>}
                     {isPii && <Badge tone="warn">PII</Badge>}
                     {isSensitive && <Badge tone="warn">sensitive</Badge>}
-                    {!isPii && !isSensitive && <span className="muted">—</span>}
+                    {!isPii && !isSensitive && !isIgnored && <span className="muted">—</span>}
                   </td>,
                 ];
               }}
             />
+            <div className="hint" style={{ marginTop: 8 }}>
+              Columns marked <code>ignore</code> are stored with the partition but excluded from
+              experiments, sensitivity/correlation analysis, dataset profiles, synthetic data and
+              monitoring drift. The target column cannot be ignored.
+            </div>
 
             <div className="row" style={{ alignItems: "center", marginTop: 12 }}>
               <label className="checkbox-row">
@@ -400,6 +480,12 @@ export default function DatasetsPage() {
       >
         {cvQ.isLoading && task && <Loading />}
         {cvQ.isError && <ErrorNote error={cvQ.error} />}
+        {cvQ.data === null && (
+          <EmptyState
+            title="No dataset registered for this task yet"
+            hint="Register a partition above; the splitter options appear here as soon as the first partition is stored."
+          />
+        )}
         {cvQ.data && (
           <>
             <div className="row">
@@ -493,6 +579,12 @@ export default function DatasetsPage() {
       <Card title="Registered metadata" sub={metaQ.data?.dataset_fingerprint ?? undefined}>
         {metaQ.isLoading && task && <Loading />}
         {metaQ.isError && <ErrorNote error={metaQ.error} />}
+        {metaQ.data === null && (
+          <EmptyState
+            title="No dataset registered for this task yet"
+            hint="Upload a CSV above and commit it as a partition; the schema, fingerprint and partitions appear here."
+          />
+        )}
         {metaQ.data && (
           <>
             <dl className="kv">
@@ -501,7 +593,20 @@ export default function DatasetsPage() {
               <dt>Fingerprint</dt>
               <dd className="mono">{metaQ.data.dataset_fingerprint ?? "—"}</dd>
               <dt>Feature count</dt>
-              <dd>{fmtNum(metaQ.data.dataset_feature_count)}</dd>
+              <dd>
+                {fmtNum(metaQ.data.effective_feature_count ?? metaQ.data.dataset_feature_count)}
+                {(metaQ.data.ignored_columns ?? []).length > 0 && (
+                  <span className="muted">
+                    {" "}· {(metaQ.data.ignored_columns ?? []).length} ignored
+                  </span>
+                )}
+              </dd>
+              {(metaQ.data.ignored_columns ?? []).length > 0 && (
+                <>
+                  <dt>Ignored columns</dt>
+                  <dd className="mono">{(metaQ.data.ignored_columns ?? []).join(", ")}</dd>
+                </>
+              )}
             </dl>
 
             {partitions.length > 0 && (
@@ -589,8 +694,17 @@ export default function DatasetsPage() {
         )}
       </Card>
 
-      <SyntheticDataCard task={task} metadata={metaQ.data} partitions={partitions} />
-      <TargetStatsCard task={task} enabled={partitions.length > 0} />
+      <SyntheticDataCard
+        task={task}
+        metadata={metaQ.data}
+        partitions={partitions}
+        onIgnoredChange={() => {
+          qc.invalidateQueries({ queryKey: ["dataset-meta", task] });
+          qc.invalidateQueries({ queryKey: ["features"] });
+          setDataRevision((revision) => revision + 1);
+        }}
+      />
+      <TargetStatsCard task={task} enabled={partitions.length > 0} revision={dataRevision} />
     </div>
   );
 }
@@ -599,20 +713,29 @@ function SyntheticDataCard({
   task,
   metadata,
   partitions,
+  onIgnoredChange,
 }: {
   task: string;
-  metadata?: DatasetMetadata;
+  metadata?: DatasetMetadata | null;
   partitions: string[];
+  onIgnoredChange: () => void;
 }) {
   const qc = useQueryClient();
   const columns = metadata?.dataset_columns ?? [];
+  const ignored = metadata?.ignored_columns ?? [];
   const [num, setNum] = useState("100");
   const [partition, setPartition] = useState("train");
   const [distribution, setDistribution] = useState<"marginal" | "joint">("marginal");
   const [types, setTypes] = useState<Record<string, string>>({});
+  const typesTaskRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!metadata) return;
+    // A different task keeps no stale per-column choices: the same column name
+    // can be numeric here and text there, and a stale "int" override was a
+    // real failure source for text-binary columns.
+    const sameTask = typesTaskRef.current === task;
+    typesTaskRef.current = task;
     const inferred = Object.fromEntries(columns.map((column) => {
       const schema = metadata.dataset_schema?.[column];
       const dtype = schema && typeof schema === "object" && "dtype" in schema
@@ -620,11 +743,15 @@ function SyntheticDataCard({
         ? schema.dtype.toLowerCase()
         : "";
       const deduced = metadata.dataset_deduced_types?.[column];
+      // SynthData's bin/int/real types compare values numerically, so a text
+      // column that merely has two distinct values (Gender = Female/Male) must
+      // default to "cat", not "bin".
+      const numericDtype = /int|float|double|decimal|bool/.test(dtype);
       const deducedType: Record<string, string> = {
         float64: "real",
         int64: "int",
         datetime64: "date",
-        binary: "bin",
+        binary: numericDtype ? "bin" : "cat",
         label: "cat",
         text: "cat",
         categorical: "cat",
@@ -635,8 +762,8 @@ function SyntheticDataCard({
         ?? (dtype.includes("datetime") ? "date" : /int/.test(dtype) ? "int" : /float|double|decimal/.test(dtype) ? "real" : "cat");
       return [column, type];
     }));
-    setTypes((current) => ({ ...inferred, ...current }));
-  }, [metadata, columns]);
+    setTypes((current) => (sameTask ? { ...inferred, ...current } : inferred));
+  }, [metadata, columns, task]);
 
   const filesQ = useQuery({
     queryKey: ["synthetic-files", task],
@@ -649,9 +776,17 @@ function SyntheticDataCard({
       num: Number(num),
       partition,
       distribution_type: distribution,
-      type_overrides: types,
+      // Ignored columns are dropped server-side from the source frame; never
+      // send a generation type for one (it would be an unknown column).
+      type_overrides: Object.fromEntries(
+        Object.entries(types).filter(([column]) => !ignored.includes(column)),
+      ),
     }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["synthetic-files", task] }),
+  });
+  const ignoreMut = useMutation({
+    mutationFn: (nextIgnored: string[]) => setIgnoredColumns(task, nextIgnored),
+    onSuccess: () => onIgnoredChange(),
   });
   const downloadMut = useMutation({ mutationFn: (filename: string) => downloadSynthetic(task, filename) });
   const preview = generateMut.data?.preview ?? [];
@@ -697,21 +832,44 @@ function SyntheticDataCard({
                 columns={["Column", "Type"]}
                 rows={columns}
                 keyOf={(column) => column}
-                render={(column) => [
-                  <td key="name" className="mono">{column}</td>,
-                  <td key="type">
-                    <select
-                      aria-label={`Synthetic type for ${column}`}
-                      value={types[column] ?? "cat"}
-                      onChange={(e) => setTypes((current) => ({ ...current, [column]: e.target.value }))}
-                    >
-                      {["bin", "int", "real", "cat", "date"].map((type) => (
-                        <option key={type} value={type}>{type}</option>
-                      ))}
-                    </select>
-                  </td>,
-                ]}
+                render={(column) => {
+                  const isIgnored = ignored.includes(column);
+                  return [
+                    <td key="name" className="mono">
+                      {isIgnored ? <span className="muted">{column} (ignored)</span> : column}
+                    </td>,
+                    <td key="type">
+                      <select
+                        aria-label={`Synthetic type for ${column}`}
+                        value={isIgnored ? IGNORE_TYPE : types[column] ?? "cat"}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          if (value === IGNORE_TYPE) {
+                            ignoreMut.mutate([...ignored, column]);
+                            return;
+                          }
+                          if (isIgnored) {
+                            ignoreMut.mutate(ignored.filter((name) => name !== column));
+                          }
+                          setTypes((current) => ({ ...current, [column]: value }));
+                        }}
+                      >
+                        {["bin", "int", "real", "cat", "date"].map((type) => (
+                          <option key={type} value={type}>{type}</option>
+                        ))}
+                        <option value={IGNORE_TYPE}>ignore (exclude from experiments)</option>
+                      </select>
+                    </td>,
+                  ];
+                }}
               />
+              <div className="hint" style={{ marginTop: 8 }}>
+                <code>ignore</code> is a dataset-level choice: the column stays in the stored
+                partition (so it can be restored at any time) but is dropped from experiments,
+                pipeline optimization, baselines, sensitivity/correlation analysis, profiles,
+                synthetic data and monitoring drift. Choose a real type to re-enable it.
+              </div>
+              {ignoreMut.isError && <ErrorNote error={ignoreMut.error} />}
             </>
           )}
 
@@ -797,10 +955,17 @@ function SensitiveScanNote({ scan }: { scan?: SensitiveScanReport }) {
 }
 
 /** Descriptive statistics of the registered target column. */
-function TargetStatsCard({ task, enabled }: { task: string; enabled: boolean }) {
+function TargetStatsCard({ task, enabled, revision }: { task: string; enabled: boolean; revision: number }) {
   const statsQ = useQuery({
-    queryKey: ["target-stats", task],
-    queryFn: () => getTargetStats(task),
+    queryKey: ["target-stats", task, revision],
+    queryFn: async () => {
+      try {
+        return await getTargetStats(task);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
+      }
+    },
     enabled: !!task && enabled,
     retry: false,
   });

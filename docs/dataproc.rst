@@ -34,6 +34,56 @@ columns at fit and prediction time. ``DataPreprocess`` remains available for
 eager, whole-frame transformations and should not be run before a held-out
 split when its fitted state could see validation or test rows.
 
+Bundles trained from a preset are array-tolerant
+------------------------------------------------
+
+An ``AML`` preset search only installs ``FoldLocalDataPreprocessor`` when it is
+given a ``DataFrame`` — that is what makes a mixed-type partition searchable
+without leaking encodings across folds. A pipeline that starts with it then
+accepts *only* frames, but several consumers legitimately hold positional
+arrays: partial dependence and accumulated local effects vary one column of a
+value matrix, and learning-curve helpers predict from ``X.to_numpy()``.
+
+``frame_tolerant(estimator, columns=None)`` (in ``SKSurrogate.DataProcess``)
+therefore prefixes such a pipeline with ``ArrayAsFrame``, which labels an array
+with the training column names in order and passes a DataFrame through
+untouched. The API applies it in ``_new_bundle``, so every bundle it writes
+keeps both contracts:
+
+.. code:: python
+
+    from SKSurrogate import load_bundle
+
+    bundle = load_bundle(path)
+    bundle.model.predict(frame)          # serving path: a frame
+    bundle.model.predict(frame.to_numpy())  # explanations: positional rows
+
+    [name for name, _ in bundle.model.steps]
+    # ['as_frame', 'preprocess', 'stp_0']
+
+Caller-supplied search spaces and ``cat_cols``
+----------------------------------------------
+
+A preset search encodes mixed-type data by itself. A search space supplied by
+the caller does not: ``AML`` only installs an encoder when it is told which
+columns are categorical, so a config-based run on a dataset with a text column
+used to fail with ``could not convert string to float``. ``fit_experiment_bundle``
+and ``optimize_pipeline`` therefore detect the non-numeric feature columns and
+pass them as ``cat_cols``; that encoder is a pipeline step, so it is still fitted
+inside each cross-validation fold. The choice is recorded in the bundle's
+reproducibility metadata:
+
+.. code:: python
+
+    bundle.metadata["reproducibility"]["configuration"]["cat_cols"]
+    # ['surname']
+    [name for name, _ in bundle.model.steps]
+    # ['categorical_encoder', 'stp_0']
+
+Note that a free-text identifier (a surname, a customer id) becomes one dummy
+column per distinct value. Drop such columns from a search rather than encoding
+them, and prefer the ``StringDtype`` TF-IDF path for genuinely free text.
+
 Currently, the DataProcess module identifies the following data types
 automatically:
 

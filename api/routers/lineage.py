@@ -5,15 +5,15 @@ routers (see docs/ui-plan.md section 3, "traceability rail") so the UI can
 render one breadcrumb per model version without stitching multiple calls.
 """
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from SKSurrogate import ModelRegistry, load_bundle
 
 from ..config import settings
 from ..safety import safe_segment
-from ..deps import bundle_summary, load_monitor_records, not_found, open_tracker
+from ..deps import bundle_summary, load_monitor_records, not_found, open_tracker, task_access
 
-router = APIRouter(prefix="/api/lineage", tags=["lineage"])
+router = APIRouter(prefix="/api/lineage", tags=["lineage"], dependencies=[Depends(task_access)])
 
 
 @router.get("/{task_name}/{model_version}")

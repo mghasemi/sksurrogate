@@ -10,6 +10,7 @@ from pathlib import Path
 import pandas as pd
 from fastapi import HTTPException, UploadFile
 
+from api import inference_service
 from api.config import settings
 from api.deps import open_tracker
 from api.routers import datasets as datasets_router
@@ -163,8 +164,8 @@ class TestPhase5Endpoints(unittest.TestCase):
             datasets_router.validate_dataset(TASK, file=None, partition="train")
         )
         self.assertTrue(result["valid"])
-        self.assertIsNone(inference_router._preflight_error(TASK, self.frame[["measurement", "category"]]))
-        error = inference_router._preflight_error(TASK, self.frame[["measurement"]])
+        self.assertIsNone(inference_service.preflight_error(TASK, self.frame[["measurement", "category"]]))
+        error = inference_service.preflight_error(TASK, self.frame[["measurement"]])
         self.assertIn("schema mismatch", error)
 
     def test_generate_list_and_download_synthetic_data(self):

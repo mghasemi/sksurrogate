@@ -10,8 +10,10 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.utils.validation import check_is_fitted
 
 from SKSurrogate import AML, Categorical, Integer, ModelBundle, Real
+from SKSurrogate.DataProcess import frame_tolerant
 
-from . import logs
+from . import compute, control, logs
+from .columns import drop_ignored, read_ignored_columns
 from .config import settings
 from .safety import safe_segment
 from .deps import bad_request, finite_or_none, not_found, open_tracker
@@ -247,10 +249,16 @@ def compute_learning_curve(
 
 
 def load_partition(task_name, partition):
+    """Load a stored partition without the dataset's ignored feature columns.
+
+    This is the single entry point for every training/analysis path, so declaring
+    a column "ignored" on the Datasets page removes it from experiments, pipeline
+    optimization, baselines, explanations and bundle previews alike.
+    """
     csv_path = settings.task_dataset_dir(task_name) / (safe_segment(partition, "partition") + ".csv")
     if not csv_path.exists():
         raise not_found("No dataset partition %r stored for task %r" % (partition, task_name))
-    return pd.read_csv(csv_path)
+    return drop_ignored(pd.read_csv(csv_path), read_ignored_columns(task_name))
 
 
 def get_registered_target(task_name):
@@ -415,18 +423,54 @@ def fit_baseline_bundle(
     return bundle
 
 
-def _new_bundle(model, metrics, task_name, schema, run_record, owner, run_id):
-    """Create a ``ModelBundle`` carrying the reproducibility record shared by all training entry points."""
+def _new_bundle(model, metrics, task_name, schema, run_record, owner, run_id, label=None):
+    """Create a ``ModelBundle`` carrying the reproducibility record shared by all training entry points.
+
+    Bundles are frame-tolerant: an experiment fitted on a mixed-type partition
+    starts with ``FoldLocalDataPreprocessor``, which only accepts DataFrames, so
+    the pipeline is prefixed with ``ArrayAsFrame`` to keep the pre-existing
+    contract that explanations, learning curves and legacy trackers can predict
+    from positional arrays.
+
+    ``label`` is the experiment's optional human name. It is stored in the
+    bundle metadata (the machine ``model_version`` stays the identity), so a
+    friendly name survives with the artifact and is visible in bundle summaries
+    even when the registry has no alias for the version.
+    """
+    metadata = {"reproducibility": run_record}
+    if label:
+        metadata["label"] = label
     return ModelBundle(
-        model,
+        frame_tolerant(model, columns=list(schema)),
         task_name=task_name,
         schema=schema,
         metrics=metrics,
-        metadata={"reproducibility": run_record},
+        metadata=metadata,
         dataset_fingerprint=run_record["data"]["train_fingerprint"],
         owner=owner,
         run_id=run_id,
     )
+
+
+def categorical_feature_columns(frame, feature_columns):
+    """Non-numeric feature columns of ``frame``.
+
+    A preset search installs ``FoldLocalDataPreprocessor`` and encodes whatever
+    it finds. An explicit search space does not: ``AML`` only adds an encoder
+    when ``cat_cols`` is given, so a config-based run on a dataset with a text
+    column failed with ``could not convert string to float``. These are the
+    columns to hand to ``cat_cols``.
+    """
+    return [column for column in feature_columns if not pd.api.types.is_numeric_dtype(frame[column])]
+
+
+def _transformation_entry(step):
+    """Describe one pipeline step for the reproducibility record.
+
+    ``Pipeline.steps`` yields ``(name, estimator)`` pairs; recording the pair
+    itself wrote ``builtins.tuple`` for every step of every experiment bundle.
+    """
+    return {"class": "%s.%s" % (step.__class__.__module__, step.__class__.__qualname__)}
 
 
 def build_search_param(spec):
@@ -555,6 +599,8 @@ def fit_experiment_bundle(
     preset=None,
     strategy="eoa",
     resume=False,
+    n_jobs=None,
+    label=None,
 ):
     """Run an AML/EOA pipeline search and wrap the best fitted pipeline into a ``ModelBundle``.
 
@@ -565,7 +611,12 @@ def fit_experiment_bundle(
     target, metadata = get_registered_target(task_name)
     frame = load_partition(task_name, train_partition)
     feature_columns = [column for column in frame.columns if column != target]
-    X = frame[feature_columns].values
+    # AML installs FoldLocalDataPreprocessor only when it is given a DataFrame,
+    # and that is what makes a mixed-type partition searchable: the encoder is
+    # then fitted inside every CV fold instead of leaking across the split.
+    # Handing it `X.values` (an object array) skipped preprocessing entirely and
+    # every candidate died on the first categorical value.
+    X = frame[feature_columns]
     y = frame[target].values
 
     if preset is not None and config:
@@ -583,13 +634,22 @@ def fit_experiment_bundle(
 
     conditional = build_conditional_map(config)
     forbidden_rules = build_forbidden_rules(forbidden)
+    # Fold-level parallelism is shared by every job in this process (joblib
+    # keeps one loky pool), so the width comes from the compute budget rather
+    # than AML's own n_jobs=-1 default. See api/compute.py.
+    n_jobs = int(compute.current()["job_threads"] if n_jobs is None else n_jobs)
 
+    # A preset encodes mixed-type data itself (fold-locally, see
+    # _new_bundle); an explicit search space needs the columns named or every
+    # candidate dies on the first string value.
+    cat_cols = categorical_feature_columns(frame, feature_columns) if preset is None else []
     cv_spec = get_stored_cv_spec(task_name)
     cv = get_stored_cv(task_name)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     aml = AML(
         config=parsed_config if preset is None else None,
         preset=preset,
+        cat_cols=cat_cols or None,
         resume=resume,
         length=length,
         scoring=scoring,
@@ -599,6 +659,9 @@ def fit_experiment_bundle(
         forbidden=forbidden_rules,
         conditional=conditional,
         callbacks=[logs.trial_callback],
+        n_jobs=n_jobs,
+        # Cooperative pause/cancel: checked between candidate evaluations.
+        stop_check=control.stop_requested,
         **stacking,
     )
     if surrogate_mode:
@@ -637,6 +700,7 @@ def fit_experiment_bundle(
         configuration={
             "kind": "automl_experiment",
             "preset": preset,
+            "cat_cols": cat_cols or None,
             "strategy": strategy,
             "search_space": requested_config,
             "length": length,
@@ -648,20 +712,16 @@ def fit_experiment_bundle(
             "forbidden": [list(list(rule.items())[0]) for rule in forbidden_rules],
             "conditional": conditional,
             "stacking": stacking or None,
+            "n_jobs": n_jobs,
         },
-        transformations=[
-            {
-                "class": "%s.%s" % (step.__class__.__module__, step.__class__.__qualname__)
-            }
-            for step in getattr(best_estimator, "steps", [])
-        ],
+        transformations=[_transformation_entry(step) for _, step in getattr(best_estimator, "steps", [])],
         evaluation_protocol={
             "scoring": scoring,
             "cv": cv_spec if cv_spec is not None else {"folds": 3, "source": "default"},
             "metric_scope": "cross-validation search score; reported train_score is refit training score",
         },
     )
-    bundle = _new_bundle(best_estimator, {"train_score": train_score}, task_name, schema, run_record, owner, run_id)
+    bundle = _new_bundle(best_estimator, {"train_score": train_score}, task_name, schema, run_record, owner, run_id, label=label)
     bundle.record_audit_event(
         "experiment",
         scoring=scoring,
@@ -724,6 +784,9 @@ def fit_pipeline_bundle(
     random_state=None,
     owner=None,
     run_id=None,
+    n_jobs=None,
+    resume=False,
+    label=None,
 ):
     """Optimize one explicit pipeline structure and wrap the result into a ``ModelBundle``.
 
@@ -739,7 +802,8 @@ def fit_pipeline_bundle(
     target, metadata = get_registered_target(task_name)
     frame = load_partition(task_name, train_partition)
     feature_columns = [column for column in frame.columns if column != target]
-    X = frame[feature_columns].values
+    # Same reason as fit_experiment_bundle: pass the frame, not `.values`.
+    X = frame[feature_columns]
     y = frame[target].values
 
     config, stacking = extract_stacking(config)
@@ -750,15 +814,20 @@ def fit_pipeline_bundle(
 
     cv_spec = get_stored_cv_spec(task_name)
     cv = get_stored_cv(task_name)
+    n_jobs = int(compute.current()["job_threads"] if n_jobs is None else n_jobs)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     aml = AML(
         config=parsed_config,
+        cat_cols=categorical_feature_columns(frame, feature_columns) or None,
         length=len(seq),
+        n_jobs=n_jobs,
+        resume=resume,
         scoring=scoring,
         check_point=str(checkpoint_dir) + "/",
         random_state=random_state,
         cv=cv if cv is not None else 3,
         callbacks=[logs.trial_callback],
+        stop_check=control.stop_requested,
         **stacking,
     )
     # optimize_pipeline requires at least one surrogate regressor; a plain
@@ -803,20 +872,16 @@ def fit_pipeline_bundle(
                 "iterations": 10,
             },
             "stacking": stacking or None,
+            "n_jobs": n_jobs,
         },
-        transformations=[
-            {
-                "class": "%s.%s" % (step.__class__.__module__, step.__class__.__qualname__)
-            }
-            for step in getattr(pipeline, "steps", [])
-        ],
+        transformations=[_transformation_entry(step) for _, step in getattr(pipeline, "steps", [])],
         evaluation_protocol={
             "scoring": scoring,
             "cv": cv_spec if cv_spec is not None else {"folds": 3, "source": "default"},
             "metric_scope": "cross-validation search score; reported train_score is refit training score",
         },
     )
-    bundle = _new_bundle(pipeline, {"train_score": train_score}, task_name, schema, run_record, owner, run_id)
+    bundle = _new_bundle(pipeline, {"train_score": train_score}, task_name, schema, run_record, owner, run_id, label=label)
     bundle.record_audit_event(
         "pipeline_optimization",
         pipeline=list(seq),

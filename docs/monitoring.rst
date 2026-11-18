@@ -150,6 +150,223 @@ registration metadata when available, and accepts the same row, feature, and
 category bounds. Its response includes the registered partition fingerprint.
 API limits are at most 10,000 rows, 100 features, and 50 categories.
 
+EDA in the Data page
+--------------------
+
+``GET /api/datasets/{task_name}/{partition}/preprocessing`` backs the Data
+Preprocessing page and forwards the profile blocks that describe a registered
+partition, so the page can show distributions, associations and collinearity
+without a second request:
+
+* ``column_profiles`` — the per-column profile entries (kind, missingness,
+  cardinality, constant/all-missing flags, quantile or frequency distribution);
+* ``target_associations`` / ``feature_associations`` — ranked association
+  entries, each naming its statistic (``pearson``, ``correlation_ratio``,
+  ``cramers_v``). Feature-pair rows are capped at ``association_limit`` (200)
+  and the response reports ``feature_associations_truncated`` rather than
+  silently dropping pairs;
+* ``rank_associations`` — Spearman and Kendall coefficients for numeric pairs;
+* ``multicollinearity`` — VIF rows and the standardized condition number;
+* ``target_composition`` — exact target counts over the **full** partition.
+  Classification targets report class counts, minority share, imbalance ratio
+  and ``recommended_folds`` (``min(5, smallest class)`` plus a
+  ``stratification_feasible`` flag). Numeric targets report counts and the
+  bounded profile's shape statistics; a two-valued numeric column carries
+  ``binary_like`` so a 0/1 float target is not presented as a regression target.
+
+.. figure:: images/preprocessing-eda.png
+   :alt: Data Preprocessing page with distribution rails, target analysis, association heatmap and collinearity table
+   :width: 100%
+
+   Distributions, target composition, associations and collinearity cards on
+   the Data Preprocessing page.
+
+The association heatmap deliberately contains numeric (Pearson) pairs only:
+correlation ratio and Cramer's V live on different scales and must not share one
+colour ramp. Every card states its scope — sampled rows versus the full
+partition — and none of these statistics is a causal claim or a hypothesis test.
+
+Data-quality flags, missingness mechanism and type audit
+--------------------------------------------------------
+
+The same overview response carries three further blocks, computed by
+``api/eda.py``:
+
+* ``quality_flags`` — review candidates with a severity, a column and a detail:
+
+  - ``identifier_like``: a text column whose distinct-value ratio is at least
+    0.95, a name that looks like an identifier (``id``, ``uuid``, ``key``,
+    ``row``, ``index``), a free-text name hint (``name``, ``surname``,
+    ``email``, …) combined with high cardinality, or a numeric column that is a
+    consecutive integer row index. Continuous measurements are **not** flagged.
+  - ``high_cardinality``: a text column whose distinct-value ratio is at least
+    0.5 — one-hot encoding it will be wide.
+  - ``quasi_constant``: one level covers at least 95 % of non-missing rows.
+  - ``near_duplicate_feature``: identical columns, columns equal after rounding,
+    or numeric pairs with ``|r| >= 0.999``.
+  - leakage hints: a target association with ``|value| >= 0.98``, a feature that
+    is constant inside a class, and class ranges that do not overlap.
+  - ``conflicting_labels``: duplicate feature rows that carry more than one
+    target value — the cross-validation leakage signal.
+
+  The block also reports IQR (1.5 × IQR fences) **and** MAD (3 × 1.4826 × MAD)
+  outlier counts per numeric column, plus the duplicate-row counts. Thresholds
+  are returned in ``thresholds``.
+
+* ``missing_mechanism`` — missing-versus-observed mean shifts (a MAR-style
+  signal across numeric columns), pairwise missingness-indicator correlations
+  (φ), and **Little's MCAR test**. The test fits multivariate-normal parameters
+  by EM and compares each missingness pattern's observed means with the ML
+  estimates:
+
+  .. math::
+
+      d^2 = \sum_j n_j (\bar y_j - \hat\mu_j)^\top \hat\Sigma_{jj}^{-1}
+            (\bar y_j - \hat\mu_j), \qquad
+            \mathrm{df} = \sum_j p_j - p .
+
+  It returns ``reason`` instead of a statistic when the test is not applicable
+  (no missing values, fewer than two columns with missingness, too few rows,
+  singular covariance, non-convergence). A rejection does not name a mechanism,
+  and with large ``n`` it rejects on trivial departures.
+
+* ``type_audit`` — numeric-looking text, mixed-type columns, boolean-like text,
+  date-like text, leading/trailing whitespace, and levels that differ only by
+  letter case. Each issue carries up to three example values.
+
+.. figure:: images/preprocessing-flags.png
+   :alt: Data-quality flags, missing-data mechanism and type-audit cards
+   :width: 100%
+
+   Identifier, near-duplicate and conflicting-label flags with IQR/MAD outlier
+   counts; Little's MCAR statistic with mean shifts; and dtype/value mismatches.
+
+All three blocks are bounded (5,000 sampled rows for flags, 2,000 for the
+missingness and type blocks, at most 12 numeric columns in the formal test) and
+none of them modifies the partition. The one formal test is labelled as such;
+everything else is a descriptive signal for review.
+
+Formal tests, effect sizes, partition drift and stability
+---------------------------------------------------------
+
+Three more blocks travel with the overview response and one route adds a
+cross-partition comparison:
+
+* ``formal_tests`` — Anderson–Darling normality test per numeric feature column.
+  The test reports the statistic and the **tabulated critical value nearest the
+  requested α** (about 0.75 at 5 %; SciPy's tabulated value varies slightly
+  with ``n``) plus the rejection verdict. A
+  p-value is intentionally not reported on this code path: SciPy's
+  ``method="interpolate"`` returns a value capped at the smallest tabulated
+  significance (0.15), which reads like a p-value and is not one. The response's
+  ``caveat`` states that a rejection at large ``n`` can be trivial and that a
+  non-rejection never proves normality.
+* ``effect_sizes`` — Cohen's d and Cliff's δ between the largest target classes
+  (or an explicit grouping), each with a percentile bootstrap interval:
+
+  .. math::
+
+      d = \frac{\bar x_A - \bar x_B}{s_p}, \qquad
+      \delta = \frac{2U}{n_A n_B} - 1 .
+
+  ``δ`` is computed from the Mann–Whitney statistic, so point estimates and
+  bootstrap replicates are ``O(n log n)`` rather than pairwise ``O(n^2)``.
+  Intervals are per comparison and uncorrected; a numeric target refuses the
+  block with ``reason = "grouping_column_is_numeric"`` instead of inventing
+  classes.
+* ``stability`` — every summary (mean, median, std, q25, q75) is recomputed on
+  two disjoint random halves of the sampled rows and reported as a fraction of
+  the column's IQR, together with the effective sample size (complete cases
+  across the tested numeric columns). Values near 1 mean the profile's numbers
+  depend on which rows were drawn.
+* ``GET /api/datasets/{task}/{partition}/partition-drift?reference=train`` —
+  numeric features: two-sample Kolmogorov–Smirnov statistic and p-value plus the
+  population stability index (decile bins from the reference); categorical
+  features: chi-square homogeneity on the **2 × k marginal count table**,
+  Cramér's V and total variation distance. Categorical columns with more than 50
+  levels skip the test (``reason = "too_many_levels"``) because the expected
+  counts collapse and the p-value is meaningless. PSI ≥ 0.2 carries a warning
+  badge and is descriptive, not a test.
+* ``GET /api/datasets/{task}/{partition}/eda-report`` — the whole payload
+  rendered as a self-contained Markdown report (sections for missingness, target
+  composition, distributions, associations, collinearity, quality flags,
+  missingness mechanism, type audit, formal tests, effect sizes, stability, and a
+  methods/limits footer). The UI downloads it as ``eda-<task>-<partition>.md``;
+  every section repeats its sampling scope, so the file is reproducible advice
+  rather than a dashboard screenshot.
+
+.. figure:: images/preprocessing-tier3.png
+   :alt: Formal tests, effect sizes, partition drift and summary stability cards
+   :width: 100%
+
+   Anderson–Darling verdicts with tabulated critical values, bootstrap effect
+   sizes by target class, KS/PSI drift against another partition, and IQR-scaled
+   half-sample stability with the report download.
+
+Formal tests live in the control plane only: ``dataset_profile`` keeps its
+descriptive contract, and every block that reports a p-value says so in its own
+name and caveat.
+
+Bounds for these blocks (defaults, all configurable per call except where noted):
+``formal_tests`` uses 2,000 sampled rows and at most 20 numeric columns;
+``effect_sizes`` uses 2,000 rows, the 3 largest groups, at most 8 numeric
+features, 300 bootstrap replicates and a 400-value per-group subsample;
+``stability`` uses 2,000 rows; ``partition_drift`` compares at most 50 features
+on 5,000 sampled rows per partition.
+
+Pre-flight checks for experiment submission
+-------------------------------------------
+
+``GET /api/datasets/{task_name}/preflight?partition=train`` answers what a user
+is about to run into, without blocking the run (``blocking`` is always
+``false``). It is advisory: the submit buttons stay enabled and the job is
+submitted exactly as before. The report contains
+
+* ``messages`` — every finding in severity order (``err`` → ``warn`` → ``info``),
+  each with a stable ``code``, a sentence and the offending ``columns``;
+* ``warnings`` / ``hints`` — the same entries split by severity;
+* ``effective_rows`` — complete cases across the active (non-ignored,
+  non-target) features;
+* ``thresholds`` — the numbers that produced the findings, so the UI can
+  explain why a hint fired.
+
+Rules and their defaults:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - Code
+     - Fires when
+   * - ``identifier_columns``
+     - a modeled column looks like an identifier (name hint, distinct ratio ≥
+       0.95, consecutive row index)
+   * - ``high_cardinality``
+     - a text column has at least half as many levels as rows
+   * - ``near_duplicate_features``
+     - identical / rounded-equal / ``|r| ≥ 0.999`` feature pairs
+   * - ``conflicting_labels``
+     - duplicate feature rows carry more than one target value
+   * - ``class_imbalance``
+     - categorical target ratio ≥ 3:1
+   * - ``limited_stratification``
+     - the smallest class allows fewer than 5 stratified folds
+   * - ``missing_cells``
+     - more than 10 % of feature cells are missing
+   * - ``high_missing_columns``
+     - a column is missing in more than 50 % of rows
+   * - ``skewed_features``
+     - ``|skewness| > 2`` on a numeric feature
+   * - ``small_effective_sample``
+     - complete rows below ``max(100, 10 × feature count)``
+   * - ``constant_features``
+     - a feature has at most one distinct value
+
+The same rules run on the sampled rows (5,000 by default) and use the active
+feature list, so ignoring a column in the Datasets page removes its warning.
+None of the findings changes the modeling pipeline; they exist so a reported
+score is read with its data caveats.
+
 These are exploratory diagnostics: association does not establish causation,
 leakage, or scientific mechanisms. A strong feature association is a prompt for
 review, not proof of redundancy or a reason to remove a feature automatically.

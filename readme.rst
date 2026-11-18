@@ -57,9 +57,16 @@ Once a run has finished, ``SKSurrogate`` explains *what* the fitted model depend
 - **Sensitivity analysis**: Sobol, Morris, and moment-independent δ indices quantify which
   inputs dominate output variance — useful for pruning expensive models or diagnosing a tuned
   pipeline. See the `sensitivity analysis guide <https://sksurrogate.readthedocs.io/en/latest/sensitivity.html>`_.
+- **Data diagnostics before a run**: the Data page profiles a registered partition —
+  distributions, target composition, target/feature associations, collinearity, identifier
+  and leakage flags, Little's MCAR, Anderson–Darling normality, bootstrap effect sizes,
+  half-sample stability, partition-to-partition drift — and exports the same tables as a
+  Markdown report. The Experiments page repeats the actionable findings as advisory
+  pre-flight checks, so a score is never read without its data caveats. See the
+  `monitoring guide <https://sksurrogate.readthedocs.io/en/latest/monitoring.html>`_.
 
-Both are descriptive, model-attributive analyses: they quantify how the learned response depends
-on its inputs, not causal effects.
+All of these are descriptive analyses: the model-attribution views show how the learned response
+depends on its inputs, and the data diagnostics describe the partition — none of them is a causal claim.
 
 Observe what a run did
 ----------------------
@@ -72,6 +79,21 @@ tags, a ``callbacks`` hook that delivers one event per evaluated candidate, and 
 `telemetry contract <https://sksurrogate.readthedocs.io/en/latest/telemetry.html>`_,
 the `log endpoints <https://sksurrogate.readthedocs.io/en/latest/controlplane.html>`_
 and the `UI manual <https://sksurrogate.readthedocs.io/en/latest/ui-manual.html>`_.
+
+Serve what you built
+--------------------
+A finished run leaves a portable ``ModelBundle`` behind: a schema-checked input contract, a
+``prediction``/``model_version``/``request_id`` output frame, and atomic CSV writes — scoreable
+in batch through ``SKSurrogate.predict_batch`` or the ``sksurrogate-batch-predict`` CLI, or
+online through the dependency-free ``SKSurrogate.serve`` WSGI adapter. In the control plane you
+declare which model a task serves: a **serving pin** naming either an exact model version
+(frozen, later promotions leave it alone) or a registry alias (follows promote/rollback), after
+which clients score through ``POST /api/serving/{task}/predict`` without naming a model at all
+(409 while nothing is served). The web UI states the same declaration: a
+``Serving <version> · <task>`` pill in the top bar while a model is served, and a **Serving**
+card on the Inference page that sets, replaces and stops it. See the
+`inference guide <https://sksurrogate.readthedocs.io/en/latest/inference.html>`_ and the
+`control-plane guide <https://sksurrogate.readthedocs.io/en/latest/controlplane.html>`_.
 
 Quick start
 -----------
@@ -111,6 +133,18 @@ For the API and UI, see the
 Run the web UI and API with Docker
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+A prebuilt image of the released version (v0.3.0) is published on Docker Hub as
+``mghasemi/sksurrogate`` (`overview <https://hub.docker.com/r/mghasemi/sksurrogate/>`_)::
+
+    docker run --rm -p 8013:8013 -v sksurrogate-data:/data mghasemi/sksurrogate:latest   # UI and API on http://localhost:8013
+
+Datasets, experiments, logs and model bundles live in the named volume mounted at
+``/data``; the image ships no user data. On first use ``docker run`` pulls the image
+automatically; to upgrade an existing deployment to a new release, re-pull first —
+``run`` will not refresh a cached copy (or pin a version tag such as ``v0.3.0``)::
+
+    docker pull mghasemi/sksurrogate:latest
+
 From a source checkout (Docker with Compose required)::
 
     docker compose --profile prod up --build -d   # UI and API on http://localhost:8013
@@ -119,8 +153,14 @@ From a source checkout (Docker with Compose required)::
 Set ``SKSURROGATE_PORT`` to change the port and ``SKSURROGATE_API_KEY`` to
 require an API key; for any published port also set
 ``SKSURROGATE_REQUIRE_AUTH=1`` so the container refuses to start without a key.
-Data persists in the ``sksurrogate-data`` volume. See the control-plane guide
-for details.
+With ``SKSURROGATE_REQUIRE_AUTH`` enabled the UI asks for a username and
+password instead, and every dataset, bundle and project belongs to an account
+that can share it with others; bootstrap the first administrator with
+``SKSURROGATE_ADMIN_USERNAME``/``SKSURROGATE_ADMIN_PASSWORD`` or
+``python -m api.auth_cli create-admin``, then create per-user API keys in
+**Settings → API keys**. Data persists in the ``sksurrogate-data`` volume. See
+the :doc:`control-plane guide <docs/controlplane>` and the
+:doc:`authentication and sharing chapter <docs/auth-and-sharing>` for details.
 
 Benchmarks
 ----------

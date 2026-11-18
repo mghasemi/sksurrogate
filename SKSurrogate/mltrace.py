@@ -744,6 +744,7 @@ class mltrack(object):
         tables = [Task, TaskMetadata, MLModel, Metrics, Saved, Plots, Data, Weights]
         for tbl in tables:
             tbl._meta.database.init(self.db_name)
+        MLTRACK_DB.connect(reuse_if_open=True)
         MLTRACK_DB.create_tables(tables)
         res = Task.select().where((Task.name == task) | (Task.task_id == task_id))
         if len(res) > 0:
@@ -795,9 +796,17 @@ class mltrack(object):
                 pass
 
     def __del__(self):
-        """Ensure SQLite connections are closed when the tracker is garbage collected."""
+        """Close only this instance's sqlite handle.
+
+        The shared Peewee database is process-wide: closing it from a garbage-
+        collected tracker can tear down a connection another request is using.
+        Explicit :meth:`close` remains responsible for the shared handle.
+        """
         try:
-            self.close()
+            conn = getattr(self, "conn", None)
+            if conn is not None:
+                conn.close()
+            self.conn = None
         except Exception:
             pass
 
@@ -1289,6 +1298,7 @@ class mltrack(object):
         groups=None,
         repeats=1,
         confidence_level=0.95,
+        exclude_columns=None,
     ):
         """Evaluate a model with nested CV while reserving the validation partition for the final score.
 
@@ -1296,6 +1306,9 @@ class mltrack(object):
         ``(estimator, X, y)`` (such as the result of
         ``sklearn.metrics.get_scorer``). When omitted, the estimator's
         ``score`` method is used when available; otherwise accuracy is used.
+
+        ``exclude_columns`` drops named feature columns from both partitions
+        before evaluation (the control plane passes a dataset's ignored columns).
 
         Metric semantics:
         - ``outer_scores`` are fold-level scores computed on each held-out outer split.
@@ -1308,8 +1321,10 @@ class mltrack(object):
         import pandas as pd
         from scipy.stats import norm
         from sklearn.base import clone, is_classifier
-        from sklearn.model_selection import KFold, StratifiedKFold, GroupKFold
         from sklearn.metrics import accuracy_score
+        from sklearn.model_selection import KFold, StratifiedKFold, GroupKFold
+
+        from .DataProcess import preprocesses_frames
 
         if not isinstance(repeats, int) or repeats < 1:
             raise ValueError("repeats must be an integer greater than or equal to 1.")
@@ -1317,12 +1332,20 @@ class mltrack(object):
             raise ValueError("confidence_level must be between 0 and 1.")
 
         train_frame = self.get_dataframe(train_partition)
+        if exclude_columns:
+            present = [column for column in exclude_columns if column in train_frame.columns]
+            if present:
+                train_frame = train_frame.drop(columns=present)
         target = self.target or train_frame.columns[-1]
         y_train = train_frame[target].to_numpy()
         X_train_frame = train_frame.drop(columns=[target])
 
         try:
             validation_frame = self.get_dataframe(validation_partition)
+            if exclude_columns:
+                present = [column for column in exclude_columns if column in validation_frame.columns]
+                if present:
+                    validation_frame = validation_frame.drop(columns=present)
             y_valid = validation_frame[target].to_numpy()
             X_valid_frame = validation_frame.drop(columns=[target])
         except ValueError:
@@ -1356,7 +1379,7 @@ class mltrack(object):
 
         def clone_for_fit():
             candidate = clone(estimator)
-            if uses_fold_local_preprocessing:
+            if uses_fold_local_preprocessing and not preprocesses_frames(candidate):
                 from sklearn.pipeline import Pipeline
 
                 from .DataProcess import FoldLocalDataPreprocessor
@@ -3249,6 +3272,58 @@ class mltrack(object):
         merged.to_sql("weights", self.conn, if_exists="replace", index=False)
         return merged
 
+    def PersistWeights(self, weights, features=None):
+        """Merge externally computed feature weights into the ``weights`` table.
+
+        ``FeatureWeights`` computes and stores weights in one go, but it reads an
+        unpartitioned ``data`` table that API-registered tasks do not have. This
+        entry point accepts weights that were computed elsewhere (for example by
+        the control plane after a ``SensAprx`` run on a registered partition) and
+        merges them into the same table, so ``RetrieveWeights``, ``TopFeatures``
+        and ``mltrack.heatmap`` see them.
+
+        :param weights: mapping ``{column name: sequence of values per feature}``
+        :param features: feature names in the same order as each value sequence;
+            required when the table is still empty
+        :return: the merged :class:`pandas.DataFrame` now stored in the database
+        """
+        from pandas import DataFrame, read_sql, to_numeric
+
+        if not weights:
+            raise ValueError("weights must contain at least one column")
+        existing = read_sql("SELECT * FROM weights", self.conn)
+        if features is None:
+            if len(existing) == 0:
+                raise ValueError("features are required when the weights table is empty")
+            feature_list = [str(value) for value in existing["feature"]]
+        else:
+            feature_list = [str(value) for value in features]
+            if len(set(feature_list)) != len(feature_list):
+                raise ValueError("features must be unique")
+
+        frame = DataFrame({"feature": feature_list})
+        for column, values in weights.items():
+            series = list(values)
+            if len(series) != len(feature_list):
+                raise ValueError(
+                    "weight column %r has %d values for %d features"
+                    % (column, len(series), len(feature_list))
+                )
+            frame[str(column)] = series
+
+        if len(existing) == 0:
+            merged = frame
+        else:
+            # Outer merge keeps rows from weightings computed on a different
+            # feature set (e.g. an earlier run before a column was dropped).
+            merged = existing.merge(frame, on="feature", how="outer")
+        for column in merged.columns:
+            if column != "feature":
+                merged[column] = to_numeric(merged[column], errors="coerce").fillna(0.0)
+        merged.to_sql("weights", self.conn, if_exists="replace", index=False)
+        self.conn.commit()
+        return merged
+
     def RetrieveWeights(self):
         """
         Obtains the previously calculated weights for features and returns the corresponding DataFrame.
@@ -3310,6 +3385,7 @@ class mltrack(object):
     all_plots = allPlots
     load_plot = LoadPlot
     feature_weights = FeatureWeights
+    persist_weights = PersistWeights
     retrieve_weights = RetrieveWeights
     top_features = TopFeatures
     stats = Stats

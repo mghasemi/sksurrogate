@@ -349,8 +349,10 @@ Open **Registry & Deployment**.
    apply the custom metric thresholds or bundle-size limit from the Quality
    Gates page. Enforce any required custom policy separately before promoting.
    Each step also needs *N* unique approver names (comma-separated, e.g.
-   ``alice, bob`` with *Required approvals* = 2). Approvers are free text in
-   this version; there is no authentication.
+   ``alice, bob`` with *Required approvals* = 2). Approver names are free text:
+   when the server enforces authentication (:doc:`auth-and-sharing`) a caller
+   needs at least ``editor`` on the task to promote, but the names themselves
+   are not checked against accounts.
 3. The lifecycle strip shows which version holds each alias, with a **Use in
    Inference** shortcut. **Rollback** re-points an alias at an earlier version.
 
@@ -404,6 +406,21 @@ REST::
          -d '{"alias":"production","rows":[{"age":0.03,"sex":0.05,"bmi":0.06,"bp":0.02,
               "s1":-0.04,"s2":-0.03,"s3":-0.02,"s4":-0.002,"s5":0.02,"s6":-0.02}]}'
     curl -X POST $API/inference/diabetes/predict-batch ...   # persists a CSV
+
+To declare the model once instead of naming it per request, pin it and score
+through the serving endpoint (no model field in the payload; 409 while nothing
+is served)::
+
+    curl -X POST $API/serving/diabetes -H 'content-type: application/json' \
+         -d '{"alias":"production","note":"canary"}'
+    curl -X POST $API/serving/diabetes/predict -H 'content-type: application/json' \
+         -d '{"rows":[{"age":0.03,"sex":0.05,"bmi":0.06,"bp":0.02,
+              "s1":-0.04,"s2":-0.03,"s3":-0.02,"s4":-0.002,"s5":0.02,"s6":-0.02}]}'
+    curl $API/serving            # every active pin
+
+An ``alias`` pin follows the registry (promoting or rolling back ``production``
+changes what is served); a ``model_version`` pin stays frozen. The top bar of
+the web UI shows the declaration while it is active.
 
 Python::
 

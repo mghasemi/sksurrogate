@@ -1,19 +1,29 @@
 import { useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
 
 import {
   REGISTRY_STATES,
   findBestBundle,
   getDatasetMetadata,
+  getServing,
   listBundles,
   predict,
   predictBatch,
+  predictServed,
   retryUnlessNotFound,
+  startServing,
+  stopServing,
 } from "../api/client";
-import type { PredictRequest, PredictResponse, PredictBatchResponse } from "../api/client";
+import type {
+  PredictRequest,
+  PredictResponse,
+  PredictBatchResponse,
+  ServedPredictRequest,
+  ServedPredictResponse,
+} from "../api/client";
 import { LineageRail } from "../components/LineageRail";
-import { Card, ErrorNote, JsonView, Stat, fmtNum } from "../components/ui";
+import { Badge, Card, ErrorNote, JsonView, Stat, fmtNum } from "../components/ui";
 import { useTask } from "../lib/task-context";
 
 export default function InferencePage() {
@@ -53,6 +63,7 @@ export default function InferencePage() {
 
       {task && (
         <>
+          <ServingCard task={task} versions={versions} partitions={partitions} />
           <PredictConsole key={`predict-${task}`} task={task} versions={versions} partitions={partitions} initialVersion={initialVersion} />
           <BatchRun key={`batch-${task}`} task={task} versions={versions} partitions={partitions} initialVersion={initialVersion} />
         </>
@@ -200,16 +211,12 @@ function IgnoredColumns({ columns }: { columns?: string[] }) {
   );
 }
 
-function buildBody(
-  inputs: ReturnType<typeof useModelInputs>,
+function buildSource(
   source: InputSourceKind,
   partition: string,
   rowsJson: string,
 ): { body: PredictRequest; error?: string } {
   const body: PredictRequest = {};
-  if (inputs.mode === "version") body.model_version = inputs.modelVersion || null;
-  else body.alias = inputs.alias;
-
   if (source === "partition") {
     if (!partition) return { body, error: "Choose a stored partition." };
     body.partition = partition;
@@ -223,6 +230,18 @@ function buildBody(
     }
   }
   return { body };
+}
+
+function buildBody(
+  inputs: ReturnType<typeof useModelInputs>,
+  source: InputSourceKind,
+  partition: string,
+  rowsJson: string,
+): { body: PredictRequest; error?: string } {
+  const { body, error } = buildSource(source, partition, rowsJson);
+  if (inputs.mode === "version") body.model_version = inputs.modelVersion || null;
+  else body.alias = inputs.alias;
+  return { body, error };
 }
 
 function PredictConsole({ task, versions, partitions, initialVersion }: { task: string; versions: string[]; partitions: string[]; initialVersion: string }) {
@@ -346,6 +365,205 @@ function BatchRun({ task, versions, partitions, initialVersion }: { task: string
             <span className="mono">{result.output_path}</span>
           </div>
           <IgnoredColumns columns={result.ignored_columns} />
+        </>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * Serving card: the deployment declaration for this task.
+ *
+ * Every other card on this page names a model per request. This one *declares*
+ * the model the task serves — the state `/api/serving/{task}/predict` scores
+ * through and the top-bar indicator reports — and lets the operator exercise
+ * that endpoint. The two resolution modes are a real choice, so the card says
+ * which one is in force: a version pin is frozen against later promotions,
+ * while an alias pin follows the registry (and the resolved version is shown,
+ * not just the alias name).
+ */
+function ServingCard({ task, versions, partitions }: { task: string; versions: string[]; partitions: string[] }) {
+  const qc = useQueryClient();
+  const pinQ = useQuery({ queryKey: ["serving", task], queryFn: () => getServing(task), enabled: !!task });
+  const inputs = useModelInputs("");
+  const [note, setNote] = useState("");
+  const [source, setSource] = useState<InputSourceKind>("partition");
+  const [partition, setPartition] = useState("");
+  const [rowsJson, setRowsJson] = useState("");
+  const [preflight, setPreflight] = useState(false);
+  const [inputError, setInputError] = useState<string | null>(null);
+  const [result, setResult] = useState<ServedPredictResponse | null>(null);
+
+  // One key prefix for the pin: ["serving", "active"] (top bar) and
+  // ["serving", task] (this card) both refresh from a single invalidation.
+  const refresh = () => qc.invalidateQueries({ queryKey: ["serving"] });
+
+  const startMut = useMutation({
+    mutationFn: () =>
+      startServing(task, {
+        model_version: inputs.mode === "version" ? inputs.modelVersion || null : null,
+        alias: inputs.mode === "alias" ? inputs.alias : null,
+        note: note.trim() || null,
+      }),
+    onSuccess: () => {
+      setResult(null);
+      refresh();
+    },
+  });
+  const stopMut = useMutation({
+    mutationFn: () => stopServing(task),
+    onSuccess: () => {
+      setResult(null);
+      refresh();
+    },
+  });
+  const predictMut = useMutation({
+    mutationFn: (body: ServedPredictRequest) => predictServed(task, body),
+    onSuccess: setResult,
+  });
+
+  const pin = pinQ.data;
+  const active = !!pin?.active;
+  const needsModel = inputs.mode === "version" ? !inputs.modelVersion : !inputs.alias;
+  const busy = startMut.isPending || stopMut.isPending || predictMut.isPending;
+  const history = [...(pin?.history ?? [])].reverse();
+
+  return (
+    <Card
+      title="Serving"
+      sub="Declare the model this task serves. The serving endpoint answers with it without being told which model to use, and the top bar shows the declaration."
+    >
+      <div className="row top" style={{ alignItems: "center", marginBottom: 4 }}>
+        <Badge tone={pin?.resolve_error ? "warn" : active ? "ok" : "muted"}>
+          {active ? `Serving ${pin?.model_version ?? "…"}` : "Not serving"}
+        </Badge>
+        {active && pin && (
+          <span className="hint">
+            {pin.resolve_mode === "alias"
+              ? `follows alias “${pin.requested}” — a promotion or rollback changes the served model`
+              : `frozen at model version “${pin.model_version}” — later promotions do not change it`}
+          </span>
+        )}
+      </div>
+
+      {pinQ.isError && <ErrorNote error={pinQ.error} />}
+      {pin?.resolve_error && (
+        <div className="error-note">The pinned model no longer resolves: {pin.resolve_error}</div>
+      )}
+
+      {active && pin && (
+        <dl className="kv" style={{ marginTop: 10 }}>
+          <dt>Model version</dt>
+          <dd className="mono">{pin.model_version ?? "—"}</dd>
+          <dt>Resolve mode</dt>
+          <dd>
+            {pin.resolve_mode} · <span className="mono">{pin.requested}</span>
+          </dd>
+          <dt>Serving since</dt>
+          <dd>{pin.started_at ? new Date(pin.started_at).toLocaleString() : "—"}</dd>
+          <dt>Started by</dt>
+          <dd>{pin.started_by ?? "—"}</dd>
+          {pin.note && (
+            <>
+              <dt>Note</dt>
+              <dd>{pin.note}</dd>
+            </>
+          )}
+        </dl>
+      )}
+
+      <ModelPicker task={task} versions={versions} inputs={inputs} />
+      <div className="row top">
+        <div className="field">
+          <label>Note (optional)</label>
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="e.g. canary rollout"
+            spellCheck={false}
+          />
+        </div>
+      </div>
+      <div className="row top" style={{ gap: 8 }}>
+        <button
+          className="btn primary"
+          disabled={!task || needsModel || busy}
+          onClick={() => startMut.mutate()}
+        >
+          {active ? "Replace served model" : "Serve this model"}
+        </button>
+        <button className="btn" disabled={!task || !active || busy} onClick={() => stopMut.mutate()}>
+          Stop serving
+        </button>
+      </div>
+      {needsModel && <div className="hint" style={{ marginTop: 8 }}>Pick a model version or alias to serve.</div>}
+      {startMut.isError && <ErrorNote error={startMut.error} />}
+      {stopMut.isError && <ErrorNote error={stopMut.error} />}
+
+      <h3 style={{ marginTop: 18 }}>Score through the served model</h3>
+      <div className="hint">
+        Sends no model id — the pin decides, so this is the payload a deployment client uses.{" "}
+        {active ? "" : "Start serving to enable it."}
+      </div>
+      <InputSource
+        partitions={partitions}
+        source={source}
+        setSource={setSource}
+        partition={partition}
+        setPartition={setPartition}
+        rowsJson={rowsJson}
+        setRowsJson={setRowsJson}
+      />
+      <label className="checkbox-row" style={{ marginTop: 8 }}>
+        <input type="checkbox" checked={preflight} onChange={(e) => setPreflight(e.target.checked)} />
+        Validate before run
+      </label>
+
+      {inputError && <div className="error-note">{inputError}</div>}
+      {predictMut.isError && <ErrorNote error={predictMut.error} />}
+
+      <button
+        className="btn"
+        disabled={!task || !active || busy}
+        onClick={() => {
+          const { body, error } = buildSource(source, partition, rowsJson);
+          setInputError(error ?? null);
+          if (error) return;
+          body.preflight = preflight;
+          predictMut.mutate(body);
+        }}
+      >
+        {predictMut.isPending ? "Predicting…" : "Run on served model"}
+      </button>
+
+      {result && (
+        <div style={{ marginTop: 14 }}>
+          <div className="success-note">
+            Answered by <code>{result.model_version}</code> (
+            {result.resolve_mode === "alias" ? `alias “${result.requested}”` : "pinned version"}) ·{" "}
+            {fmtNum(result.metrics.rows)} row(s) · {fmtNum(result.metrics.latency_ms)} ms
+          </div>
+          <IgnoredColumns columns={result.ignored_columns} />
+          <h3 style={{ marginTop: 14 }}>Predictions</h3>
+          <JsonView data={result.predictions} />
+        </div>
+      )}
+
+      {history.length > 0 && (
+        <>
+          <h3 style={{ marginTop: 18 }}>Pin history</h3>
+          <ul className="pin-history">
+            {history.slice(0, 8).map((event, index) => (
+              <li key={`${event.at}-${index}`}>
+                <Badge tone={event.event === "stop" ? "warn" : "ok"}>{event.event}</Badge>
+                <span className="mono">{event.model_version ?? "—"}</span>
+                <span className="muted">
+                  {event.resolve_mode === "alias" ? `alias ${event.requested}` : `version ${event.requested}`} ·{" "}
+                  {event.actor ?? "—"} · {new Date(event.at).toLocaleString()}
+                </span>
+              </li>
+            ))}
+          </ul>
         </>
       )}
     </Card>

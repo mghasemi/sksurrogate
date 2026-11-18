@@ -85,10 +85,32 @@ feature ranges based on each observed minimum and maximum plus a margin of 0.2
 in each feature's units. These indices
 describe the fitted surrogate's response to input perturbations under that
 design; they are not Pearson feature-target associations, model-score
-attributions, or causal effects. Correlated and categorical features can
-produce unrealistic combinations in the generated design, so interpret the
-results cautiously and consider the method assumptions and generated ranges
-before using rankings to narrow a search.
+attributions, or causal effects. Correlated features, and numeric columns that
+are identifiers rather than measurements, can produce unrealistic combinations
+in the generated design, so interpret the results cautiously and consider the
+method assumptions and generated ranges before using rankings to narrow a
+search.
+
+**Numeric features only.** The sampled design and its surrogate regressor are
+numeric procedures, and both Pearson correlation and the delta index are defined
+through means and variances, so non-numeric columns are excluded rather than
+silently coerced. A registered partition that mixes types — the Telco churn CSV
+carries ``Surname``, ``Geography`` and ``Gender`` as text — is projected onto its
+numeric columns; the API reports the exclusion (``excluded_columns`` /
+``excluded_feature_names`` in the result, and a note above the ranking in the
+web UI) and answers HTTP 400 when a partition has no numeric feature column at
+all. Rows with a non-finite value in the numeric block are dropped as a complete
+case and the count is reported as ``rows_dropped``. To analyse a text column,
+encode it (for example one-hot) and re-register the partition: an ordinal code
+would be perturbed as if it were a quantity, which the index cannot justify.
+
+**SALib versions and the delta estimator.** The delta moment-independent index
+changed shape in SALib 1.6: ``delta.analyze`` now returns ``delta_balanced``,
+``delta_raw`` and ``delta_step`` instead of a single ``delta``. ``SensAprx``
+resolves whichever key the installed version provides and records it as
+``estimator`` in the API result (``delta`` on SALib ≤ 1.5, ``delta_balanced`` on
+≥ 1.6) — the three are different statistics, so compare runs from different
+environments by that field rather than by method name alone.
 
 
 ================================================
@@ -123,6 +145,35 @@ with correlation below a given threshold:
 
 The above procedure selects those features which has high (positive or negative) correlation with higher number of
 other features and omits the other features. Repeats this process until no more pair with high correlation remains.
+
+Stored weightings and the consensus ranking
+===========================================
+Sensitivity indices are only useful if they accumulate somewhere comparable, so
+a completed run is merged into the task's ``weights`` table in its tracking
+database, under the column matching the method (``sobol``, ``morris``,
+``delta_mmnt``). ``mltrack.RetrieveWeights``, ``mltrack.heatmap`` and
+``mltrack.TopFeatures`` read that table, and the control plane's **Consensus top
+features** card ranks every feature by how often it appears in the top *N* of
+each stored weighting column.
+
+Registering a partition seeds the table with the two cheap dataset-level
+weightings for its numeric columns — feature-target Pearson correlation and
+feature variance — so the card is meaningful before the first sensitivity run.
+Tasks registered before that existed (or whose partition was replaced) can be
+back-filled with ``POST /api/sensitivity/{task}/base-weights``; the card offers
+the same action when it finds no stored weighting at all.
+
+``mltrack.FeatureWeights`` computes and stores weights itself, but it reads an
+unpartitioned ``data`` table that API-registered tasks do not have. For
+partitioned data use ``mltrack.PersistWeights({column: values}, features=...)``,
+which merges externally computed weights into the same table (and is what the
+API uses).
+
+.. note::
+   Correlation pruning is a *selection* step: it reports which features to drop
+   at a given absolute-correlation threshold and deliberately adds no weighting
+   column. Feeding a selection into a consensus of weightings would count the
+   same evidence twice, so the consensus card only grows when a weighting exists.
 
 Heatmaps
 ========
