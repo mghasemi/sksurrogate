@@ -4,6 +4,26 @@ Changelog
 [Unreleased]
 ------------
 
+Serving a pinned model
+~~~~~~~~~~~~~~~~~~~~~~
+
+* New **serving pin**: declare once which trained/registered model a task
+  serves (``POST /api/serving/{task}``), score through it without naming a
+  model (``POST /api/serving/{task}/predict``, 409 while nothing is served),
+  read it back with the resolved version, resolve mode and append-only pin
+  history (``GET /api/serving/{task}``), list active pins
+  (``GET /api/serving``) and stop serving (``DELETE /api/serving/{task}``).
+  A ``version`` pin stays frozen across registry promotions; an ``alias`` pin
+  follows the pointer, so a promotion or rollback changes what is served.
+* The web UI **declares** the state instead of leaving it implicit: a
+  ``Serving <version> · <task>`` pill in the top bar on every page while a
+  model is served, and a **Serving** card on the Inference page to pin,
+  replace, stop and exercise the served endpoint.
+* The served path shares its prediction core with
+  ``POST /api/inference/{task}/predict`` (input projection, pre-flight
+  validation, monitoring record keyed to the answering model), so the two
+  surfaces cannot drift; both are documented in ``docs/inference.rst``.
+
 Data Preprocessing page
 ~~~~~~~~~~~~~~~~~~~~~~~
 

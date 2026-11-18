@@ -80,6 +80,21 @@ tags, a ``callbacks`` hook that delivers one event per evaluated candidate, and 
 the `log endpoints <https://sksurrogate.readthedocs.io/en/latest/controlplane.html>`_
 and the `UI manual <https://sksurrogate.readthedocs.io/en/latest/ui-manual.html>`_.
 
+Serve what you built
+--------------------
+A finished run leaves a portable ``ModelBundle`` behind: a schema-checked input contract, a
+``prediction``/``model_version``/``request_id`` output frame, and atomic CSV writes — scoreable
+in batch through ``SKSurrogate.predict_batch`` or the ``sksurrogate-batch-predict`` CLI, or
+online through the dependency-free ``SKSurrogate.serve`` WSGI adapter. In the control plane you
+declare which model a task serves: a **serving pin** naming either an exact model version
+(frozen, later promotions leave it alone) or a registry alias (follows promote/rollback), after
+which clients score through ``POST /api/serving/{task}/predict`` without naming a model at all
+(409 while nothing is served). The web UI states the same declaration: a
+``Serving <version> · <task>`` pill in the top bar while a model is served, and a **Serving**
+card on the Inference page that sets, replaces and stops it. See the
+`inference guide <https://sksurrogate.readthedocs.io/en/latest/inference.html>`_ and the
+`control-plane guide <https://sksurrogate.readthedocs.io/en/latest/controlplane.html>`_.
+
 Quick start
 -----------
 ``SurrogateRandomCV`` is a drop-in for ``RandomizedSearchCV``; ranges can be written as plain
