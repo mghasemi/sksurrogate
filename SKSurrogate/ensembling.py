@@ -79,6 +79,7 @@ from typing import Any
 
 import numpy as np
 from sklearn.base import BaseEstimator, ClassifierMixin, RegressorMixin, clone, is_classifier, is_regressor
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import (
     AdaBoostClassifier,
     AdaBoostRegressor,
@@ -139,19 +140,47 @@ DEFAULT_STACKING_FINAL_ESTIMATOR = {
     REGRESSION: "linear_regression",
 }
 
+#: Post-hoc probability calibration applied to each member before it is combined.
+CALIBRATION_METHODS = ("sigmoid", "isotonic")
+
+#: How ``CalibratedClassifierCV`` builds its calibrators, as user-facing tokens.
+#: scikit-learn's own default is ``"auto"`` (which means *per fold* for an ordinary
+#: estimator, and a single frozen one otherwise), so it is exposed as a choice rather
+#: than left implicit.
+CALIBRATION_ENSEMBLE_TOKENS = {"auto": "auto", "per_fold": True, "single": False}
+
+#: How an optimized weight vector is found. ``least_squares`` minimises the squared error
+#: between the weighted blend and the target (the Brier score for classification), which
+#: is a small convex problem solved on the simplex; ``dirichlet`` samples the simplex at
+#: random and keeps the best task-scorer value; ``greedy`` is Caruana-style forward
+#: selection with replacement, which produces integer weights and can therefore *drop* a
+#: member visibly.
+WEIGHT_STRATEGIES = ("least_squares", "dirichlet", "greedy")
+
+#: Strategies that need a scikit-learn scorer: the task's own metric decides, so they
+#: work for label metrics (accuracy, ROC AUC) and for error metrics alike.
+SCORER_WEIGHT_STRATEGIES = ("dirichlet", "greedy")
+
+#: A shared help string: weights are positional, and an optimized vector may contain a
+#: zero, which is how a strategy reports that it dropped a member.
+_WEIGHTS_HELP = (
+    "One non-negative weight per member, in the order given; omitted means equal weights. "
+    "A zero weight drops that member."
+)
+
 #: Parameter schema per method, consumed by the control plane's ``/methods``
 #: endpoint and validated by :func:`validate_params` so the UI and the API agree.
 METHOD_PARAMETERS = {
     "voting": (
         {"name": "weights", "type": "floats", "default": None, "label": "Weights",
-         "help": "One non-negative weight per member, in the order given; omitted means equal weights."},
+         "help": _WEIGHTS_HELP},
         {"name": "voting", "type": "choice", "choices": ["hard", "soft"], "default": "hard",
          "label": "Vote", "family": CLASSIFICATION,
          "help": "Hard counts labels, soft averages class probabilities (requires every member to predict probabilities)."},
     ),
     "averaging": (
         {"name": "weights", "type": "floats", "default": None, "label": "Weights",
-         "help": "One non-negative weight per member, in the order given; omitted means equal weights."},
+         "help": _WEIGHTS_HELP},
     ),
     "stacking": (
         {"name": "final_estimator", "type": "string", "default": None, "label": "Final estimator",
@@ -170,6 +199,8 @@ METHOD_PARAMETERS = {
          "help": "Fraction of features considered per replica; omitted means all features."},
         {"name": "bootstrap", "type": "boolean", "default": True, "label": "Bootstrap",
          "help": "Sample rows with replacement; without it bagging degenerates to member averaging."},
+        {"name": "weights", "type": "floats", "default": None, "label": "Weights",
+         "help": "Applied to the aggregation of the bagged members. " + _WEIGHTS_HELP},
     ),
     "boosting": (
         {"name": "n_estimators", "type": "integer", "default": 20, "min": 1, "max": 500, "label": "Rounds",
@@ -179,6 +210,8 @@ METHOD_PARAMETERS = {
         {"name": "loss", "type": "choice", "choices": ["linear", "square", "exponential"], "default": "linear",
          "label": "Loss", "family": REGRESSION,
          "help": "AdaBoost.R2 loss updated after each round (regression only)."},
+        {"name": "weights", "type": "floats", "default": None, "label": "Weights",
+         "help": "Applied to the aggregation of the boosted members. " + _WEIGHTS_HELP},
     ),
 }
 
@@ -226,6 +259,9 @@ def method_catalogue(family):
         applies = True
         if method == "stacking":
             applies = family in STACKING_FINAL_ESTIMATORS
+        # Weights apply wherever the members are merged by a weighted vote/average;
+        # stacking learns its own combination in the final estimator instead.
+        accepts_weights = method != "stacking"
         entries.append(
             {
                 "value": method,
@@ -235,9 +271,14 @@ def method_catalogue(family):
                 "parameters": [dict(spec) for spec in parameters],
                 "aggregation": aggregation_label(method, family),
                 "available": applies,
+                "accepts_weights": accepts_weights,
             }
         )
-    return {"family": family, "methods": entries}
+    return {
+        "family": family,
+        "methods": entries,
+        **calibration_and_weight_options(family),
+    }
 
 
 def aggregation_label(method, family):
@@ -492,33 +533,109 @@ def _check_sample_weight_support(members):
         )
 
 
-def build_ensemble(
+def _per_member_forms(method, normalised, family, params, n_jobs, random_state):
+    """The per-member estimator that will be handed to the aggregator.
+
+    Bagging and boosting give every member its own resampling/reweighting wrapper, so the
+    "member" being aggregated is that wrapper; the other methods aggregate the member
+    itself. Keeping this in one place is what makes calibration land in the right spot:
+    calling :func:`calibrate_members` on *these* forms puts the calibrator outside the
+    wrapper, which is the only nesting that does not refit it on bootstrap resamples.
+    """
+    if method in ("voting", "averaging", "stacking"):
+        return list(normalised)
+    if method == "bagging":
+        cls = BaggingClassifier if family == CLASSIFICATION else BaggingRegressor
+        # scikit-learn's parameter constraints reject an explicit ``None`` for
+        # ``max_samples``/``max_features``; the "all rows/all features" behaviour is the
+        # omitted-parameter default, so unset values are left out rather than passed on.
+        limits = {
+            name: params[name]
+            for name in ("max_samples", "max_features")
+            if params.get(name) is not None
+        }
+        return [
+            (
+                name,
+                cls(
+                    estimator=estimator,
+                    n_estimators=params.get("n_estimators", 10),
+                    bootstrap=bool(params.get("bootstrap", True)),
+                    random_state=random_state,
+                    n_jobs=n_jobs,
+                    **limits,
+                ),
+            )
+            for name, estimator in normalised
+        ]
+    if method == "boosting":
+        if family == CLASSIFICATION:
+            # AdaBoostClassifier refuses a base estimator without a literal
+            # ``sample_weight`` parameter and forwards the round weights to it, so every
+            # member has to be wrapped (and one that cannot be reweighted must be refused,
+            # or every round would train an identical learner).
+            _check_sample_weight_support(normalised)
+            return [
+                (
+                    name,
+                    AdaBoostClassifier(
+                        estimator=SampleWeightRouter(estimator),
+                        n_estimators=params.get("n_estimators", 20),
+                        learning_rate=params.get("learning_rate", 1.0),
+                        random_state=random_state,
+                    ),
+                )
+                for name, estimator in normalised
+            ]
+        # AdaBoostRegressor does *not* forward sample weights: ``_boost`` reweights by
+        # resampling (``random_state.choice(..., p=sample_weight)``) and then calls
+        # ``estimator.fit(X_, y_)``. Regression members therefore need no adapter and are
+        # not refused for lacking sample-weight support.
+        return [
+            (
+                name,
+                AdaBoostRegressor(
+                    estimator=estimator,
+                    n_estimators=params.get("n_estimators", 20),
+                    learning_rate=params.get("learning_rate", 1.0),
+                    loss=params.get("loss", "linear"),
+                    random_state=random_state,
+                ),
+            )
+            for name, estimator in normalised
+        ]
+    raise EnsembleError("Unknown ensemble method %r." % (method,))  # pragma: no cover - guarded
+
+
+def aggregate_forms(method, forms, family, params, n_jobs):
+    """Aggregate per-member forms into the unfitted meta-estimator (no member wrapping)."""
+    if method in ("voting", "averaging"):
+        return _build_vote(method, forms, family, params, n_jobs)
+    if method == "stacking":
+        return _build_stacking(forms, family, params, n_jobs)
+    if method in ("bagging", "boosting"):
+        return _aggregate(forms, family, params.get("weights"), n_jobs)
+    raise EnsembleError("Unknown ensemble method %r." % (method,))  # pragma: no cover - guarded
+
+
+def member_forms(
     method,
     members,
     *,
     family=None,
     params=None,
+    calibration=None,
     columns=None,
     random_state=None,
     n_jobs=None,
 ):
-    """Build the (unfitted) scikit-learn meta-estimator combining ``members``.
+    """Resolve, validate and prepare the per-member estimators of one ensemble.
 
-    :param method: one of :data:`ENSEMBLE_METHODS`.
-    :param members: sequence of ``(name, estimator)`` pairs — the *trained* member
-        models, in the order the caller wants them aggregated (weights are applied
-        positionally, so the order is part of the request). Names must be unique.
-    :param family: ``"Classification"``/``"Regression"``; inferred when omitted.
-    :param params: method-specific parameters, validated by :func:`validate_params`.
-    :param columns: feature names in training order. Each member is passed through
-        :func:`~SKSurrogate.DataProcess.frame_tolerant` with them, so a member whose
-        encoder selects columns by name survives bagging's positional
-        ``X[indices]`` and the array-input prediction paths.
-    :param random_state: seeds every stochastic component (bagging resampling).
-    :param n_jobs: parallelism handed to scikit-learn; the caller is responsible for
-        keeping it inside the process's compute budget.
-    :returns: an unfitted estimator implementing ``fit``/``predict`` (and
-        ``predict_proba`` for classification).
+    Returns ``(forms, family, cleaned_params)``. ``forms`` are the estimators that will
+    actually be combined — array-safe, with a bagging/boosting wrapper where the method
+    calls for one, and with calibration wrapped **outermost** when requested. Weight
+    optimization uses the same ``forms``, so a weight vector always describes exactly the
+    members that end up in the ensemble.
     """
     members = [(str(name), estimator) for name, estimator in members]
     names = [name for name, _ in members]
@@ -541,16 +658,61 @@ def build_ensemble(
         (name, frame_tolerant(estimator, columns=list(columns) if columns else None))
         for name, estimator in members
     ]
+    forms = _per_member_forms(method, normalised, resolved_family, cleaned, n_jobs, random_state)
+    if calibration:
+        forms = calibrate_members(
+            forms,
+            method=calibration.get("method", "sigmoid"),
+            cv=calibration.get("cv", 5),
+            ensemble=calibration.get("ensemble", "auto"),
+            n_jobs=calibration.get("n_jobs"),
+        )
+    return forms, resolved_family, cleaned
 
-    if method in ("voting", "averaging"):
-        return _build_vote(method, normalised, resolved_family, cleaned, n_jobs)
-    if method == "stacking":
-        return _build_stacking(normalised, resolved_family, cleaned, n_jobs)
-    if method == "bagging":
-        return _build_bagged(normalised, resolved_family, cleaned, n_jobs, random_state)
-    if method == "boosting":
-        return _build_boosted(normalised, resolved_family, cleaned, n_jobs, random_state)
-    raise EnsembleError("Unknown ensemble method %r." % (method,))  # pragma: no cover - guarded above
+
+def build_ensemble(
+    method,
+    members,
+    *,
+    family=None,
+    params=None,
+    calibration=None,
+    columns=None,
+    random_state=None,
+    n_jobs=None,
+):
+    """Build the (unfitted) scikit-learn meta-estimator combining ``members``.
+
+    :param method: one of :data:`ENSEMBLE_METHODS`.
+    :param members: sequence of ``(name, estimator)`` pairs — the *trained* member
+        models, in the order the caller wants them aggregated (weights are applied
+        positionally, so the order is part of the request). Names must be unique.
+    :param family: ``"Classification"``/``"Regression"``; inferred when omitted.
+    :param params: method-specific parameters, validated by :func:`validate_params`.
+    :param calibration: optional ``{"method", "cv", "ensemble"}`` applied to each member's
+        outermost form (see :func:`calibrate_member`), which is what repairs an
+        overconfident member's probabilities before they are averaged.
+    :param columns: feature names in training order. Each member is passed through
+        :func:`~SKSurrogate.DataProcess.frame_tolerant` with them, so a member whose
+        encoder selects columns by name survives bagging's positional
+        ``X[indices]`` and the array-input prediction paths.
+    :param random_state: seeds every stochastic component (bagging resampling).
+    :param n_jobs: parallelism handed to scikit-learn; the caller is responsible for
+        keeping it inside the process's compute budget.
+    :returns: an unfitted estimator implementing ``fit``/``predict`` (and
+        ``predict_proba`` for classification).
+    """
+    forms, resolved_family, cleaned = member_forms(
+        method,
+        members,
+        family=family,
+        params=params,
+        calibration=calibration,
+        columns=columns,
+        random_state=random_state,
+        n_jobs=n_jobs,
+    )
+    return aggregate_forms(method, forms, resolved_family, cleaned, n_jobs)
 
 
 def _aggregate(normalised, family, weights, n_jobs, *, soft=True, force_soft=False):
@@ -583,73 +745,6 @@ def _build_stacking(normalised, family, params, n_jobs):
         passthrough=bool(params.get("passthrough", False)),
         n_jobs=n_jobs,
     )
-
-
-def _build_bagged(normalised, family, params, n_jobs, random_state):
-    cls = BaggingClassifier if family == CLASSIFICATION else BaggingRegressor
-    # scikit-learn's parameter constraints reject an explicit ``None`` for
-    # ``max_samples``/``max_features``; the "all rows/all features" behaviour is the
-    # omitted-parameter default, so unset values are left out rather than passed on.
-    limits = {
-        name: params[name]
-        for name in ("max_samples", "max_features")
-        if params.get(name) is not None
-    }
-    wrapped = [
-        (
-            name,
-            cls(
-                estimator=estimator,
-                n_estimators=params.get("n_estimators", 10),
-                bootstrap=bool(params.get("bootstrap", True)),
-                random_state=random_state,
-                n_jobs=n_jobs,
-                **limits,
-            ),
-        )
-        for name, estimator in normalised
-    ]
-    return _aggregate(wrapped, family, None, n_jobs)
-
-
-def _build_boosted(normalised, family, params, n_jobs, random_state):
-    if family == CLASSIFICATION:
-        # AdaBoostClassifier refuses a base estimator without a literal
-        # ``sample_weight`` parameter and forwards the round weights to it, so every
-        # member has to be wrapped (and one that cannot be reweighted must be refused,
-        # or every round would train an identical learner).
-        _check_sample_weight_support(normalised)
-        wrapped = [
-            (
-                name,
-                AdaBoostClassifier(
-                    estimator=SampleWeightRouter(estimator),
-                    n_estimators=params.get("n_estimators", 20),
-                    learning_rate=params.get("learning_rate", 1.0),
-                    random_state=random_state,
-                ),
-            )
-            for name, estimator in normalised
-        ]
-    else:
-        # AdaBoostRegressor does *not* forward sample weights: ``_boost`` reweights by
-        # resampling (``random_state.choice(..., p=sample_weight)``) and then calls
-        # ``estimator.fit(X_, y_)``. Regression members therefore need no adapter and
-        # are not refused for lacking sample-weight support.
-        wrapped = [
-            (
-                name,
-                AdaBoostRegressor(
-                    estimator=estimator,
-                    n_estimators=params.get("n_estimators", 20),
-                    learning_rate=params.get("learning_rate", 1.0),
-                    loss=params.get("loss", "linear"),
-                    random_state=random_state,
-                ),
-            )
-            for name, estimator in normalised
-        ]
-    return _aggregate(wrapped, family, None, n_jobs)
 
 
 def cross_validated_scores(estimator, X, y, *, cv=5, scoring=None, n_jobs=None):
@@ -701,3 +796,725 @@ def member_scores(members, X, y, *, cv=5, scoring=None, n_jobs=None):
             entry["error"] = str(exc)
         results.append(entry)
     return results
+
+
+# --------------------------------------------------------------------------- #
+# Per-member probability calibration
+# --------------------------------------------------------------------------- #
+
+
+def _resolve_calibration_ensemble(value):
+    """Turn an ``ensemble`` token (``auto``/``per_fold``/``single``) into sklearn's value."""
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return "auto"
+    token = str(value).strip().lower()
+    if token not in CALIBRATION_ENSEMBLE_TOKENS:
+        raise EnsembleError(
+            "Calibration 'ensemble' must be one of %s."
+            % ", ".join(sorted(CALIBRATION_ENSEMBLE_TOKENS))
+        )
+    return CALIBRATION_ENSEMBLE_TOKENS[token]
+
+
+def calibrate_member(estimator, *, method="sigmoid", cv=5, ensemble="auto", n_jobs=None):
+    """Wrap one member in a probability calibrator.
+
+    Calibration is a post-hoc map from a member's scores to probabilities, so it changes
+    what the *aggregation* sees without touching the member's own decisions. It is
+    applied to the **outermost per-member form** — after any bagging or boosting wrapper
+    — and never inside one: scikit-learn's resampling wrappers forward ``sample_weight``
+    to any base whose ``fit`` declares it (``CalibratedClassifierCV`` does), which makes
+    it warn *"Since Pipeline does not appear to accept sample_weight … the result of the
+    calibration is likely to be incorrect"* and fits the calibrator on bootstrap
+    resamples instead of the fold's held-out rows. Measured on a 3-replica bagging
+    member: three such warnings nested inside, none nested outside.
+
+    :param method: ``"sigmoid"`` (Platt scaling, the default: safe on few rows) or
+        ``"isotonic"`` (more flexible, needs enough samples per fold to avoid step noise).
+    :param cv: folds used to produce the calibrator's held-out scores (at least 2).
+    :param ensemble: ``"auto"`` (scikit-learn's own default: one calibrator per fold for an
+        ordinary estimator), ``"per_fold"`` to force that, or ``"single"`` to fit one
+        calibrator on the cross-validated scores (the classic Platt/isotonic construction).
+        ``True``/``False`` are accepted as synonyms of the last two.
+    """
+    if method not in CALIBRATION_METHODS:
+        raise EnsembleError(
+            "Unknown calibration method %r; choose one of %s."
+            % (method, ", ".join(CALIBRATION_METHODS))
+        )
+    if isinstance(cv, bool) or not isinstance(cv, int) or cv < 2:
+        raise EnsembleError("Calibration folds must be an integer of at least 2.")
+    return CalibratedClassifierCV(
+        estimator,
+        method=method,
+        cv=cv,
+        ensemble=_resolve_calibration_ensemble(ensemble),
+        n_jobs=n_jobs,
+    )
+
+
+def calibrate_members(members, *, method="sigmoid", cv=5, ensemble="auto", n_jobs=None):
+    """Calibrate every member, refusing what cannot be calibrated.
+
+    Only classification members have probabilities to calibrate, and a member needs a
+    ``predict_proba`` or a ``decision_function`` for a calibrator to be fitted at all;
+    both are checked here rather than left to a confusing failure inside the fit.
+    """
+    unsupported = [
+        name for name, estimator in members if problem_family_of(estimator) != CLASSIFICATION
+    ]
+    if unsupported:
+        raise EnsembleError(
+            "Calibration is available for classification members only; %s is not a "
+            "classifier." % ", ".join(repr(name) for name in unsupported)
+        )
+    uncalibratable = [
+        name
+        for name, estimator in members
+        if not (hasattr(estimator, "predict_proba") or hasattr(estimator, "decision_function"))
+    ]
+    if uncalibratable:
+        raise EnsembleError(
+            "Calibration needs a member that can predict probabilities or scores; %s "
+            "exposes neither predict_proba nor decision_function."
+            % ", ".join(repr(name) for name in uncalibratable)
+        )
+    return [
+        (name, calibrate_member(estimator, method=method, cv=cv, ensemble=ensemble, n_jobs=n_jobs))
+        for name, estimator in members
+    ]
+
+
+def _brier_and_log_loss(probabilities, y, classes):
+    """``(brier, log_loss)`` for a probability matrix, or ``(None, None)`` when undefined."""
+    from sklearn.metrics import brier_score_loss, log_loss
+
+    probabilities = np.asarray(probabilities, dtype=float)
+    labels = np.asarray(classes)
+    if len(labels) == 2:
+        positive = (np.asarray(y) == labels[1]).astype(float)
+        brier = float(brier_score_loss(positive, probabilities[:, 1]))
+    else:
+        # Multiclass Brier: mean squared error against the one-hot target.
+        onehot = np.zeros_like(probabilities)
+        onehot[np.arange(len(y)), np.searchsorted(labels, y)] = 1.0
+        brier = float(np.mean((probabilities - onehot) ** 2))
+    try:
+        loss = float(log_loss(y, probabilities, labels=list(labels)))
+    except ValueError:
+        loss = None
+    return brier, loss
+
+
+def calibration_report(members, X, y, *, cv=5, method="sigmoid", ensemble="auto", n_jobs=None):
+    """Per-member Brier score and log loss before and after calibration, on the same folds.
+
+    This is the evidence that calibration did anything: on an already well-calibrated
+    member both are ~unchanged, while an overconfident member improves sharply (measured
+    on a fully grown decision tree: Brier 0.2000 → 0.1385 and log loss 7.2087 → 0.4440).
+    Each member is cloned per fold, so the "before" and "after" numbers describe the same
+    rows.
+    """
+    from sklearn.base import clone
+    from sklearn.model_selection import cross_val_predict
+
+    report = []
+    for name, estimator in members:
+        entry = {"member": name, "method": method, "cv": cv}
+        try:
+            raw = cross_val_predict(clone(estimator), X, y, cv=cv, method="predict_proba")
+            calibrated = cross_val_predict(
+                calibrate_member(estimator, method=method, cv=cv, ensemble=ensemble, n_jobs=n_jobs),
+                X,
+                y,
+                cv=cv,
+                method="predict_proba",
+            )
+            classes = np.unique(np.asarray(y))
+            brier_before, loss_before = _brier_and_log_loss(raw, y, classes)
+            brier_after, loss_after = _brier_and_log_loss(calibrated, y, classes)
+            entry.update(
+                {
+                    "brier_before": brier_before,
+                    "brier_after": brier_after,
+                    "log_loss_before": loss_before,
+                    "log_loss_after": loss_after,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - one member must not fail the report
+            entry["error"] = "%s: %s" % (type(exc).__name__, exc)
+        report.append(entry)
+    return report
+
+
+# --------------------------------------------------------------------------- #
+# Weight optimization
+# --------------------------------------------------------------------------- #
+
+
+class _WeightedBlend(BaseEstimator):
+    """Apply a weight vector to precomputed member outputs, so a scorer can judge it.
+
+    A weight *search* has to score thousands of candidate vectors; refitting the members
+    for each is impossible, so the members' out-of-fold outputs are computed once and this
+    adapter exposes them under the response method the scorer asks for. It never touches
+    data — ``fit`` is a no-op — which is why the search can only ever see out-of-fold
+    member output.
+    """
+
+    def __init__(self, outputs=None, weights=None, classes=None, family=None):
+        self.outputs = outputs
+        self.weights = weights
+        self.classes = classes
+        self.family = family
+
+    def fit(self, X=None, y=None, **kwargs):
+        return self
+
+    def _blend(self):
+        weights = np.asarray(self.weights, dtype=float)
+        total = weights.sum()
+        if total <= 0:
+            raise EnsembleError("Weights must sum to a positive value.")
+        weights = weights / total
+        if self.family == CLASSIFICATION:
+            return sum(weight * output for weight, output in zip(weights, self.outputs))
+        return np.asarray(self.outputs) @ weights
+
+    def predict_proba(self, X=None):
+        return self._blend()
+
+    def predict(self, X=None):
+        if self.family == CLASSIFICATION:
+            return np.asarray(self.classes)[np.argmax(self._blend(), axis=1)]
+        return self._blend()
+
+    def decision_function(self, X=None):
+        blended = self._blend()
+        if self.family == CLASSIFICATION:
+            return blended[:, 1] if blended.shape[1] == 2 else blended
+        return blended
+
+
+def out_of_fold_outputs(members, X, y, cv, n_jobs):
+    """Out-of-fold member outputs: probability matrices (classification) or predictions.
+
+    One pass per member, on the same folds, so every weight the optimizer considers is
+    judged on rows no member was trained on. This is the only place a weight search is
+    allowed to look.
+    """
+    from sklearn.model_selection import cross_val_predict
+
+    outputs = []
+    for _, estimator in members:
+        if problem_family_of(estimator) == CLASSIFICATION:
+            outputs.append(
+                np.asarray(
+                    cross_val_predict(estimator, X, y, cv=cv, method="predict_proba", n_jobs=n_jobs)
+                )
+            )
+        else:
+            outputs.append(
+                np.asarray(cross_val_predict(estimator, X, y, cv=cv, method="predict", n_jobs=n_jobs))
+            )
+    return outputs
+
+
+def _simplex_least_squares(outputs, y, family, classes):
+    """Weights minimizing squared error between the blend and the target, on the simplex.
+
+    For classification the target is the one-hot label matrix, so this minimizes the
+    Brier score of the blended probabilities; for regression it is the plain MSE. The
+    problem is convex in the weights with a simplex constraint (non-negative, summing to
+    one), which is what keeps a member interpretable as "dropped" when its weight is
+    exactly zero — measured on a three-member set, the optimizer put 0.902 on the best
+    member and 0.000 on a useless one.
+    """
+    from scipy.optimize import minimize
+
+    count = len(outputs)
+    if family == CLASSIFICATION:
+        target = np.zeros((len(y), len(classes)))
+        target[np.arange(len(y)), np.searchsorted(classes, y)] = 1.0
+    else:
+        target = np.asarray(y, dtype=float)
+
+    def objective(weights):
+        blended = (
+            sum(weight * output for weight, output in zip(weights, outputs))
+            if family == CLASSIFICATION
+            else np.asarray(outputs).T @ weights
+        )
+        return float(np.mean((blended - target) ** 2))
+
+    result = minimize(
+        objective,
+        np.full(count, 1.0 / count),
+        method="SLSQP",
+        bounds=[(0.0, 1.0)] * count,
+        constraints=[{"type": "eq", "fun": lambda weights: float(np.sum(weights) - 1.0)}],
+        options={"maxiter": 500, "ftol": 1e-12},
+    )
+    weights = np.asarray(result.x, dtype=float)
+    weights = np.clip(weights, 0.0, None)
+    total = weights.sum()
+    if total <= 0:
+        weights = np.full(count, 1.0 / count)
+    else:
+        weights = weights / total
+    return weights, objective(weights)
+
+
+def _scorer_value(scorer, outputs, weights, y, family, classes):
+    """The task scorer's value for one candidate weight vector, on the stored outputs."""
+    blend = _WeightedBlend(outputs, weights, classes, family)
+    return float(scorer(blend, None, y))
+
+
+def _dirichlet_search(outputs, weights_shape, y, family, classes, *, scorer, samples, random_state):
+    generator = np.random.default_rng(random_state)
+    count = weights_shape
+    best_weights = np.full(count, 1.0 / count)
+    best_value = _scorer_value(scorer, outputs, best_weights, y, family, classes)
+    for _ in range(int(samples)):
+        candidate = generator.dirichlet(np.ones(count))
+        value = _scorer_value(scorer, outputs, candidate, y, family, classes)
+        if value > best_value:
+            best_weights, best_value = candidate, value
+    return best_weights, best_value
+
+
+def _greedy_selection(outputs, weights_shape, y, family, classes, *, scorer, rounds):
+    """Caruana-style forward selection with replacement: integer weights, visible drops."""
+    counts = np.zeros(weights_shape)
+    best_value = -np.inf
+    for _ in range(int(rounds)):
+        chosen_index, chosen_value = None, best_value
+        for index in range(weights_shape):
+            candidate = counts.copy()
+            candidate[index] += 1
+            value = _scorer_value(scorer, outputs, candidate / candidate.sum(), y, family, classes)
+            if value > chosen_value:
+                chosen_index, chosen_value = index, value
+        if chosen_index is None:
+            break
+        counts[chosen_index] += 1
+        best_value = chosen_value
+    if counts.sum() <= 0:
+        return np.full(weights_shape, 1.0 / weights_shape), best_value
+    return counts / counts.sum(), best_value
+
+
+def optimize_weights(
+    members,
+    X,
+    y,
+    *,
+    cv=5,
+    strategy="least_squares",
+    scoring=None,
+    samples=200,
+    rounds=20,
+    random_state=None,
+    n_jobs=None,
+):
+    """Find member weights that maximize agreement with the target, on out-of-fold output.
+
+    The weights are fitted on **out-of-fold** member output, so no member scores a row it
+    was trained on; that is the minimum requirement for the vector to mean anything. It is
+    still an in-sample fit of the *weights*, which is why the score of the weighted
+    ensemble is optimistic unless the whole procedure is nested (see
+    :func:`nested_ensemble_cv`). How much optimism is bought depends on whether the search
+    has anything to fit: measured across ten configurations (200-560 rows, two to three
+    members, least-squares and greedy, three to five scoring folds) the gap between the
+    in-sample and the nested number ran from 0.0000 — the search collapsed onto one member,
+    so the ensemble *is* that member — to 0.0233.
+
+    :returns: ``{"weights", "strategy", "objective", "objective_name", "folds", "budget",
+        "dropped"}`` — ``dropped`` names the members whose weight collapsed to zero.
+    """
+    # Same validation the submit-time path runs, so a bad strategy or budget is refused
+    # before any cross-validation is spent and both callers say the same thing.
+    validate_weight_optimization({"strategy": strategy, "samples": samples, "rounds": rounds})
+    members = list(members)
+    if len(members) < 1:
+        raise EnsembleError("At least one member is required to optimize weights.")
+    family = resolve_family(members)
+    outputs = out_of_fold_outputs(members, X, y, cv, n_jobs)
+    classes = np.unique(np.asarray(y)) if family == CLASSIFICATION else None
+
+    if strategy == "least_squares":
+        weights, objective = _simplex_least_squares(outputs, y, family, classes)
+        objective_name = "mean squared error against the target (Brier score for classification)"
+        budget = None
+    else:
+        from sklearn.metrics import get_scorer
+
+        if scoring is None:
+            raise EnsembleError(
+                "Strategy %r maximizes the task's scorer, so a scoring metric is required." % strategy
+            )
+        try:
+            scorer = get_scorer(scoring)
+        except ValueError as exc:
+            raise EnsembleError(str(exc)) from exc
+        if strategy == "dirichlet":
+            weights, objective = _dirichlet_search(
+                outputs, len(members), y, family, classes,
+                scorer=scorer, samples=samples, random_state=random_state,
+            )
+            objective_name = "scorer %r over %d sampled weight vectors" % (scoring, int(samples))
+            budget = {"samples": int(samples)}
+        else:
+            weights, objective = _greedy_selection(
+                outputs, len(members), y, family, classes, scorer=scorer, rounds=rounds
+            )
+            objective_name = "scorer %r over %d forward-selection rounds" % (scoring, int(rounds))
+            budget = {"rounds": int(rounds)}
+    return {
+        "weights": [float(weight) for weight in weights],
+        "strategy": strategy,
+        "objective": float(objective),
+        "objective_name": objective_name,
+        "folds": cv if isinstance(cv, int) else getattr(cv, "get_n_splits", lambda: None)(),
+        "budget": budget,
+        "dropped": [
+            name for (name, _), weight in zip(members, weights) if weight <= 1e-12
+        ],
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Data-dependent orchestration: calibrate, weight, fit, and score honestly
+# --------------------------------------------------------------------------- #
+
+
+def validate_weight_optimization(request):
+    """Shape and value checks for a weight-optimization request, before any data is touched.
+
+    Split out so the same rules run at submit time (the control plane refuses a bad
+    request before queueing a job) and inside :func:`optimize_weights` (the library
+    refuses it before spending a cross-validation), with one wording for both.
+    """
+    request = request or {}
+    strategy = request.get("strategy", "least_squares")
+    if strategy not in WEIGHT_STRATEGIES:
+        raise EnsembleError(
+            "Unknown weight strategy %r; choose one of %s."
+            % (strategy, ", ".join(WEIGHT_STRATEGIES))
+        )
+    cleaned: dict = {"strategy": strategy}
+    for name, default, low, high in (("samples", 200, 10, 5000), ("rounds", 20, 1, 500)):
+        value = request.get(name, default)
+        if isinstance(value, bool) or not isinstance(value, int) or not (low <= value <= high):
+            raise EnsembleError(
+                "weight_optimization.%s must be an integer between %d and %d."
+                % (name, low, high)
+            )
+        cleaned[name] = value
+    return cleaned
+
+
+def validate_combination(method, params=None, calibration=None, weight_optimization=None):
+    """Refuse the two request-level conflicts that are knowable without any data.
+
+    Both are ambiguous rather than impossible, which is why they are errors instead of
+    silent precedence rules: an optimized vector would replace an explicit one, and
+    stacking learns its own combination so a member weight vector would be ignored.
+    Shared by the library entry point and the control plane so the messages cannot drift.
+    """
+    if weight_optimization and (params or {}).get("weights"):
+        raise EnsembleError(
+            "Supply either explicit weights or weight optimization, not both: the "
+            "optimized vector would silently replace the one you passed."
+        )
+    if weight_optimization and method == "stacking":
+        raise EnsembleError(
+            "Stacking learns its own combination in the final estimator, so member "
+            "weights do not apply; optimize weights with voting, averaging, bagging or "
+            "boosting instead."
+        )
+    if weight_optimization:
+        validate_weight_optimization(weight_optimization)
+    if calibration and calibration.get("method") not in (None, *CALIBRATION_METHODS):
+        raise EnsembleError(
+            "Unknown calibration method %r; choose one of %s."
+            % (calibration.get("method"), ", ".join(CALIBRATION_METHODS))
+        )
+    return True
+
+
+def fit_ensemble(
+    method,
+    members,
+    X,
+    y,
+    *,
+    family=None,
+    params=None,
+    calibration=None,
+    weight_optimization=None,
+    columns=None,
+    cv=5,
+    scoring=None,
+    random_state=None,
+    n_jobs=None,
+):
+    """Calibrate (optionally), optimize weights (optionally), build and fit one ensemble.
+
+    Returns ``(estimator, provenance)``. ``provenance`` records what was done *and* how
+    the numbers should be read: the weight vector with its strategy/objective/folds,
+    whether members were calibrated, and the caveat that a weight vector fitted on these
+    folds makes the resulting score optimistic (use :func:`nested_ensemble_cv` for the
+    honest number).
+
+    Both the weights and the calibration are computed from the members'
+    *final per-member forms* — the bagging/boosting wrapper and the calibrator in the
+    nesting the ensemble will actually use — so the vector describes exactly what is
+    combined.
+    """
+    members = list(members)
+    validate_combination(method, params, calibration, weight_optimization)
+    forms, resolved_family, cleaned = member_forms(
+        method,
+        members,
+        family=family,
+        params=params,
+        calibration=calibration,
+        columns=columns,
+        random_state=random_state,
+        n_jobs=n_jobs,
+    )
+
+    provenance = {
+        "calibration": dict(calibration) if calibration else None,
+        "weights": None,
+        # The parameters actually used (optimized weights injected) and the per-member
+        # forms that were combined. A caller records the first and may score the second;
+        # neither is fitted state, and the *forms* must not be written into a bundle's
+        # metadata (they are live estimator objects).
+        "parameters": None,
+        "forms": None,
+    }
+    if weight_optimization:
+        job_threads = weight_optimization.get("n_jobs") or n_jobs
+        optimized = optimize_weights(
+            forms,
+            X,
+            y,
+            cv=cv,
+            strategy=weight_optimization.get("strategy", "least_squares"),
+            scoring=scoring,
+            samples=weight_optimization.get("samples", 200),
+            rounds=weight_optimization.get("rounds", 20),
+            random_state=random_state,
+            n_jobs=job_threads,
+        )
+        provenance["weights"] = optimized
+        cleaned["weights"] = optimized["weights"]
+
+    provenance["parameters"] = dict(cleaned)
+    provenance["forms"] = forms
+    estimator = aggregate_forms(method, forms, resolved_family, cleaned, n_jobs)
+    estimator.fit(X, y)
+    return estimator, provenance
+
+
+def nested_ensemble_cv(
+    method,
+    members,
+    X,
+    y,
+    *,
+    family=None,
+    params=None,
+    calibration=None,
+    weight_optimization=None,
+    columns=None,
+    outer_cv=5,
+    inner_cv=3,
+    scoring=None,
+    random_state=None,
+    n_jobs=None,
+):
+    """Honest estimate for a weight-optimized ensemble: refit everything inside each fold.
+
+    Every outer training fold gets its own calibration, its own out-of-fold member output
+    and its own weight vector; the score is read on the held-out fold, which the weight
+    search never saw. That is what separates this number from the in-sample one. How far
+    apart they are is a property of the search, not a constant: measured across ten
+    configurations (200-560 rows, two to three members, least-squares and greedy, three to
+    five scoring folds) the gap ran from 0.0000 — the search collapsed onto one member, so
+    both protocols score the same estimator — to 0.0233 (three members including a 1-NN
+    memorizer, 300 rows, greedy, three scoring folds: 0.8100 in-sample against
+    0.7867 ± 0.0340 here). A zero gap is therefore a finding about the members, not a
+    failure of the estimate.
+
+    :returns: ``{"scoring", "outer_cv", "inner_cv", "folds", "mean", "std", "errors",
+        "per_fold_weights"}``. Fold-level failures are reported per fold rather than
+        raising, so a single degenerate split does not lose the estimate.
+    """
+    from sklearn.model_selection import check_cv
+
+    members = list(members)
+    validate_combination(method, params, calibration, weight_optimization)
+    # Validate the member set/parameters once up front: a request-level mistake must fail
+    # loudly here, not turn into one error per fold and a null estimate.
+    member_forms(
+        method,
+        members,
+        family=family,
+        params=params,
+        calibration=calibration,
+        columns=columns,
+        random_state=random_state,
+        n_jobs=n_jobs,
+    )
+    outer = check_cv(outer_cv, y, classifier=problem_family_of(members[0][1]) == CLASSIFICATION)
+    if isinstance(outer, int):
+        # ``check_cv`` can hand back the fold count unchanged (it does so when it cannot
+        # decide a classifier/regressor splitter); build the splitter explicitly so the
+        # nested loop always has ``.split``.
+        from sklearn.model_selection import KFold, StratifiedKFold
+
+        outer = (
+            StratifiedKFold(n_splits=outer, shuffle=True, random_state=random_state)
+            if problem_family_of(members[0][1]) == CLASSIFICATION
+            else KFold(n_splits=outer, shuffle=True, random_state=random_state)
+        )
+    try:
+        # Materialized before the loop: a fold count the data cannot support raises here,
+        # where it can be reported as a request problem, rather than as one error per fold.
+        splits = list(outer.split(X, y))
+    except Exception as exc:  # noqa: BLE001 - re-raised with the splitter's own reason
+        raise EnsembleError(
+            "Could not build %s outer folds over %d rows: %s: %s"
+            % (outer_cv, len(y), type(exc).__name__, exc)
+        ) from exc
+    folds = []
+    errors = []
+    per_fold_weights = []
+    for index, (train_index, test_index) in enumerate(splits):
+        try:
+            X_train = X.iloc[train_index] if hasattr(X, "iloc") else X[train_index]
+            X_test = X.iloc[test_index] if hasattr(X, "iloc") else X[test_index]
+            y_train = np.asarray(y)[train_index]
+            y_test = np.asarray(y)[test_index]
+            forms, resolved_family, cleaned = member_forms(
+                method,
+                members,
+                family=family,
+                params=params,
+                calibration=calibration,
+                columns=columns,
+                random_state=random_state,
+                n_jobs=n_jobs,
+            )
+            if weight_optimization:
+                optimized = optimize_weights(
+                    forms,
+                    X_train,
+                    y_train,
+                    cv=inner_cv,
+                    strategy=weight_optimization.get("strategy", "least_squares"),
+                    scoring=scoring,
+                    samples=weight_optimization.get("samples", 200),
+                    rounds=weight_optimization.get("rounds", 20),
+                    random_state=random_state,
+                    n_jobs=weight_optimization.get("n_jobs") or n_jobs,
+                )
+                cleaned["weights"] = optimized["weights"]
+                # The point of the nested run: the weight vector is a *decision* made per
+                # fold, so recording it shows how stable the search was across folds.
+                per_fold_weights.append({"fold": index, "weights": optimized["weights"]})
+            estimator = aggregate_forms(method, forms, resolved_family, cleaned, n_jobs)
+            estimator.fit(X_train, y_train)
+            if scoring:
+                from sklearn.metrics import get_scorer
+
+                try:
+                    value = float(get_scorer(scoring)(estimator, X_test, y_test))
+                except ValueError as exc:
+                    raise EnsembleError(str(exc)) from exc
+            else:
+                value = float(estimator.score(X_test, y_test))
+            folds.append(value)
+        except Exception as exc:  # noqa: BLE001 - one bad split must not lose the estimate
+            errors.append({"fold": index, "detail": "%s: %s" % (type(exc).__name__, exc)})
+    usable = [value for value in folds if math.isfinite(value)]
+    return {
+        "scoring": scoring,
+        "outer_cv": outer_cv if isinstance(outer_cv, int) else type(outer_cv).__name__,
+        "inner_cv": inner_cv if isinstance(inner_cv, int) else type(inner_cv).__name__,
+        "folds": folds,
+        "mean": float(np.mean(usable)) if usable else None,
+        "std": float(np.std(usable)) if usable else None,
+        "errors": errors,
+        "per_fold_weights": per_fold_weights or None,
+    }
+
+
+def calibration_and_weight_options(family):
+    """The calibration and weight-optimization schema blocks for the API/UI.
+
+    One source of truth for both sides: the control plane forwards these values and the
+    page renders controls from them, so a new strategy or calibration method cannot appear
+    in one and not the other.
+    """
+    return {
+        "calibration": {
+            "available": family == CLASSIFICATION,
+            "methods": [
+                {
+                    "value": "sigmoid",
+                    "label": "Sigmoid (Platt)",
+                    "help": "Fits a logistic map to the member's scores; safe on few rows.",
+                },
+                {
+                    "value": "isotonic",
+                    "label": "Isotonic",
+                    "help": "Fits a monotone step function; more flexible, needs enough rows per fold.",
+                },
+            ],
+            "parameters": [
+                {"name": "method", "type": "choice", "choices": list(CALIBRATION_METHODS),
+                 "default": "sigmoid", "label": "Method"},
+                {"name": "cv", "type": "integer", "default": 5, "min": 2, "max": 20,
+                 "label": "Folds", "help": "Folds used to fit the calibrator."},
+                {"name": "ensemble", "type": "choice",
+                 "choices": sorted(CALIBRATION_ENSEMBLE_TOKENS), "default": "auto",
+                 "label": "Calibrators",
+                 "help": "auto (scikit-learn's default) or per_fold average one calibrator per fold; "
+                         "single fits one calibrator on the cross-validated scores."},
+            ],
+            "note": (
+                "Calibration is applied to each member's outermost form and refitted inside "
+                "every comparison fold; it is refused for regression members."
+            ),
+        },
+        "weight_optimization": {
+            "available": True,
+            "strategies": [
+                {"value": "least_squares", "label": "Least squares (Brier/MSE)",
+                 "help": "Convex fit of the weights to the target, on out-of-fold member output; needs no metric."},
+                {"value": "dirichlet", "label": "Random simplex search",
+                 "help": "Samples weight vectors and keeps the best value of the task's scoring metric."},
+                {"value": "greedy", "label": "Greedy selection (Caruana)",
+                 "help": "Forward selection with replacement: integer weights, so a dropped member is visible."},
+            ],
+            "parameters": [
+                {"name": "strategy", "type": "choice", "choices": list(WEIGHT_STRATEGIES),
+                 "default": "least_squares", "label": "Strategy"},
+                {"name": "samples", "type": "integer", "default": 200, "min": 10, "max": 5000,
+                 "label": "Samples", "help": "Candidate vectors for the random search."},
+                {"name": "rounds", "type": "integer", "default": 20, "min": 1, "max": 500,
+                 "label": "Rounds", "help": "Forward-selection rounds for the greedy strategy."},
+            ],
+            "note": (
+                "Weights are fitted on out-of-fold member output; the score of the weighted "
+                "ensemble is still optimistic unless the honest nested estimate is requested."
+            ),
+        },
+    }

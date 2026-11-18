@@ -37,6 +37,43 @@ Combining trained models
 * Documented in ``docs/ensembles.rst`` (new chapter), the UI manual's *Combine
   models into an ensemble* section, and the model-bundle chapter's cross-link.
 
+Calibrating members, optimizing weights, pricing the search
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Per-member calibration** (``calibration``): each member's outermost form is
+  wrapped in scikit-learn's ``CalibratedClassifierCV`` (sigmoid or isotonic, with
+  the calibrator count selectable), so the probabilities entering the merge are
+  calibrated. The calibrator sits *outside* any bagging/boosting wrapper — inside,
+  the bootstrap weights reach it and scikit-learn warns the calibration is
+  "likely to be incorrect". Recorded as a measured before/after pair per member
+  (Brier score and log loss on identical folds), so "calibrated" is evidence
+  rather than a claim; classification-only, refused for regression members.
+* **Weight optimization** (``weight_optimization``): member weights fitted on the
+  members' out-of-fold output by a convex simplex least-squares (Brier/MSE, no
+  metric needed), a Dirichlet search over the task's scorer, or Caruana greedy
+  selection (integer weights, so a member that never helps is visibly dropped and
+  named). Applies wherever members are merged by a weighted vote/average —
+  voting, averaging, bagging, boosting — and is refused for stacking, which
+  learns its own combination, and alongside an explicit ``weights`` vector.
+* **The honest estimate** (``honest_cv``): an outer cross-validation that refits
+  the members, their calibration *and* the weight search inside every training
+  fold, reporting the score of the procedure rather than of the one stored model,
+  with the per-fold weight vectors recorded so the stability of the search is
+  visible. Off by default (it costs outer-folds × (members + search) fits).
+  Measured across ten configurations, the gap between the in-sample and the
+  nested number ran 0.0000 (the search collapsed onto one member, so the ensemble
+  *is* that member) to 0.0233 — which is why both are reported side by side and
+  the caveat states the range instead of a single figure.
+* All three blocks are validated by the same core functions the library uses, so
+  a bad strategy, a fold count the data cannot fill, calibration on regression
+  members, or weights together with optimization are ``400`` at submit time. A
+  failed nested estimate is recorded as an error next to a fitted, scored,
+  usable ensemble rather than taking the model down.
+* The **Refinements** card on the Ensembles page renders those controls from the
+  server's schema and disables what the request would refuse; the detail view
+  adds the weight column, the calibration before/after table and the
+  nested-versus-optimistic gap.
+
 Serving a pinned model
 ~~~~~~~~~~~~~~~~~~~~~~
 

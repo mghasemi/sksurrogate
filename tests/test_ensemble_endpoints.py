@@ -334,6 +334,376 @@ def test_the_ensemble_bundle_serves_predictions(client):
 
 
 # --------------------------------------------------------------------------- #
+# Weight optimization
+# --------------------------------------------------------------------------- #
+
+
+def test_weights_can_be_optimized_and_are_reported(client):
+    _two_members("churn", client)
+    record = _fit(
+        client,
+        "churn",
+        members=["member-lr", "member-dt"],
+        method="voting",
+        params={"voting": "soft"},
+        weight_optimization={"strategy": "least_squares"},
+    )
+    result = record["result"]
+    optimized = result["weight_optimization"]
+    assert optimized["strategy"] == "least_squares"
+    assert len(optimized["weights"]) == 2
+    assert abs(sum(optimized["weights"]) - 1.0) < 1e-6
+    assert optimized["objective"] is not None
+    # The vector is recorded on the bundle, on the member rows, and as the parameters.
+    stored = load_bundle(
+        settings.task_bundles_dir("churn") / (result["model_version"] + ".bundle"),
+        strict_dependencies=False,
+    )
+    metadata = stored.metadata["ensemble"]
+    assert metadata["weight_optimization"]["weights"] == optimized["weights"]
+    assert metadata["parameters"]["weights"] == optimized["weights"]
+    assert [entry["weight"] for entry in metadata["members"]] == optimized["weights"]
+    # A weight-search caveat is added, quoting the measured optimism.
+    assert any("weight" in caveat.lower() and "optimistic" in caveat.lower() for caveat in result["caveats"])
+
+
+def test_each_weight_strategy_runs_and_reports_its_budget(client):
+    _two_members("churn", client)
+    for strategy, extra in (
+        ("least_squares", {}),
+        ("dirichlet", {"samples": 20}),
+        ("greedy", {"rounds": 4}),
+    ):
+        record = _fit(
+            client,
+            "churn",
+            members=["member-lr", "member-dt"],
+            method="averaging",
+            params={"weights": None},
+            weight_optimization={"strategy": strategy, **extra},
+        )
+        optimized = record["result"]["weight_optimization"]
+        assert optimized["strategy"] == strategy
+        assert optimized["objective"] is not None
+        if strategy == "least_squares":
+            assert optimized["budget"] is None
+        else:
+            # A scorer-based search must say which budget it spent.
+            assert optimized["budget"]
+            assert optimized["objective_name"]
+
+
+def test_weight_optimization_and_explicit_weights_conflict(client):
+    _two_members("churn", client)
+    response = _reject(
+        client,
+        "churn",
+        params={"weights": [1.0, 1.0]},
+        weight_optimization={"strategy": "least_squares"},
+    )
+    assert response.status_code == 400
+    assert "not both" in response.json()["detail"]
+
+
+def test_weight_optimization_is_refused_for_stacking(client):
+    _two_members("churn", client)
+    response = _reject(
+        client, "churn", method="stacking", weight_optimization={"strategy": "least_squares"}
+    )
+    assert response.status_code == 400
+    assert "Stacking learns its own combination" in response.json()["detail"]
+
+
+def test_unknown_weight_strategy_is_refused(client):
+    _two_members("churn", client)
+    response = _reject(
+        client, "churn", weight_optimization={"strategy": "bayesian"}
+    )
+    assert response.status_code == 400
+    assert "Unknown weight strategy" in response.json()["detail"]
+
+
+def test_bagging_and_boosting_accept_weights(client):
+    _two_members("churn", client)
+    for method, params in (
+        ("bagging", {"n_estimators": 3, "weights": [0.0, 1.0]}),
+        ("boosting", {"n_estimators": 3, "weights": [1.0, 0.0]}),
+    ):
+        record = _fit(client, "churn", members=["member-lr", "member-dt"], method=method, params=params)
+        stored = load_bundle(
+            settings.task_bundles_dir("churn") / (record["result"]["model_version"] + ".bundle"),
+            strict_dependencies=False,
+        )
+        assert stored.metadata["ensemble"]["parameters"]["weights"] == params["weights"]
+
+
+def test_zero_weight_is_reported_as_a_dropped_member(client):
+    """A strategy that collapses a member to zero says so instead of hiding it."""
+    _two_members("churn", client)
+    record = _fit(
+        client,
+        "churn",
+        members=["member-lr", "member-dt"],
+        method="voting",
+        params={"voting": "soft"},
+        weight_optimization={"strategy": "greedy", "rounds": 4},
+    )
+    optimized = record["result"]["weight_optimization"]
+    zeroed = [index for index, weight in enumerate(optimized["weights"]) if weight == 0.0]
+    assert set(optimized["dropped"]) == {
+        ["member-lr", "member-dt"][index] for index in zeroed
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Per-member calibration
+# --------------------------------------------------------------------------- #
+
+
+def test_calibration_is_reported_with_before_and_after_probability_scores(client):
+    _two_members("churn", client)
+    record = _fit(
+        client,
+        "churn",
+        members=["member-lr", "member-dt"],
+        method="averaging",
+        calibration={"method": "sigmoid", "cv": 3},
+    )
+    result = record["result"]
+    assert result["calibration"]["method"] == "sigmoid"
+    report = {entry["member"]: entry for entry in result["calibration"]["members"]}
+    assert set(report) == {"member-lr", "member-dt"}
+    for entry in report.values():
+        assert entry["brier_before"] is not None and entry["brier_after"] is not None
+        assert entry["log_loss_before"] is not None and entry["log_loss_after"] is not None
+    # The member rows record that they were scored as calibrated members.
+    assert all(entry["calibrated"] is True for entry in result["members"])
+    assert any("calibrat" in caveat.lower() for caveat in result["caveats"])
+    stored = load_bundle(
+        settings.task_bundles_dir("churn") / (result["model_version"] + ".bundle"),
+        strict_dependencies=False,
+    )
+    assert stored.metadata["ensemble"]["calibration"]["method"] == "sigmoid"
+
+
+def test_isotonic_calibration_is_available(client):
+    _two_members("churn", client)
+    record = _fit(
+        client,
+        "churn",
+        members=["member-lr", "member-dt"],
+        method="averaging",
+        calibration={"method": "isotonic", "cv": 3, "ensemble": "single"},
+    )
+    assert record["result"]["calibration"]["method"] == "isotonic"
+
+
+def test_calibration_is_refused_for_regression_members(client):
+    from sklearn.linear_model import LinearRegression
+
+    _two_members("churn", client)
+    _store_member("churn", LinearRegression(), version="member-reg")
+    _store_member("churn", LinearRegression(fit_intercept=False), version="member-reg2")
+    response = _reject(
+        client,
+        "churn",
+        members=["member-reg", "member-reg2"],
+        method="averaging",
+        calibration={"method": "sigmoid"},
+    )
+    assert response.status_code == 400
+    assert "classification members only" in response.json()["detail"]
+
+
+def test_unknown_calibration_method_and_token_are_refused(client):
+    _two_members("churn", client)
+    response = _reject(client, "churn", calibration={"method": "platt"})
+    assert response.status_code == 400
+    assert "Unknown calibration method" in response.json()["detail"]
+    response = _reject(client, "churn", calibration={"method": "sigmoid", "ensemble": "sometimes"})
+    assert response.status_code == 400
+    assert "ensemble" in response.json()["detail"]
+
+
+def test_calibration_plus_bagging_emits_no_sample_weight_warning(client):
+    """Calibration must sit outside the resampling wrapper, or sklearn warns.
+
+    Nested inside, ``CalibratedClassifierCV`` receives the bootstrap weights
+    (``BaggingClassifier`` forwards them to any base whose ``fit`` declares them) and
+    warns that the calibration is "likely to be incorrect". The fit is driven through the
+    core so the warning filter sees it.
+    """
+    import warnings
+
+    from SKSurrogate import fit_ensemble
+    from SKSurrogate.DataProcess import FoldLocalDataPreprocessor
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import Pipeline
+
+    _two_members("churn", client)
+    frame = load_partition("churn", "train")
+    features = frame.drop(columns=["y"])
+    columns = list(features.columns)
+
+    def member(estimator):
+        from SKSurrogate.DataProcess import frame_tolerant
+
+        return frame_tolerant(
+            Pipeline([("preprocess", FoldLocalDataPreprocessor()), ("model", estimator)]),
+            columns=columns,
+        )
+
+    members = [
+        ("a", member(LogisticRegression(max_iter=300))),
+        ("b", member(LogisticRegression(max_iter=300, C=0.5))),
+    ]
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        fit_ensemble(
+            "bagging",
+            members,
+            features,
+            frame["y"].to_numpy(),
+            params={"n_estimators": 3},
+            calibration={"method": "sigmoid", "cv": 3},
+            columns=columns,
+            random_state=0,
+            n_jobs=1,
+        )
+    assert [str(item.message) for item in caught if "sample_weight" in str(item.message)] == []
+
+
+def test_methods_endpoint_publishes_the_new_capabilities(client):
+    _two_members("churn", client)
+    methods = client.get("/api/ensembles/churn/methods").json()
+
+    assert methods["calibration"]["available"] is True
+    assert {entry["value"] for entry in methods["calibration"]["methods"]} == {"sigmoid", "isotonic"}
+    assert {spec["name"] for spec in methods["calibration"]["parameters"]} == {"method", "cv", "ensemble"}
+    assert methods["weight_optimization"]["available"] is True
+    assert {entry["value"] for entry in methods["weight_optimization"]["strategies"]} == {
+        "least_squares",
+        "dirichlet",
+        "greedy",
+    }
+    accepts = {entry["value"]: entry["accepts_weights"] for entry in methods["methods"]}
+    assert accepts == {
+        "voting": True,
+        "averaging": True,
+        "stacking": False,
+        "bagging": True,
+        "boosting": True,
+    }
+
+
+# --------------------------------------------------------------------------- #
+# The honest nested estimate
+# --------------------------------------------------------------------------- #
+
+
+def test_honest_cv_prices_the_weight_search(client):
+    """The nested estimate must exist next to the optimistic one, with its own caveat."""
+    _two_members("churn", client)
+    record = _fit(
+        client,
+        "churn",
+        members=["member-lr", "member-dt"],
+        method="voting",
+        params={"voting": "soft"},
+        weight_optimization={"strategy": "least_squares"},
+        honest_cv={"folds": 3, "inner_folds": 2},
+    )
+    result = record["result"]
+    nested = result["nested"]
+    assert nested["mean"] is not None
+    assert nested["std"] is not None
+    assert len(nested["folds"]) == 3
+    assert nested["errors"] == []
+    # Both numbers are stored so the UI can show the gap.
+    assert result["metrics"]["cv_score"] is not None
+    assert nested["mean"] != result["metrics"]["cv_score"] or nested["std"] > 0
+    stored = load_bundle(
+        settings.task_bundles_dir("churn") / (result["model_version"] + ".bundle"),
+        strict_dependencies=False,
+    )
+    assert stored.metadata["ensemble"]["scores"]["nested"]["mean"] == nested["mean"]
+    assert "a weight vector was fitted on those folds" in (
+        stored.metadata["reproducibility"]["evaluation_protocol"]["metric_scope"]
+    )
+
+
+def test_honest_cv_is_optional_and_absent_by_default(client):
+    _two_members("churn", client)
+    record = _fit(client, "churn", members=["member-lr", "member-dt"], method="voting")
+    assert record["result"]["nested"] is None
+    stored = load_bundle(
+        settings.task_bundles_dir("churn") / (record["result"]["model_version"] + ".bundle"),
+        strict_dependencies=False,
+    )
+    assert stored.metadata["ensemble"]["scores"]["nested"] is None
+
+
+def test_malformed_honest_cv_is_refused(client):
+    _two_members("churn", client)
+    response = _reject(client, "churn", honest_cv={"folds": 1})
+    assert response.status_code == 400
+    assert "honest_cv.folds" in response.json()["detail"]
+    response = _reject(client, "churn", honest_cv={"folds": "three"})
+    assert response.status_code == 400
+    assert "honest_cv.folds" in response.json()["detail"]
+
+
+def test_a_failed_honest_estimate_does_not_lose_the_ensemble(client):
+    """The model is the artifact; the honest estimate is a measurement of it.
+
+    Driven through the API function rather than the route, because the route caps the
+    fold count at 20 and this fixture can fill 20 folds; 500 folds cannot be filled.
+    """
+    from api.training import fit_ensemble_bundle
+
+    _two_members("churn", client)
+    bundle, summary = fit_ensemble_bundle(
+        "churn",
+        members=["member-lr", "member-dt"],
+        method="voting",
+        params={"voting": "soft"},
+        honest_cv={"folds": 500, "inner_folds": 2},
+        scoring="accuracy",
+        random_state=0,
+    )
+    assert summary["nested"]["mean"] is None
+    assert summary["nested"]["errors"][0]["fold"] == -1
+    assert "Could not build" in summary["nested"]["errors"][0]["detail"]
+    # The ensemble itself is complete: fitted, scored and stored with the failure recorded.
+    assert summary["metrics"]["cv_score"] is not None
+    assert summary["model_version"] == bundle.model_version
+    assert bundle.metadata["ensemble"]["scores"]["nested"]["mean"] is None
+    assert bundle.metadata["ensemble"]["scores"]["cv_score"] is not None
+
+
+def test_candidates_report_calibrated_and_weighted_flags(client):
+    _two_members("churn", client)
+    record = _fit(
+        client,
+        "churn",
+        members=["member-lr", "member-dt"],
+        method="voting",
+        params={"voting": "soft"},
+        calibration={"method": "sigmoid", "cv": 3},
+        weight_optimization={"strategy": "least_squares"},
+    )
+    version = record["result"]["model_version"]
+    candidates = client.get("/api/ensembles/churn/candidates").json()["candidates"]
+    entry = next(item for item in candidates if item["model_version"] == version)
+    assert entry["ensemble"]["calibrated"] is True
+    assert entry["ensemble"]["weighted"] is True
+    # And the listed ensemble row carries them too, so the table can badge them.
+    listed = client.get("/api/ensembles/churn").json()["ensembles"]
+    row = next(item for item in listed if item["model_version"] == version)
+    assert row["calibrated"] is True and row["weighted"] is True
+
+
+# --------------------------------------------------------------------------- #
 # Rejections: at submit time, not inside the job
 # --------------------------------------------------------------------------- #
 

@@ -16,11 +16,22 @@ Endpoints:
 - ``/`` (GET)     → list the task's ensembles with their member-versus-ensemble scores
 - ``/{version}``  → one ensemble's detail: members, parameters, scores, caveats
 
+Two orthogonal capabilities extend every combiner, and both are recorded with the
+result rather than left implicit:
+
+- **per-member calibration** (``calibration``) wraps each member's *outermost* form in a
+  ``CalibratedClassifierCV``, so the probabilities that enter the merge are calibrated.
+  The per-member Brier score and log loss before/after are stored as the evidence.
+- **weight optimization** (``weight_optimization``) fits the member weights on
+  out-of-fold member output, and ``honest_cv`` then prices that search by refitting the
+  members, the calibration and the weights inside every outer fold.
+
 The member-versus-ensemble comparison is scoped by an explicit caveat carried in the
 response and stored with the model (see ``api.training.ENSEMBLE_CAVEATS``): the
 members were fitted and tuned on this same data, so their out-of-fold scores and the
 ensemble's are jointly optimistic, and the honest estimate is the nested-CV
-evaluation.
+evaluation. A weight search adds a second layer of optimism, which is why the
+weight-optimization caveat quotes the measured gap and ``honest_cv`` exists.
 """
 
 from fastapi import APIRouter, Depends
@@ -55,6 +66,10 @@ class FitEnsembleRequest(BaseModel):
     ``params`` is deliberately free-form and validated against the method's schema on
     the server (``SKSurrogate.ensembling.validate_params``), so the UI and the API
     cannot drift: an unknown key is refused rather than ignored.
+
+    ``calibration`` and ``weight_optimization`` are orthogonal to ``method`` — they post-
+    process every member and the merge itself — and are validated by the same core
+    functions the library uses, so a request rejected here would be rejected there too.
     """
 
     members: list[str] = Field(default_factory=list)
@@ -67,6 +82,15 @@ class FitEnsembleRequest(BaseModel):
     run_id: str | None = None
     label: str | None = None  # optional human name for the job and its bundle
     register: bool = False  # additionally register the result as a candidate version
+    #: ``{"method": "sigmoid"|"isotonic", "cv": int, "ensemble": "auto"|"per_fold"|"single"}``
+    #: applied to each member's outermost form; classification members only.
+    calibration: dict | None = None
+    #: ``{"strategy": "least_squares"|"dirichlet"|"greedy", "samples": int, "rounds": int}``
+    #: fitted on out-of-fold member output; unavailable for stacking.
+    weight_optimization: dict | None = None
+    #: ``{"folds": int, "inner_folds": int}`` — the honest estimate that refits members,
+    #: calibration and weights inside every outer fold. Costs outer-folds x member fits.
+    honest_cv: dict | None = None
 
 
 def _stored_bundle_files(task_name):
@@ -123,6 +147,9 @@ def _candidate_entries(task_name, limit=_CANDIDATE_PROBE_LIMIT):
                         "aggregation": metadata.get("aggregation"),
                         "member_count": len(metadata.get("members") or []),
                         "scores": metadata.get("scores"),
+                        "calibrated": bool(metadata.get("calibration")),
+                        "weighted": bool(metadata.get("weight_optimization")),
+                        "nested_score": ((metadata.get("scores") or {}).get("nested") or {}).get("mean"),
                     }
                     if metadata
                     else None
@@ -155,6 +182,33 @@ def ensemble_candidates(task_name: str):
     return {"task_name": task_name, "candidates": _candidate_entries(task_name)}
 
 
+def _validate_combination_options(body):
+    """Reject malformed calibration / weight-optimization / honest-CV payloads at submit.
+
+    Field-level shape only (the value sets and the cross-field conflicts are checked by
+    the core functions the job also calls); a bad shape here would otherwise fail at the
+    first ``.get`` inside the worker.
+    """
+    if body.calibration is not None and not isinstance(body.calibration, dict):
+        raise bad_request("'calibration' must be an object of method/cv/ensemble.")
+    if body.weight_optimization is not None and not isinstance(body.weight_optimization, dict):
+        raise bad_request("'weight_optimization' must be an object of strategy/samples/rounds.")
+    if body.honest_cv is not None and not isinstance(body.honest_cv, dict):
+        raise bad_request("'honest_cv' must be an object of folds/inner_folds.")
+    if body.honest_cv:
+        folds = body.honest_cv.get("folds", 5)
+        inner = body.honest_cv.get("inner_folds", 3)
+        for name, value in (("folds", folds), ("inner_folds", inner)):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 2:
+                raise bad_request("honest_cv.%s must be an integer of at least 2." % name)
+    if body.calibration and body.weight_optimization and body.method == "stacking":
+        raise bad_request(
+            "Stacking learns its own combination in the final estimator, so member "
+            "weights do not apply; optimize weights with voting, averaging, bagging or "
+            "boosting instead."
+        )
+
+
 def _submit_ensemble(task_name, body):
     """Validate the request now, then run the combining job in the background.
 
@@ -165,16 +219,20 @@ def _submit_ensemble(task_name, body):
     """
     if not body.method:
         raise bad_request("An ensemble method is required.")
+    _validate_combination_options(body)
     target, _ = get_registered_target(task_name)
     frame = load_partition(task_name, body.train_partition)
     feature_columns = [column for column in frame.columns if column != target]
-    # Fail fast: resolves members, checks the family, the capability requirements and
-    # every parameter value before the job is queued.
+    # Fail fast: resolves members, checks the family, the capability requirements, every
+    # parameter value, the calibration eligibility and the weight-optimization conflicts
+    # before the job is queued.
     ensemble_plan(
         task_name,
         members=body.members,
         method=body.method,
         params=body.params,
+        calibration=body.calibration,
+        weight_optimization=body.weight_optimization,
         columns=feature_columns,
         random_state=body.random_state,
     )
@@ -193,6 +251,9 @@ def _submit_ensemble(task_name, body):
                 run_id=body.run_id or job_id,
                 label=body.label,
                 register=body.register,
+                calibration=body.calibration,
+                weight_optimization=body.weight_optimization,
+                honest_cv=body.honest_cv,
             )
             return summary
 

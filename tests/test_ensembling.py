@@ -28,6 +28,7 @@ import pickle
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.base import BaseEstimator, ClassifierMixin, clone
 from sklearn.ensemble import AdaBoostClassifier
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier, KNeighborsRegressor
@@ -41,13 +42,22 @@ from SKSurrogate import (
     EnsembleError,
     SampleWeightRouter,
     build_ensemble,
+    calibrate_member,
+    calibrate_members,
+    calibration_report,
     cross_validated_scores,
+    fit_ensemble,
+    member_forms,
     member_scores,
     method_catalogue,
+    nested_ensemble_cv,
+    optimize_weights,
+    out_of_fold_outputs,
     problem_family_of,
     resolve_family,
     supports_sample_weight,
     validate_params,
+    validate_weight_optimization,
 )
 from SKSurrogate.DataProcess import (
     ArrayAsFrame,
@@ -503,9 +513,482 @@ def test_public_surface_is_picklable():
 
 def test_base_estimator_subclass_contract_holds():
     """``clone`` must round-trip the adapter, or AdaBoost cannot refit it."""
-    from sklearn.base import clone
-
     router = SampleWeightRouter(_member(DecisionTreeClassifier(max_depth=1)))
     cloned = clone(router)
     assert isinstance(cloned, SampleWeightRouter)
     assert not hasattr(cloned, "estimator_")
+
+
+# --------------------------------------------------------------------------- #
+# Per-member calibration
+# --------------------------------------------------------------------------- #
+
+
+def _overconfident_member():
+    """A fully grown tree: probabilities are 0/1, so log loss is catastrophic."""
+    return _member(DecisionTreeClassifier(max_depth=12, min_samples_leaf=1, random_state=0))
+
+
+def test_calibration_repairs_an_overconfident_member():
+    """The evidence the feature exists for: probabilities, not decisions, get repaired."""
+    rng = np.random.default_rng(7)
+    n = 400
+    frame = pd.DataFrame(
+        {"x1": rng.normal(size=n), "x2": rng.normal(size=n), "team": rng.choice(["a", "b"], size=n)}
+    )
+    frame["y"] = (
+        frame["x1"] * 1.5 + (frame["team"] == "a") + rng.normal(scale=0.8, size=n) > 0
+    ).astype(int)
+    features = frame[COLUMNS[:2] + ["team"]]
+    members = [("tree", _overconfident_member())]
+
+    report = calibration_report(members, features, frame["y"], cv=5, method="sigmoid")
+    entry = report[0]
+
+    assert entry["log_loss_before"] > 1.0  # an overconfident member is heavily penalised
+    assert entry["log_loss_after"] < entry["log_loss_before"] / 2
+    assert entry["brier_after"] < entry["brier_before"]
+    # Calibration does not have to change a single hard decision, and it is not asked to.
+    assert abs(entry["brier_after"] - entry["brier_before"]) < 0.2
+
+
+def test_calibration_leaves_a_well_calibrated_member_about_unchanged():
+    frame = _frame()
+    report = calibration_report(
+        [("lr", _member(LogisticRegression(max_iter=500)))],
+        frame[COLUMNS],
+        frame["y_cls"],
+        cv=5,
+        method="sigmoid",
+    )
+    entry = report[0]
+    assert abs(entry["brier_after"] - entry["brier_before"]) < 0.02
+    assert abs(entry["log_loss_after"] - entry["log_loss_before"]) < 0.05
+
+
+def test_calibration_reports_a_member_failure_instead_of_raising():
+    """A member that cannot be calibrated is reported, not fatal."""
+    frame = _frame()
+    report = calibration_report(
+        [("bare", _ScoresLessClassifier())], frame[COLUMNS], frame["y_cls"], cv=2
+    )
+    assert "error" in report[0]
+
+
+class _ScoresLessClassifier(ClassifierMixin, BaseEstimator):
+    """A classifier with neither probabilities nor a decision function.
+
+    Exists so the calibration eligibility check can be pinned: such a member is refused by
+    name rather than failing somewhere inside ``CalibratedClassifierCV``.
+    """
+
+    def fit(self, X, y=None):
+        self.classes_ = np.unique(np.asarray(y))
+        self.majority_ = self.classes_[0]
+        return self
+
+    def predict(self, X):
+        return np.full(len(np.asarray(X)), self.majority_)
+
+
+def test_calibration_members_refuses_regression_and_unscorable_members():
+    with pytest.raises(EnsembleError, match="classification members only"):
+        calibrate_members(_reg_members(), method="sigmoid", cv=3)
+    # A classifier that exposes neither predict_proba nor decision_function has nothing
+    # to calibrate; the refusal names it instead of failing inside the fit.
+    with pytest.raises(EnsembleError, match="neither predict_proba nor decision_function"):
+        calibrate_members([("bare", _ScoresLessClassifier())], method="sigmoid", cv=3)
+    # A classifier *with* a decision function is calibratable even without probabilities.
+    svc = _member(LinearSVC())
+    assert calibrate_members([("svc", svc)], method="sigmoid", cv=3)
+
+
+def test_calibration_method_and_folds_are_validated():
+    member = _member(LogisticRegression(max_iter=200))
+    with pytest.raises(EnsembleError, match="Unknown calibration method"):
+        calibrate_member(member, method="platt")
+    with pytest.raises(EnsembleError, match="at least 2"):
+        calibrate_member(member, cv=1)
+    with pytest.raises(EnsembleError, match="must be one of"):
+        calibrate_member(member, ensemble="sometimes")
+    # The three tokens resolve to scikit-learn's own values.
+    assert calibrate_member(member, ensemble="auto").ensemble == "auto"
+    assert calibrate_member(member, ensemble="per_fold").ensemble is True
+    assert calibrate_member(member, ensemble="single").ensemble is False
+    assert calibrate_member(member, ensemble=False).ensemble is False
+
+
+def test_calibration_is_wrapped_outside_the_resampling_wrapper():
+    """The nesting that keeps the calibration honest (and sklearn quiet).
+
+    Inside, ``BaggingClassifier`` forwards the bootstrap weights to the calibrator and
+    scikit-learn warns that the calibration is "likely to be incorrect"; outside, the
+    calibrator sees the fold's own rows. This pins the structure, and
+    tests/test_ensemble_endpoints.py pins the absence of the warning end to end.
+    """
+    from sklearn.calibration import CalibratedClassifierCV
+
+    frame = _frame()
+    features = frame[COLUMNS]
+    members = _cls_members()
+
+    for method in ("bagging", "boosting"):
+        forms, _family, _cleaned = member_forms(
+            method,
+            members,
+            params={"n_estimators": 3},
+            calibration={"method": "sigmoid", "cv": 3},
+            columns=COLUMNS,
+            random_state=0,
+        )
+        for _name, form in forms:
+            # Outermost is the calibrator, and what it calibrates is the wrapper.
+            assert isinstance(form, CalibratedClassifierCV), method
+            inner = form.estimator
+            assert type(inner).__name__ in ("BaggingClassifier", "AdaBoostClassifier"), method
+
+    # The aggregating methods calibrate the member itself instead.
+    forms, _family, _cleaned = member_forms(
+        "voting", members, calibration={"method": "sigmoid", "cv": 3}, columns=COLUMNS
+    )
+    assert all(isinstance(form, CalibratedClassifierCV) for _name, form in forms)
+
+
+def test_already_calibrated_members_are_not_double_wrapped():
+    frame = _frame()
+    features = frame[COLUMNS]
+    members = [(name, calibrate_member(est, cv=3)) for name, est in _cls_members()]
+
+    estimator = build_ensemble("averaging", members, columns=COLUMNS, n_jobs=1)
+    estimator.fit(features, frame["y_cls"])
+
+    # build_ensemble leaves an already-calibrated member alone rather than nesting again.
+    from sklearn.calibration import CalibratedClassifierCV
+
+    assert all(
+        isinstance(est, CalibratedClassifierCV) for _name, est in estimator.estimators
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Weight optimization
+# --------------------------------------------------------------------------- #
+
+
+def _weighting_frame(n=500, seed=3):
+    rng = np.random.default_rng(seed)
+    frame = pd.DataFrame(
+        {"x1": rng.normal(size=n), "x2": rng.normal(size=n), "team": rng.choice(["a", "b", "c"], size=n)}
+    )
+    frame["y_cls"] = (
+        frame["x1"] * 1.6
+        + 0.9 * (frame["team"] == "a")
+        + 0.7 * frame["x1"] * frame["x2"]
+        + rng.normal(scale=1.0, size=n)
+        > 0
+    ).astype(int)
+    frame["y_reg"] = 2 * frame["x1"] - frame["x2"] + (frame["team"] == "b") + rng.normal(scale=0.4, size=n)
+    return frame
+
+
+def test_out_of_fold_outputs_are_not_in_sample():
+    """Each member's stored output must come from folds it was not trained on."""
+    frame = _weighting_frame()
+    features = frame[COLUMNS]
+    member = _member(LogisticRegression(max_iter=500))
+    outputs = out_of_fold_outputs([("lr", member)], features, frame["y_cls"], 4, None)
+
+    oof_prediction = (outputs[0][:, 1] > 0.5).astype(int)
+    oof_accuracy = float((oof_prediction == frame["y_cls"]).mean())
+    in_sample = float(clone(member).fit(features, frame["y_cls"]).score(features, frame["y_cls"]))
+    assert oof_accuracy < in_sample
+
+
+def test_least_squares_weights_live_on_the_simplex_and_beat_equal_weights():
+    frame = _weighting_frame()
+    features = frame[COLUMNS]
+    members = _cls_members()
+    result = optimize_weights(members, features, frame["y_cls"], cv=4, strategy="least_squares")
+
+    weights = np.asarray(result["weights"])
+    assert np.all(weights >= 0.0)
+    assert abs(float(weights.sum()) - 1.0) < 1e-6
+    assert result["objective_name"].startswith("mean squared error")
+    assert result["budget"] is None
+    # `dropped` must name exactly the zero entries, positionally.
+    assert set(result["dropped"]) == {
+        members[index][0] for index in range(len(members)) if weights[index] <= 1e-12
+    }
+    # The fit is not a no-op: it must do at least as well as equal weights on its own
+    # objective (that is the whole point of solving it).
+    outputs = out_of_fold_outputs(members, features, frame["y_cls"], 4, None)
+    equal = np.full(len(members), 1.0 / len(members))
+    onehot = np.zeros((len(frame), 2))
+    onehot[np.arange(len(frame)), frame["y_cls"].to_numpy()] = 1.0
+    equal_objective = float(np.mean((sum(w * o for w, o in zip(equal, outputs)) - onehot) ** 2))
+    assert result["objective"] <= equal_objective
+
+
+def test_scorer_strategies_use_the_task_metric_and_report_their_budget():
+    frame = _weighting_frame()
+    features = frame[COLUMNS]
+    members = _cls_members()
+
+    for strategy, extra, key in (
+        ("dirichlet", {"samples": 40}, "samples"),
+        ("greedy", {"rounds": 6}, "rounds"),
+    ):
+        result = optimize_weights(
+            members, features, frame["y_cls"], cv=4, strategy=strategy, scoring="accuracy", **extra
+        )
+        assert result["strategy"] == strategy
+        assert result["budget"][key] == extra[key]
+        assert "accuracy" in result["objective_name"]
+        assert 0.0 < float(np.asarray(result["weights"]).sum()) <= 1.0 + 1e-9
+    # A scorer-based search is meaningless without the metric.
+    with pytest.raises(EnsembleError, match="scoring metric is required"):
+        optimize_weights(members, features, frame["y_cls"], cv=4, strategy="dirichlet")
+
+
+def test_optimize_weights_validates_strategy_and_budget():
+    with pytest.raises(EnsembleError, match="Unknown weight strategy"):
+        validate_weight_optimization({"strategy": "bayesian"})
+    with pytest.raises(EnsembleError, match="weight_optimization.samples"):
+        validate_weight_optimization({"strategy": "dirichlet", "samples": 3})
+    with pytest.raises(EnsembleError, match="weight_optimization.rounds"):
+        validate_weight_optimization({"strategy": "greedy", "rounds": 0})
+    cleaned = validate_weight_optimization({})
+    assert cleaned == {"strategy": "least_squares", "samples": 200, "rounds": 20}
+
+
+def test_weights_are_optimized_for_regression_too():
+    frame = _weighting_frame()
+    features = frame[COLUMNS]
+    result = optimize_weights(
+        _reg_members(), features, frame["y_reg"], cv=4, strategy="least_squares"
+    )
+    assert abs(sum(result["weights"]) - 1.0) < 1e-6
+    assert result["objective"] < 1.0  # an MSE well below the target's own variance
+
+
+def test_optimized_weights_reach_the_bagging_and_boosting_aggregation():
+    """Weights apply wherever the merge is a weighted vote, not only to voting/averaging."""
+    frame = _weighting_frame()
+    features = frame[COLUMNS]
+
+    for method in ("bagging", "boosting"):
+        estimator = build_ensemble(
+            method,
+            _cls_members(),
+            params={"n_estimators": 3, "weights": [0.0, 1.0]},
+            columns=COLUMNS,
+            random_state=0,
+            n_jobs=1,
+        )
+        estimator.fit(features, frame["y_cls"])
+        assert list(estimator.weights) == [0.0, 1.0]
+        # The dropped member's estimator is still fitted, but contributes nothing.
+        assert len(estimator.estimators_) == 2
+
+
+def test_fit_ensemble_records_what_it_did():
+    frame = _weighting_frame()
+    features = frame[COLUMNS]
+    estimator, provenance = fit_ensemble(
+        "voting",
+        _cls_members(),
+        features,
+        frame["y_cls"],
+        params={"voting": "soft"},
+        calibration={"method": "sigmoid", "cv": 3},
+        weight_optimization={"strategy": "least_squares"},
+        columns=COLUMNS,
+        cv=4,
+        random_state=0,
+        n_jobs=1,
+    )
+    assert provenance["calibration"]["method"] == "sigmoid"
+    assert provenance["weights"]["strategy"] == "least_squares"
+    assert provenance["parameters"]["weights"] == provenance["weights"]["weights"]
+    # The forms reported are the ones that were combined (calibrated, wrappers included).
+    from sklearn.calibration import CalibratedClassifierCV
+
+    assert all(isinstance(form, CalibratedClassifierCV) for _name, form in provenance["forms"])
+    assert estimator.score(features, frame["y_cls"]) > 0.7
+
+
+def test_fit_ensemble_refuses_conflicting_and_impossible_combinations():
+    frame = _weighting_frame()
+    features = frame[COLUMNS]
+    with pytest.raises(EnsembleError, match="not both"):
+        fit_ensemble(
+            "voting",
+            _cls_members(),
+            features,
+            frame["y_cls"],
+            params={"weights": [1.0, 1.0]},
+            weight_optimization={"strategy": "least_squares"},
+            columns=COLUMNS,
+            n_jobs=1,
+        )
+    with pytest.raises(EnsembleError, match="Stacking learns its own combination"):
+        fit_ensemble(
+            "stacking",
+            _cls_members(),
+            features,
+            frame["y_cls"],
+            weight_optimization={"strategy": "least_squares"},
+            columns=COLUMNS,
+            n_jobs=1,
+        )
+    with pytest.raises(EnsembleError, match="Unknown weight strategy"):
+        fit_ensemble(
+            "voting",
+            _cls_members(),
+            features,
+            frame["y_cls"],
+            weight_optimization={"strategy": "bayesian"},
+            columns=COLUMNS,
+            n_jobs=1,
+        )
+    with pytest.raises(EnsembleError, match="Unknown calibration method"):
+        fit_ensemble(
+            "voting",
+            _cls_members(),
+            features,
+            frame["y_cls"],
+            calibration={"method": "platt"},
+            columns=COLUMNS,
+            n_jobs=1,
+        )
+
+
+def test_nested_ensemble_cv_prices_the_weight_search():
+    """The honest procedure must be available next to the optimistic one.
+
+    ``nested_ensemble_cv`` refits the weights inside every outer training fold, so its
+    number is not the one the weight search was fitted against. On this fixture the
+    in-sample-optimized score is the higher of the two — that gap *is* the finding, so
+    the assertion is deliberately one-sided rather than an equality.
+    """
+    frame = _weighting_frame()
+    features = frame[COLUMNS]
+    members = _cls_members()
+
+    nested = nested_ensemble_cv(
+        "voting",
+        members,
+        features,
+        frame["y_cls"],
+        params={"voting": "soft"},
+        weight_optimization={"strategy": "least_squares"},
+        columns=COLUMNS,
+        outer_cv=4,
+        inner_cv=3,
+        scoring="accuracy",
+        random_state=0,
+        n_jobs=1,
+    )
+    assert nested["mean"] is not None and nested["std"] is not None
+    assert len(nested["folds"]) == 4
+    assert nested["errors"] == []
+    assert nested["scoring"] == "accuracy"
+    # Each outer fold fitted its own weight vector, and each is a distribution.
+    assert len(nested["per_fold_weights"]) == 4
+    for entry in nested["per_fold_weights"]:
+        assert abs(sum(entry["weights"]) - 1.0) < 1e-6
+        assert all(weight >= 0.0 for weight in entry["weights"])
+
+    # The optimistic counterpart: weights fitted on the folds that score them.
+    estimator, _provenance = fit_ensemble(
+        "voting",
+        members,
+        features,
+        frame["y_cls"],
+        params={"voting": "soft"},
+        weight_optimization={"strategy": "least_squares"},
+        columns=COLUMNS,
+        cv=4,
+        scoring="accuracy",
+        random_state=0,
+        n_jobs=1,
+    )
+    from SKSurrogate import cross_validated_scores
+
+    optimistic, _std, _folds = cross_validated_scores(
+        estimator, features, frame["y_cls"], cv=4, scoring="accuracy", n_jobs=1
+    )
+    assert nested["mean"] <= optimistic + 0.02
+
+
+def test_nested_ensemble_cv_without_weight_optimization_scores_the_plain_ensemble():
+    frame = _weighting_frame()
+    nested = nested_ensemble_cv(
+        "averaging",
+        _cls_members(),
+        frame[COLUMNS],
+        frame["y_cls"],
+        columns=COLUMNS,
+        outer_cv=3,
+        inner_cv=2,
+        scoring="accuracy",
+        random_state=0,
+        n_jobs=1,
+    )
+    assert nested["mean"] is not None
+    assert len(nested["folds"]) == 3
+
+
+def test_nested_ensemble_cv_fails_loudly_on_a_bad_request():
+    """A request-level mistake must raise, not become one error per fold."""
+    frame = _weighting_frame()
+    with pytest.raises(EnsembleError, match="does not take"):
+        nested_ensemble_cv(
+            "averaging",
+            _cls_members(),
+            frame[COLUMNS],
+            frame["y_cls"],
+            params={"voting": "soft"},  # averaging has no `voting` parameter
+            columns=COLUMNS,
+            outer_cv=3,
+            inner_cv=2,
+            scoring="accuracy",
+            n_jobs=1,
+        )
+
+
+def test_a_fold_count_the_data_cannot_support_is_a_clear_error():
+    """Folds the partition cannot support must not become one error per fold."""
+    frame = _weighting_frame(n=60)
+    with pytest.raises(EnsembleError, match="Could not build"):
+        nested_ensemble_cv(
+            "voting",
+            _cls_members(),
+            frame[COLUMNS],
+            frame["y_cls"],
+            params={"voting": "soft"},
+            columns=COLUMNS,
+            outer_cv=40,  # far more folds than the smallest class can fill
+            inner_cv=2,
+            scoring="accuracy",
+            n_jobs=1,
+        )
+
+
+def test_nested_ensemble_cv_reports_a_fold_failure_instead_of_raising():
+    """One degenerate split must not lose the estimate."""
+    frame = _weighting_frame(n=60)
+    nested = nested_ensemble_cv(
+        "voting",
+        _cls_members(),
+        frame[COLUMNS],
+        frame["y_cls"],
+        params={"voting": "soft"},
+        columns=COLUMNS,
+        outer_cv=2,
+        inner_cv=6,  # more inner folds than the smallest class can support
+        scoring="accuracy",
+        random_state=0,
+        n_jobs=1,
+    )
+    assert nested["errors"] or nested["mean"] is not None
