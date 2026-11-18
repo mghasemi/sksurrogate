@@ -1,22 +1,27 @@
 """Batch/online inference endpoints, wrapping ``SKSurrogate.inference.predict_batch``.
 
+Here the *caller* names the model on every request — an exact ``model_version``
+or a lifecycle/registry ``alias``. To declare a model once and score through it
+without naming it, see :mod:`api.routers.serving` (``/api/serving/{task}/predict``).
+
 Every call also appends a persisted ``InferenceMonitor`` observation so the
 Monitoring router can report latency/throughput history for the model
-version used (see docs/ui-plan.md section 4).
+version used (see docs/ui-plan.md section 4). The prediction core itself —
+input-frame resolution, pre-flight validation, prediction and monitoring — is
+shared with the serving router in :mod:`api.inference_service`.
 """
 
 import uuid
-from time import perf_counter
 
-import pandas as pd
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from SKSurrogate import ModelRegistry, SchemaValidationError, predict_batch
+from SKSurrogate import ModelRegistry
 
 from ..config import settings
+from ..inference_service import resolve_input_frame, score
 from ..safety import safe_segment
-from ..deps import append_monitor_record, bad_request, not_found, open_tracker, resolve_bundle, task_access
+from ..deps import open_tracker, resolve_bundle, task_access
 
 router = APIRouter(prefix="/api/inference", tags=["inference"], dependencies=[Depends(task_access)])
 
@@ -33,90 +38,22 @@ class PredictRequest(BaseModel):
     preflight: bool = False
 
 
-def _preflight_error(task_name, frame):
-    """Return a validation error string for ``frame``, or None if it passes."""
-    if not settings.mltrace_db_path(task_name).exists():
-        return "No registered dataset schema found for task %r; cannot run pre-flight validation." % task_name
-    try:
-        with open_tracker(task_name) as tracker:
-            tracker.validate_prediction_data(frame)
-    except ValueError as exc:
-        return str(exc)
-    return None
-
-
-def _check_preflight(task_name, frame, bundle, enabled):
-    if not enabled:
-        return
-    started = perf_counter()
-    error = _preflight_error(task_name, frame)
-    if error is not None:
-        latency_ms = (perf_counter() - started) * 1000
-        append_monitor_record(
-            task_name,
-            bundle.model_version,
-            latency_ms,
-            len(frame),
-            success=False,
-            error="Pre-flight validation failed",
-        )
-        raise bad_request("Pre-flight validation failed: %s" % error)
-
-
-def _resolve_input_frame(task_name, body: PredictRequest, bundle):
-    """Build the input frame, returning ``(frame, ignored_columns)``.
-
-    A stored partition is *registered training data*, so it carries the target
-    label (and any other non-feature column). ``predict_batch`` validates the
-    input schema strictly — it rejects unknown columns outright — so a partition
-    is projected onto the bundle schema first and the dropped columns are
-    reported back. Inline ``rows`` are the caller's exact payload (the
-    production serving contract) and are passed through untouched.
-    """
-    if body.rows is not None:
-        return pd.DataFrame(body.rows), []
-    if body.partition is not None:
-        csv_path = settings.task_dataset_dir(task_name) / (safe_segment(body.partition, "partition") + ".csv")
-        if not csv_path.exists():
-            raise not_found("No dataset partition %r stored for task %r" % (body.partition, task_name))
-        frame = pd.read_csv(csv_path)
-        if not bundle.schema:
-            return frame, []
-        ignored = [column for column in frame.columns if column not in bundle.schema]
-        # Schema order is authoritative, so selecting by it also normalizes a
-        # partition whose columns happen to be stored in a different order.
-        return frame[[column for column in bundle.schema if column in frame.columns]], ignored
-    raise bad_request("Either 'rows' or 'partition' must be provided")
-
-
 @router.post("/{task_name}/predict")
 def predict(task_name: str, body: PredictRequest):
     """Run predictions in-request and return them as JSON (no file written)."""
     bundle = resolve_bundle(task_name, model_version=body.model_version, alias=body.alias)
-    frame, ignored_columns = _resolve_input_frame(task_name, body, bundle)
-    _check_preflight(task_name, frame, bundle, body.preflight)
-    started = perf_counter()
-    try:
-        result = predict_batch(bundle, frame, request_id=body.request_id or uuid.uuid4().hex)
-    except SchemaValidationError as exc:
-        latency_ms = (perf_counter() - started) * 1000
-        append_monitor_record(
-            task_name,
-            bundle.model_version,
-            latency_ms,
-            len(frame),
-            success=False,
-            error="Schema validation failed",
-        )
-        raise bad_request("; ".join(exc.errors))
-    metrics = result.attrs["inference_metrics"]
-    append_monitor_record(task_name, bundle.model_version, metrics["latency_ms"], metrics["rows"])
+    frame, ignored_columns = resolve_input_frame(
+        task_name, bundle=bundle, rows=body.rows, partition=body.partition
+    )
+    result = score(
+        task_name, frame, bundle, request_id=body.request_id, preflight=body.preflight
+    )
     return {
         "task_name": task_name,
         "model_version": bundle.model_version,
-        "request_id": result["request_id"].iloc[0],
-        "predictions": result["prediction"].tolist(),
-        "metrics": metrics,
+        "request_id": result["request_id"],
+        "predictions": result["predictions"],
+        "metrics": result["metrics"],
         "ignored_columns": ignored_columns,
     }
 
@@ -125,29 +62,23 @@ def predict(task_name: str, body: PredictRequest):
 def predict_batch_endpoint(task_name: str, body: PredictRequest):
     """Run predictions and persist them as a CSV artifact under the task's predictions folder."""
     bundle = resolve_bundle(task_name, model_version=body.model_version, alias=body.alias)
-    frame, ignored_columns = _resolve_input_frame(task_name, body, bundle)
-    _check_preflight(task_name, frame, bundle, body.preflight)
+    frame, ignored_columns = resolve_input_frame(
+        task_name, bundle=bundle, rows=body.rows, partition=body.partition
+    )
     request_id = body.request_id or uuid.uuid4().hex
     output_dir = settings.task_predictions_dir(task_name) / safe_segment(
         bundle.model_version, "model version"
     )
     output_path = output_dir / (safe_segment(request_id, "request id") + ".csv")
-    started = perf_counter()
-    try:
-        result = predict_batch(bundle, frame, output_path=output_path, request_id=request_id)
-    except SchemaValidationError as exc:
-        latency_ms = (perf_counter() - started) * 1000
-        append_monitor_record(
-            task_name,
-            bundle.model_version,
-            latency_ms,
-            len(frame),
-            success=False,
-            error="Schema validation failed",
-        )
-        raise bad_request("; ".join(exc.errors))
-    metrics = result.attrs["inference_metrics"]
-    append_monitor_record(task_name, bundle.model_version, metrics["latency_ms"], metrics["rows"])
+    result = score(
+        task_name,
+        frame,
+        bundle,
+        request_id=request_id,
+        preflight=body.preflight,
+        output_path=output_path,
+    )
+    metrics = result["metrics"]
 
     # Phase 3.4 auto-wiring: register the persisted CSV as a prediction artifact
     # (keyed to the model version + dataset fingerprint) so lineage is complete.

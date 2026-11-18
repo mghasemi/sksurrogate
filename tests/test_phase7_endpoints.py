@@ -11,6 +11,7 @@ import pandas as pd
 from fastapi import HTTPException
 
 from SKSurrogate import SchemaValidationError
+from api import inference_service
 from api.config import settings
 from api.deps import append_monitor_alert, append_monitor_record, load_monitor_records
 from api.routers import inference as inference_router
@@ -131,8 +132,8 @@ class TestPhase7MonitoringAlerts(unittest.TestCase):
         preflight_error = "unknown category: %s" % private_value
         with (
             patch.object(inference_router, "resolve_bundle", return_value=bundle),
-            patch.object(inference_router, "_resolve_input_frame", return_value=(frame, [])),
-            patch.object(inference_router, "_preflight_error", return_value=preflight_error),
+            patch.object(inference_router, "resolve_input_frame", return_value=(frame, [])),
+            patch.object(inference_service, "preflight_error", return_value=preflight_error),
         ):
             for endpoint in (inference_router.predict, inference_router.predict_batch_endpoint):
                 with self.subTest(endpoint=endpoint.__name__):
@@ -158,8 +159,8 @@ class TestPhase7MonitoringAlerts(unittest.TestCase):
         )
         with (
             patch.object(inference_router, "resolve_bundle", return_value=bundle),
-            patch.object(inference_router, "_resolve_input_frame", return_value=(frame, [])),
-            patch.object(inference_router, "predict_batch", side_effect=error),
+            patch.object(inference_router, "resolve_input_frame", return_value=(frame, [])),
+            patch.object(inference_service, "predict_batch", side_effect=error),
         ):
             for endpoint in (inference_router.predict, inference_router.predict_batch_endpoint):
                 with self.subTest(endpoint=endpoint.__name__):
