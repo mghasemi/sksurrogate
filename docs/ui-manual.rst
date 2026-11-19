@@ -525,8 +525,10 @@ bundles also provide ROC, calibration, cumulative-gain, and lift diagnostics.
 
 Bundles that have a named alias (set with **Model aliases** on the Registry &
 Deployment page) are shown by those names in the Bundle metrics table and used
-as the series labels of the Metric comparison charts; versions without an
-alias keep their full version hash everywhere.
+as the series labels of the Metric comparison charts; the bundle selectors in
+**Nested CV** and **Diagnostic curves** list each aliased bundle as *alias - version*
+(several aliases joined with ", "), so an alias never hides which exact version
+a run will use. Versions without an alias keep their full version hash everywhere.
 
 For a more rigorous estimate, choose a bundle in **Nested CV**, set inner and
 outer fold counts and repeats, and click **Run nested CV**. The inner loop

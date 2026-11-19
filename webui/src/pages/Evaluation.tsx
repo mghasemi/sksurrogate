@@ -66,7 +66,18 @@ function pairedPoints(
 }
 
 /** Bundle picker shared by the nested-CV and diagnostic-curves cards. */
-function BundlePicker({ bundles, value, onChange }: { bundles: BundleSummary[]; value: string; onChange: (v: string) => void }) {
+function BundlePicker({
+  bundles,
+  value,
+  onChange,
+  labelOf,
+}: {
+  bundles: BundleSummary[];
+  value: string;
+  onChange: (v: string) => void;
+  /** Display label for a version — alias-aware; the option's value stays the raw id. */
+  labelOf: (version: string) => string;
+}) {
   useEffect(() => {
     if (bundles.length > 0 && !bundles.some((b) => b.model_version === value)) {
       onChange(bundles[0].model_version);
@@ -79,7 +90,7 @@ function BundlePicker({ bundles, value, onChange }: { bundles: BundleSummary[]; 
       <select value={value} onChange={(e) => onChange(e.target.value)}>
         {bundles.map((b) => (
           <option key={b.model_version} value={b.model_version}>
-            {b.model_version.slice(0, 12)}…
+            {labelOf(b.model_version)}
           </option>
         ))}
       </select>
@@ -116,7 +127,7 @@ function NumberField({
 }
 
 /** Nested cross-validation: submit as a background job, render the result when it lands. */
-function NestedCVCard({ task, bundles }: { task: string; bundles: BundleSummary[] }) {
+function NestedCVCard({ task, bundles, labelOf }: { task: string; bundles: BundleSummary[]; labelOf: (version: string) => string }) {
   const [modelVersion, setModelVersion] = useState(bundles[0]?.model_version ?? "");
   const [innerCv, setInnerCv] = useState(2);
   const [outerCv, setOuterCv] = useState(2);
@@ -156,7 +167,7 @@ function NestedCVCard({ task, bundles }: { task: string; bundles: BundleSummary[
       sub="Inner loop tunes the estimator, outer loop measures it — an unbiased estimate of generalization. Expensive: runs as a background job."
     >
       <div className="row">
-        <BundlePicker bundles={bundles} value={modelVersion} onChange={setModelVersion} />
+        <BundlePicker bundles={bundles} value={modelVersion} onChange={setModelVersion} labelOf={labelOf} />
         <NumberField label="Inner CV" value={innerCv} onChange={setInnerCv} min={1} max={10} />
         <NumberField label="Outer CV" value={outerCv} onChange={setOuterCv} min={1} max={10} />
         <NumberField label="Repeats" value={repeats} onChange={setRepeats} min={1} max={20} />
@@ -252,7 +263,7 @@ function NestedCVCard({ task, bundles }: { task: string; bundles: BundleSummary[
 }
 
 /** Diagnostic curves (ROC / calibration / gain / lift) for one classification bundle. */
-function CurvesCard({ task, bundles }: { task: string; bundles: BundleSummary[] }) {
+function CurvesCard({ task, bundles, labelOf }: { task: string; bundles: BundleSummary[]; labelOf: (version: string) => string }) {
   const [modelVersion, setModelVersion] = useState(bundles[0]?.model_version ?? "");
   const [bins, setBins] = useState(10);
   const [tab, setTab] = useState("roc");
@@ -294,7 +305,7 @@ function CurvesCard({ task, bundles }: { task: string; bundles: BundleSummary[] 
   return (
     <Card title="Diagnostic curves" sub="Computed server-side on the bundle's cached 75/25 split — classification bundles only.">
       <div className="row">
-        <BundlePicker bundles={bundles} value={modelVersion} onChange={setModelVersion} />
+        <BundlePicker bundles={bundles} value={modelVersion} onChange={setModelVersion} labelOf={labelOf} />
         <NumberField label="Calibration bins" value={bins} onChange={setBins} min={2} max={50} />
       </div>
 
@@ -479,6 +490,12 @@ export default function EvaluationPage() {
     return aliases && aliases.length > 0 ? aliases.join(", ") : version;
   };
 
+  /** Bundle picker label (Nested CV / Diagnostic curves): "{alias(es)} - {version}" when an alias is set, otherwise the version. */
+  const bundleLabelOf = (version: string) => {
+    const aliases = aliasByVersion.get(version);
+    return aliases && aliases.length > 0 ? `${aliases.join(", ")} - ${version}` : version;
+  };
+
   const bundles = bundleQs.data ?? [];
 
   const metricNames = useMemo(() => {
@@ -572,9 +589,9 @@ export default function EvaluationPage() {
 
       {bundles.length > 0 && (
         <>
-          <NestedCVCard task={task} bundles={bundles} />
+          <NestedCVCard task={task} bundles={bundles} labelOf={bundleLabelOf} />
 
-          <CurvesCard task={task} bundles={bundles} />
+          <CurvesCard task={task} bundles={bundles} labelOf={bundleLabelOf} />
 
           <Card
             title={`Metric comparison (${fmtNum(bundles.length)} bundles)`}

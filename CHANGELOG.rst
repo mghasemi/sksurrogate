@@ -569,6 +569,12 @@ Evaluation page shows registry aliases
   without a named alias are labelled exactly as before, so existing views are
   unchanged; lifecycle pointers (``latest``, ``production``, …) are not used
   here because they move between versions on promotion/rollback.
+* The **Nested CV** and **Diagnostic curves** bundle selectors now label each
+  option *alias - version* when the bundle has a named alias (several aliases
+  joined by ", ") and show the plain full version otherwise — the same
+  convention as the Explain page's model dropdown. Picking an aliased option
+  still submits its exact version id, so runs resolve identically no matter how
+  the bundle is displayed.
 
 Model alias form validates names before submission
 ==================================================
@@ -581,6 +587,15 @@ Model alias form validates names before submission
   inline hint under the input states the rule either way. The 400 message itself
   now includes examples (e.g. ``rf-v1`` or ``baseline-2026-11``) so any remaining
   backend rejection is actionable.
+
+Explain page model dropdown shows registry aliases
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The **Model** card on Explain now lists each bundle in its version dropdown
+  as *alias - version* when a named alias has been set (several aliases joined
+  by ", ") and the plain full version otherwise. Selecting an option still
+  submits the exact version id, so explanation, interval and ALE calls resolve
+  identically; lifecycle pointers are not used for labels.
 
 [0.3.0] - 2026-11-08
 --------------------
