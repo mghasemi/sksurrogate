@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from .. import audit, auth
 from ..auth import SESSION_COOKIE
 from ..config import settings
-from ..deps import bad_request, not_found, require_admin, require_user
+from ..deps import bad_request, exc_message, not_found, require_admin, require_user
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -215,7 +215,7 @@ def revoke_key(key_id: int, principal: auth.Principal = Depends(require_user()))
     try:
         record = auth.store().revoke_api_key(key_id, user_id=scope)
     except KeyError as exc:
-        raise not_found(str(exc))
+        raise not_found(exc_message(exc))
     audit.record("api_key.revoke", principal=principal, prefix=record["prefix"], key_id=record["id"])
     return {"revoked": record}
 

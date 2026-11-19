@@ -18,6 +18,14 @@ FROM python:3.12-slim AS base
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1
+# LightGBM (and XGBoost's optional libgomp path) links `libgomp.so.1` at import
+# time via ctypes; python:3.12-slim does not ship it, so any estimator config
+# containing LGBM crashed with OSError on import (aml.types() imports every
+# module in the config). Install the GNU OpenMP runtime in the shared base so
+# both dev and prod targets get it.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 # Optional extras, e.g. --build-arg EXTRAS="jupyter nbformat"

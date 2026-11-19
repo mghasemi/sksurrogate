@@ -22,11 +22,14 @@ import {
   getLearningCurves,
   listBundles,
   listJobs,
+  registrySummary,
+  retryUnlessNotFound,
   runNestedCV,
 } from "../api/client";
 import type { BundleSummary, NestedCVJobResult } from "../api/client";
 import { Card, EmptyState, ErrorNote, Loading, Stat, Table, Tabs, fmtNum } from "../components/ui";
 import { JobTracker } from "../components/JobTracker";
+import { useBundleLabel } from "../lib/hooks";
 import { useTask } from "../lib/task-context";
 
 const CHART_COLORS = ["#4f8cff", "#7c5cff", "#34d399", "#fbbf24", "#f87171", "#60a5fa"];
@@ -64,7 +67,18 @@ function pairedPoints(
 }
 
 /** Bundle picker shared by the nested-CV and diagnostic-curves cards. */
-function BundlePicker({ bundles, value, onChange }: { bundles: BundleSummary[]; value: string; onChange: (v: string) => void }) {
+function BundlePicker({
+  bundles,
+  value,
+  onChange,
+  labelOf,
+}: {
+  bundles: BundleSummary[];
+  value: string;
+  onChange: (v: string) => void;
+  /** Display label for a version — alias-aware; the option's value stays the raw id. */
+  labelOf: (version: string) => string;
+}) {
   useEffect(() => {
     if (bundles.length > 0 && !bundles.some((b) => b.model_version === value)) {
       onChange(bundles[0].model_version);
@@ -77,7 +91,7 @@ function BundlePicker({ bundles, value, onChange }: { bundles: BundleSummary[]; 
       <select value={value} onChange={(e) => onChange(e.target.value)}>
         {bundles.map((b) => (
           <option key={b.model_version} value={b.model_version}>
-            {b.model_version.slice(0, 12)}…
+            {labelOf(b.model_version)}
           </option>
         ))}
       </select>
@@ -114,7 +128,7 @@ function NumberField({
 }
 
 /** Nested cross-validation: submit as a background job, render the result when it lands. */
-function NestedCVCard({ task, bundles }: { task: string; bundles: BundleSummary[] }) {
+function NestedCVCard({ task, bundles, labelOf }: { task: string; bundles: BundleSummary[]; labelOf: (version: string) => string }) {
   const [modelVersion, setModelVersion] = useState(bundles[0]?.model_version ?? "");
   const [innerCv, setInnerCv] = useState(2);
   const [outerCv, setOuterCv] = useState(2);
@@ -154,7 +168,7 @@ function NestedCVCard({ task, bundles }: { task: string; bundles: BundleSummary[
       sub="Inner loop tunes the estimator, outer loop measures it — an unbiased estimate of generalization. Expensive: runs as a background job."
     >
       <div className="row">
-        <BundlePicker bundles={bundles} value={modelVersion} onChange={setModelVersion} />
+        <BundlePicker bundles={bundles} value={modelVersion} onChange={setModelVersion} labelOf={labelOf} />
         <NumberField label="Inner CV" value={innerCv} onChange={setInnerCv} min={1} max={10} />
         <NumberField label="Outer CV" value={outerCv} onChange={setOuterCv} min={1} max={10} />
         <NumberField label="Repeats" value={repeats} onChange={setRepeats} min={1} max={20} />
@@ -250,7 +264,7 @@ function NestedCVCard({ task, bundles }: { task: string; bundles: BundleSummary[
 }
 
 /** Diagnostic curves (ROC / calibration / gain / lift) for one classification bundle. */
-function CurvesCard({ task, bundles }: { task: string; bundles: BundleSummary[] }) {
+function CurvesCard({ task, bundles, labelOf }: { task: string; bundles: BundleSummary[]; labelOf: (version: string) => string }) {
   const [modelVersion, setModelVersion] = useState(bundles[0]?.model_version ?? "");
   const [bins, setBins] = useState(10);
   const [tab, setTab] = useState("roc");
@@ -292,7 +306,7 @@ function CurvesCard({ task, bundles }: { task: string; bundles: BundleSummary[] 
   return (
     <Card title="Diagnostic curves" sub="Computed server-side on the bundle's cached 75/25 split — classification bundles only.">
       <div className="row">
-        <BundlePicker bundles={bundles} value={modelVersion} onChange={setModelVersion} />
+        <BundlePicker bundles={bundles} value={modelVersion} onChange={setModelVersion} labelOf={labelOf} />
         <NumberField label="Calibration bins" value={bins} onChange={setBins} min={2} max={50} />
       </div>
 
@@ -450,6 +464,36 @@ export default function EvaluationPage() {
 
   const jobsQ = useQuery({ queryKey: ["jobs", task], queryFn: () => listJobs(task), enabled: !!task });
 
+  // Named registry aliases give bundles human labels on this page; the Registry page owns the
+  // cache entry under the same key, and a 404 just means "no registry state yet".
+  const aliasQ = useQuery({
+    queryKey: ["registry-summary", task],
+    queryFn: () => registrySummary(task),
+    enabled: !!task,
+    retry: retryUnlessNotFound,
+  });
+
+  /** Sorted named aliases pointing at each model version (empty when none has been set). */
+  const aliasByVersion = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const [name, entry] of Object.entries(aliasQ.data?.named_aliases ?? {})) {
+      const names = map.get(entry.model_version) ?? [];
+      names.push(name);
+      map.set(entry.model_version, names);
+    }
+    for (const names of map.values()) names.sort();
+    return map;
+  }, [aliasQ.data]);
+
+  /** Series/table label: the alias if one has been set, otherwise the raw version. */
+  const displayNameOf = (version: string) => {
+    const aliases = aliasByVersion.get(version);
+    return aliases && aliases.length > 0 ? aliases.join(", ") : version;
+  };
+
+  /** Bundle picker label (Nested CV / Diagnostic curves): "{alias(es)}-{version}" when an alias is set, otherwise the version. */
+  const bundleLabelOf = useBundleLabel(task);
+
   const bundles = bundleQs.data ?? [];
 
   const metricNames = useMemo(() => {
@@ -543,9 +587,9 @@ export default function EvaluationPage() {
 
       {bundles.length > 0 && (
         <>
-          <NestedCVCard task={task} bundles={bundles} />
+          <NestedCVCard task={task} bundles={bundles} labelOf={bundleLabelOf} />
 
-          <CurvesCard task={task} bundles={bundles} />
+          <CurvesCard task={task} bundles={bundles} labelOf={bundleLabelOf} />
 
           <Card
             title={`Metric comparison (${fmtNum(bundles.length)} bundles)`}
@@ -574,7 +618,7 @@ export default function EvaluationPage() {
                     <Tooltip contentStyle={{ background: "#131926", border: "1px solid #232c40" }} />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
                     {bundles.map((b, i) => (
-                      <Bar key={b.model_version} dataKey={b.model_version} fill={CHART_COLORS[i % CHART_COLORS.length]} radius={[3, 3, 0, 0]} />
+                      <Bar key={b.model_version} dataKey={b.model_version} name={displayNameOf(b.model_version)} fill={CHART_COLORS[i % CHART_COLORS.length]} radius={[3, 3, 0, 0]} />
                     ))}
                   </BarChart>
                 </ResponsiveContainer>
@@ -635,6 +679,7 @@ export default function EvaluationPage() {
                               key={`${s.model_version}:validation`}
                               type="monotone"
                               dataKey={`${s.model_version} (validation)`}
+                              name={`${displayNameOf(s.model_version)} (validation)`}
                               stroke={CHART_COLORS[i % CHART_COLORS.length]}
                               strokeWidth={2}
                               dot={{ r: 2 }}
@@ -645,6 +690,7 @@ export default function EvaluationPage() {
                               key={`${s.model_version}:train`}
                               type="monotone"
                               dataKey={`${s.model_version} (train)`}
+                              name={`${displayNameOf(s.model_version)} (train)`}
                               stroke={CHART_COLORS[i % CHART_COLORS.length]}
                               strokeDasharray="4 4"
                               strokeWidth={1.5}
@@ -674,11 +720,17 @@ export default function EvaluationPage() {
 
           <Card title="Bundle metrics">
             <Table<BundleSummary>
-              columns={["Model version", ...metricNames, "Created"]}
+              columns={["Model version", "Alias", ...metricNames, "Created"]}
               rows={bundles}
               keyOf={(b) => b.model_version}
               render={(b) => [
                 <td key="v" className="mono">{b.model_version}</td>,
+                <td key="alias">
+                  {(() => {
+                    const aliases = aliasByVersion.get(b.model_version);
+                    return aliases && aliases.length > 0 ? aliases.join(", ") : <span className="muted">—</span>;
+                  })()}
+                </td>,
                 ...metricNames.map((m) => (
                   <td key={m}>{fmtNum(b.metrics[m])}</td>
                 )),

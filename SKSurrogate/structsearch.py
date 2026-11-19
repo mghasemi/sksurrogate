@@ -1220,7 +1220,18 @@ class SurrogateRandomCV(BaseSearchCV):
                 raise ValueError("Pipeline step names must be unique: %r" % name)
             names.append(name)
             if index < len(steps) - 1:
-                if transformer is None or not hasattr(transformer, "fit") or not hasattr(transformer, "transform"):
+                # An intermediate step must be usable in a pipeline regardless of
+                # whether it builds on sklearn (``transform``) or imblearn
+                # semantics (``fit_resample`` for samplers such as SMOTE). The
+                # pipeline object itself is an ``imblearn.pipeline.Pipeline``
+                # whenever samplers are present (see ``aml.optimize_pipeline``),
+                # so a raw sampler is valid mid-pipeline even though it has no
+                # ``transform``. Without this, a legitimate ``[SMOTE, estimator]``
+                # candidate was falsely rejected and aborted the whole search.
+                if transformer is None or not hasattr(transformer, "fit") or (
+                    not hasattr(transformer, "transform")
+                    and not hasattr(transformer, "fit_resample")
+                ):
                     raise ValueError(
                         "Pipeline intermediate step %r must implement fit and transform"
                         % name

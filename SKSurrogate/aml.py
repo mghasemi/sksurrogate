@@ -391,11 +391,21 @@ def _preset_config(preset):
     return config
 
 
-def _preset_surrogates():
-    from sklearn.gaussian_process import GaussianProcessRegressor
-    from .structsearch import BoxSample
+def _default_surrogates():
+    """Single Gaussian-Process surrogate, matching the Experiments default.
 
-    return [(GaussianProcessRegressor(), 50, BoxSample, "L-BFGS-B")]
+    Used when no surrogate family is supplied (``surrogates=None``): EOA and
+    exhaustive pipeline searches then optimize every candidate with this one
+    surrogate instead of a fixed pairwise family.
+    """
+    from .surrogate_family import build_surrogate
+
+    return build_surrogate("gpr", 30, "BoxSample")
+
+
+def _preset_surrogates():
+    """Backwards-compatible alias of :func:`_default_surrogates` for presets."""
+    return _default_surrogates()
 
 
 class AML(BaseEstimator):
@@ -744,55 +754,8 @@ class AML(BaseEstimator):
         :param y: Observed values
         :return: None
         """
-        from .structsearch import BoxSample, CompactSample
-
-        # if self.couldBfirst == []:
-        #    from sklearn.pipeline import Pipeline
-        # else:
-        #    from imblearn.pipeline import Pipeline
-        from sklearn.model_selection import RandomizedSearchCV
-
         if self.surrogates is None:
-            from numpy import logspace
-            from sklearn.gaussian_process import GaussianProcessRegressor
-            from sklearn.kernel_ridge import KernelRidge
-            from sklearn.gaussian_process.kernels import (
-                Matern,
-                Sum,
-                ExpSineSquared,
-                WhiteKernel,
-            )
-
-            param_grid_gpr = {
-                "alpha": logspace(-8, 1, 20),
-                "kernel": [
-                    Sum(Matern(length_scale=l, nu=p), WhiteKernel(noise_level=q))
-                    for l in logspace(-3, 3, 20)
-                    for p in [0.5, 1.5, 2.5]
-                    for q in logspace(-3, 1.5, 20)
-                ],
-            }
-            GPR = RandomizedSearchCV(
-                GaussianProcessRegressor(),
-                param_distributions=param_grid_gpr,
-                n_iter=20,
-                cv=2,
-            )
-            param_grid_krr = {
-                "alpha": logspace(-2, 0, 10),
-                "kernel": [
-                    Sum(Matern(), ExpSineSquared(l, p))
-                    for l in logspace(-2, 2, 20)
-                    for p in logspace(0, 2, 20)
-                ],
-            }
-            KRR = RandomizedSearchCV(
-                KernelRidge(), param_distributions=param_grid_krr, n_iter=30, cv=2
-            )
-            self.surrogates = [
-                (KRR, 35, CompactSample, "L-BFGS-B"),
-                (GPR, 50, BoxSample, "L-BFGS-B"),
-            ]
+            self.surrogates = _default_surrogates()
             self.min_random_evals = 10
         surrogates = self.surrogates
         if surrogates is None:
@@ -819,7 +782,7 @@ class AML(BaseEstimator):
                 emit(logging.INFO, "score:%f" % best_scr)
                 emit(logging.INFO, best_mdl)
 
-    def fit(self, X: Any, y: Any, strategy="surrogate", **kwargs):
+    def fit(self, X: Any, y: Any, strategy="exhaustive", **kwargs):
         """
         Generates and optimizes all legitimate pipelines. The best pipeline can be retrieved from `self.best_estimator_`
 
@@ -827,16 +790,17 @@ class AML(BaseEstimator):
             preprocessed inside each CV fold. If ``cat_cols`` is set, pass the
             original, unencoded feature matrix.
         :param y: Corresponding observations
-        :param strategy: ``"surrogate"`` (default) or ``"eoa"``; the latter is the same as calling
-            :meth:`eoa_fit` and forwards ``kwargs`` to it.
+        :param strategy: ``"exhaustive"`` (default: walk every admissible
+            pipeline) or ``"eoa"`` (search the pipeline space genetically, the
+            same as :meth:`eoa_fit`, forwarding ``kwargs`` to it).
         :return: `self`
         """
         if strategy == "eoa":
             return self.eoa_fit(X, y, **kwargs)
-        if strategy != "surrogate":
-            raise ValueError("strategy must be 'surrogate' or 'eoa'")
+        if strategy != "exhaustive":
+            raise ValueError("strategy must be 'exhaustive' or 'eoa'")
         if kwargs:
-            raise TypeError("unexpected fit arguments for strategy='surrogate': %s" % sorted(kwargs))
+            raise TypeError("unexpected fit arguments for strategy='exhaustive': %s" % sorted(kwargs))
         self.models.clear()
         self.evaluation_history_.clear()
         self.stage_audits_history_.clear()
@@ -947,49 +911,8 @@ class AML(BaseEstimator):
             #    from sklearn.pipeline import Pipeline
             # else:
             #    from imblearn.pipeline import Pipeline
-            from sklearn.model_selection import RandomizedSearchCV
-
             if self.surrogates is None:
-                from numpy import logspace
-                from sklearn.gaussian_process import GaussianProcessRegressor
-                from sklearn.kernel_ridge import KernelRidge
-                from sklearn.gaussian_process.kernels import (
-                    Matern,
-                    Sum,
-                    ExpSineSquared,
-                    WhiteKernel,
-                )
-
-                param_grid_gpr = {
-                    "alpha": logspace(-8, 1, 20),
-                    "kernel": [
-                        Sum(Matern(length_scale=l_, nu=p), WhiteKernel(noise_level=q))
-                        for l_ in logspace(-3, 3, 20)
-                        for p in [0.5, 1.5, 2.5]
-                        for q in logspace(-3, 1.5, 20)
-                    ],
-                }
-                GPR = RandomizedSearchCV(
-                    GaussianProcessRegressor(),
-                    param_distributions=param_grid_gpr,
-                    n_iter=20,
-                    cv=2,
-                )
-                param_grid_krr = {
-                    "alpha": logspace(-4, 0, 10),
-                    "kernel": [
-                        Sum(Matern(), ExpSineSquared(l_, p))
-                        for l_ in logspace(-2, 2, 20)
-                        for p in logspace(0, 2, 20)
-                    ],
-                }
-                KRR = RandomizedSearchCV(
-                    KernelRidge(), param_distributions=param_grid_krr, n_iter=30, cv=2
-                )
-                self.surrogates = [
-                    (KRR, 35, CompactSample, "L-BFGS-B"),
-                    (GPR, 50, BoxSample, "L-BFGS-B"),
-                ]
+                self.surrogates = _default_surrogates()
                 self.min_random_evals = 10
             from collections import OrderedDict
 

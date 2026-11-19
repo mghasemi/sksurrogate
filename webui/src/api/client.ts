@@ -64,9 +64,12 @@ function authHeaders(): Record<string, string> {
 
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  /** Machine-readable reason code from the server's ``X-Reason`` header, if sent. */
+  reason?: string;
+  constructor(status: number, message: string, reason?: string) {
     super(message);
     this.status = status;
+    if (reason) this.reason = reason;
   }
 }
 
@@ -116,7 +119,10 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     } catch {
       /* non-JSON error body */
     }
-    throw new ApiError(res.status, `${method} ${path} -> ${res.status}: ${detail}`);
+    // Machine-readable refusal code for UIs to branch on (e.g. prediction
+    // intervals requested against a classification bundle).
+    const reason = res.headers.get("X-Reason") ?? undefined;
+    throw new ApiError(res.status, `${method} ${path} -> ${res.status}: ${detail}`, reason);
   }
   return (await res.json()) as T;
 }
@@ -1152,6 +1158,21 @@ export interface TargetStats {
 export const getTargetStats = (task: string) =>
   get<TargetStats>(`/api/datasets/${encodeURIComponent(task)}/target-stats`);
 
+/** Response of re-pointing a registered dataset's target column. */
+export interface SetTargetResponse {
+  task_name: string;
+  target: string;
+  previous_target: string | null;
+  dataset_feature_count: number;
+  effective_features: string[];
+  effective_feature_count: number;
+  weights_stored: string[];
+}
+
+/** Re-point which registered column downstream analysis predicts. */
+export const setDatasetTarget = (task: string, target: string) =>
+  put<SetTargetResponse>(`/api/datasets/${encodeURIComponent(task)}/target`, { target });
+
 /* ------------------------------------------------------------------ */
 /* Bundles                                                             */
 /* ------------------------------------------------------------------ */
@@ -1282,6 +1303,13 @@ export function bundleDownloadUrl(task: string, modelVersion: string): string {
   const key = getApiKey();
   const base = getEffectiveApiBase();
   return `${base}/api/bundles/${encodeURIComponent(task)}/${encodeURIComponent(modelVersion)}/download${key ? `?api_key=${encodeURIComponent(key)}` : ""}`;
+}
+
+/** Absolute URL that streams a persisted batch-prediction CSV (API key as query param, see above). */
+export function predictionDownloadUrl(task: string, modelVersion: string, filename: string): string {
+  const key = getApiKey();
+  const base = getEffectiveApiBase();
+  return `${base}/api/inference/${encodeURIComponent(task)}/predictions/${encodeURIComponent(modelVersion)}/${encodeURIComponent(filename)}${key ? `?api_key=${encodeURIComponent(key)}` : ""}`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -2143,8 +2171,8 @@ export interface RunExperimentRequest {
   config?: SearchSpace;
   /** Quick-start preset (bounded search space); mutually exclusive with `config`. */
   preset?: "classification" | "regression";
-  /** `eoa` (evolutionary, default) or `surrogate` (surrogate search only). */
-  strategy?: "eoa" | "surrogate";
+  /** Structural search strategy: `eoa` (evolutionary, default) or `exhaustive`. */
+  strategy?: "eoa" | "exhaustive";
   length?: number;
   max_generations?: number;
   num_parents?: number;
@@ -2153,10 +2181,14 @@ export interface RunExperimentRequest {
   random_state?: number | null;
   owner?: string | null;
   run_id?: string | null;
-  /** Use a single lightweight surrogate regressor instead of the default KRR+GPR pair. */
-  surrogate_mode?: boolean;
-  /** Per-surrogate iteration budget (surrogate mode only). */
-  surrogate_itrs?: number | null;
+  /** Single surrogate estimator applied to every candidate pipeline: gpr|krr|svr. */
+  surrogate_estimator?: string;
+  /** Surrogate-search iterations (default 30). */
+  surrogate_itrs?: number;
+  /** Surrogate sampling strategy: BoxSample | CompactSample | SphereSample. */
+  surrogate_sampling?: string;
+  /** Random initial hyperparameter samples before surrogate exploitation (default 10). */
+  surrogate_min_random_evals?: number;
   /** Disallowed parameter combinations, e.g. [["penalty", "l1"]] or [["max_depth", 1]]. */
   forbidden?: Array<[string, unknown]> | null;
   backend?: "local" | "dask";

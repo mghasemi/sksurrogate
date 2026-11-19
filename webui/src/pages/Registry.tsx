@@ -21,12 +21,18 @@ import {
 import type { AuditEvent, RegistryAliasEntry, RegistryArtifact, RegistryHistoryEntry } from "../api/client";
 import { LineageRail } from "../components/LineageRail";
 import { Badge, Card, ErrorNote, Loading, StatusBadge, Table, fmtBytes, fmtNum } from "../components/ui";
+import { useBundleLabel } from "../lib/hooks";
 import { useTask } from "../lib/task-context";
 
 /** How many registered versions currently sit in a given lifecycle state. */
 function countInState(versions: Record<string, string>, state: string): number {
   return Object.values(versions).filter((s) => s === state).length;
 }
+
+/** Grammar for user-chosen alias names — must stay in sync with ``ModelRegistry.validate_alias_name``. */
+const ALIAS_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+/** Lifecycle pointer names the registry rewrites itself — never usable as named aliases. */
+const RESERVED_ALIAS_NAMES: ReadonlySet<string> = new Set([...REGISTRY_STATES, "latest"]);
 
 export default function RegistryPage() {
   const { task } = useTask();
@@ -57,6 +63,21 @@ export default function RegistryPage() {
 
   const aliases = summaryQ.data?.aliases ?? {};
   const versionStates = summaryQ.data?.versions ?? {};
+
+  /** Sorted named aliases pointing at each model version (empty when none has been set). */
+  const aliasByVersion = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const [name, entry] of Object.entries(summaryQ.data?.named_aliases ?? {})) {
+      const names = map.get(entry.model_version) ?? [];
+      names.push(name);
+      map.set(entry.model_version, names);
+    }
+    for (const names of map.values()) names.sort();
+    return map;
+  }, [summaryQ.data]);
+
+  /** Dropdown label: "{alias(es)}-{version}" when a named alias is set, otherwise the version. */
+  const labelOf = useBundleLabel(task);
   const loadRegisteredMut = useMutation({
     mutationFn: (alias: string) => loadRegisteredBundle(task, alias),
     onSuccess: (bundle) => {
@@ -72,6 +93,14 @@ export default function RegistryPage() {
     for (const a of auditQ.data?.audit ?? []) if (a.model_version) set.add(a.model_version);
     return [...set].reverse();
   }, [bundlesQ.data, versionStates, historyQ.data, auditQ.data]);
+
+  // Versions that exist in the registry — only these can be aliased / promoted /
+  // rolled back. Undefined while the summary is still loading so options are not
+  // gated (and misleadingly suffixed) before we know anything.
+  const registeredVersions = useMemo<Set<string> | undefined>(() => {
+    if (!summaryQ.data && !summaryQ.isError) return undefined;
+    return new Set(Object.keys(versionStates));
+  }, [summaryQ.data, summaryQ.isError, versionStates]);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["registry-summary", task] });
@@ -150,12 +179,14 @@ export default function RegistryPage() {
       <AliasCard
         task={task}
         versions={versions}
+        registered={registeredVersions}
         namedAliases={summaryQ.data?.named_aliases ?? {}}
+        labelOf={labelOf}
         onDone={invalidate}
       />
-      <RegisterCard task={task} versions={versions} onDone={() => { invalidate(); qc.invalidateQueries({ queryKey: ["bundles-list", task] }); }} />
-      <PromoteCard task={task} versions={versions} onDone={invalidate} />
-      <RollbackCard task={task} versions={versions} onDone={invalidate} />
+      <RegisterCard task={task} versions={versions} labelOf={labelOf} onDone={() => { invalidate(); qc.invalidateQueries({ queryKey: ["bundles-list", task] }); }} />
+      <PromoteCard task={task} versions={versions} registered={registeredVersions} labelOf={labelOf} onDone={invalidate} />
+      <RollbackCard task={task} versions={versions} registered={registeredVersions} labelOf={labelOf} onDone={invalidate} />
 
       <Card title="History" sub="Promote / rollback events, newest last">
         {historyQ.isLoading && <Loading />}
@@ -179,9 +210,9 @@ export default function RegistryPage() {
         )}
       </Card>
 
-      <ArtifactCleanupCard task={task} versions={versions} onDone={invalidate} />
+      <ArtifactCleanupCard task={task} versions={versions} labelOf={labelOf} onDone={invalidate} />
 
-      <AuditCard task={task} audit={auditQ.data?.audit ?? []} loading={auditQ.isLoading} error={auditQ.error} />
+      <AuditCard task={task} audit={auditQ.data?.audit ?? []} loading={auditQ.isLoading} error={auditQ.error} aliasByVersion={aliasByVersion} />
     </div>
   );
 }
@@ -195,7 +226,7 @@ export default function RegistryPage() {
  * the server rejects an unscoped delete with 422 — so the button stays
  * disabled until a scope is chosen.
  */
-function ArtifactCleanupCard({ task, versions, onDone }: { task: string; versions: string[]; onDone: () => void }) {
+function ArtifactCleanupCard({ task, versions, labelOf, onDone }: { task: string; versions: string[]; labelOf: (version: string) => string; onDone: () => void }) {
   const qc = useQueryClient();
   const [version, setVersion] = useState("");
   const [fingerprint, setFingerprint] = useState("");
@@ -260,7 +291,7 @@ function ArtifactCleanupCard({ task, versions, onDone }: { task: string; version
                 <option value="">— any model —</option>
                 {[...new Set([...versions, ...predictions.map((p) => p.model_version).filter((v): v is string => !!v)])].map(
                   (v) => (
-                    <option key={v}>{v}</option>
+                    <option key={v} value={v}>{labelOf(v)}</option>
                   ),
                 )}
               </select>
@@ -338,23 +369,42 @@ function ArtifactCleanupCard({ task, versions, onDone }: { task: string; version
 function AliasCard({
   task,
   versions,
+  registered,
   namedAliases,
+  labelOf,
   onDone,
 }: {
   task: string;
   versions: string[];
+  registered?: Set<string>;
   namedAliases: Record<string, RegistryAliasEntry>;
+  labelOf: (version: string) => string;
   onDone: () => void;
 }) {
   const [name, setName] = useState("");
   const [version, setVersion] = useState("");
 
+  // Client-side mirror of ModelRegistry.validate_alias_name so invalid names get
+  // feedback before the round-trip instead of a raw API error.
+  const cleanedName = name.trim();
+  let aliasProblem: string | null = null;
+  if (cleanedName) {
+    if (!ALIAS_NAME_RE.test(cleanedName)) {
+      aliasProblem = "Use only lowercase letters/digits with '.', '_' or '-' after the first character — e.g. 'rf-v1'. No capitals, spaces, or other symbols.";
+    } else if (RESERVED_ALIAS_NAMES.has(cleanedName)) {
+      aliasProblem = `'${cleanedName}' is reserved for lifecycle states; choose a different name.`;
+    }
+  }
+
   const setMut = useMutation({
     mutationFn: () => {
-      const cleaned = name.trim();
-      if (!cleaned) throw new Error("Give the alias a name (lowercase letters, digits, '.', '_' or '-').");
+      if (!cleanedName) throw new Error("Give the alias a name (lowercase letters, digits, '.', '_' or '-').");
+      if (aliasProblem) throw new Error(aliasProblem);
       if (!version) throw new Error("Pick the model version the alias should point at.");
-      return setRegistryAlias(task, cleaned, version);
+      if (registered && !registered.has(version)) {
+        throw new Error(`Version ${version} is not registered in this task's registry — register it first with “Register a bundle” below.`);
+      }
+      return setRegistryAlias(task, cleanedName, version);
     },
     onSuccess: () => {
       setName("");
@@ -400,37 +450,44 @@ function AliasCard({
         />
       )}
 
-      <div className="row" style={{ marginTop: 12 }}>
+      <div className="row top" style={{ marginTop: 12 }}>
         <div className="field fixed" style={{ flex: "0 1 220px", minWidth: 170 }}>
           <label>Alias name</label>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="baseline"
+            placeholder="rf-v1 or baseline-2026-11"
             spellCheck={false}
             maxLength={64}
           />
+          {aliasProblem ? (
+            <span className="hint" style={{ color: "var(--err)" }}>{aliasProblem}</span>
+          ) : (
+            <span className="hint">lowercase a–z / 0–9, then '.', '_' or '-'; max 64</span>
+          )}
         </div>
         <div className="field fixed" style={{ flex: "0 1 320px", minWidth: 240 }}>
           <label>Model version</label>
           <select value={version} onChange={(e) => setVersion(e.target.value)}>
             <option value="">— select —</option>
             {versions.map((v) => (
-              <option key={v}>{v}</option>
+              <option key={v} value={v} disabled={registered !== undefined && !registered.has(v)}>
+                {labelOf(v)}{registered !== undefined && !registered.has(v) ? " — register first" : ""}
+              </option>
             ))}
           </select>
         </div>
       </div>
       {setMut.isError && <ErrorNote error={setMut.error} />}
       {deleteMut.isError && <ErrorNote error={deleteMut.error} />}
-      <button className="btn primary" disabled={!task || setMut.isPending} onClick={() => setMut.mutate()}>
+      <button className="btn primary" disabled={!task || aliasProblem !== null || setMut.isPending} onClick={() => setMut.mutate()}>
         {setMut.isPending ? "Saving…" : "Save alias"}
       </button>
     </Card>
   );
 }
 
-function RegisterCard({ task, versions, onDone }: { task: string; versions: string[]; onDone: () => void }) {
+function RegisterCard({ task, versions, labelOf, onDone }: { task: string; versions: string[]; labelOf: (version: string) => string; onDone: () => void }) {
   const [version, setVersion] = useState("");
   const mut = useMutation({ mutationFn: () => registerBundle(task, version), onSuccess: onDone });
 
@@ -442,7 +499,7 @@ function RegisterCard({ task, versions, onDone }: { task: string; versions: stri
           <select value={version} onChange={(e) => setVersion(e.target.value)}>
             <option value="">— select —</option>
             {versions.map((v) => (
-              <option key={v}>{v}</option>
+              <option key={v} value={v}>{labelOf(v)}</option>
             ))}
           </select>
         </div>
@@ -460,7 +517,7 @@ function RegisterCard({ task, versions, onDone }: { task: string; versions: stri
   );
 }
 
-function PromoteCard({ task, versions, onDone }: { task: string; versions: string[]; onDone: () => void }) {
+function PromoteCard({ task, versions, registered, labelOf, onDone }: { task: string; versions: string[]; registered?: Set<string>; labelOf: (version: string) => string; onDone: () => void }) {
   const [version, setVersion] = useState("");
   const [state, setState] = useState<string>("validated");
   const [approversText, setApproversText] = useState("mehdi");
@@ -470,6 +527,10 @@ function PromoteCard({ task, versions, onDone }: { task: string; versions: strin
     mutationFn: () => {
       const approvers = approversText.split(",").map((s) => s.trim()).filter(Boolean);
       if (!approvers.length) throw new Error("Provide at least one approver name (comma-separated).");
+      if (!version) throw new Error("Pick the model version to promote.");
+      if (registered && !registered.has(version)) {
+        throw new Error(`Version ${version} is not registered in this task's registry — register it first with “Register a bundle” above.`);
+      }
       return promoteBundle(task, { model_version: version, state, approvers, required_approvals: required });
     },
     onSuccess: onDone,
@@ -483,7 +544,9 @@ function PromoteCard({ task, versions, onDone }: { task: string; versions: strin
           <select value={version} onChange={(e) => setVersion(e.target.value)}>
             <option value="">— select —</option>
             {versions.map((v) => (
-              <option key={v}>{v}</option>
+              <option key={v} value={v} disabled={registered !== undefined && !registered.has(v)}>
+                {labelOf(v)}{registered !== undefined && !registered.has(v) ? " — register first" : ""}
+              </option>
             ))}
           </select>
         </div>
@@ -521,16 +584,28 @@ function PromoteCard({ task, versions, onDone }: { task: string; versions: strin
 function RollbackCard({
   task,
   versions,
+  registered,
+  labelOf,
   onDone,
 }: {
   task: string;
   versions: string[];
+  registered?: Set<string>;
+  labelOf: (version: string) => string;
   onDone: () => void;
 }) {
   const [state, setState] = useState("production");
   const [version, setVersion] = useState("");
 
-  const mut = useMutation({ mutationFn: () => rollbackBundle(task, state, version || undefined), onSuccess: onDone });
+  const mut = useMutation({
+    mutationFn: () => {
+      if (version && registered && !registered.has(version)) {
+        throw new Error(`Version ${version} is not registered in this task's registry — register it first with “Register a bundle” above.`);
+      }
+      return rollbackBundle(task, state, version || undefined);
+    },
+    onSuccess: onDone,
+  });
 
   return (
     <Card title="Rollback" sub="Re-points a lifecycle alias at a prior model version.">
@@ -548,7 +623,9 @@ function RollbackCard({
           <select value={version} onChange={(e) => setVersion(e.target.value)}>
             <option value="">— previous —</option>
             {versions.map((v) => (
-              <option key={v}>{v}</option>
+              <option key={v} value={v} disabled={registered !== undefined && !registered.has(v)}>
+                {labelOf(v)}{registered !== undefined && !registered.has(v) ? " — register first" : ""}
+              </option>
             ))}
           </select>
         </div>
@@ -577,11 +654,13 @@ function AuditCard({
   audit,
   loading,
   error,
+  aliasByVersion,
 }: {
   task: string;
   audit: AuditEvent[];
   loading: boolean;
   error: unknown;
+  aliasByVersion: Map<string, string[]>;
 }) {
   const [filter, setFilter] = useState("all");
 
@@ -605,13 +684,17 @@ function AuditCard({
           {(rows ?? []).length === 0 && !loading && <p className="muted">No audit events yet.</p>}
           {(rows ?? []).length > 0 && (
             <Table<AuditEvent>
-              columns={["Timestamp", "Event", "Model version", "Details"]}
+              columns={["Timestamp", "Event", "Model version", "Alias", "Details"]}
               rows={[...rows].reverse()}
               keyOf={(a, i) => `${a.timestamp}-${i}`}
               render={(a) => [
                 <td key="t" className="mono">{a.timestamp}</td>,
                 <td key="e"><Badge tone={a.event_type === "promote" ? "info" : a.event_type === "rollback" ? "warn" : "muted"}>{a.event_type}</Badge></td>,
                 <td key="v" className="mono">{a.model_version ?? "—"}</td>,
+                <td key="a">{(() => {
+                  const names = a.model_version ? aliasByVersion.get(a.model_version) : undefined;
+                  return names && names.length > 0 ? names.join(", ") : <span className="muted">—</span>;
+                })()}</td>,
                 <td key="d" className="mono" style={{ fontSize: 12 }}>{JSON.stringify(a.details ?? a)}</td>,
               ]}
             />

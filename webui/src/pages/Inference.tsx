@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
+import { Download } from "lucide-react";
 
 import {
   REGISTRY_STATES,
   findBestBundle,
   getDatasetMetadata,
+  getEffectiveApiBase,
   getServing,
   listBundles,
   predict,
   predictBatch,
+  predictionDownloadUrl,
   predictServed,
   retryUnlessNotFound,
   startServing,
@@ -24,6 +27,7 @@ import type {
 } from "../api/client";
 import { LineageRail } from "../components/LineageRail";
 import { Badge, Card, ErrorNote, JsonView, Stat, fmtNum } from "../components/ui";
+import { useBundleLabel } from "../lib/hooks";
 import { useTask } from "../lib/task-context";
 
 export default function InferencePage() {
@@ -100,8 +104,10 @@ function ModelPicker({
   const bestVersion = bestQ.data?.model_version ?? null;
   const bestIsAvailable = !!bestVersion && versions.includes(bestVersion);
 
+  const labelOf = useBundleLabel(task);
+
   return (
-    <div className="row">
+    <div className="row top">
       <div className="field fixed" style={{ flex: "0 1 150px", minWidth: 120 }}>
         <label>Resolve by</label>
         <select value={mode} onChange={(e) => setMode(e.target.value as "version" | "alias")}>
@@ -115,18 +121,18 @@ function ModelPicker({
           <select value={modelVersion} onChange={(e) => setModelVersion(e.target.value)}>
             <option value="">— select —</option>
             {versions.map((v) => (
-              <option key={v}>{v}</option>
+              <option key={v} value={v}>{labelOf(v)}</option>
             ))}
           </select>
           {bestIsAvailable && (
             <div className="chips" style={{ marginTop: 6 }}>
               <button
                 type="button"
-                className="chip"
+                className="chip chip-best"
                 title={`Highest ${bestQ.data?.metric ?? "score"} metric: ${bestQ.data?.value ?? "—"}`}
                 onClick={() => setModelVersion(bestVersion!)}
               >
-                ★ best: {bestVersion}
+                ★ best: {labelOf(bestVersion)}
               </button>
             </div>
           )}
@@ -211,6 +217,11 @@ function IgnoredColumns({ columns }: { columns?: string[] }) {
   );
 }
 
+/** Last path component of a server-side artifact path — the file to download. */
+function artifactFilename(outputPath: string): string {
+  return outputPath.replace(/\\/g, "/").split("/").pop() || "predictions.csv";
+}
+
 function buildSource(
   source: InputSourceKind,
   partition: string,
@@ -246,6 +257,7 @@ function buildBody(
 
 function PredictConsole({ task, versions, partitions, initialVersion }: { task: string; versions: string[]; partitions: string[]; initialVersion: string }) {
   const inputs = useModelInputs(initialVersion);
+  const labelOf = useBundleLabel(task);
   const [source, setSource] = useState<InputSourceKind>("partition");
   const [partition, setPartition] = useState("");
   const [rowsJson, setRowsJson] = useState("");
@@ -299,7 +311,7 @@ function PredictConsole({ task, versions, partitions, initialVersion }: { task: 
         <div style={{ marginTop: 14 }}>
           <LineageRail task={task} modelVersion={result.model_version} />
           <div className="grid cols-3">
-            <Stat label="Model version" value={result.model_version} />
+            <Stat label="Model version" value={labelOf(result.model_version)} />
             <Stat label="Rows" value={fmtNum(result.metrics.rows)} />
             <Stat label="Latency" value={`${fmtNum(result.metrics.latency_ms)} ms`} />
           </div>
@@ -314,6 +326,7 @@ function PredictConsole({ task, versions, partitions, initialVersion }: { task: 
 
 function BatchRun({ task, versions, partitions, initialVersion }: { task: string; versions: string[]; partitions: string[]; initialVersion: string }) {
   const inputs = useModelInputs(initialVersion);
+  const labelOf = useBundleLabel(task);
   const [source, setSource] = useState<InputSourceKind>("partition");
   const [partition, setPartition] = useState("");
   const [rowsJson, setRowsJson] = useState("");
@@ -361,8 +374,18 @@ function BatchRun({ task, versions, partitions, initialVersion }: { task: string
         <>
           <LineageRail task={task} modelVersion={result.model_version} />
           <div className="success-note" style={{ marginTop: 12 }}>
-            Wrote <code>{fmtNum(result.rows)}</code> rows for model <code>{result.model_version}</code> →{" "}
+            Wrote <code>{fmtNum(result.rows)}</code> rows for model <code>{labelOf(result.model_version)}</code> →{" "}
             <span className="mono">{result.output_path}</span>
+          </div>
+          <div className="row top" style={{ marginTop: 10, gap: 8 }}>
+            <a
+              className="btn"
+              href={predictionDownloadUrl(task, result.model_version, artifactFilename(result.output_path))}
+              download
+              title={`Download ${result.output_path}`}
+            >
+              <Download size={15} /> Download CSV
+            </a>
           </div>
           <IgnoredColumns columns={result.ignored_columns} />
         </>
@@ -424,9 +447,13 @@ function ServingCard({ task, versions, partitions }: { task: string; versions: s
 
   const pin = pinQ.data;
   const active = !!pin?.active;
+  const labelOf = useBundleLabel(task);
   const needsModel = inputs.mode === "version" ? !inputs.modelVersion : !inputs.alias;
   const busy = startMut.isPending || stopMut.isPending || predictMut.isPending;
   const history = [...(pin?.history ?? [])].reverse();
+  // The reachable endpoint a deployment client points at (same-origin base, so it
+  // honors both the dev-server proxy and the container's served origin).
+  const endpointUrl = `${getEffectiveApiBase()}/api/serving/${encodeURIComponent(task)}/predict`;
 
   return (
     <Card
@@ -435,13 +462,13 @@ function ServingCard({ task, versions, partitions }: { task: string; versions: s
     >
       <div className="row top" style={{ alignItems: "center", marginBottom: 4 }}>
         <Badge tone={pin?.resolve_error ? "warn" : active ? "ok" : "muted"}>
-          {active ? `Serving ${pin?.model_version ?? "…"}` : "Not serving"}
+          {active ? `Serving ${pin?.model_version ? labelOf(pin.model_version) : "…"}` : "Not serving"}
         </Badge>
         {active && pin && (
           <span className="hint">
             {pin.resolve_mode === "alias"
               ? `follows alias “${pin.requested}” — a promotion or rollback changes the served model`
-              : `frozen at model version “${pin.model_version}” — later promotions do not change it`}
+              : `frozen at model version “${labelOf(pin.model_version)}” — later promotions do not change it`}
           </span>
         )}
       </div>
@@ -454,7 +481,11 @@ function ServingCard({ task, versions, partitions }: { task: string; versions: s
       {active && pin && (
         <dl className="kv" style={{ marginTop: 10 }}>
           <dt>Model version</dt>
-          <dd className="mono">{pin.model_version ?? "—"}</dd>
+          <dd className="mono">{labelOf(pin.model_version)}</dd>
+          <dt>Endpoint</dt>
+          <dd>
+            <code className="mono">{endpointUrl}</code>
+          </dd>
           <dt>Resolve mode</dt>
           <dd>
             {pin.resolve_mode} · <span className="mono">{pin.requested}</span>
@@ -539,7 +570,7 @@ function ServingCard({ task, versions, partitions }: { task: string; versions: s
       {result && (
         <div style={{ marginTop: 14 }}>
           <div className="success-note">
-            Answered by <code>{result.model_version}</code> (
+            Answered by <code>{labelOf(result.model_version)}</code> (
             {result.resolve_mode === "alias" ? `alias “${result.requested}”` : "pinned version"}) ·{" "}
             {fmtNum(result.metrics.rows)} row(s) · {fmtNum(result.metrics.latency_ms)} ms
           </div>
@@ -556,7 +587,7 @@ function ServingCard({ task, versions, partitions }: { task: string; versions: s
             {history.slice(0, 8).map((event, index) => (
               <li key={`${event.at}-${index}`}>
                 <Badge tone={event.event === "stop" ? "warn" : "ok"}>{event.event}</Badge>
-                <span className="mono">{event.model_version ?? "—"}</span>
+                <span className="mono">{labelOf(event.model_version)}</span>
                 <span className="muted">
                   {event.resolve_mode === "alias" ? `alias ${event.requested}` : `version ${event.requested}`} ·{" "}
                   {event.actor ?? "—"} · {new Date(event.at).toLocaleString()}

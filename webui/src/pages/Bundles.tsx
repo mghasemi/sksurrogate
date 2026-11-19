@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Package } from "lucide-react";
 
@@ -12,6 +12,7 @@ import {
   listPreservedModels,
   preserveBundle,
   recoverModel,
+  registrySummary,
   retryUnlessNotFound,
   trainBaseline,
 } from "../api/client";
@@ -82,6 +83,27 @@ export default function BundlesPage() {
 
   const bundles = listQ.data?.bundles ?? [];
 
+  // Named registry aliases give bundles human labels in this table; the Registry page owns
+  // the cache entry under the same key, and a 404 just means "no registry state yet".
+  const aliasQ = useQuery({
+    queryKey: ["registry-summary", task],
+    queryFn: () => registrySummary(task),
+    enabled: !!task,
+    retry: retryUnlessNotFound,
+  });
+
+  /** Sorted named aliases pointing at each model version (empty when none has been set). */
+  const aliasByVersion = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const [name, entry] of Object.entries(aliasQ.data?.named_aliases ?? {})) {
+      const names = map.get(entry.model_version) ?? [];
+      names.push(name);
+      map.set(entry.model_version, names);
+    }
+    for (const names of map.values()) names.sort();
+    return map;
+  }, [aliasQ.data]);
+
   return (
     <div className="stack">
       <div className="page-head">
@@ -151,18 +173,22 @@ export default function BundlesPage() {
         )}
         {bundles.length > 0 && (
           <Table<string>
-            columns={["Model version", "", "Selected"]}
+            columns={["Model version", "Alias", "", "Selected"]}
             rows={[...bundles].reverse()}
             keyOf={(v) => v}
-            render={(v) => [
-              <td key="v" className="mono">{v}</td>,
-              <td key="b">{v === bestVersion && <Badge tone="ok">★ best</Badge>}</td>,
-              <td key="s">
-                <button className={`btn${selected === v ? " primary" : ""}`} onClick={() => setSelected(v)}>
-                  Inspect
-                </button>
-              </td>,
-            ]}
+            render={(v) => {
+              const aliases = aliasByVersion.get(v);
+              return [
+                <td key="v" className="mono">{v}</td>,
+                <td key="a">{aliases && aliases.length > 0 ? aliases.join(", ") : <span className="muted">—</span>}</td>,
+                <td key="b">{v === bestVersion && <Badge tone="ok">★ best</Badge>}</td>,
+                <td key="s">
+                  <button className={`btn${selected === v ? " primary" : ""}`} onClick={() => setSelected(v)}>
+                    Inspect
+                  </button>
+                </td>,
+              ];
+            }}
           />
         )}
       </Card>

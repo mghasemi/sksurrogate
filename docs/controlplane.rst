@@ -203,6 +203,15 @@ dataset fingerprints stay valid.
     registered dataset answers **404**. The mutation requires edit access to the
     task.
 
+``PUT /api/datasets/{task_name}/target``
+    Body ``{"target": "Outcome"}`` re-points which registered column downstream
+    analysis predicts, without re-uploading the CSV. It updates the tracker
+    ``Task.target`` row and the metadata ``target_name``/
+    ``dataset_feature_count``, and reseeds the Pearson/variance weightings
+    against the new target. Returns the new/previous targets and the
+    ``effective_features`` after the change. An unknown or currently ignored
+    column answers **400**; a task without a registered dataset answers **404**.
+
 ``POST /api/datasets/{task_name}/register``
     Accepts an optional multipart field ``ignored_columns`` (a JSON array), so
     review-time exclusions are stored in the same registration.

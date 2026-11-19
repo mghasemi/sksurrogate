@@ -10,7 +10,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.utils.validation import check_is_fitted
 
 from SKSurrogate import AML, Categorical, Integer, ModelBundle, Real
-from SKSurrogate.DataProcess import frame_tolerant
+from SKSurrogate.DataProcess import FoldLocalDataPreprocessor, frame_tolerant
 
 from . import compute, control, logs
 from .columns import drop_ignored, read_ignored_columns
@@ -24,6 +24,24 @@ BASELINE_ESTIMATORS = {
     "random_forest_classifier": RandomForestClassifier,
     "random_forest_regressor": RandomForestRegressor,
 }
+
+#: Surrogate estimator / sampler options, forwarded to the library's
+#: single-surrogate builder. Re-exported from ``SKSurrogate`` so the routers can
+#: validate experiment requests against the same lists the search consumes.
+from SKSurrogate import SURROGATE_ESTIMATORS as SURROGATE_FAMILIES
+from SKSurrogate import SURROGATE_SAMPLERS, build_surrogate
+
+
+def build_surrogate_models(name, itrs, sampling="BoxSample"):
+    """Build the single surrogate configured for an experiment run.
+
+    Thin wrapper over :func:`SKSurrogate.build_surrogate`. Returns the one-entry
+    list of ``(regressor, itrs, sampling, solver)`` tuples consumed by
+    ``AML.optimize_pipeline``, which runs one ``SurrogateRandomCV`` pass on
+    every evaluated pipeline and keeps the best stage.
+    """
+    return list(build_surrogate(name, itrs, sampling))
+
 
 # Scorer name fragments whose display label should not be title-cased verbatim.
 _SCORING_ACRONYMS = {
@@ -188,6 +206,12 @@ def compute_learning_curve(
     (falling back to scikit-learn's default 3-fold convention), for training-set
     fractions spread evenly between 10% and 100%. Non-finite scores (e.g. a fold
     that could not be fitted) become ``None`` so the UI renders a gap.
+
+    Features are sliced to the bundle's recorded schema and passed as a
+    DataFrame, so bundles whose first step is a named-column encoder (the
+    explicit cat_cols path) keep working; when a schema column no longer exists
+    in the partition this raises a clear per-bundle error instead of failing
+    every fold.
     """
     import numpy as np
     from sklearn.model_selection import learning_curve
@@ -220,8 +244,23 @@ def compute_learning_curve(
     frame = load_partition(task_name, train_partition)
     if target not in frame.columns:
         raise bad_request("Partition %r of task %r has no target column %r" % (train_partition, task_name, target))
-    feature_columns = [column for column in frame.columns if column != target]
-    X = frame[feature_columns].values
+
+    # Fit on the bundle's own feature schema rather than whatever columns the
+    # partition currently carries, and keep it a DataFrame: bundles from the
+    # explicit cat_cols path start with named-column encoders that cannot be
+    # fitted positionally, so an ndarray input fails every fold. When no schema
+    # was recorded (legacy bundles) fall back to every non-target column.
+    schema_columns = [column for column in (bundle.schema or {}) if column != target]
+    if schema_columns:
+        missing = [column for column in schema_columns if column not in frame.columns]
+        if missing:
+            raise bad_request(
+                "Bundle %r expects feature columns absent from partition %r: %s"
+                % (bundle.model_version, train_partition, ", ".join(missing))
+            )
+        X = frame[schema_columns]
+    else:
+        X = frame[[column for column in frame.columns if column != target]]
     y = frame[target].values
 
     cv = get_stored_cv(task_name)
@@ -350,6 +389,27 @@ def _reproducibility_record(
     }
 
 
+def _baseline_needs_preprocessing(frame):
+    """Whether a baseline pipeline must start with ``FoldLocalDataPreprocessor``.
+
+    The historical baseline was a bare ``StandardScaler`` in front of the
+    estimator, which only fits numeric matrices: on a partition carrying an
+    object/category/string or datetime feature column it died inside
+    ``check_array`` and surfaced as an opaque 500 from ``train-baseline``.
+    Any column that would not land in ``FoldLocalDataPreprocessor``'s plain
+    numeric branch (booleans, categoricals, datetimes, declared text) is a
+    reason to switch the baseline over to the same fold-local preprocessor
+    the experiment path installs — which also brings median imputation for
+    numerics. Purely numeric partitions keep their historical scaler-first
+    pipeline so existing bundles stay shape-compatible.
+    """
+    for column in frame.columns:
+        dtype = frame[column].dtype
+        if pd.api.types.is_bool_dtype(dtype) or not pd.api.types.is_numeric_dtype(dtype):
+            return True
+    return False
+
+
 def fit_baseline_bundle(
     task_name,
     *,
@@ -367,19 +427,47 @@ def fit_baseline_bundle(
     train_X = train_frame.drop(columns=[target])
     train_y = train_frame[target]
 
-    model = make_pipeline(StandardScaler(), BASELINE_ESTIMATORS[estimator]())
+    estimator_cls = BASELINE_ESTIMATORS[estimator]
+    preprocessed = _baseline_needs_preprocessing(train_X)
+    if preprocessed:
+        # Mixed-type partition: the same fold-local encoder the experiment
+        # path installs (median imputation + scaling for numerics, one-hot
+        # with ``handle_unknown="ignore"`` for categoricals). A bare
+        # StandardScaler cannot fit this frame at all.
+        model = make_pipeline(FoldLocalDataPreprocessor(scale_numeric=True), estimator_cls())
+    else:
+        model = make_pipeline(StandardScaler(), estimator_cls())
     model.fit(train_X, train_y)
 
     metrics = {}
     if validation_partition:
         validation_csv = settings.task_dataset_dir(task_name) / (safe_segment(validation_partition, "partition") + ".csv")
         if validation_csv.exists():
-            validation_frame = pd.read_csv(validation_csv)
+            # load_partition — not a raw read — so columns ignored on the
+            # Datasets page are excluded from the score as well as the fit.
+            validation_frame = load_partition(task_name, validation_partition)
             validation_X = validation_frame.drop(columns=[target])
             validation_y = validation_frame[target]
             metrics["score"] = float(model.score(validation_X, validation_y))
 
     schema = {column: {"dtype": str(train_X[column].dtype)} for column in train_X.columns}
+    if preprocessed:
+        transformation_entries = [
+            {
+                "class": "%s.%s"
+                % (FoldLocalDataPreprocessor.__module__, FoldLocalDataPreprocessor.__qualname__),
+                "parameters": {"scale_numeric": True},
+            }
+        ]
+    else:
+        transformation_entries = [{"class": "sklearn.preprocessing.StandardScaler", "parameters": {}}]
+    transformation_entries.append(
+        {
+            "class": "%s.%s" % (estimator_cls.__module__, estimator_cls.__qualname__),
+            "parameters": estimator_cls().get_params(deep=False),
+        }
+    )
+
     run_record = _reproducibility_record(
         task_name,
         metadata,
@@ -401,17 +489,7 @@ def fit_baseline_bundle(
                 else None
             ),
         },
-        transformations=[
-            {"class": "sklearn.preprocessing.StandardScaler", "parameters": {}},
-            {
-                "class": "%s.%s"
-                % (
-                    BASELINE_ESTIMATORS[estimator].__module__,
-                    BASELINE_ESTIMATORS[estimator].__qualname__,
-                ),
-                "parameters": BASELINE_ESTIMATORS[estimator]().get_params(deep=False),
-            },
-        ],
+        transformations=transformation_entries,
         evaluation_protocol={
             "selection": "none; fixed baseline estimator",
             "metric": "estimator.score",
@@ -593,8 +671,10 @@ def fit_experiment_bundle(
     random_state=None,
     owner=None,
     run_id=None,
-    surrogate_mode=False,
-    surrogate_itrs=None,
+    surrogate_estimator="gpr",
+    surrogate_itrs=30,
+    surrogate_sampling="BoxSample",
+    surrogate_min_random_evals=10,
     forbidden=None,
     preset=None,
     strategy="eoa",
@@ -623,8 +703,8 @@ def fit_experiment_bundle(
         raise bad_request("Send either a preset or a config, not both")
     if preset is None and not config:
         raise bad_request("A search-space config or a preset is required")
-    if strategy not in ("eoa", "surrogate"):
-        raise bad_request("strategy must be 'eoa' or 'surrogate'")
+    if strategy not in ("eoa", "exhaustive"):
+        raise bad_request("strategy must be 'eoa' or 'exhaustive'")
     requested_config = config
     config, stacking = extract_stacking(config or {})
     parsed_config = {
@@ -646,6 +726,13 @@ def fit_experiment_bundle(
     cv_spec = get_stored_cv_spec(task_name)
     cv = get_stored_cv(task_name)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    # The single chosen surrogate is applied to every candidate pipeline the
+    # search evaluates (one SurrogateRandomCV pass, best stage kept); the
+    # iteration budget bounds how many candidate points the pass tries and
+    # min_random_evals sets how many random initial points are sampled before
+    # the surrogate is exploited. Passing surrogates explicitly also suppresses
+    # AML's implicit default KRR+GPR pair, so the estimator is the user's pick.
+    surrogates = build_surrogate_models(surrogate_estimator, surrogate_itrs, surrogate_sampling)
     aml = AML(
         config=parsed_config if preset is None else None,
         preset=preset,
@@ -656,6 +743,8 @@ def fit_experiment_bundle(
         check_point=str(checkpoint_dir) + "/",
         random_state=random_state,
         cv=cv if cv is not None else 3,
+        surrogates=surrogates,
+        min_random_evals=surrogate_min_random_evals,
         forbidden=forbidden_rules,
         conditional=conditional,
         callbacks=[logs.trial_callback],
@@ -664,14 +753,13 @@ def fit_experiment_bundle(
         stop_check=control.stop_requested,
         **stacking,
     )
-    if surrogate_mode:
-        # A single lightweight regressor replaces the default KRR+GPR pair; the
-        # iteration budget bounds how many candidate points each surrogate pass tries.
-        aml.add_surrogate(LinearRegression(), int(surrogate_itrs) if surrogate_itrs else 20)
     if strategy == "eoa":
+        # Evolutionary search over the space of all possible pipelines, instead
+        # of exhaustively enumerating the whole space.
         aml.fit(X, y, strategy="eoa", max_generations=max_generation, num_parents=num_parents)
     else:
-        aml.fit(X, y, strategy="surrogate")
+        # "exhaustive": enumerate every admissible pipeline, surrogate-tuned.
+        aml.fit(X, y, strategy="exhaustive")
     # SurrogateRandomCV refits best_estimator_ on the full dataset (refit=True),
     # so it is ready for scoring/serving without an extra fit here. When every
     # candidate was rejected (e.g. the forbidden rules ban the whole space) it
@@ -707,8 +795,12 @@ def fit_experiment_bundle(
             "max_generation": max_generation,
             "num_parents": num_parents,
             "random_state": random_state,
-            "surrogate_mode": surrogate_mode,
-            "surrogate_iterations": int(surrogate_itrs) if surrogate_itrs else None,
+            "surrogate": {
+                "estimator": surrogate_estimator,
+                "itrs": int(surrogate_itrs),
+                "sampling": surrogate_sampling,
+                "min_random_evals": surrogate_min_random_evals,
+            },
             "forbidden": [list(list(rule.items())[0]) for rule in forbidden_rules],
             "conditional": conditional,
             "stacking": stacking or None,
@@ -730,8 +822,10 @@ def fit_experiment_bundle(
         max_generation=max_generation,
         num_parents=num_parents,
         train_score=train_score,
-        surrogate_mode=surrogate_mode,
-        surrogate_itrs=int(surrogate_itrs) if surrogate_itrs else None,
+        surrogate_estimator=surrogate_estimator,
+        surrogate_itrs=int(surrogate_itrs),
+        surrogate_sampling=surrogate_sampling,
+        surrogate_min_random_evals=surrogate_min_random_evals,
         forbidden=[list(list(rule.items())[0]) for rule in forbidden_rules],
         conditional=conditional,
         stacking=stacking or None,

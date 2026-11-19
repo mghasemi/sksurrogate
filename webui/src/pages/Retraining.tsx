@@ -142,7 +142,7 @@ export default function RetrainingPage() {
       {!task && <div className="error-note">Pick a task name in the top bar first.</div>}
 
       <Card title="Trainer" sub="Baseline fits one estimator; experiment runs an AML/EOA search over a JSON-defined space.">
-        <div className="row fixed">
+        <div className="radio-row">
           <label style={{ display: "flex", gap: 6, alignItems: "center" }}>
             <input type="radio" name="trainer-kind" checked={kind === "baseline"} onChange={() => setKind("baseline")} />
             Baseline

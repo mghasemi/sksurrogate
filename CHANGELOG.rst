@@ -4,6 +4,67 @@ Changelog
 [Unreleased]
 ------------
 
+Experiments: search strategy × surrogate family
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The Experiments page's advanced "Run settings" no longer conflates the
+  surrogate with the structural search. **Search strategy** is now
+  **Evolutionary (EOA)** — a genetic search over the space of all possible
+  pipelines instead of walking the whole space — or **Exhaustive search**
+  (evaluate every admissible pipeline). EOA honours **Max generation** and
+  **Num parents**; exhaustive ignores them. The old ``Search engine`` dropdown
+  (``strategy="surrogate"``, "Surrogate only (no evolution)") is retired.
+* **Surrogate optimization runs on every pipeline the search evaluates.**
+  Exactly one surrogate estimator is chosen per experiment — a dropdown of GPR,
+  KRR or SVR (``RandomizedSearchCV``-tuned over the estimator's own
+  hyperparameter grid, default ``gpr``) — plus parameters ``itrs`` (default
+  30), ``sampling`` (default ``BoxSample``; CompactSample/SphereSample also
+  available) and ``min_random_evals`` (default 10, the number of random initial
+  hyperparameter samples before the surrogate is exploited). The API fields
+  ``surrogate_family``/``surrogate_mode`` are replaced by ``surrogate_estimator``,
+  ``surrogate_itrs``, ``surrogate_sampling`` and ``surrogate_min_random_evals``;
+  they are recorded in the bundle audit/reproducibility record under a
+  ``surrogate`` object. Unknown estimators or samplers are rejected with a
+  clear 400.
+* **The library now exposes the same model.** ``SKSurrogate`` adds
+  ``build_surrogate(estimator, itrs=30, sampling="BoxSample", solver="L-BFGS-B")``
+  plus the ``SURROGATE_ESTIMATORS`` (``gpr``/``krr``/``svr``) and
+  ``SURROGATE_SAMPLERS`` (BoxSample/CompactSample/SphereSample) lists, and
+  re-exports ``CompactSample``; the API's experiment surrogate is a thin wrapper
+  over this builder, so the estimator grids live in one place. ``AML.fit``'s
+  pipeline-search strategy is renamed ``"surrogate"`` -> ``"exhaustive"``
+  (the old spelling is rejected), and ``AML``'s implicit default surrogate — a
+  hardcoded KRR+GPR pair — is now a single Gaussian Process via the shared
+  builder (``gpr``/``itrs=30``/``BoxSample``), so the library default matches
+  the Experiments default. Surrogate optimization is applied to every candidate
+  pipeline the chosen strategy evaluates.
+
+Explain page
+~~~~~~~~~~~~
+
+* Prediction intervals on classifier bundles now return guidance instead of a terse error: ``POST /api/evaluation/{task}/{model}/intervals`` answers 422 with an explanation that the selected bundle is a classification model, that split-conformal prediction intervals are only defined for numeric regression targets, and to select or train a regression bundle (e.g. via Baselines) instead. The refusal is also tagged with the stable machine-readable code ``intervals_require_regression_bundle`` in the ``X-Reason`` response header so clients can branch on it without parsing the human-facing detail text; the web UI client surfaces that code on its error objects. The Explain page recognizes this refusal (by code, or by wording against older servers) and renders it as an informational note rather than an error banner; other interval failures still surface as errors.
+
+Baselines train on mixed-type partitions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* ``POST /api/bundles/{task}/train-baseline`` answered 500 on any partition
+  with a non-numeric feature column (object/category/string/datetime/bool):
+  the baseline pipeline hardwired a bare ``StandardScaler`` in front of the
+  estimator, which cannot fit such frames — the crash died inside
+  ``check_array`` and surfaced as an opaque 500 from "Train baseline" on the
+  Model Bundles page. Mixed-type partitions now get the same fold-local
+  encoder the experiment path installs (``FoldLocalDataPreprocessor`` with
+  median imputation + scaling for numerics, one-hot encoding with
+  ``handle_unknown="ignore"`` for categoricals, epoch seconds for datetimes);
+  purely numeric partitions keep their historical scaler-first pipeline so
+  existing bundles stay shape-compatible. The reproducibility record lists the
+  transformation that was actually fitted.
+* Baseline validation scores are computed through ``load_partition`` (previously
+  a raw CSV read), so columns ignored on the Datasets page are excluded from
+  the score as well as the fit. Regression tests in
+  ``tests/test_baseline_mixed_types.py`` cover mixed-type and numeric-only
+  partitions, bundle round-trips and inference on the stored frame.
+
 Serving a pinned model
 ~~~~~~~~~~~~~~~~~~~~~~
 
@@ -159,6 +220,78 @@ Ignored dataset columns
   facts. ``mltrack.nested_cv_evaluation`` accepts ``exclude_columns`` for the
   nested-CV path. Stored weights for ignored features are filtered from the
   heatmap and consensus ranking.
+
+Editable target column
+~~~~~~~~~~~~~~~~~~~~~~
+
+* The target is no longer locked at registration. ``PUT
+  /api/datasets/{task}/target`` re-points which registered column downstream
+  analysis predicts (``{target: "<column>"}``, 400 for an unknown or currently
+  ignored column, 404 without a registered dataset). It updates both the tracker
+  ``Task.target`` row and the metadata ``target_name``/``dataset_feature_count``,
+  and reseeds the Pearson/variance weightings against the new target so the
+  consensus ranking stays consistent. The stored partitions, schema and
+  fingerprint are untouched — metadata-only and reversible.
+* The Datasets page clarifies the initial choice — **Target column (what to
+  predict)** with a hint naming what it feeds — and the **Registered metadata**
+  card now has a **Change** control to edit the target after upload instead of
+  re-uploading the CSV.
+
+Regularized Greedy Forest (rgf-python)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* ``rgf.sklearn.RGFClassifier`` (and the rest of the ``RGF`` family) is now a
+  supported, installed estimator: ``rgf-python>=3.12.0`` was added to
+  ``requirements.txt`` and ``setup.py`` ``install_requires`` so search-space
+  configs naming ``rgf.sklearn.*`` resolve in ``aml.types()`` instead of
+  failing the whole experiment job. ``FastRGF`` variants need the separate
+  ``FastRGF`` executables (not shipped here); the standard ``RGFClassifier`` /
+  ``RGFRegressor`` estimators work out of the box.
+
+Mid-pipeline samplers accepted in search pipelines
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* A search space containing ``imblearn.over_sampling.SMOTE`` could abort the
+  whole experiment job with ``Pipeline intermediate step 'stp_0' must implement
+  fit and transform``. The structure validator enforced the sklearn rule that
+  every intermediate step has ``transform``, but a legitimate ``[SMOTE,
+  estimator]`` pipeline uses ``imblearn.pipeline.Pipeline``, which routes the
+  sampler through ``fit_resample`` (SMOTE has no ``transform``). The validator
+  now accepts an intermediate step that implements either ``transform`` or
+  ``fit_resample``, so sampler-first pipelines validate and fit instead of
+  crashing the search. Regression tests in ``tests/test_mid_pipeline_sampler.py``.
+
+Nested CV accepts cat_cols bundles without a second encoder
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Nested cross-validation on a bundle trained through the explicit
+  ``cat_cols`` path crashed with ``X does not contain the columns listed in
+  cols: ['spr_risk_level']``. ``AML``'s ``cat_cols`` path builds the pipeline
+  with ``category_encoders.one_hot.OneHotEncoder(cols=[...])`` first, which
+  needs a DataFrame (named columns) at fit. ``nested_cv_evaluation`` did not
+  recognise that as "already preprocessing frames", so it stacked a
+  ``FoldLocalDataPreprocessor`` in front; that step emits a numpy matrix and
+  the inner encoder could not recover the named columns. ``preprocesses_frames``
+  now also returns ``True`` for pipelines whose first step is a
+  ``category_encoders`` encoder, so the candidate gets the raw frame instead of
+  a second, double-encoding wrapper (regression test in
+  ``tests/test_mixed_type_experiments.py``).
+
+Learning curves respect cat_cols bundles
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The Evaluation page's metric tabs failed every bundle trained through the
+  explicit ``cat_cols`` path: scikit-learn's ``learning_curve`` retrains the
+  pipeline on each fold, and with a numpy array as input its internal
+  cross-validation strips column names, so
+  ``category_encoders.one_hot.OneHotEncoder(cols=[...])`` raised ``X does not
+  contain the columns listed in cols: ['<feature>']`` and all folds failed.
+  The learning-curve endpoint now feeds a DataFrame sliced to the bundle's own
+  recorded schema (falling back to every non-target column for legacy bundles)
+  instead of positional values, so named columns reach the encoder on every
+  fold. A partition missing schema features answers HTTP 400 naming them.
+  Regression tests in ``tests/test_phase1_endpoints.py`` pin both a
+  classification and a regression cat_cols bundle through the endpoint.
 
 Human names for jobs and model versions
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -459,6 +592,118 @@ Logging and telemetry
   export, and forwards its ``callbacks`` parameter to every surrogate stage —
   one callback list receives trial events from all searches of a run. No
   existing result key changes.
+
+Evaluation page shows registry aliases
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The Evaluation page now displays the named model aliases set on the Registry
+  & Deployment page: the Bundle metrics table gains an **Alias** column beside
+  the Model version (a muted dash when no alias has been set), and the Metric
+  comparison charts — overview bars and per-metric learning-curve lines — label
+  their series with the alias(es) instead of the raw version hash. Versions
+  without a named alias are labelled exactly as before, so existing views are
+  unchanged; lifecycle pointers (``latest``, ``production``, …) are not used
+  here because they move between versions on promotion/rollback.
+* The **Nested CV** and **Diagnostic curves** bundle selectors now label each
+  option *alias - version* when the bundle has a named alias (several aliases
+  joined by ", ") and show the plain full version otherwise — the same
+  convention as the Explain page's model dropdown. Picking an aliased option
+  still submits its exact version id, so runs resolve identically no matter how
+  the bundle is displayed.
+
+Model alias form validates names before submission
+==================================================
+
+* The **Model aliases** card on Registry & Deployment now checks the name
+  against the registry grammar as you type — lowercase letters/digits with '.',
+  '_' or '-' after the first character, max 64 characters — and flags reserved
+  lifecycle pointer names (``latest``, ``candidate``, …), disabling Save until
+  the name is legal. An invalid name no longer round-trips to a raw API 400; an
+  inline hint under the input states the rule either way. The 400 message itself
+  now includes examples (e.g. ``rf-v1`` or ``baseline-2026-11``) so any remaining
+  backend rejection is actionable.
+
+Explain page model dropdown shows registry aliases
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The **Model** card on Explain now lists each bundle in its version dropdown
+  as *alias - version* when a named alias has been set (several aliases joined
+  by ", ") and the plain full version otherwise. Selecting an option still
+  submits the exact version id, so explanation, interval and ALE calls resolve
+  identically; lifecycle pointers are not used for labels.
+
+Model Bundles list shows registry aliases
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The **Bundles** table on the Model Bundles page gains an **Alias** column
+  beside the model version, showing the named alias(es) set on the Registry &
+  Deployment page (a muted dash when none has been set). The version cell still
+  holds the exact version id, so Inspect and every other action resolve that
+  id as-is.
+
+Registry, Quality Gates and audit tables show registry aliases
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The bundle/version selectors on the Quality Gates page (**Bundle (model
+  version)**) and the Registry & Deployment page (**Register a bundle**,
+  **Promote**, **Rollback**, and **Artifact cleanup**'s "Model version
+  (predictions)") now label each option *alias - version* when a named alias
+  has been set and show the plain version otherwise; the selected ``value`` is
+  still the exact version id, so checks, registration, promotion, rollback and
+  artifact deletion resolve identically, and the " — register first" flag on
+  unregistered versions is preserved after the label.
+* The **Audit log** table — on Registry & Deployment and under **Settings /
+  Audit** — gains an **Alias** column that shows the named alias(es) for each
+  event's model version (a muted dash when none is set).
+
+Inference model pickers show registry aliases
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The **Model version** dropdowns on the Inference page — in **Predict
+  console**, **Batch run**, and the **Serving** card — label each option
+  *alias - version* when a named alias has been set and show the plain version
+  otherwise. The selected ``value`` is still the exact version id, so a
+  per-request prediction or batch run resolves that id exactly as before.
+
+Pre-flight prediction validation checks the model's feature schema
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* ``preflight: true`` on the inference/serving prediction endpoints previously
+  validated the input frame against the task's full registered *dataset*
+  schema. That over-strictly rejected any model trained on a curated or
+  downstream feature subset of the raw table — e.g. an SPRA model consuming 18
+  ``spr_*`` features was refused for lacking the other 47 unrelated columns of
+  the original schema. Pre-flight now validates the frame against the *model
+  bundle's* feature schema (the columns the estimator actually consumes), so a
+  frame holding exactly those features passes and a genuinely missing feature
+  is still reported as ``Prediction schema mismatch``. ``predict_batch``
+  remains the strict gate for feature presence, ordering and dtypes. The
+  "Validate before run" checkbox (Predict console, Batch run, Serving) works
+  for subset-trained models as documented.
+
+Serving card shows the reachable endpoint; aliases label every version on Inference
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* When a model is being served, the **Serving** card now shows the **reachable
+  endpoint** — the absolute ``POST /api/serving/{task}/predict`` URL (built
+  from the effective API base) that a deployment client points at, so an
+  operator can see exactly where the served model answers without hunting for
+  it.
+* Alias-aware labels now apply everywhere the Inference page names a model, not
+  just the Model version dropdown: the Serving badge, the "frozen at / follows
+  alias" hint, the model-version details, the Predict-console and Batch-run
+  results, the "Answered by" line and the pin history. Each shows
+  *alias - version* when a named alias is set and the plain version otherwise;
+  option values and resolution keep the exact version id.
+
+Inference dropdowns align whether or not the best-bundle chip shows
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The model-picker row bottom-aligned its fields, so the **Model version**
+  dropdown that carries the "★ best" chip sat higher than the **Resolve by**
+  dropdown beside it (in Predict console, Batch run and Serving). The picker
+  row now top-aligns its fields, keeping **Resolve by** / **Model version** /
+  **Alias** controls level in all three cards with or without the chip.
 
 [0.3.0] - 2026-11-08
 --------------------

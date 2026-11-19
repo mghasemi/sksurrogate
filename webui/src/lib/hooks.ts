@@ -1,6 +1,40 @@
 import { useEffect, useMemo, useState } from "react";
-import { getJob, health, jobLogs, subscribeToJob } from "../api/client";
+import { useQuery } from "@tanstack/react-query";
+import { getJob, health, jobLogs, registrySummary, retryUnlessNotFound, subscribeToJob } from "../api/client";
 import type { JobRecord, LogEntry } from "../api/client";
+
+/**
+ * Alias-aware display label for a model version: ``"{alias(es)}-{version}"``
+ * when a named registry alias points at the version, otherwise the bare
+ * version. The Registry page owns the ``["registry-summary", task]`` cache
+ * entry, so calling this from several cards on one page costs a single request.
+ */
+export function useBundleLabel(task: string): (version: string | null | undefined) => string {
+  const aliasQ = useQuery({
+    queryKey: ["registry-summary", task],
+    queryFn: () => registrySummary(task),
+    enabled: !!task,
+    retry: retryUnlessNotFound,
+  });
+  const aliasByVersion = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const [name, entry] of Object.entries(aliasQ.data?.named_aliases ?? {})) {
+      const names = map.get(entry.model_version) ?? [];
+      names.push(name);
+      map.set(entry.model_version, names);
+    }
+    for (const names of map.values()) names.sort();
+    return map;
+  }, [aliasQ.data]);
+  return useMemo(
+    () => (version) => {
+      if (!version) return "—";
+      const aliases = aliasByVersion.get(version);
+      return aliases && aliases.length > 0 ? `${aliases.join(", ")}-${version}` : version;
+    },
+    [aliasByVersion],
+  );
+}
 
 /**
  * Track a background job live: WebSocket stream for immediacy plus a light

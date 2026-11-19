@@ -3,7 +3,7 @@
 Covers the new search plumbing behind ``POST /api/experiments/{task}/run`` and the
 new single-structure endpoint:
 
-- 4.1 surrogate-assisted search (``surrogate_mode`` / ``surrogate_itrs``)
+- 4.1 surrogate-assisted search (``surrogate_estimator`` / ``surrogate_itrs``)
 - 4.2 conditional parameters (``depends_on``) and forbidden rules (``forbidden``)
 - 4.3 Pareto frontier of the search (``pareto`` in the job result)
 - 4.4 top pipelines (``top_pipelines``) and ``POST /{task}/optimize-pipeline``
@@ -225,14 +225,16 @@ class TestPhase4Endpoints(unittest.TestCase):
             bundle.dataset_fingerprint, provenance["data"]["train_fingerprint"]
         )
 
-    def test_run_experiment_surrogate_mode_records_audit_event(self):
+    def test_run_experiment_records_surrogate_config_audit_event(self):
         body = RunExperimentRequest(
             config={name: {p: ParamSpec(**spec) for p, spec in params.items()} for name, params in TINY_CONFIG.items()},
             length=1,
             max_generations=1,
             num_parents=1,
-            surrogate_mode=True,
+            surrogate_estimator="krr",
             surrogate_itrs=5,
+            surrogate_sampling="CompactSample",
+            surrogate_min_random_evals=3,
         )
         submitted = experiments_router.run_experiment(TASK, body)
         record = _wait_for_job(submitted["job_id"])
@@ -243,8 +245,10 @@ class TestPhase4Endpoints(unittest.TestCase):
         bundle = load_bundle(Path(record["result"]["bundle_path"]))
         events = [event for event in bundle.audit_events if event["event_type"] == "experiment"]
         self.assertTrue(events)
-        self.assertTrue(events[-1]["details"]["surrogate_mode"])
+        self.assertEqual(events[-1]["details"]["surrogate_estimator"], "krr")
         self.assertEqual(events[-1]["details"]["surrogate_itrs"], 5)
+        self.assertEqual(events[-1]["details"]["surrogate_sampling"], "CompactSample")
+        self.assertEqual(events[-1]["details"]["surrogate_min_random_evals"], 3)
 
     def test_run_experiment_excludes_forbidden_candidates(self):
         config = {
@@ -368,8 +372,32 @@ class TestPhase4Endpoints(unittest.TestCase):
     def test_run_experiment_rejects_non_positive_surrogate_itrs(self):
         body = RunExperimentRequest(
             config={name: {p: ParamSpec(**spec) for p, spec in params.items()} for name, params in TINY_CONFIG.items()},
-            surrogate_mode=True,
+            surrogate_estimator="gpr",
             surrogate_itrs=0,
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            experiments_router.run_experiment(TASK, body)
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_run_experiment_rejects_unknown_surrogate_estimator(self):
+        body = RunExperimentRequest(
+            config={name: {p: ParamSpec(**spec) for p, spec in params.items()} for name, params in TINY_CONFIG.items()},
+            length=1,
+            max_generations=1,
+            num_parents=1,
+            surrogate_estimator="random_forest",
+        )
+        with self.assertRaises(HTTPException) as ctx:
+            experiments_router.run_experiment(TASK, body)
+        self.assertEqual(ctx.exception.status_code, 400)
+
+    def test_run_experiment_rejects_unknown_surrogate_sampling(self):
+        body = RunExperimentRequest(
+            config={name: {p: ParamSpec(**spec) for p, spec in params.items()} for name, params in TINY_CONFIG.items()},
+            length=1,
+            max_generations=1,
+            num_parents=1,
+            surrogate_sampling="RandomSample",
         )
         with self.assertRaises(HTTPException) as ctx:
             experiments_router.run_experiment(TASK, body)
