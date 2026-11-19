@@ -450,7 +450,7 @@ function AliasCard({
         />
       )}
 
-      <div className="row" style={{ marginTop: 12 }}>
+      <div className="row top" style={{ marginTop: 12 }}>
         <div className="field fixed" style={{ flex: "0 1 220px", minWidth: 170 }}>
           <label>Alias name</label>
           <input

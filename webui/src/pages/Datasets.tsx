@@ -314,7 +314,7 @@ export default function DatasetsPage() {
       )}
 
       <Card title="Register a partition" sub="Upload, review the inferred schema, then commit the CSV as a task partition.">
-        <div className="row">
+        <div className="row top">
           <div className="field fixed" style={{ flex: "0 1 260px", minWidth: 180 }}>
             <label>Target column (what to predict)</label>
             {inspected ? (
@@ -877,7 +877,7 @@ function SyntheticDataCard({
             </div>
             <div className="field fixed" style={{ flex: "0 1 240px", minWidth: 180 }}>
               <label>Distribution type</label>
-              <div className="row" style={{ gap: 12 }}>
+              <div className="radio-row">
                 <label className="checkbox-row">
                   <input type="radio" name="synthetic-distribution" checked={distribution === "marginal"} onChange={() => setDistribution("marginal")} />
                   Marginal

@@ -560,7 +560,7 @@ export default function ExperimentsPage() {
         title="Run settings"
         sub="Each field is one column of the row; the scoring metric becomes the objective the AML/EOA search maximizes."
       >
-        <div className="row">
+        <div className="row top">
           <div className="field">
             <label>Max pipeline length</label>
             <input type="number" min={1} value={length} onChange={(e) => setLength(Number(e.target.value))} />
@@ -594,10 +594,10 @@ export default function ExperimentsPage() {
           </div>
         </div>
 
-        <div className="row" style={{ marginTop: 12 }}>
-          <div className="field">
+        <div className="row top" style={{ marginTop: 12 }}>
+          <div className="field" style={{ flex: "1 1 320px" }}>
             <label>Search strategy</label>
-            <span className="row fixed">
+            <span className="radio-row">
               <input type="radio" name="strategy" checked={strategy === "eoa"} onChange={() => setStrategy("eoa")} />
               <span>Evolutionary (EOA)</span>
               <input type="radio" name="strategy" checked={strategy === "exhaustive"} onChange={() => setStrategy("exhaustive")} />

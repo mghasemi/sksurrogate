@@ -577,14 +577,12 @@ function ProjectDetail({ project }: { project: Project }) {
       </Card>
 
       <Card title="Notes">
-        <div className="row">
-          <div className="field">
-            <textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="What did you learn?" />
-          </div>
-          <button className="btn primary" disabled={!note.trim() || noteMut.isPending} onClick={() => noteMut.mutate()}>
-            Add note
-          </button>
+        <div className="field">
+          <textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="What did you learn?" />
         </div>
+        <button className="btn primary" disabled={!note.trim() || noteMut.isPending} onClick={() => noteMut.mutate()}>
+          Add note
+        </button>
         {noteMut.isError && <ErrorNote error={noteMut.error} />}
         <ul>
           {[...project.notes].reverse().map((n) => (

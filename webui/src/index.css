@@ -13,6 +13,9 @@
   --err: #f87171;
   --info: #60a5fa;
   --radius: 10px;
+  /* One height for every form control, so inputs, selects and buttons sharing a
+     row sit on the same line. */
+  --control-h: 33px;
   font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
@@ -154,7 +157,7 @@ input, select, textarea {
 input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 /* Native <select> renders ~2px taller than <input>, which nudges fields sharing a
    row out of alignment; pin a single control height so inputs and selects match. */
-.field input, .field select { height: 33px; }
+.field input, .field select { height: var(--control-h); }
 textarea { resize: vertical; min-height: 90px; font-family: inherit; }
 textarea.mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12.5px; }
 
@@ -164,6 +167,21 @@ textarea.mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-siz
 .row.top { align-items: flex-start; }
 .row > * { flex: 1; min-width: 130px; }
 .row .fixed { flex: 0 0 auto; width: auto; min-width: 0; }
+/* A field already carries a 12px bottom margin for stacked layouts; inside a row
+   the row's own `gap` spaces it, and the stray margin — being part of the flex
+   margin box that `align-items: end` aligns — drags a bare button 12px below the
+   line the controls sit on. Drop it so bottoms line up. */
+.row > .field { margin-bottom: 0; }
+/* A hint that is a direct child of a row is a caption, not a column; give it a
+   full line of its own rather than letting `flex: 1` stretch it into a slot. */
+.row > .hint { flex-basis: 100%; }
+/* A radio/checkbox group living inside a `.field`. It must NOT be a `.row`:
+   `.row > *` forces `flex: 1` on every child, which stretched the option labels
+   to hundreds of pixels and wrapped the group in a narrow field. */
+.radio-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 16px; }
+.radio-row > * { flex: 0 0 auto; min-width: 0; }
+.radio-row input { width: auto; }
+.radio-row > .checkbox-row { margin-bottom: 0; }
 
 .checkbox-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 13.5px; }
 .checkbox-row input { width: auto; }
@@ -173,7 +191,7 @@ textarea.mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-siz
   display: inline-flex; align-items: center; justify-content: center; gap: 7px;
   background: var(--panel-2); color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 8px; padding: 7px 14px;
+  border-radius: 8px; padding: 0 14px; height: var(--control-h);
   font-size: 13.5px; font-weight: 550; cursor: pointer;
 }
 .btn:hover { border-color: #33405e; }
