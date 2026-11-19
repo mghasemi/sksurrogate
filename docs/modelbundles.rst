@@ -7,6 +7,10 @@ training to validation or deployment. A bundle stores the fitted model together 
 its preprocessing reference, feature schema, metrics, dataset fingerprint, configuration
 version, runtime dependency versions, task name, and model version.
 
+Several bundles can also be combined into one model with scikit-learn's own
+meta-estimators — see :doc:`ensembles` for voting, averaging, stacking, bagging and
+boosting over a selection of trained models.
+
 Creating and loading a bundle
 =============================
 

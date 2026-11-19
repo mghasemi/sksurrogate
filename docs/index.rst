@@ -22,6 +22,7 @@ Welcome to SKSurrogate's documentation!
    dataproc
    mltrace
    modelbundles
+   ensembles
    notebooks
    inference
    monitoring

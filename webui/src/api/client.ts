@@ -3314,3 +3314,243 @@ export const adoptOrphans = (kind: "task" | "project", userId?: number) =>
     "/api/access/adopt",
     { kind, user_id: userId },
   );
+
+/* ------------------------------------------------------------------ */
+/* Ensembles: combining the task's trained models                      */
+/* ------------------------------------------------------------------ */
+
+/** One parameter of a combiner, as the server describes it. */
+export interface EnsembleParameterSpec {
+  name: string;
+  type: "floats" | "choice" | "integer" | "float" | "boolean" | "string";
+  default: unknown;
+  label?: string;
+  help?: string;
+  min?: number;
+  max?: number;
+  choices?: string[];
+}
+
+export interface EnsembleMethod {
+  value: string;
+  label: string;
+  description: string;
+  aggregation: string;
+  minimum_members: number;
+  parameters: EnsembleParameterSpec[];
+  available: boolean;
+  /** Weights apply where members are merged by a weighted vote/average, not to stacking. */
+  accepts_weights: boolean;
+}
+
+/** One calibration choice (sigmoid/isotonic), as the server describes it. */
+export interface EnsembleCalibrationMethod {
+  value: string;
+  label: string;
+  help: string;
+}
+
+/** The per-member calibration block of the methods payload. */
+export interface EnsembleCalibrationOptions {
+  available: boolean;
+  methods: EnsembleCalibrationMethod[];
+  parameters: EnsembleParameterSpec[];
+  note: string;
+}
+
+/** One weight-optimization strategy, as the server describes it. */
+export interface EnsembleWeightStrategy {
+  value: string;
+  label: string;
+  help: string;
+}
+
+/** The weight-optimization block of the methods payload. */
+export interface EnsembleWeightOptions {
+  available: boolean;
+  strategies: EnsembleWeightStrategy[];
+  parameters: EnsembleParameterSpec[];
+  note: string;
+}
+
+export interface EnsembleMethodsResponse {
+  task_name: string;
+  family: "Classification" | "Regression" | null;
+  max_members: number;
+  methods: EnsembleMethod[];
+  calibration: EnsembleCalibrationOptions;
+  weight_optimization: EnsembleWeightOptions;
+  /** The selection-bias caveat that qualifies every score this page shows. */
+  caveats: string[];
+}
+
+export interface EnsembleCandidate {
+  model_version: string;
+  label: string | null;
+  family: "Classification" | "Regression" | null;
+  metrics: Record<string, number | null> | null;
+  created_at: string;
+  is_ensemble: boolean;
+  source: "bundle" | "registry";
+  ensemble?: {
+    method: string | null;
+    family: string | null;
+    aggregation: string | null;
+    member_count: number;
+    scores: Record<string, unknown> | null;
+    calibrated: boolean;
+    weighted: boolean;
+    nested_score: number | null;
+  } | null;
+}
+
+export interface EnsembleMemberScore {
+  model_version: string;
+  label: string | null;
+  source: string;
+  family: string | null;
+  metrics: Record<string, number | null> | null;
+  cv_mean: number | null;
+  cv_std: number | null;
+  cv_folds: (number | null)[] | null;
+  error: string | null;
+  /** True when this member entered the merge as a calibrated member. */
+  calibrated: boolean;
+  /** The member's weight in the merge, or null when the merge is unweighted. */
+  weight: number | null;
+}
+
+/** Brier score and log loss for one member, before and after calibration. */
+export interface EnsembleCalibrationMember {
+  member: string;
+  method: string;
+  cv: number;
+  brier_before: number | null;
+  brier_after: number | null;
+  log_loss_before: number | null;
+  log_loss_after: number | null;
+  error?: string | null;
+}
+
+export interface EnsembleCalibrationReport {
+  method: string;
+  cv: number;
+  ensemble: string;
+  members: EnsembleCalibrationMember[];
+}
+
+/** The weight vector that was fitted, with the budget the search spent. */
+export interface EnsembleWeightReport {
+  weights: number[];
+  strategy: string;
+  /** Null when a degenerate search left no usable objective (never a non-finite number). */
+  objective: number | null;
+  objective_name: string;
+  folds: number | null;
+  budget: Record<string, number> | null;
+  dropped: string[];
+}
+
+/** The honest nested estimate: the procedure refitted inside every outer fold. */
+export interface EnsembleNestedReport {
+  scoring: string;
+  outer_cv: number | string;
+  inner_cv: number | string;
+  folds: (number | null)[];
+  mean: number | null;
+  std: number | null;
+  errors: Array<{ fold: number; detail: string }>;
+  /** The weight vector each outer fold's search produced, or null without one. */
+  per_fold_weights: Array<{ fold: number; weights: number[] }> | null;
+}
+
+export interface EnsembleRecord {
+  model_version: string;
+  label: string | null;
+  created_at: string;
+  metrics: Record<string, number | null> | null;
+  source: string;
+  method: string | null;
+  family: string | null;
+  aggregation: string | null;
+  member_count: number;
+  scores: Record<string, unknown> | null;
+  calibrated: boolean;
+  weighted: boolean;
+  nested_score: number | null;
+}
+
+export interface EnsembleDetail {
+  task_name: string;
+  model_version: string;
+  label: string | null;
+  created_at: string;
+  schema: Record<string, { dtype: string }>;
+  metrics: Record<string, number | null>;
+  ensemble: {
+    schema: string;
+    method: string;
+    family: string;
+    parameters: Record<string, unknown>;
+    aggregation: string;
+    members: EnsembleMemberScore[];
+    scoring: string;
+    cv: Record<string, unknown>;
+    calibration: EnsembleCalibrationReport | null;
+    weight_optimization: EnsembleWeightReport | null;
+    scores: {
+      train_score: number | null;
+      cv_score: number | null;
+      cv_score_std: number | null;
+      cv_folds: (number | null)[];
+      cv_error: string | null;
+      nested: EnsembleNestedReport | null;
+    };
+    caveats: string[];
+  };
+}
+
+export interface FitEnsembleRequest {
+  members: string[];
+  method: string;
+  params?: Record<string, unknown>;
+  train_partition?: string;
+  scoring?: string | null;
+  random_state?: number | null;
+  label?: string | null;
+  register?: boolean;
+  /** Per-member calibration; classification members only. */
+  calibration?: { method: string; cv: number; ensemble: string } | null;
+  /** Fitted member weights; mutually exclusive with an explicit ``weights`` parameter. */
+  weight_optimization?: {
+    strategy: string;
+    samples?: number;
+    rounds?: number;
+  } | null;
+  /** The honest estimate: refit members, calibration and weights inside each outer fold. */
+  honest_cv?: { folds: number; inner_folds: number } | null;
+}
+
+export const getEnsembleMethods = (task: string) =>
+  get<EnsembleMethodsResponse>(`/api/ensembles/${encodeURIComponent(task)}/methods`);
+
+export const getEnsembleCandidates = (task: string) =>
+  get<{ task_name: string; candidates: EnsembleCandidate[] }>(
+    `/api/ensembles/${encodeURIComponent(task)}/candidates`,
+  );
+
+export const listEnsembles = (task: string) =>
+  get<{ task_name: string; ensembles: EnsembleRecord[] }>(
+    `/api/ensembles/${encodeURIComponent(task)}`,
+  );
+
+export const getEnsemble = (task: string, modelVersion: string) =>
+  get<EnsembleDetail>(
+    `/api/ensembles/${encodeURIComponent(task)}/${encodeURIComponent(modelVersion)}`,
+  );
+
+export const fitEnsemble = (task: string, body: FitEnsembleRequest) =>
+  post<{ job_id: string; display_name?: string | null; status: string }>(
+    `/api/ensembles/${encodeURIComponent(task)}/fit`,
+    body,
+  );
