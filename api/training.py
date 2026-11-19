@@ -10,7 +10,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.utils.validation import check_is_fitted
 
 from SKSurrogate import AML, Categorical, Integer, ModelBundle, Real
-from SKSurrogate.DataProcess import frame_tolerant
+from SKSurrogate.DataProcess import FoldLocalDataPreprocessor, frame_tolerant
 
 from . import compute, control, logs
 from .columns import drop_ignored, read_ignored_columns
@@ -371,6 +371,27 @@ def _reproducibility_record(
     }
 
 
+def _baseline_needs_preprocessing(frame):
+    """Whether a baseline pipeline must start with ``FoldLocalDataPreprocessor``.
+
+    The historical baseline was a bare ``StandardScaler`` in front of the
+    estimator, which only fits numeric matrices: on a partition carrying an
+    object/category/string or datetime feature column it died inside
+    ``check_array`` and surfaced as an opaque 500 from ``train-baseline``.
+    Any column that would not land in ``FoldLocalDataPreprocessor``'s plain
+    numeric branch (booleans, categoricals, datetimes, declared text) is a
+    reason to switch the baseline over to the same fold-local preprocessor
+    the experiment path installs — which also brings median imputation for
+    numerics. Purely numeric partitions keep their historical scaler-first
+    pipeline so existing bundles stay shape-compatible.
+    """
+    for column in frame.columns:
+        dtype = frame[column].dtype
+        if pd.api.types.is_bool_dtype(dtype) or not pd.api.types.is_numeric_dtype(dtype):
+            return True
+    return False
+
+
 def fit_baseline_bundle(
     task_name,
     *,
@@ -388,19 +409,47 @@ def fit_baseline_bundle(
     train_X = train_frame.drop(columns=[target])
     train_y = train_frame[target]
 
-    model = make_pipeline(StandardScaler(), BASELINE_ESTIMATORS[estimator]())
+    estimator_cls = BASELINE_ESTIMATORS[estimator]
+    preprocessed = _baseline_needs_preprocessing(train_X)
+    if preprocessed:
+        # Mixed-type partition: the same fold-local encoder the experiment
+        # path installs (median imputation + scaling for numerics, one-hot
+        # with ``handle_unknown="ignore"`` for categoricals). A bare
+        # StandardScaler cannot fit this frame at all.
+        model = make_pipeline(FoldLocalDataPreprocessor(scale_numeric=True), estimator_cls())
+    else:
+        model = make_pipeline(StandardScaler(), estimator_cls())
     model.fit(train_X, train_y)
 
     metrics = {}
     if validation_partition:
         validation_csv = settings.task_dataset_dir(task_name) / (safe_segment(validation_partition, "partition") + ".csv")
         if validation_csv.exists():
-            validation_frame = pd.read_csv(validation_csv)
+            # load_partition — not a raw read — so columns ignored on the
+            # Datasets page are excluded from the score as well as the fit.
+            validation_frame = load_partition(task_name, validation_partition)
             validation_X = validation_frame.drop(columns=[target])
             validation_y = validation_frame[target]
             metrics["score"] = float(model.score(validation_X, validation_y))
 
     schema = {column: {"dtype": str(train_X[column].dtype)} for column in train_X.columns}
+    if preprocessed:
+        transformation_entries = [
+            {
+                "class": "%s.%s"
+                % (FoldLocalDataPreprocessor.__module__, FoldLocalDataPreprocessor.__qualname__),
+                "parameters": {"scale_numeric": True},
+            }
+        ]
+    else:
+        transformation_entries = [{"class": "sklearn.preprocessing.StandardScaler", "parameters": {}}]
+    transformation_entries.append(
+        {
+            "class": "%s.%s" % (estimator_cls.__module__, estimator_cls.__qualname__),
+            "parameters": estimator_cls().get_params(deep=False),
+        }
+    )
+
     run_record = _reproducibility_record(
         task_name,
         metadata,
@@ -422,17 +471,7 @@ def fit_baseline_bundle(
                 else None
             ),
         },
-        transformations=[
-            {"class": "sklearn.preprocessing.StandardScaler", "parameters": {}},
-            {
-                "class": "%s.%s"
-                % (
-                    BASELINE_ESTIMATORS[estimator].__module__,
-                    BASELINE_ESTIMATORS[estimator].__qualname__,
-                ),
-                "parameters": BASELINE_ESTIMATORS[estimator]().get_params(deep=False),
-            },
-        ],
+        transformations=transformation_entries,
         evaluation_protocol={
             "selection": "none; fixed baseline estimator",
             "metric": "estimator.score",

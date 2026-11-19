@@ -9,6 +9,27 @@ Explain page
 
 * Prediction intervals on classifier bundles now return guidance instead of a terse error: ``POST /api/evaluation/{task}/{model}/intervals`` answers 422 with an explanation that the selected bundle is a classification model, that split-conformal prediction intervals are only defined for numeric regression targets, and to select or train a regression bundle (e.g. via Baselines) instead. The refusal is also tagged with the stable machine-readable code ``intervals_require_regression_bundle`` in the ``X-Reason`` response header so clients can branch on it without parsing the human-facing detail text; the web UI client surfaces that code on its error objects. The Explain page recognizes this refusal (by code, or by wording against older servers) and renders it as an informational note rather than an error banner; other interval failures still surface as errors.
 
+Baselines train on mixed-type partitions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* ``POST /api/bundles/{task}/train-baseline`` answered 500 on any partition
+  with a non-numeric feature column (object/category/string/datetime/bool):
+  the baseline pipeline hardwired a bare ``StandardScaler`` in front of the
+  estimator, which cannot fit such frames — the crash died inside
+  ``check_array`` and surfaced as an opaque 500 from "Train baseline" on the
+  Model Bundles page. Mixed-type partitions now get the same fold-local
+  encoder the experiment path installs (``FoldLocalDataPreprocessor`` with
+  median imputation + scaling for numerics, one-hot encoding with
+  ``handle_unknown="ignore"`` for categoricals, epoch seconds for datetimes);
+  purely numeric partitions keep their historical scaler-first pipeline so
+  existing bundles stay shape-compatible. The reproducibility record lists the
+  transformation that was actually fitted.
+* Baseline validation scores are computed through ``load_partition`` (previously
+  a raw CSV read), so columns ignored on the Datasets page are excluded from
+  the score as well as the fit. Regression tests in
+  ``tests/test_baseline_mixed_types.py`` cover mixed-type and numeric-only
+  partitions, bundle round-trips and inference on the stored frame.
+
 Serving a pinned model
 ~~~~~~~~~~~~~~~~~~~~~~
 
