@@ -78,6 +78,14 @@ export default function RegistryPage() {
     return [...set].reverse();
   }, [bundlesQ.data, versionStates, historyQ.data, auditQ.data]);
 
+  // Versions that exist in the registry — only these can be aliased / promoted /
+  // rolled back. Undefined while the summary is still loading so options are not
+  // gated (and misleadingly suffixed) before we know anything.
+  const registeredVersions = useMemo<Set<string> | undefined>(() => {
+    if (!summaryQ.data && !summaryQ.isError) return undefined;
+    return new Set(Object.keys(versionStates));
+  }, [summaryQ.data, summaryQ.isError, versionStates]);
+
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["registry-summary", task] });
     qc.invalidateQueries({ queryKey: ["registry-history", task] });
@@ -155,12 +163,13 @@ export default function RegistryPage() {
       <AliasCard
         task={task}
         versions={versions}
+        registered={registeredVersions}
         namedAliases={summaryQ.data?.named_aliases ?? {}}
         onDone={invalidate}
       />
       <RegisterCard task={task} versions={versions} onDone={() => { invalidate(); qc.invalidateQueries({ queryKey: ["bundles-list", task] }); }} />
-      <PromoteCard task={task} versions={versions} onDone={invalidate} />
-      <RollbackCard task={task} versions={versions} onDone={invalidate} />
+      <PromoteCard task={task} versions={versions} registered={registeredVersions} onDone={invalidate} />
+      <RollbackCard task={task} versions={versions} registered={registeredVersions} onDone={invalidate} />
 
       <Card title="History" sub="Promote / rollback events, newest last">
         {historyQ.isLoading && <Loading />}
@@ -343,11 +352,13 @@ function ArtifactCleanupCard({ task, versions, onDone }: { task: string; version
 function AliasCard({
   task,
   versions,
+  registered,
   namedAliases,
   onDone,
 }: {
   task: string;
   versions: string[];
+  registered?: Set<string>;
   namedAliases: Record<string, RegistryAliasEntry>;
   onDone: () => void;
 }) {
@@ -371,6 +382,9 @@ function AliasCard({
       if (!cleanedName) throw new Error("Give the alias a name (lowercase letters, digits, '.', '_' or '-').");
       if (aliasProblem) throw new Error(aliasProblem);
       if (!version) throw new Error("Pick the model version the alias should point at.");
+      if (registered && !registered.has(version)) {
+        throw new Error(`Version ${version} is not registered in this task's registry — register it first with “Register a bundle” below.`);
+      }
       return setRegistryAlias(task, cleanedName, version);
     },
     onSuccess: () => {
@@ -438,7 +452,9 @@ function AliasCard({
           <select value={version} onChange={(e) => setVersion(e.target.value)}>
             <option value="">— select —</option>
             {versions.map((v) => (
-              <option key={v}>{v}</option>
+              <option key={v} value={v} disabled={registered !== undefined && !registered.has(v)}>
+                {v}{registered !== undefined && !registered.has(v) ? " — register first" : ""}
+              </option>
             ))}
           </select>
         </div>
@@ -482,7 +498,7 @@ function RegisterCard({ task, versions, onDone }: { task: string; versions: stri
   );
 }
 
-function PromoteCard({ task, versions, onDone }: { task: string; versions: string[]; onDone: () => void }) {
+function PromoteCard({ task, versions, registered, onDone }: { task: string; versions: string[]; registered?: Set<string>; onDone: () => void }) {
   const [version, setVersion] = useState("");
   const [state, setState] = useState<string>("validated");
   const [approversText, setApproversText] = useState("mehdi");
@@ -492,6 +508,10 @@ function PromoteCard({ task, versions, onDone }: { task: string; versions: strin
     mutationFn: () => {
       const approvers = approversText.split(",").map((s) => s.trim()).filter(Boolean);
       if (!approvers.length) throw new Error("Provide at least one approver name (comma-separated).");
+      if (!version) throw new Error("Pick the model version to promote.");
+      if (registered && !registered.has(version)) {
+        throw new Error(`Version ${version} is not registered in this task's registry — register it first with “Register a bundle” above.`);
+      }
       return promoteBundle(task, { model_version: version, state, approvers, required_approvals: required });
     },
     onSuccess: onDone,
@@ -505,7 +525,9 @@ function PromoteCard({ task, versions, onDone }: { task: string; versions: strin
           <select value={version} onChange={(e) => setVersion(e.target.value)}>
             <option value="">— select —</option>
             {versions.map((v) => (
-              <option key={v}>{v}</option>
+              <option key={v} value={v} disabled={registered !== undefined && !registered.has(v)}>
+                {v}{registered !== undefined && !registered.has(v) ? " — register first" : ""}
+              </option>
             ))}
           </select>
         </div>
@@ -543,16 +565,26 @@ function PromoteCard({ task, versions, onDone }: { task: string; versions: strin
 function RollbackCard({
   task,
   versions,
+  registered,
   onDone,
 }: {
   task: string;
   versions: string[];
+  registered?: Set<string>;
   onDone: () => void;
 }) {
   const [state, setState] = useState("production");
   const [version, setVersion] = useState("");
 
-  const mut = useMutation({ mutationFn: () => rollbackBundle(task, state, version || undefined), onSuccess: onDone });
+  const mut = useMutation({
+    mutationFn: () => {
+      if (version && registered && !registered.has(version)) {
+        throw new Error(`Version ${version} is not registered in this task's registry — register it first with “Register a bundle” above.`);
+      }
+      return rollbackBundle(task, state, version || undefined);
+    },
+    onSuccess: onDone,
+  });
 
   return (
     <Card title="Rollback" sub="Re-points a lifecycle alias at a prior model version.">
@@ -570,7 +602,9 @@ function RollbackCard({
           <select value={version} onChange={(e) => setVersion(e.target.value)}>
             <option value="">— previous —</option>
             {versions.map((v) => (
-              <option key={v}>{v}</option>
+              <option key={v} value={v} disabled={registered !== undefined && !registered.has(v)}>
+                {v}{registered !== undefined && !registered.has(v) ? " — register first" : ""}
+              </option>
             ))}
           </select>
         </div>

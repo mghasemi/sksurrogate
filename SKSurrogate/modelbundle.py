@@ -308,7 +308,10 @@ class ModelRegistry:
         index = self._read_index()
         task = index["models"].get(task_name)
         if task is None or model_version not in task["versions"]:
-            raise KeyError("Unknown model version %r for task %r" % (model_version, task_name))
+            raise KeyError(
+                "Unknown model version %r for task %r: the bundle is not registered in this task's registry yet. Register it first (e.g. POST /api/registry/%s/register)."
+                % (model_version, task_name, task_name)
+            )
         previous = task["versions"][model_version]["state"]
         task["versions"][model_version]["state"] = state
         task["aliases"][state] = model_version
@@ -337,7 +340,10 @@ class ModelRegistry:
         index = self._read_index()
         task = index["models"].get(task_name)
         if task is None or model_version not in task["versions"]:
-            raise KeyError("Unknown model version %r for task %r" % (model_version, task_name))
+            raise KeyError(
+                "Unknown model version %r for task %r: the bundle is not registered in this task's registry yet. Register it first (e.g. POST /api/registry/%s/register)."
+                % (model_version, task_name, task_name)
+            )
         event = {
             "event_type": "approval",
             "action": "approve",
@@ -629,7 +635,8 @@ class ModelRegistry:
         if entry is not None:
             return entry["model_version"]
         raise KeyError(
-            "Unknown model version or alias %r for task %r" % (identifier, task_name)
+            "Unknown model version or alias %r for task %r: check the registry's named aliases, and register a bundle first (e.g. POST /api/registry/%s/register) if this task has no registered versions yet"
+            % (identifier, task_name, task_name)
         )
 
     def set_named_alias(self, task_name, name, model_version, *, actor=None):
@@ -639,7 +646,8 @@ class ModelRegistry:
         task = self._task_or_raise(index, task_name)
         if model_version not in task.get("versions", {}):
             raise KeyError(
-                "Unknown model version %r for task %r" % (model_version, task_name)
+                "Unknown model version %r for task %r: the bundle is not registered in this task's registry yet. Register it first (e.g. POST /api/registry/%s/register) to make its version addressable by alias."
+                % (model_version, task_name, task_name)
             )
         timestamp = datetime.now(timezone.utc).isoformat()
         previous = task.setdefault("named_aliases", {}).get(name)

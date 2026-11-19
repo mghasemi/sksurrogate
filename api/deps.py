@@ -172,6 +172,18 @@ def not_found(message):
     return HTTPException(status_code=404, detail=message)
 
 
+def exc_message(exc: BaseException) -> str:
+    """Plain text of ``exc`` for API error details.
+
+    ``str(KeyError("msg"))`` returns the *repr* of its argument (quoted), which
+    leaks stray quotes into 404/400 details — strip them when the payload is a
+    single string message.
+    """
+    if isinstance(exc, KeyError) and len(exc.args) == 1 and isinstance(exc.args[0], str):
+        return exc.args[0]
+    return str(exc)
+
+
 def bad_request(message):
     return HTTPException(status_code=400, detail=message)
 
@@ -199,7 +211,7 @@ def resolve_bundle(task_name, *, model_version=None, alias=None, strict_dependen
                 task_name, alias=alias, strict_dependencies=strict_dependencies
             )
         except KeyError as exc:
-            raise not_found(str(exc))
+            raise not_found(exc_message(exc))
     if model_version is not None:
         bundle_path = contained_path(
             settings.task_bundles_dir(task_name),

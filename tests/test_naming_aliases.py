@@ -189,8 +189,10 @@ def test_named_alias_rejects_reserved_or_illegal_names_and_unknown_versions(tmp_
     for reserved in sorted(LIFECYCLE_ALIAS_NAMES):
         with pytest.raises(ValueError):
             registry.set_named_alias("credit-card", reserved, versions[0])
-    with pytest.raises(KeyError):
+    with pytest.raises(KeyError) as exc:
         registry.set_named_alias("credit-card", "ok-name", "no-such-version")
+    # The 404 must tell the user the version is simply not registered yet.
+    assert "not registered" in str(exc.value) and "/register" in str(exc.value)
     with pytest.raises(KeyError):
         registry.resolve_version("credit-card", "missing-alias")
 
@@ -244,3 +246,5 @@ def test_registry_alias_endpoints(client, tmp_path):
         json={"name": "fine", "model_version": "nope"},
     )
     assert missing.status_code == 404
+    # The detail must steer the user to register the bundle instead of just failing.
+    assert "not registered" in missing.json()["detail"] and "/register" in missing.json()["detail"]
