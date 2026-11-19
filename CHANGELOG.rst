@@ -606,6 +606,21 @@ Model Bundles list shows registry aliases
   holds the exact version id, so Inspect and every other action resolve that
   id as-is.
 
+Registry, Quality Gates and audit tables show registry aliases
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The bundle/version selectors on the Quality Gates page (**Bundle (model
+  version)**) and the Registry & Deployment page (**Register a bundle**,
+  **Promote**, **Rollback**, and **Artifact cleanup**'s "Model version
+  (predictions)") now label each option *alias - version* when a named alias
+  has been set and show the plain version otherwise; the selected ``value`` is
+  still the exact version id, so checks, registration, promotion, rollback and
+  artifact deletion resolve identically, and the " — register first" flag on
+  unregistered versions is preserved after the label.
+* The **Audit log** table — on Registry & Deployment and under **Settings /
+  Audit** — gains an **Alias** column that shows the named alias(es) for each
+  event's model version (a muted dash when none is set).
+
 [0.3.0] - 2026-11-08
 --------------------
 

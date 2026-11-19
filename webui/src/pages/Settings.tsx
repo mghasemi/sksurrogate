@@ -8,7 +8,9 @@ import {
   getComputeSettings,
   getEffectiveApiBase,
   registryAudit,
+  registrySummary,
   resetMyData,
+  retryUnlessNotFound,
   setApiKey,
   setApiBase,
   updateComputeSettings,
@@ -118,6 +120,27 @@ function AuditLogCard({ task }: { task: string }) {
     enabled: !!task,
   });
 
+  // Named aliases give versions human labels in this table; the Registry page owns
+  // the cache entry under the same key, and a 404 just means "no registry state yet".
+  const aliasQ = useQuery({
+    queryKey: ["registry-summary", task],
+    queryFn: () => registrySummary(task),
+    enabled: !!task,
+    retry: retryUnlessNotFound,
+  });
+
+  /** Sorted named aliases pointing at each model version (empty when none has been set). */
+  const aliasByVersion = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const [name, entry] of Object.entries(aliasQ.data?.named_aliases ?? {})) {
+      const names = map.get(entry.model_version) ?? [];
+      names.push(name);
+      map.set(entry.model_version, names);
+    }
+    for (const names of map.values()) names.sort();
+    return map;
+  }, [aliasQ.data]);
+
   const events = useMemo(() => (auditQ.data?.audit ?? []).slice().reverse(), [auditQ.data]);
   const types = useMemo(
     () => ["all", ...Array.from(new Set(events.map((a) => a.event_type)))],
@@ -144,7 +167,7 @@ function AuditLogCard({ task }: { task: string }) {
           {rows.length === 0 && !auditQ.isLoading && <p className="muted">No audit events yet.</p>}
           {rows.length > 0 && (
             <Table<AuditEvent>
-              columns={["Timestamp", "Event", "Action", "Model version", "Details"]}
+              columns={["Timestamp", "Event", "Action", "Model version", "Alias", "Details"]}
               rows={rows}
               keyOf={(a, i) => `${a.timestamp}-${i}`}
               render={(a) => [
@@ -156,6 +179,10 @@ function AuditLogCard({ task }: { task: string }) {
                 </td>,
                 <td key="a">{a.action ?? "—"}</td>,
                 <td key="v" className="mono">{a.model_version ?? "—"}</td>,
+                <td key="al">{(() => {
+                  const names = a.model_version ? aliasByVersion.get(a.model_version) : undefined;
+                  return names && names.length > 0 ? names.join(", ") : <span className="muted">—</span>;
+                })()}</td>,
                 <td key="d" className="mono" style={{ fontSize: 12 }}>{JSON.stringify(a.details ?? null)}</td>,
               ]}
             />

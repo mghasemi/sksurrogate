@@ -62,6 +62,24 @@ export default function RegistryPage() {
 
   const aliases = summaryQ.data?.aliases ?? {};
   const versionStates = summaryQ.data?.versions ?? {};
+
+  /** Sorted named aliases pointing at each model version (empty when none has been set). */
+  const aliasByVersion = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const [name, entry] of Object.entries(summaryQ.data?.named_aliases ?? {})) {
+      const names = map.get(entry.model_version) ?? [];
+      names.push(name);
+      map.set(entry.model_version, names);
+    }
+    for (const names of map.values()) names.sort();
+    return map;
+  }, [summaryQ.data]);
+
+  /** Dropdown label: "{alias(es)} - {version}" when a named alias is set, otherwise the version. */
+  const labelOf = (version: string) => {
+    const aliases = aliasByVersion.get(version);
+    return aliases && aliases.length > 0 ? `${aliases.join(", ")} - ${version}` : version;
+  };
   const loadRegisteredMut = useMutation({
     mutationFn: (alias: string) => loadRegisteredBundle(task, alias),
     onSuccess: (bundle) => {
@@ -167,9 +185,9 @@ export default function RegistryPage() {
         namedAliases={summaryQ.data?.named_aliases ?? {}}
         onDone={invalidate}
       />
-      <RegisterCard task={task} versions={versions} onDone={() => { invalidate(); qc.invalidateQueries({ queryKey: ["bundles-list", task] }); }} />
-      <PromoteCard task={task} versions={versions} registered={registeredVersions} onDone={invalidate} />
-      <RollbackCard task={task} versions={versions} registered={registeredVersions} onDone={invalidate} />
+      <RegisterCard task={task} versions={versions} labelOf={labelOf} onDone={() => { invalidate(); qc.invalidateQueries({ queryKey: ["bundles-list", task] }); }} />
+      <PromoteCard task={task} versions={versions} registered={registeredVersions} labelOf={labelOf} onDone={invalidate} />
+      <RollbackCard task={task} versions={versions} registered={registeredVersions} labelOf={labelOf} onDone={invalidate} />
 
       <Card title="History" sub="Promote / rollback events, newest last">
         {historyQ.isLoading && <Loading />}
@@ -193,9 +211,9 @@ export default function RegistryPage() {
         )}
       </Card>
 
-      <ArtifactCleanupCard task={task} versions={versions} onDone={invalidate} />
+      <ArtifactCleanupCard task={task} versions={versions} labelOf={labelOf} onDone={invalidate} />
 
-      <AuditCard task={task} audit={auditQ.data?.audit ?? []} loading={auditQ.isLoading} error={auditQ.error} />
+      <AuditCard task={task} audit={auditQ.data?.audit ?? []} loading={auditQ.isLoading} error={auditQ.error} aliasByVersion={aliasByVersion} />
     </div>
   );
 }
@@ -209,7 +227,7 @@ export default function RegistryPage() {
  * the server rejects an unscoped delete with 422 — so the button stays
  * disabled until a scope is chosen.
  */
-function ArtifactCleanupCard({ task, versions, onDone }: { task: string; versions: string[]; onDone: () => void }) {
+function ArtifactCleanupCard({ task, versions, labelOf, onDone }: { task: string; versions: string[]; labelOf: (version: string) => string; onDone: () => void }) {
   const qc = useQueryClient();
   const [version, setVersion] = useState("");
   const [fingerprint, setFingerprint] = useState("");
@@ -274,7 +292,7 @@ function ArtifactCleanupCard({ task, versions, onDone }: { task: string; version
                 <option value="">— any model —</option>
                 {[...new Set([...versions, ...predictions.map((p) => p.model_version).filter((v): v is string => !!v)])].map(
                   (v) => (
-                    <option key={v}>{v}</option>
+                    <option key={v} value={v}>{labelOf(v)}</option>
                   ),
                 )}
               </select>
@@ -468,7 +486,7 @@ function AliasCard({
   );
 }
 
-function RegisterCard({ task, versions, onDone }: { task: string; versions: string[]; onDone: () => void }) {
+function RegisterCard({ task, versions, labelOf, onDone }: { task: string; versions: string[]; labelOf: (version: string) => string; onDone: () => void }) {
   const [version, setVersion] = useState("");
   const mut = useMutation({ mutationFn: () => registerBundle(task, version), onSuccess: onDone });
 
@@ -480,7 +498,7 @@ function RegisterCard({ task, versions, onDone }: { task: string; versions: stri
           <select value={version} onChange={(e) => setVersion(e.target.value)}>
             <option value="">— select —</option>
             {versions.map((v) => (
-              <option key={v}>{v}</option>
+              <option key={v} value={v}>{labelOf(v)}</option>
             ))}
           </select>
         </div>
@@ -498,7 +516,7 @@ function RegisterCard({ task, versions, onDone }: { task: string; versions: stri
   );
 }
 
-function PromoteCard({ task, versions, registered, onDone }: { task: string; versions: string[]; registered?: Set<string>; onDone: () => void }) {
+function PromoteCard({ task, versions, registered, labelOf, onDone }: { task: string; versions: string[]; registered?: Set<string>; labelOf: (version: string) => string; onDone: () => void }) {
   const [version, setVersion] = useState("");
   const [state, setState] = useState<string>("validated");
   const [approversText, setApproversText] = useState("mehdi");
@@ -526,7 +544,7 @@ function PromoteCard({ task, versions, registered, onDone }: { task: string; ver
             <option value="">— select —</option>
             {versions.map((v) => (
               <option key={v} value={v} disabled={registered !== undefined && !registered.has(v)}>
-                {v}{registered !== undefined && !registered.has(v) ? " — register first" : ""}
+                {labelOf(v)}{registered !== undefined && !registered.has(v) ? " — register first" : ""}
               </option>
             ))}
           </select>
@@ -566,11 +584,13 @@ function RollbackCard({
   task,
   versions,
   registered,
+  labelOf,
   onDone,
 }: {
   task: string;
   versions: string[];
   registered?: Set<string>;
+  labelOf: (version: string) => string;
   onDone: () => void;
 }) {
   const [state, setState] = useState("production");
@@ -603,7 +623,7 @@ function RollbackCard({
             <option value="">— previous —</option>
             {versions.map((v) => (
               <option key={v} value={v} disabled={registered !== undefined && !registered.has(v)}>
-                {v}{registered !== undefined && !registered.has(v) ? " — register first" : ""}
+                {labelOf(v)}{registered !== undefined && !registered.has(v) ? " — register first" : ""}
               </option>
             ))}
           </select>
@@ -633,11 +653,13 @@ function AuditCard({
   audit,
   loading,
   error,
+  aliasByVersion,
 }: {
   task: string;
   audit: AuditEvent[];
   loading: boolean;
   error: unknown;
+  aliasByVersion: Map<string, string[]>;
 }) {
   const [filter, setFilter] = useState("all");
 
@@ -661,13 +683,17 @@ function AuditCard({
           {(rows ?? []).length === 0 && !loading && <p className="muted">No audit events yet.</p>}
           {(rows ?? []).length > 0 && (
             <Table<AuditEvent>
-              columns={["Timestamp", "Event", "Model version", "Details"]}
+              columns={["Timestamp", "Event", "Model version", "Alias", "Details"]}
               rows={[...rows].reverse()}
               keyOf={(a, i) => `${a.timestamp}-${i}`}
               render={(a) => [
                 <td key="t" className="mono">{a.timestamp}</td>,
                 <td key="e"><Badge tone={a.event_type === "promote" ? "info" : a.event_type === "rollback" ? "warn" : "muted"}>{a.event_type}</Badge></td>,
                 <td key="v" className="mono">{a.model_version ?? "—"}</td>,
+                <td key="a">{(() => {
+                  const names = a.model_version ? aliasByVersion.get(a.model_version) : undefined;
+                  return names && names.length > 0 ? names.join(", ") : <span className="muted">—</span>;
+                })()}</td>,
                 <td key="d" className="mono" style={{ fontSize: 12 }}>{JSON.stringify(a.details ?? a)}</td>,
               ]}
             />

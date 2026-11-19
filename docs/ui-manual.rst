@@ -653,7 +653,11 @@ Serialized models should only be loaded from trusted sources.
 7. Run quality gates before release
 ------------------------------------
 
-In **Quality Gates**, select the bundle version. Optionally set a maximum
+In **Quality Gates**, select the bundle version. Bundles that have a named
+alias (set with **Model aliases** on the Registry & Deployment page) are listed
+in the **Bundle (model version)** picker as *alias - version*; bundles without
+one keep their plain version, and the check still runs against the exact
+version id. Optionally set a maximum
 bundle file size and define numeric metric minimums as a JSON object, for
 example:
 
@@ -710,6 +714,13 @@ Open **Registry & Deployment**:
    audit log.
 6. Use **Use in Inference** to open the selected registry alias in the
    Inference page.
+
+The version selectors in **Register a bundle**, **Promote**, **Rollback**, and
+**Artifact cleanup** list each bundle as *alias - version* when it has a named
+alias (several joined with ", "), so an operator can tell versions apart
+without reading full hashes; the selected value is still the exact version id.
+The **Audit log** table — on this page and under **Settings / Audit** — shows
+those aliases in an **Alias** column next to the model version.
 
 This workflow uses ``ModelRegistry`` and ``DeploymentApprovalGate`` from
 ``SKSurrogate.modelbundle`` and ``SKSurrogate.deployment``. Lifecycle states

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
-import { checkQuality, getBundle, listBundles } from "../api/client";
+import { checkQuality, getBundle, listBundles, registrySummary, retryUnlessNotFound } from "../api/client";
 import type { BundleSummary, QualityGateReport } from "../api/client";
 import { Card, ErrorNote, StatusBadge, fmtNum } from "../components/ui";
 import { useTask } from "../lib/task-context";
@@ -11,6 +11,33 @@ export default function QualityGatesPage() {
 
   const listQ = useQuery({ queryKey: ["bundles-list", task], queryFn: () => listBundles(task), enabled: !!task });
   const bundles = listQ.data?.bundles ?? [];
+
+  // Named registry aliases give bundles human labels in the picker; the Registry page owns
+  // the cache entry under the same key, and a 404 just means "no registry state yet".
+  const aliasQ = useQuery({
+    queryKey: ["registry-summary", task],
+    queryFn: () => registrySummary(task),
+    enabled: !!task,
+    retry: retryUnlessNotFound,
+  });
+
+  /** Sorted named aliases pointing at each model version (empty when none has been set). */
+  const aliasByVersion = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const [name, entry] of Object.entries(aliasQ.data?.named_aliases ?? {})) {
+      const names = map.get(entry.model_version) ?? [];
+      names.push(name);
+      map.set(entry.model_version, names);
+    }
+    for (const names of map.values()) names.sort();
+    return map;
+  }, [aliasQ.data]);
+
+  /** Dropdown label: "{alias(es)} - {version}" when a named alias is set, otherwise the version. */
+  const labelOf = (version: string) => {
+    const aliases = aliasByVersion.get(version);
+    return aliases && aliases.length > 0 ? `${aliases.join(", ")} - ${version}` : version;
+  };
 
   const [modelVersion, setModelVersion] = useState("");
   const version = modelVersion || bundles[0] || "";
@@ -105,7 +132,7 @@ export default function QualityGatesPage() {
             {bundles.length > 0 ? (
               <select value={version} onChange={(e) => setModelVersion(e.target.value)}>
                 {[...bundles].reverse().map((v) => (
-                  <option key={v}>{v}</option>
+                  <option key={v} value={v}>{labelOf(v)}</option>
                 ))}
               </select>
             ) : (
