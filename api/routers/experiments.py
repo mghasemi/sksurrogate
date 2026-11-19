@@ -17,7 +17,7 @@ from ..config import settings
 from ..safety import safe_segment
 from ..deps import bad_request, task_access
 from ..jobs import dask_available, job_manager
-from ..training import fit_experiment_bundle, fit_pipeline_bundle, standard_scoring_options
+from ..training import SURROGATE_FAMILIES, SURROGATE_SAMPLERS, fit_experiment_bundle, fit_pipeline_bundle, standard_scoring_options
 
 router = APIRouter(prefix="/api/experiments", tags=["experiments"], dependencies=[Depends(task_access)])
 
@@ -50,7 +50,7 @@ def _dump_config(config):
 class RunExperimentRequest(BaseModel):
     config: SearchSpace | None = None  # omit when a preset is given
     preset: Literal["classification", "regression"] | None = None
-    strategy: Literal["eoa", "surrogate"] = "eoa"
+    strategy: Literal["eoa", "exhaustive"] = "eoa"  # how the pipeline space is searched
     length: int = 2
     max_generations: int = Field(
         default=3,
@@ -62,8 +62,10 @@ class RunExperimentRequest(BaseModel):
     random_state: int | None = None
     owner: str | None = None
     run_id: str | None = None
-    surrogate_mode: bool = False
-    surrogate_itrs: int | None = None  # per-surrogate iteration budget (surrogate mode only)
+    surrogate_estimator: str = "gpr"  # one regressor applied to every candidate pipeline (gpr|krr|svr)
+    surrogate_itrs: int = 30  # surrogate-search iterations
+    surrogate_sampling: str = "BoxSample"  # BoxSample | CompactSample | SphereSample
+    surrogate_min_random_evals: int = 10  # random initial sample size before surrogate exploitation
     forbidden: list[list] | None = None  # [["param", value], ...] disallowed combinations
     backend: Literal["local", "dask"] = "local"
     label: str | None = None  # optional human name for the job and its bundle
@@ -131,8 +133,20 @@ def _effective_scoring(body):
 def submit_experiment(task_name, body, *, checkpoint_job_id=None, run_id=None):
     if body.backend == "dask" and not dask_available():
         raise HTTPException(status_code=503, detail="Dask backend requested but dask.distributed is not installed")
-    if body.surrogate_itrs is not None and body.surrogate_itrs < 1:
+    if body.surrogate_itrs < 1:
         raise bad_request("surrogate_itrs must be a positive integer")
+    if body.surrogate_min_random_evals < 1:
+        raise bad_request("surrogate_min_random_evals must be a positive integer")
+    if body.surrogate_estimator not in SURROGATE_FAMILIES:
+        raise bad_request(
+            "unknown surrogate estimator: %s (choose from %s)"
+            % (body.surrogate_estimator, ", ".join(SURROGATE_FAMILIES))
+        )
+    if body.surrogate_sampling not in SURROGATE_SAMPLERS:
+        raise bad_request(
+            "unknown surrogate sampling: %s (choose from %s)"
+            % (body.surrogate_sampling, ", ".join(SURROGATE_SAMPLERS))
+        )
     config = _dump_config(body.config) if body.config else None
 
     def make_job(job_id):
@@ -149,8 +163,10 @@ def submit_experiment(task_name, body, *, checkpoint_job_id=None, run_id=None):
                 random_state=body.random_state,
                 owner=body.owner,
                 run_id=run_id or body.run_id or job_id,
-                surrogate_mode=body.surrogate_mode,
+                surrogate_estimator=body.surrogate_estimator,
                 surrogate_itrs=body.surrogate_itrs,
+                surrogate_sampling=body.surrogate_sampling,
+                surrogate_min_random_evals=body.surrogate_min_random_evals,
                 forbidden=body.forbidden,
                 preset=body.preset,
                 strategy=body.strategy,

@@ -5,6 +5,13 @@ Evolutionary Optimization Algorithms
 discrete populations. It is also used by ``AML.eoa_fit`` to search over tuples
 of pipeline components.
 
+It is the **Evolutionary (EOA)** pipeline-search strategy: it searches over the
+space of all possible pipelines genetically, instead of exhaustively walking
+the whole space. The alternative strategy, **exhaustive enumeration**, evaluates
+every admissible pipeline of each length; ``AML.fit`` takes
+``strategy="eoa" | "exhaustive"``. A single configured surrogate tunes the
+hyperparameters of every candidate pipeline either strategy produces.
+
 The optimizer works with a complete population supplied by the caller. Each
 individual is normally a tuple, for example ``('scale', 'model')``. A fitness
 function evaluates groups of individuals and returns an

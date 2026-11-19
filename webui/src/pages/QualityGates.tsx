@@ -4,6 +4,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { checkQuality, getBundle, listBundles } from "../api/client";
 import type { BundleSummary, QualityGateReport } from "../api/client";
 import { Card, ErrorNote, StatusBadge, fmtNum } from "../components/ui";
+import { useBundleLabel } from "../lib/hooks";
 import { useTask } from "../lib/task-context";
 
 export default function QualityGatesPage() {
@@ -11,6 +12,9 @@ export default function QualityGatesPage() {
 
   const listQ = useQuery({ queryKey: ["bundles-list", task], queryFn: () => listBundles(task), enabled: !!task });
   const bundles = listQ.data?.bundles ?? [];
+
+  // Alias-aware label ("{alias(es)}-{version}"), shared with the other pages.
+  const labelOf = useBundleLabel(task);
 
   const [modelVersion, setModelVersion] = useState("");
   const version = modelVersion || bundles[0] || "";
@@ -105,7 +109,7 @@ export default function QualityGatesPage() {
             {bundles.length > 0 ? (
               <select value={version} onChange={(e) => setModelVersion(e.target.value)}>
                 {[...bundles].reverse().map((v) => (
-                  <option key={v}>{v}</option>
+                  <option key={v} value={v}>{labelOf(v)}</option>
                 ))}
               </select>
             ) : (

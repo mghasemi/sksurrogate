@@ -81,7 +81,7 @@ def _register(client, task, frame, target="y"):
 
 
 def _bundle(client, task, preset):
-    body = {"preset": preset, "strategy": "surrogate", "length": 1, "random_state": 0}
+    body = {"preset": preset, "strategy": "exhaustive", "length": 1, "random_state": 0}
     job = client.post("/api/experiments/%s/run" % task, json=body).json()["job_id"]
     record = _wait(client, job)
     assert record["status"] == "completed", record

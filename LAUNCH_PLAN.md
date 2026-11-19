@@ -24,7 +24,7 @@ decisions from the maintainer (Section 9).
 | Packaging extras | Dockerfile, docker-compose.yml (`--profile prod` single port), CITATION.cff |
 | README (`readme.rst`) | Positions the package as a "drop-in replacement for BayesSearchCV" and explicitly keeps UI/API "out of the headline" — **contradicts the new end-to-end positioning** |
 | LLM features in code | **Shipped, opt-in.** Bounded cited-note synthesis in `api/synthesis.py` + `api/routers/synthesis.py` (re-verified 2026-11-10): disabled unless `SKSURROGATE_LLM_BASE_URL` and `SKSURROGATE_LLM_MODEL` are set; receives computed aggregates only, never raw dataset rows; stateless (SKSurrogate stores no prompt and no draft); every claim must cite `[S1]…[Sn]` or the draft is rejected. Row-level explanations and ALE also shipped. Document-to-table extraction and acquisition extensions remain unimplemented. Authority is `AI_LAYER02_REMAINING_PLAN.md`; the `AI_LAYER02_FOLLOWUP_PLAN.md` line "Phase 7 is not started" is stale. |
-| Repo hygiene issues | Stray artifacts at root: `optim_task.pkl`, `sklearn.linear_model.LogisticRegression.pkl`; internal review docs (`ailayer.md`, `ai_layer02.md`, the two plans) tracked in a public repo; `HANDOFF.md` public |
+| Repo hygiene issues | **Resolved 2026-11-18** (PR #10, branch `chore/repo-hygiene`): the two AI review transcripts (`ailayer.md`, `ai_layer02.md`) were untracked and moved to a private location, the six unlabelled root planning docs now carry an "Internal working document" marker, and the root `.pkl` scratch files were already covered by `.gitignore`. |
 
 ## 1. Positioning — the single most important decision
 

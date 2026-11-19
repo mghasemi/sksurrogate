@@ -1,5 +1,7 @@
 # SKSurrogate API Simplification Plan
 
+**Internal working document.** Planning notes for the maintainers, not user documentation — user-facing material is in `docs/` and at <https://sksurrogate.readthedocs.io>.
+
 ## Purpose and status
 
 Review the public API for duplication and redundancy so users write the least
@@ -83,7 +85,7 @@ Making `DataPreprocess` itself a transformer would duplicate it.
 
 ### Phase 4: Unify options (medium risk)
 - [x] Budget options (`time_limit`, `max_evals`, `cpu_limit`, `memory_limit`, `random_state`, `n_jobs`) already share names/semantics in `AML` and `SurrogateRandomCV`; no new object needed. `max_iter`/`n_iter` vs `max_evals` kept distinct (iterations vs evaluations).
-- [x] `AML.fit(X, y, strategy="surrogate"|"eoa", **eoa_kwargs)`; `eoa_fit` kept.
+- [x] `AML.fit(X, y, strategy="exhaustive"|"eoa", **eoa_kwargs)`; `eoa_fit` kept. (The pipeline-search strategy is EOA vs exhaustive; the surrogate is a separate per-pipeline configuration, see `SKSurrogate.build_surrogate`.)
 - [x] `AML(stacking={...})` overrides the `stack_*` arguments, which are kept.
 - [x] Tuples/lists as spaces for `SurrogateRandomCV` (`as_space`) and `sampling="box"|"sphere"|"compact"` (`resolve_sampling`) for `SurrogateSearch`, `SurrogateRandomCV`, `AML.add_surrogate`. EOA operators already default sensibly; no shortcut needed.
 - [x] Shorthand spaces in `AML` configs work (they go through `SurrogateRandomCV`); `SurrogateSearch` bounds are already plain tuples.

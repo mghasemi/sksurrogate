@@ -60,7 +60,7 @@ def test_config_and_preset_are_exclusive(client):
 
 def test_preset_run_produces_bundle(client):
     _register(client, "quick")
-    body = {"preset": "classification", "strategy": "surrogate", "length": 1, "random_state": 0}
+    body = {"preset": "classification", "strategy": "exhaustive", "length": 1, "random_state": 0}
     job = client.post("/api/experiments/quick/run", json=body).json()["job_id"]
     record = _wait(client, job)
     assert record["status"] == "completed", record
@@ -118,7 +118,7 @@ def _register_regression(client, task):
 
 
 def _quick_bundle(client, task, preset):
-    body = {"preset": preset, "strategy": "surrogate", "length": 1, "random_state": 0}
+    body = {"preset": preset, "strategy": "exhaustive", "length": 1, "random_state": 0}
     record = _wait(client, client.post("/api/experiments/%s/run" % task, json=body).json()["job_id"])
     assert record["status"] == "completed", record
     return record["result"]["model_version"], record["job_id"]
@@ -345,7 +345,16 @@ def test_explain_intervals_and_project_summary(client):
 def test_intervals_reject_classifier(client):
     _register(client, "cls")
     version, _ = _quick_bundle(client, "cls", "classification")
-    assert client.post("/api/evaluation/cls/%s/intervals" % version, json={}).status_code == 422
+    response = client.post("/api/evaluation/cls/%s/intervals" % version, json={})
+    assert response.status_code == 422
+    # The refusal should read as guidance: what the model is and how to proceed.
+    detail = response.json()["detail"]
+    assert "is a Classification model" in detail
+    assert "only defined for numeric regression targets" in detail
+    assert "Select or train a regression bundle" in detail
+    # The refusal is machine-readable too, so clients can branch on it without
+    # parsing the human-facing text.
+    assert response.headers["X-Reason"] == "intervals_require_regression_bundle"
 
 
 def test_design_endpoints(client):

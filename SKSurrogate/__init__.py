@@ -1,5 +1,6 @@
 from .structsearch import (
     BoxSample,
+    CompactSample,
     SphereSample,
     SurrogateSearch,
     Real,
@@ -9,6 +10,7 @@ from .structsearch import (
     SurrogateRandomCV,
     SearchStopped,
 )
+from .surrogate_family import SURROGATE_ESTIMATORS, SURROGATE_SAMPLERS, build_surrogate
 from .NpyProximation import (
     Infinitesimal,
     Measure,
@@ -88,7 +90,11 @@ __all__ = [
     "BoxSample",
     "BundleQualityGateError",
     "Categorical",
+    "CompactSample",
     "CorrelationThreshold",
+    "SURROGATE_ESTIMATORS",
+    "SURROGATE_SAMPLERS",
+    "build_surrogate",
     "build_cv",
     "cv_param_defs",
     "cv_to_spec",

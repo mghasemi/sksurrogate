@@ -147,6 +147,34 @@ termination condition is met. These diagnostics distinguish response-surface
 failures from candidate-model CV failures, which are handled by
 ``error_score`` and reported in ``failure_summary_``.
 
+.. note:: The surrogate is *not* a search strategy. It tunes the hyperparameters
+    of every candidate pipeline the search produces, regardless of how those
+    pipelines are chosen. How pipelines are chosen is the search strategy —
+    evolutionary (``AML.fit(strategy="eoa")``) or exhaustive enumeration of the
+    pipeline space (``AML.fit(strategy="exhaustive")``, see :doc:`eoa`).
+
+Selectable surrogate families for pipeline search
+=================================================
+``AML`` optimizes every pipeline it searches with a *single* surrogate regressor
+chosen per experiment. ``SKSurrogate.build_surrogate`` builds it from four
+options — an estimator (``gpr``, ``krr`` or ``svr``), an iteration budget
+(``itrs``, default 30), a sampling strategy (``sampling``, default
+``BoxSample``; ``CompactSample`` and ``SphereSample`` also available) and a
+SciPy solver (default ``L-BFGS-B``). The regressor's own hyperparameters are
+tuned by an inner randomized cross-validated search over its kernel grid::
+
+    from SKSurrogate import build_surrogate, AML
+
+    surrogates = build_surrogate("krr", itrs=30, sampling="CompactSample")
+    aml = AML(config=..., surrogates=surrogates, min_random_evals=10)
+
+The same family powers the Experiments page, whose advanced mode exposes the
+estimator as a dropdown plus ``itrs``, ``sampling`` and ``min_random_evals``
+(default 10 random initial points before the surrogate is exploited).
+``build_surrogate`` is the single source of truth for the estimator grids, and
+``AML``'s implicit default when no surrogate is supplied is a single
+Gaussian-process surrogate via ``build_surrogate("gpr", 30, "BoxSample")``.
+
 Optimizer
 ===================================
 A `scipy` optimizer can be used to find a minimum of the surrogate at each iteration.

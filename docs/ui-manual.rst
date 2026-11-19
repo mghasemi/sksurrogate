@@ -150,6 +150,14 @@ Open **Datasets**. For each CSV partition:
 5. Click **Commit dataset**. The API registers the partition and schema,
    calculates a dataset fingerprint, and stores the CSV under the task.
 
+Once registered, the target column is not locked. The **Registered metadata**
+card shows the current target with a **Change** control: re-point which column
+downstream analysis predicts (experiments, feature analysis, correlations, EDA,
+target statistics) without re-uploading the CSV. The stored partitions, schema
+and fingerprint are untouched — the change is metadata-only and reversible —
+and the Pearson/variance feature weights are reseeded against the new target.
+The new target must be an existing column and cannot currently be ignored.
+
 Use the same target and compatible feature columns across partitions. For the
 tutorial, register the training file as ``train`` and the second file as
 ``validation``. In a real workflow, keep validation data separate from
@@ -438,11 +446,19 @@ Then configure the run:
    small for an initial smoke test.
 2. Choose a scoring metric that matches the task and the business objective.
    The selected scorer is the objective the search optimizes.
-3. Choose **Evolutionary (EOA)** or **Surrogate-assisted** search. The latter
-   adds surrogate iterations and may take longer per generation.
-4. **Search engine** selects ``AML.fit(strategy="eoa")`` (default) or
-   ``strategy="surrogate"`` (surrogate search only; generation and parent
-   settings are ignored).
+3. Choose a **Search strategy**. **Evolutionary (EOA)** optimizes over the
+   space of all possible pipelines with genetic operators instead of
+   exhaustively enumerating the whole space; **Exhaustive search** evaluates
+   every admissible pipeline. EOA honours **Max generation** and **Num
+   parents**; exhaustive ignores them.
+4. Configure the **Surrogate**. One estimator is chosen per experiment from
+   the dropdown (GPR, KRR or SVR — the list is meant to grow), alongside
+   ``itrs`` (default 30), ``sampling`` (default ``BoxSample``;
+   ``CompactSample`` and ``SphereSample`` are also available), and
+   ``min_random_evals`` (default 10 — the number of random initial
+   hyperparameter samples before the surrogate is exploited). The chosen
+   surrogate tunes the hyperparameters of *every* pipeline the search
+   evaluates.
 5. **Execution backend** chooses **Local** (thread pool in the API process) or
    **Dask**. The API image ships ``dask[distributed]``; a Dask job runs on a
    local cluster sized by the compute budget and tears it down afterwards. The
@@ -587,6 +603,13 @@ overview compares the bundles side by side; metric tabs compute learning
 curves across training sizes using the task's saved splitter. Classification
 bundles also provide ROC, calibration, cumulative-gain, and lift diagnostics.
 
+Bundles that have a named alias (set with **Model aliases** on the Registry &
+Deployment page) are shown by those names in the Bundle metrics table and used
+as the series labels of the Metric comparison charts; the bundle selectors in
+**Nested CV** and **Diagnostic curves** list each aliased bundle as *alias-version*
+(several aliases joined with ", "), so an alias never hides which exact version
+a run will use. Versions without an alias keep their full version hash everywhere.
+
 For a more rigorous estimate, choose a bundle in **Nested CV**, set inner and
 outer fold counts and repeats, and click **Run nested CV**. The inner loop
 selects/tunes the estimator; the outer loop estimates generalization. This is
@@ -692,6 +715,11 @@ saved as a versioned ``.bundle`` file. You can also:
   existing snapshot into a new bundle version;
 * download the bundle or export it to an MLflow-compatible model directory.
 
+Bundles with a named alias (set with **Model aliases** on the Registry &
+Deployment page) show that alias in an **Alias** column next to the model
+version in the Bundles list (several aliases joined by ", "); versions
+without an alias keep their full version hash there.
+
 Bundle persistence and loading correspond to ``ModelBundle``, ``save_bundle``,
 ``load_bundle``, and ``export_mlflow`` in ``SKSurrogate.modelbundle``.
 Serialized models should only be loaded from trusted sources.
@@ -705,7 +733,11 @@ Serialized models should only be loaded from trusted sources.
 7. Run quality gates before release
 ------------------------------------
 
-In **Quality Gates**, select the bundle version. Optionally set a maximum
+In **Quality Gates**, select the bundle version. Bundles that have a named
+alias (set with **Model aliases** on the Registry & Deployment page) are listed
+in the **Bundle (model version)** picker as *alias-version*; bundles without
+one keep their plain version, and the check still runs against the exact
+version id. Optionally set a maximum
 bundle file size and define numeric metric minimums as a JSON object, for
 example:
 
@@ -752,12 +784,23 @@ Open **Registry & Deployment**:
 4. If a production alias needs to point to another version, use **Rollback**
    to select the target model version and lifecycle alias.
 5. Use **Model aliases** to give a version a stable, human-chosen name such as
-   ``baseline`` or ``credit-card-v2``. Unlike lifecycle aliases, a named alias is
-   not rewritten by promotion; it always points at the version you chose, is
-   resolvable by the API and the Python registry, and can be deleted without
-   touching the version. Every set/delete appears in the history and audit log.
+   ``baseline`` or ``credit-card-v2``. A name must be a lowercase slug — letters
+   and digits plus '.', '_' or '-' after the first character, at most 64 long —
+   and the lifecycle pointer names (``latest``, ``candidate``, ...) are reserved;
+   the form checks both before submitting. Unlike lifecycle aliases, a named
+   alias is not rewritten by promotion; it always points at the version you
+   chose, is resolvable by the API and the Python registry, and can be deleted
+   without touching the version. Every set/delete appears in the history and
+   audit log.
 6. Use **Use in Inference** to open the selected registry alias in the
    Inference page.
+
+The version selectors in **Register a bundle**, **Promote**, **Rollback**, and
+**Artifact cleanup** list each bundle as *alias-version* when it has a named
+alias (several joined with ", "), so an operator can tell versions apart
+without reading full hashes; the selected value is still the exact version id.
+The **Audit log** table — on this page and under **Settings / Audit** — shows
+those aliases in an **Alias** column next to the model version.
 
 This workflow uses ``ModelRegistry`` and ``DeploymentApprovalGate`` from
 ``SKSurrogate.modelbundle`` and ``SKSurrogate.deployment``. Lifecycle states
@@ -785,8 +828,10 @@ place that says *which model this task serves*, as opposed to which model a
 single request should use. Pick a model version or a registry alias and click
 **Serve this model**. While a model is served the top bar shows a
 ``Serving <version> · <task>`` pill on every page, and the card shows the
-resolved version, the resolve mode, when and by whom it was pinned, and the pin
-history. **Replace served model** changes the pin; **Stop serving** ends the
+resolved version, the resolve mode, when and by whom it was pinned, the pin
+history, and the **reachable serving endpoint** — the absolute
+``POST /api/serving/{task}/predict`` URL a deployment client points at.
+**Replace served model** changes the pin; **Stop serving** ends the
 declaration (the history keeps the record, so nothing is silently forgotten).
 
 Which mode is in force is stated on the card, and it decides what a later
@@ -815,9 +860,18 @@ The cards below it resolve a model *per request*: for a single call, explicitly
 resolve a model by version or registry alias.
 For a quick request, choose a stored partition or enter JSON rows and click
 **Run prediction**. Turn on **Validate before run** to check the input
-against the task's registered data schema before prediction. Review the
+against the model bundle's feature schema before prediction. Review the
 returned predictions, model version, request ID, latency, row count, and
 ignored columns; batch runs are additionally registered in registry lineage.
+
+In each card's **Model version** dropdown, bundles that have a named alias (set
+with **Model aliases** on the Registry & Deployment page) are listed as
+*alias-version* (several aliases joined with ", "); bundles without one keep
+their plain version, and the selected value is still the exact version id. The
+same alias-aware labels are used wherever the page names a model — the Serving
+badge, the frozen-at / follows-alias hint, the model-version details, the
+prediction and batch results, and the pin history — so a version is always
+recognizable without reading the full hash.
 
 For stored partitions, the API projects the data onto the bundle's feature
 schema, which removes the target label and normalizes feature order. Inline
@@ -827,7 +881,10 @@ features.
 
 Use **Batch run** to score the selected input in bulk. The output is saved as
 a CSV artifact under the task's predictions directory and can be linked to
-monitoring and registry lineage. These actions wrap
+monitoring and registry lineage. The result note offers a **Download CSV** link,
+which streams that file back from the server through
+``GET /api/inference/{task}/predictions/{version}/{file}`` — no shell access is
+needed to retrieve an artifact. These actions wrap
 ``SKSurrogate.inference.predict_batch`` and its schema validation.
 
 .. figure:: images/ui-inference.png
@@ -858,6 +915,11 @@ Open **Monitoring** after scoring data:
   Supply correctly aligned ``y_true``, ``y_pred``, and group arrays.
 * **Delayed-label performance** compares saved predictions with labels that
   arrive later; choose the task type and model version.
+
+The model-version selectors on every Monitoring card list an aliased bundle as
+*alias-version* (several aliases joined with ", "), the same convention used
+elsewhere in the UI, so an alias never hides which exact version a report
+covers; versions without an alias keep their full version hash.
 
 Inference requests are logged automatically. The reports correspond to
 ``drift_report``, ``prediction_distribution_report``,

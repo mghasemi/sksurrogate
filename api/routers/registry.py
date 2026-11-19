@@ -17,7 +17,7 @@ from SKSurrogate import (
 
 from ..config import settings
 from ..safety import safe_segment
-from ..deps import bad_request, bundle_summary, current_principal, not_found, unprocessable, task_access
+from ..deps import bad_request, bundle_summary, current_principal, exc_message, not_found, unprocessable, task_access
 
 router = APIRouter(prefix="/api/registry", tags=["registry"], dependencies=[Depends(task_access)])
 
@@ -83,7 +83,7 @@ def promote_bundle(task_name: str, body: PromoteRequest):
             quality_report=quality_report,
         )
     except KeyError as exc:
-        raise not_found(str(exc))
+        raise not_found(exc_message(exc))
     except (PermissionError, ValueError) as exc:
         raise bad_request(str(exc))
     return {**result, "quality_report": quality_report}
@@ -96,7 +96,7 @@ def rollback_bundle(task_name: str, body: RollbackRequest):
     try:
         return gate.rollback(task_name, body.state, model_version=body.model_version)
     except KeyError as exc:
-        raise not_found(str(exc))
+        raise not_found(exc_message(exc))
 
 
 @router.get("/{task_name}/summary")
@@ -105,7 +105,7 @@ def registry_summary(task_name: str):
     try:
         return {"task_name": task_name, **_registry().summary(task_name)}
     except KeyError as exc:
-        raise not_found(str(exc))
+        raise not_found(exc_message(exc))
 
 
 @router.get("/{task_name}/aliases")
@@ -114,7 +114,7 @@ def list_aliases(task_name: str):
     try:
         return {"task_name": task_name, "aliases": _registry().named_aliases(task_name)}
     except KeyError as exc:
-        raise not_found(str(exc))
+        raise not_found(exc_message(exc))
 
 
 @router.post("/{task_name}/aliases")
@@ -128,7 +128,7 @@ def set_alias(task_name: str, body: AliasRequest):
             actor=current_principal().username,
         )
     except KeyError as exc:
-        raise not_found(str(exc))
+        raise not_found(exc_message(exc))
     except ValueError as exc:
         raise bad_request(str(exc))
     return {"task_name": task_name, "name": body.name, **entry}
@@ -140,7 +140,7 @@ def delete_alias(task_name: str, name: str):
     try:
         removed = _registry().delete_named_alias(task_name, name)
     except KeyError as exc:
-        raise not_found(str(exc))
+        raise not_found(exc_message(exc))
     return {"task_name": task_name, "name": name, **removed}
 
 
@@ -149,7 +149,7 @@ def registry_history(task_name: str):
     try:
         return {"task_name": task_name, "history": _registry().history(task_name)}
     except KeyError as exc:
-        raise not_found(str(exc))
+        raise not_found(exc_message(exc))
 
 
 @router.get("/{task_name}/audit")
@@ -157,7 +157,7 @@ def registry_audit(task_name: str):
     try:
         return {"task_name": task_name, "audit": _registry().audit_log(task_name)}
     except KeyError as exc:
-        raise not_found(str(exc))
+        raise not_found(exc_message(exc))
 
 
 @router.get("/{task_name}/load")
@@ -166,7 +166,7 @@ def load_registered_bundle(task_name: str, alias: str = "production"):
     try:
         bundle = _registry().load(task_name, alias=alias, strict_dependencies=False)
     except KeyError as exc:
-        raise not_found(str(exc))
+        raise not_found(exc_message(exc))
     return {"alias": alias, **bundle_summary(bundle)}
 
 
@@ -184,7 +184,7 @@ def registry_artifacts(task_name: str):
     try:
         artifacts = _registry().artifacts(task_name)
     except KeyError as exc:
-        raise not_found(str(exc))
+        raise not_found(exc_message(exc))
     return {
         "task_name": task_name,
         "datasets": artifacts["datasets"],
@@ -218,7 +218,7 @@ def delete_registry_artifacts(
             task_name, model_version=model_version, dataset_fingerprint=dataset_fingerprint
         )
     except KeyError as exc:
-        raise not_found(str(exc))
+        raise not_found(exc_message(exc))
     return {
         "task_name": task_name,
         "model_version": model_version,

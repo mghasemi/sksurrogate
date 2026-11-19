@@ -6,6 +6,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 from fastapi import HTTPException, UploadFile
@@ -164,8 +165,12 @@ class TestPhase5Endpoints(unittest.TestCase):
             datasets_router.validate_dataset(TASK, file=None, partition="train")
         )
         self.assertTrue(result["valid"])
-        self.assertIsNone(inference_service.preflight_error(TASK, self.frame[["measurement", "category"]]))
-        error = inference_service.preflight_error(TASK, self.frame[["measurement"]])
+        # Pre-flight validates against the *bundle's* feature schema (the columns
+        # the estimator consumes), not the task's full registered dataset schema —
+        # so a full-feature frame passes and a missing column is reported.
+        bundle = SimpleNamespace(schema={"measurement": {"dtype": "float64"}, "category": {"dtype": "object"}})
+        self.assertIsNone(inference_service.preflight_error(self.frame[["measurement", "category"]], bundle))
+        error = inference_service.preflight_error(self.frame[["measurement"]], bundle)
         self.assertIn("schema mismatch", error)
 
     def test_generate_list_and_download_synthetic_data(self):

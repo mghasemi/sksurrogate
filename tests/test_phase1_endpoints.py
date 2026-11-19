@@ -321,6 +321,117 @@ class TestPhase1Endpoints(unittest.TestCase):
             -np.mean(validation_scores, axis=1),
         )
 
+    def test_learning_curve_fits_cat_cols_bundle_from_data_frame(self):
+        # Bundles from the explicit cat_cols path start with a named-column encoder
+        # (see AML.optimize_pipeline), which cannot be fitted positionally: every
+        # learning-curve fold must receive a DataFrame. Passing X as an ndarray
+        # used to fail all folds with "X does not contain the columns listed in cols".
+        from category_encoders.one_hot import OneHotEncoder
+        from sklearn.pipeline import Pipeline
+
+        frame = pd.DataFrame(
+            {
+                "risk": np.tile(["low", "medium", "high"], 50),
+                "score_a": np.linspace(0.0, 1.0, 150) + np.arange(150) * 1e-3,
+                TARGET: (np.arange(150) % 2 == 0).astype(int),
+            }
+        )
+        settings.task_dataset_dir(TASK).mkdir(parents=True, exist_ok=True)
+        frame.to_csv(settings.task_dataset_dir(TASK) / "mixed.csv", index=False)
+
+        features = ["risk", "score_a"]
+        model = Pipeline(
+            [
+                (
+                    "categorical_encoder",
+                    OneHotEncoder(cols=["risk"], return_df=False, handle_unknown="value"),
+                ),
+                ("clf", LogisticRegression(max_iter=300)),
+            ]
+        ).fit(frame[features], frame[TARGET].values)
+        version = "catcols-v1"
+        bundle = ModelBundle(
+            model,
+            task_name=TASK,
+            model_version=version,
+            schema={column: {"dtype": str(frame[column].dtype)} for column in features},
+            dependencies={},
+        )
+        save_bundle(bundle, settings.task_bundles_dir(TASK) / (version + ".bundle"))
+
+        response = evaluation_router.evaluation_learning_curves(
+            TASK,
+            scoring="accuracy",
+            model_versions=version,
+            train_partition="mixed",
+            n_points=2,
+        )
+
+        self.assertEqual(response["errors"], [], msg=response["errors"])
+        curve = response["series"][0]
+        self.assertEqual(curve["model_version"], version)
+        self.assertEqual(len(curve["train_sizes"]), 2)
+        for key in ("train_scores_mean", "validation_scores_mean"):
+            self.assertTrue(all(value is not None for value in curve[key]), msg=key)
+
+    def test_learning_curve_slices_features_to_bundle_schema(self):
+        # The curve fits on the bundle's own feature schema, not on whatever columns
+        # the partition currently carries: a text column added after training must be
+        # excluded by a numeric-only schema, and a schema column that no longer exists
+        # is reported per-bundle instead of failing every fold.
+        frame = pd.DataFrame(
+            {
+                "risk": np.tile(["low", "high"], 50),
+                "score_a": np.linspace(0.0, 1.0, 100) + np.arange(100) * 1e-3,
+                TARGET: (np.arange(100) % 2 == 0).astype(int),
+            }
+        )
+        settings.task_dataset_dir(TASK).mkdir(parents=True, exist_ok=True)
+        frame.to_csv(settings.task_dataset_dir(TASK) / "mixed.csv", index=False)
+
+        def _save(model, version, schema):
+            bundle = ModelBundle(
+                model,
+                task_name=TASK,
+                model_version=version,
+                schema=schema,
+                dependencies={},
+            )
+            save_bundle(bundle, settings.task_bundles_dir(TASK) / (version + ".bundle"))
+
+        _save(
+            LogisticRegression(max_iter=300).fit(frame[["score_a"]], frame[TARGET].values),
+            "schema-v1",
+            {"score_a": {"dtype": str(frame["score_a"].dtype)}},
+        )
+        # A schema naming a column the partition no longer has.
+        _save(
+            LogisticRegression(max_iter=300).fit(frame[["score_a"]], frame[TARGET].values),
+            "schema-missing-v1",
+            {
+                "score_a": {"dtype": str(frame["score_a"].dtype)},
+                "ghost": {"dtype": "float64"},
+            },
+        )
+
+        response = evaluation_router.evaluation_learning_curves(
+            TASK,
+            scoring="accuracy",
+            model_versions="schema-v1,schema-missing-v1",
+            train_partition="mixed",
+            n_points=2,
+        )
+
+        by_version = {curve["model_version"]: curve for curve in response["series"]}
+        # The numeric-only schema excludes the text column, so this bundle fits.
+        self.assertIn("schema-v1", by_version)
+        self.assertEqual(len(by_version["schema-v1"]["train_sizes"]), 2)
+
+        errors = {entry["model_version"]: entry for entry in response["errors"]}
+        self.assertNotIn("schema-v1", errors)
+        self.assertIn("schema-missing-v1", errors)
+        self.assertIn("ghost", errors["schema-missing-v1"]["detail"])
+
     # ------------------------------------------------------------ 1.1 nested CV
 
     def test_nested_cv_runs_as_background_job(self):

@@ -172,7 +172,7 @@ Open **Experiments → Quick start**:
    RandomForest, RMSE ≈ 55) and the model bundle it produced.
 
 The **Advanced** tab exposes everything else: a custom search space, the
-search strategy (``eoa`` evolutionary or ``surrogate``), forbidden
+search strategy (``eoa`` evolutionary or ``exhaustive``), forbidden
 combinations, generations, Dask backend and resumable runs. Quick start only
 fills in a preset for you; both tabs call the same endpoint.
 

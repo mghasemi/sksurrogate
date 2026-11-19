@@ -1231,6 +1231,44 @@ class mltrack(object):
         self.X = source_df[clmns].values
         self.y = source_df[target].values
 
+    def SetTarget(self, new_target):
+        """Re-point the registered dataset's prediction target column.
+
+        Updates the ``Task.target`` row (the source of ``self.target``, which
+        ``get_data``/``get_dataframe``/``split_train`` read directly) and the
+        ``target_name`` metadata, plus the derived ``dataset_feature_count`` so
+        it matches the new exclusion. The stored frames, schema and fingerprint
+        are untouched: a target change is metadata-only and reversible.
+
+        :param new_target: the name of an existing column to predict.
+        :return: the new target name.
+        """
+        metadata = self.GetMetadata()
+        # API-registered partitions live in `data_<partition>` tables (e.g.
+        # ``data_train``); the default ``data`` table only exists for
+        # unpartitioned (``RegisterData`` with no partition) registrations.
+        partition = metadata.get("dataset_partition") or "default"
+        partition = None if partition == "default" else partition
+        frame = self.get_dataframe(partition=partition)
+        if new_target not in frame.columns:
+            raise ValueError("Target column '%s' is not part of the registered dataset." % new_target)
+        res = Task.select().where(Task.task_id == self.task_id)[0]
+        res.target = new_target
+        res.last_mod_date = datetime.now()
+        res.save()
+        self.target = new_target
+        self._split_cache.clear()
+        columns = list(frame.columns)
+        self.UpdateMetadata(
+            {
+                "target_name": new_target,
+                "dataset_feature_count": int(
+                    len([column for column in columns if column != new_target])
+                ),
+            }
+        )
+        return new_target
+
     def dataset_splits(self):
         """Return the stored dataset-partition metadata keyed by split name."""
         metadata = self.GetMetadata()

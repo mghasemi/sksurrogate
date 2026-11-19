@@ -64,6 +64,7 @@ setup(
         "scikit-learn>=1.5",
         "lightgbm>=4.6",
         "xgboost>=2.1",
+        "rgf-python>=3.12.0",
         "SALib",
         "imbalanced-learn",
         "joblib>=1.2",
