@@ -60,7 +60,7 @@ def test_config_and_preset_are_exclusive(client):
 
 def test_preset_run_produces_bundle(client):
     _register(client, "quick")
-    body = {"preset": "classification", "strategy": "surrogate", "length": 1, "random_state": 0}
+    body = {"preset": "classification", "strategy": "exhaustive", "length": 1, "random_state": 0}
     job = client.post("/api/experiments/quick/run", json=body).json()["job_id"]
     record = _wait(client, job)
     assert record["status"] == "completed", record
@@ -118,7 +118,7 @@ def _register_regression(client, task):
 
 
 def _quick_bundle(client, task, preset):
-    body = {"preset": preset, "strategy": "surrogate", "length": 1, "random_state": 0}
+    body = {"preset": preset, "strategy": "exhaustive", "length": 1, "random_state": 0}
     record = _wait(client, client.post("/api/experiments/%s/run" % task, json=body).json()["job_id"])
     assert record["status"] == "completed", record
     return record["result"]["model_version"], record["job_id"]

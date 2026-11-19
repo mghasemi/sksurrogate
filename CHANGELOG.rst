@@ -4,6 +4,41 @@ Changelog
 [Unreleased]
 ------------
 
+Experiments: search strategy × surrogate family
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The Experiments page's advanced "Run settings" no longer conflates the
+  surrogate with the structural search. **Search strategy** is now
+  **Evolutionary (EOA)** — a genetic search over the space of all possible
+  pipelines instead of walking the whole space — or **Exhaustive search**
+  (evaluate every admissible pipeline). EOA honours **Max generation** and
+  **Num parents**; exhaustive ignores them. The old ``Search engine`` dropdown
+  (``strategy="surrogate"``, "Surrogate only (no evolution)") is retired.
+* **Surrogate optimization runs on every pipeline the search evaluates.**
+  Exactly one surrogate estimator is chosen per experiment — a dropdown of GPR,
+  KRR or SVR (``RandomizedSearchCV``-tuned over the estimator's own
+  hyperparameter grid, default ``gpr``) — plus parameters ``itrs`` (default
+  30), ``sampling`` (default ``BoxSample``; CompactSample/SphereSample also
+  available) and ``min_random_evals`` (default 10, the number of random initial
+  hyperparameter samples before the surrogate is exploited). The API fields
+  ``surrogate_family``/``surrogate_mode`` are replaced by ``surrogate_estimator``,
+  ``surrogate_itrs``, ``surrogate_sampling`` and ``surrogate_min_random_evals``;
+  they are recorded in the bundle audit/reproducibility record under a
+  ``surrogate`` object. Unknown estimators or samplers are rejected with a
+  clear 400.
+* **The library now exposes the same model.** ``SKSurrogate`` adds
+  ``build_surrogate(estimator, itrs=30, sampling="BoxSample", solver="L-BFGS-B")``
+  plus the ``SURROGATE_ESTIMATORS`` (``gpr``/``krr``/``svr``) and
+  ``SURROGATE_SAMPLERS`` (BoxSample/CompactSample/SphereSample) lists, and
+  re-exports ``CompactSample``; the API's experiment surrogate is a thin wrapper
+  over this builder, so the estimator grids live in one place. ``AML.fit``'s
+  pipeline-search strategy is renamed ``"surrogate"`` -> ``"exhaustive"``
+  (the old spelling is rejected), and ``AML``'s implicit default surrogate — a
+  hardcoded KRR+GPR pair — is now a single Gaussian Process via the shared
+  builder (``gpr``/``itrs=30``/``BoxSample``), so the library default matches
+  the Experiments default. Surrogate optimization is applied to every candidate
+  pipeline the chosen strategy evaluates.
+
 Explain page
 ~~~~~~~~~~~~
 

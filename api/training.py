@@ -25,6 +25,24 @@ BASELINE_ESTIMATORS = {
     "random_forest_regressor": RandomForestRegressor,
 }
 
+#: Surrogate estimator / sampler options, forwarded to the library's
+#: single-surrogate builder. Re-exported from ``SKSurrogate`` so the routers can
+#: validate experiment requests against the same lists the search consumes.
+from SKSurrogate import SURROGATE_ESTIMATORS as SURROGATE_FAMILIES
+from SKSurrogate import SURROGATE_SAMPLERS, build_surrogate
+
+
+def build_surrogate_models(name, itrs, sampling="BoxSample"):
+    """Build the single surrogate configured for an experiment run.
+
+    Thin wrapper over :func:`SKSurrogate.build_surrogate`. Returns the one-entry
+    list of ``(regressor, itrs, sampling, solver)`` tuples consumed by
+    ``AML.optimize_pipeline``, which runs one ``SurrogateRandomCV`` pass on
+    every evaluated pipeline and keeps the best stage.
+    """
+    return list(build_surrogate(name, itrs, sampling))
+
+
 # Scorer name fragments whose display label should not be title-cased verbatim.
 _SCORING_ACRONYMS = {
     "roc": "ROC",
@@ -653,8 +671,10 @@ def fit_experiment_bundle(
     random_state=None,
     owner=None,
     run_id=None,
-    surrogate_mode=False,
-    surrogate_itrs=None,
+    surrogate_estimator="gpr",
+    surrogate_itrs=30,
+    surrogate_sampling="BoxSample",
+    surrogate_min_random_evals=10,
     forbidden=None,
     preset=None,
     strategy="eoa",
@@ -683,8 +703,8 @@ def fit_experiment_bundle(
         raise bad_request("Send either a preset or a config, not both")
     if preset is None and not config:
         raise bad_request("A search-space config or a preset is required")
-    if strategy not in ("eoa", "surrogate"):
-        raise bad_request("strategy must be 'eoa' or 'surrogate'")
+    if strategy not in ("eoa", "exhaustive"):
+        raise bad_request("strategy must be 'eoa' or 'exhaustive'")
     requested_config = config
     config, stacking = extract_stacking(config or {})
     parsed_config = {
@@ -706,6 +726,13 @@ def fit_experiment_bundle(
     cv_spec = get_stored_cv_spec(task_name)
     cv = get_stored_cv(task_name)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    # The single chosen surrogate is applied to every candidate pipeline the
+    # search evaluates (one SurrogateRandomCV pass, best stage kept); the
+    # iteration budget bounds how many candidate points the pass tries and
+    # min_random_evals sets how many random initial points are sampled before
+    # the surrogate is exploited. Passing surrogates explicitly also suppresses
+    # AML's implicit default KRR+GPR pair, so the estimator is the user's pick.
+    surrogates = build_surrogate_models(surrogate_estimator, surrogate_itrs, surrogate_sampling)
     aml = AML(
         config=parsed_config if preset is None else None,
         preset=preset,
@@ -716,6 +743,8 @@ def fit_experiment_bundle(
         check_point=str(checkpoint_dir) + "/",
         random_state=random_state,
         cv=cv if cv is not None else 3,
+        surrogates=surrogates,
+        min_random_evals=surrogate_min_random_evals,
         forbidden=forbidden_rules,
         conditional=conditional,
         callbacks=[logs.trial_callback],
@@ -724,14 +753,13 @@ def fit_experiment_bundle(
         stop_check=control.stop_requested,
         **stacking,
     )
-    if surrogate_mode:
-        # A single lightweight regressor replaces the default KRR+GPR pair; the
-        # iteration budget bounds how many candidate points each surrogate pass tries.
-        aml.add_surrogate(LinearRegression(), int(surrogate_itrs) if surrogate_itrs else 20)
     if strategy == "eoa":
+        # Evolutionary search over the space of all possible pipelines, instead
+        # of exhaustively enumerating the whole space.
         aml.fit(X, y, strategy="eoa", max_generations=max_generation, num_parents=num_parents)
     else:
-        aml.fit(X, y, strategy="surrogate")
+        # "exhaustive": enumerate every admissible pipeline, surrogate-tuned.
+        aml.fit(X, y, strategy="exhaustive")
     # SurrogateRandomCV refits best_estimator_ on the full dataset (refit=True),
     # so it is ready for scoring/serving without an extra fit here. When every
     # candidate was rejected (e.g. the forbidden rules ban the whole space) it
@@ -767,8 +795,12 @@ def fit_experiment_bundle(
             "max_generation": max_generation,
             "num_parents": num_parents,
             "random_state": random_state,
-            "surrogate_mode": surrogate_mode,
-            "surrogate_iterations": int(surrogate_itrs) if surrogate_itrs else None,
+            "surrogate": {
+                "estimator": surrogate_estimator,
+                "itrs": int(surrogate_itrs),
+                "sampling": surrogate_sampling,
+                "min_random_evals": surrogate_min_random_evals,
+            },
             "forbidden": [list(list(rule.items())[0]) for rule in forbidden_rules],
             "conditional": conditional,
             "stacking": stacking or None,
@@ -790,8 +822,10 @@ def fit_experiment_bundle(
         max_generation=max_generation,
         num_parents=num_parents,
         train_score=train_score,
-        surrogate_mode=surrogate_mode,
-        surrogate_itrs=int(surrogate_itrs) if surrogate_itrs else None,
+        surrogate_estimator=surrogate_estimator,
+        surrogate_itrs=int(surrogate_itrs),
+        surrogate_sampling=surrogate_sampling,
+        surrogate_min_random_evals=surrogate_min_random_evals,
         forbidden=[list(list(rule.items())[0]) for rule in forbidden_rules],
         conditional=conditional,
         stacking=stacking or None,

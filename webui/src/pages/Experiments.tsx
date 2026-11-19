@@ -146,7 +146,6 @@ export default function ExperimentsPage() {
   const [preset, setPreset] = useState<"classification" | "regression">("classification");
   const [quickScoring, setQuickScoring] = useState("");
   const [budget, setBudget] = useState(1);
-  const [engine, setEngine] = useState<"eoa" | "surrogate">("eoa");
   const [configJson, setConfigJson] = useState(defaultConfigJson);
   const [length, setLength] = useState(2);
   const [maxGeneration, setMaxGeneration] = useState(3);
@@ -154,8 +153,11 @@ export default function ExperimentsPage() {
   const [trainPartition, setTrainPartition] = useState("train");
   const [scoring, setScoring] = useState("accuracy");
   const [backend, setBackend] = useState<"local" | "dask">("local");
-  const [strategy, setStrategy] = useState<"eoa" | "surrogate">("eoa");
-  const [surrogateItrs, setSurrogateItrs] = useState(20);
+  const [strategy, setStrategy] = useState<"eoa" | "exhaustive">("eoa");
+  const [surrogateEstimator, setSurrogateEstimator] = useState("gpr");
+  const [surrogateItrs, setSurrogateItrs] = useState(30);
+  const [surrogateSampling, setSurrogateSampling] = useState("BoxSample");
+  const [surrogateMinRandomEvals, setSurrogateMinRandomEvals] = useState(10);
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobTask, setJobTask] = useState<string | null>(null);
   const [experimentLabel, setExperimentLabel] = useState("");
@@ -286,11 +288,13 @@ export default function ExperimentsPage() {
         num_parents: numParents,
         train_partition: trainPartition,
         scoring,
-        surrogate_mode: strategy === "surrogate",
-        surrogate_itrs: strategy === "surrogate" ? surrogateItrs : null,
+        surrogate_estimator: surrogateEstimator,
+        surrogate_itrs: surrogateItrs,
+        surrogate_sampling: surrogateSampling,
+        surrogate_min_random_evals: surrogateMinRandomEvals,
         forbidden: parsed.forbidden,
         backend,
-        strategy: engine,
+        strategy,
         label: experimentLabel.trim() || null,
       };
       return { ...(await runExperiment(task, body)), taskName: task };
@@ -308,7 +312,7 @@ export default function ExperimentsPage() {
     mutationFn: async () => ({
       ...(await runExperiment(task, {
         preset,
-        strategy: "surrogate",
+        strategy: "exhaustive",
         length: budget,
         scoring: quickScoring || presetInfo?.default_scoring,
         random_state: 0,
@@ -576,14 +580,6 @@ export default function ExperimentsPage() {
           </div>
           <ScoringSelect value={scoring} onChange={setScoring} disabled={!task} />
           <div className="field">
-            <label>Search engine</label>
-            <select value={engine} onChange={(e) => setEngine(e.target.value as "eoa" | "surrogate")}>
-              <option value="eoa">Evolutionary (EOA)</option>
-              <option value="surrogate">Surrogate only (no evolution)</option>
-            </select>
-            {engine === "surrogate" && <span className="hint">Generation and parent settings are ignored.</span>}
-          </div>
-          <div className="field">
             <label>Execution backend</label>
             <select value={backend} onChange={(e) => setBackend(e.target.value as "local" | "dask")}>
               <option value="local">Local</option>
@@ -604,22 +600,39 @@ export default function ExperimentsPage() {
             <span className="row fixed">
               <input type="radio" name="strategy" checked={strategy === "eoa"} onChange={() => setStrategy("eoa")} />
               <span>Evolutionary (EOA)</span>
-              <input type="radio" name="strategy" checked={strategy === "surrogate"} onChange={() => setStrategy("surrogate")} />
-              <span>Surrogate-assisted</span>
+              <input type="radio" name="strategy" checked={strategy === "exhaustive"} onChange={() => setStrategy("exhaustive")} />
+              <span>Exhaustive search</span>
             </span>
+            {strategy === "exhaustive" && <span className="hint">Generation and parent settings are ignored.</span>}
           </div>
-          {strategy === "surrogate" && (
-            <>
-              <div className="field">
-                <label>Surrogate iterations</label>
-                <input type="number" min={1} value={surrogateItrs} onChange={(e) => setSurrogateItrs(Number(e.target.value))} />
-              </div>
-              <span className="hint">
-                A single lightweight regressor replaces the default KRR+GPR pair; more iterations improve the
-                surrogate fit but increase runtime per generation.
-              </span>
-            </>
-          )}
+          <div className="field">
+            <label>Surrogate estimator</label>
+            <select value={surrogateEstimator} onChange={(e) => setSurrogateEstimator(e.target.value)}>
+              <option value="gpr">GPR</option>
+              <option value="krr">KRR</option>
+              <option value="svr">SVR</option>
+            </select>
+          </div>
+          <div className="field">
+            <label>itrs</label>
+            <input type="number" min={1} value={surrogateItrs} onChange={(e) => setSurrogateItrs(Number(e.target.value))} />
+          </div>
+          <div className="field">
+            <label>Sampling</label>
+            <select value={surrogateSampling} onChange={(e) => setSurrogateSampling(e.target.value)}>
+              {["BoxSample", "CompactSample", "SphereSample"].map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label>min_random_evals</label>
+            <input type="number" min={1} value={surrogateMinRandomEvals} onChange={(e) => setSurrogateMinRandomEvals(Number(e.target.value))} />
+          </div>
+          <span className="hint">
+            The chosen surrogate tunes the hyperparameters of every pipeline the search evaluates; min_random_evals
+            is how many random initial points are sampled before the surrogate is exploited.
+          </span>
         </div>
 
         {runMut.isError && <ErrorNote error={runMut.error} />}

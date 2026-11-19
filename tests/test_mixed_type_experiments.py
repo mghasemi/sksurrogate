@@ -175,8 +175,8 @@ def test_advanced_search_space_encodes_text_columns(client):
         # without EOA's per-generation Gaussian-process fits, which dominate the
         # runtime regardless of dataset size (388 s on 90 rows for one
         # generation). The contract under test is the encoding, not the search.
-        "strategy": "surrogate",
-        "surrogate_mode": True,
+        "strategy": "exhaustive",
+        "surrogate_estimator": "gpr",
         "surrogate_itrs": 4,
         "length": 1,
         "scoring": "accuracy",
@@ -249,7 +249,7 @@ def test_nested_cv_accepts_a_bundle_that_already_encodes(client):
         ValueError: ArrayAsFrame expected 13 feature column(s); got shape ()
     """
     _register_mixed(client, "nestedcv")
-    body = {"preset": "classification", "strategy": "surrogate", "surrogate_mode": True,
+    body = {"preset": "classification", "strategy": "exhaustive", "surrogate_estimator": "gpr",
             "surrogate_itrs": 4, "length": 1, "scoring": "accuracy", "random_state": 0}
     job = client.post("/api/experiments/nestedcv/run", json=body).json()["job_id"]
     experiment = _wait(client, job)

@@ -446,11 +446,19 @@ Then configure the run:
    small for an initial smoke test.
 2. Choose a scoring metric that matches the task and the business objective.
    The selected scorer is the objective the search optimizes.
-3. Choose **Evolutionary (EOA)** or **Surrogate-assisted** search. The latter
-   adds surrogate iterations and may take longer per generation.
-4. **Search engine** selects ``AML.fit(strategy="eoa")`` (default) or
-   ``strategy="surrogate"`` (surrogate search only; generation and parent
-   settings are ignored).
+3. Choose a **Search strategy**. **Evolutionary (EOA)** optimizes over the
+   space of all possible pipelines with genetic operators instead of
+   exhaustively enumerating the whole space; **Exhaustive search** evaluates
+   every admissible pipeline. EOA honours **Max generation** and **Num
+   parents**; exhaustive ignores them.
+4. Configure the **Surrogate**. One estimator is chosen per experiment from
+   the dropdown (GPR, KRR or SVR — the list is meant to grow), alongside
+   ``itrs`` (default 30), ``sampling`` (default ``BoxSample``;
+   ``CompactSample`` and ``SphereSample`` are also available), and
+   ``min_random_evals`` (default 10 — the number of random initial
+   hyperparameter samples before the surrogate is exploited). The chosen
+   surrogate tunes the hyperparameters of *every* pipeline the search
+   evaluates.
 5. **Execution backend** chooses **Local** (thread pool in the API process) or
    **Dask**. The API image ships ``dask[distributed]``; a Dask job runs on a
    local cluster sized by the compute budget and tears it down afterwards. The

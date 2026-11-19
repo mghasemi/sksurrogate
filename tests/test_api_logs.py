@@ -264,7 +264,7 @@ def _register(client, task):
 def test_experiment_jobs_capture_trial_events(client):
     """AML forwards the callbacks hook, so trials appear as log entries."""
     _register(client, "trial-logs")
-    body = {"preset": "classification", "strategy": "surrogate", "length": 1, "random_state": 0}
+    body = {"preset": "classification", "strategy": "exhaustive", "length": 1, "random_state": 0}
     job_id = client.post("/api/experiments/trial-logs/run", json=body).json()["job_id"]
     record = _wait(job_id)
     assert record["status"] == "completed"

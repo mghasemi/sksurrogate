@@ -2164,8 +2164,8 @@ export interface RunExperimentRequest {
   config?: SearchSpace;
   /** Quick-start preset (bounded search space); mutually exclusive with `config`. */
   preset?: "classification" | "regression";
-  /** `eoa` (evolutionary, default) or `surrogate` (surrogate search only). */
-  strategy?: "eoa" | "surrogate";
+  /** Structural search strategy: `eoa` (evolutionary, default) or `exhaustive`. */
+  strategy?: "eoa" | "exhaustive";
   length?: number;
   max_generations?: number;
   num_parents?: number;
@@ -2174,10 +2174,14 @@ export interface RunExperimentRequest {
   random_state?: number | null;
   owner?: string | null;
   run_id?: string | null;
-  /** Use a single lightweight surrogate regressor instead of the default KRR+GPR pair. */
-  surrogate_mode?: boolean;
-  /** Per-surrogate iteration budget (surrogate mode only). */
-  surrogate_itrs?: number | null;
+  /** Single surrogate estimator applied to every candidate pipeline: gpr|krr|svr. */
+  surrogate_estimator?: string;
+  /** Surrogate-search iterations (default 30). */
+  surrogate_itrs?: number;
+  /** Surrogate sampling strategy: BoxSample | CompactSample | SphereSample. */
+  surrogate_sampling?: string;
+  /** Random initial hyperparameter samples before surrogate exploitation (default 10). */
+  surrogate_min_random_evals?: number;
   /** Disallowed parameter combinations, e.g. [["penalty", "l1"]] or [["max_depth", 1]]. */
   forbidden?: Array<[string, unknown]> | null;
   backend?: "local" | "dask";
