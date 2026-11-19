@@ -661,6 +661,15 @@ Serving card shows the reachable endpoint; aliases label every version on Infere
   *alias - version* when a named alias is set and the plain version otherwise;
   option values and resolution keep the exact version id.
 
+Inference dropdowns align whether or not the best-bundle chip shows
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The model-picker row bottom-aligned its fields, so the **Model version**
+  dropdown that carries the "★ best" chip sat higher than the **Resolve by**
+  dropdown beside it (in Predict console, Batch run and Serving). The picker
+  row now top-aligns its fields, keeping **Resolve by** / **Model version** /
+  **Alias** controls level in all three cards with or without the chip.
+
 [0.3.0] - 2026-11-08
 --------------------
 

@@ -138,7 +138,7 @@ function ModelPicker({
   const labelOf = useBundleLabel(task);
 
   return (
-    <div className="row">
+    <div className="row top">
       <div className="field fixed" style={{ flex: "0 1 150px", minWidth: 120 }}>
         <label>Resolve by</label>
         <select value={mode} onChange={(e) => setMode(e.target.value as "version" | "alias")}>
