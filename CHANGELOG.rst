@@ -630,6 +630,22 @@ Inference model pickers show registry aliases
   otherwise. The selected ``value`` is still the exact version id, so a
   per-request prediction or batch run resolves that id exactly as before.
 
+Pre-flight prediction validation checks the model's feature schema
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* ``preflight: true`` on the inference/serving prediction endpoints previously
+  validated the input frame against the task's full registered *dataset*
+  schema. That over-strictly rejected any model trained on a curated or
+  downstream feature subset of the raw table — e.g. an SPRA model consuming 18
+  ``spr_*`` features was refused for lacking the other 47 unrelated columns of
+  the original schema. Pre-flight now validates the frame against the *model
+  bundle's* feature schema (the columns the estimator actually consumes), so a
+  frame holding exactly those features passes and a genuinely missing feature
+  is still reported as ``Prediction schema mismatch``. ``predict_batch``
+  remains the strict gate for feature presence, ordering and dtypes. The
+  "Validate before run" checkbox (Predict console, Batch run, Serving) works
+  for subset-trained models as documented.
+
 [0.3.0] - 2026-11-08
 --------------------
 

@@ -5,7 +5,7 @@ Two routers expose prediction over HTTP and they differ in exactly one thing:
 each request body (``model_version`` or ``alias``); ``api.routers.serving``
 takes it from the persisted serving pin (see :mod:`api.serving`). Everything
 after resolution — building the input frame, optional pre-flight validation
-against the registered dataset schema, the ``predict_batch`` call, the
+against the *model bundle's* feature schema, the ``predict_batch`` call, the
 monitoring record — is identical and lives here so the two paths cannot drift.
 """
 
@@ -17,7 +17,7 @@ import pandas as pd
 from SKSurrogate import SchemaValidationError, predict_batch
 
 from .config import settings
-from .deps import append_monitor_record, bad_request, not_found, open_tracker
+from .deps import append_monitor_record, bad_request, not_found
 from .safety import safe_segment
 
 
@@ -47,20 +47,52 @@ def resolve_input_frame(task_name, *, bundle, rows=None, partition=None):
     raise bad_request("Either 'rows' or 'partition' must be provided")
 
 
-def preflight_error(task_name, frame):
-    """Return a validation error string for ``frame``, or None if it passes."""
-    if not settings.mltrace_db_path(task_name).exists():
-        return "No registered dataset schema found for task %r; cannot run pre-flight validation." % task_name
-    try:
-        with open_tracker(task_name) as tracker:
-            tracker.validate_prediction_data(frame)
-    except ValueError as exc:
-        return str(exc)
+def preflight_error(frame, bundle):
+    """Return a validation error string for ``frame``, or None if it passes.
+
+    Pre-flight checks the input against the *model bundle's* feature schema —
+    the columns the estimator actually consumes. Validating against the task's
+    full registered dataset schema instead would reject a model trained on a
+    curated or downstream feature subset of the raw table (its input is missing
+    unrelated columns the model never used), so the bundle schema is the
+    authoritative contract a caller must satisfy. ``predict_batch`` remains the
+    strict gate for feature presence, ordering and dtypes.
+    """
+    expected = list(bundle.schema or ())
+    if not expected:
+        return None
+    actual = list(frame.columns)
+    if actual != expected:
+        return "Prediction schema mismatch: %s" % _schema_difference(expected, actual)
     return None
 
 
+def _schema_difference(expected_columns, actual_columns):
+    """Readable description of a column mismatch in the same shape as ``mltrace``.
+
+    Mirrors ``SKSurrogate.mltrace._format_schema_difference`` so callers and the
+    Monitoring page see a consistent message, but computed against the model
+    bundle's feature schema rather than the task's dataset schema.
+    """
+    missing = [column for column in expected_columns if column not in actual_columns]
+    extra = [column for column in actual_columns if column not in expected_columns]
+    if missing or extra:
+        detail = []
+        if missing:
+            detail.append("missing columns: %s" % ", ".join(missing))
+        if extra:
+            detail.append("unexpected columns: %s" % ", ".join(extra))
+        if list(expected_columns) != list(actual_columns):
+            detail.append(
+                "expected order: [%s], received: [%s]"
+                % (", ".join(map(str, expected_columns)), ", ".join(map(str, actual_columns)))
+            )
+        return "; ".join(detail)
+    return "columns are in a different order"
+
+
 def check_preflight(task_name, frame, bundle, enabled):
-    """Validate ``frame`` against the task's registered schema when ``enabled``.
+    """Validate ``frame`` against ``bundle``'s feature schema when ``enabled``.
 
     A failure is a 400 (not a prediction error) and still records the failed
     request, so the Monitoring page sees pre-flight rejections as errors.
@@ -68,7 +100,7 @@ def check_preflight(task_name, frame, bundle, enabled):
     if not enabled:
         return
     started = perf_counter()
-    error = preflight_error(task_name, frame)
+    error = preflight_error(frame, bundle)
     if error is not None:
         latency_ms = (perf_counter() - started) * 1000
         append_monitor_record(

@@ -778,7 +778,7 @@ The cards below it resolve a model *per request*: for a single call, explicitly
 resolve a model by version or registry alias.
 For a quick request, choose a stored partition or enter JSON rows and click
 **Run prediction**. Turn on **Validate before run** to check the input
-against the task's registered data schema before prediction. Review the
+against the model bundle's feature schema before prediction. Review the
 returned predictions, model version, request ID, latency, row count, and
 ignored columns; batch runs are additionally registered in registry lineage.
 

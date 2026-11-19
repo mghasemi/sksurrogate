@@ -109,9 +109,12 @@ Input is either inline ``rows`` — the serving payload, validated exactly as
 sent — or a stored ``partition``, which is registered training data and is
 therefore projected onto the bundle schema first (the target and other
 non-feature columns are dropped and reported as ``ignored_columns``). Set
-``"preflight": true`` to validate the frame against the task's registered
-dataset schema and receive the schema-difference message instead of a raw
-prediction failure.
+``"preflight": true`` to validate the frame against the *model bundle's*
+feature schema — the columns the estimator actually consumes — and receive the
+schema-difference message instead of a raw prediction failure. The bundle
+schema (not the task's full registered dataset schema) is the contract, so a
+model trained on a curated feature subset of the raw table scores correctly
+against a frame holding just those features.
 
 Every request appends a monitoring record (latency, rows, success or error)
 keyed to the model version, which the Monitoring page summarizes. Note the

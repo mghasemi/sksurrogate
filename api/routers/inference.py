@@ -32,8 +32,8 @@ class PredictRequest(BaseModel):
     partition: str | None = None
     rows: list[dict] | None = None
     request_id: str | None = None
-    # Phase 5.2: when set, run ``validate_prediction_data`` against the registered
-    # dataset schema before predicting and surface the schema-difference message
+    # Phase 5.2: when set, validate the frame against the model bundle's feature
+    # schema before predicting and surface the schema-difference message
     # instead of a raw prediction failure.
     preflight: bool = False
 
