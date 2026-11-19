@@ -135,7 +135,12 @@ def test_array_as_frame_restores_numeric_dtypes_from_a_mixed_matrix():
 
     rebuilt = adapter.transform(np.array([[1.0, 2.0, "a"], [3.0, 4.0, "b"]], dtype=object))
 
-    assert [str(dtype) for dtype in rebuilt.dtypes] == ["float64", "float64", "object"]
+    dtypes = [str(dtype) for dtype in rebuilt.dtypes]
+    # The two numeric columns stay float64 and the text column stays text. Under
+    # pandas 3 a text column gets the new ``str`` dtype (PDEP-14) where pandas 2
+    # reports ``object`` — either is "text, not numbers".
+    assert dtypes[:2] == ["float64", "float64"]
+    assert dtypes[2] in ("object", "str", "string")
     # A text column must stay text, not be coerced into numbers.
     assert rebuilt["team"].tolist() == ["a", "b"]
 
