@@ -782,6 +782,11 @@ against the task's registered data schema before prediction. Review the
 returned predictions, model version, request ID, latency, row count, and
 ignored columns; batch runs are additionally registered in registry lineage.
 
+In each card's **Model version** dropdown, bundles that have a named alias (set
+with **Model aliases** on the Registry & Deployment page) are listed as
+*alias - version* (several aliases joined with ", "); bundles without one keep
+their plain version, and the selected value is still the exact version id.
+
 For stored partitions, the API projects the data onto the bundle's feature
 schema, which removes the target label and normalizes feature order. Inline
 rows are treated as the serving payload and must match the bundle schema.

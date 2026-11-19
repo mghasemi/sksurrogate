@@ -621,6 +621,15 @@ Registry, Quality Gates and audit tables show registry aliases
   Audit** — gains an **Alias** column that shows the named alias(es) for each
   event's model version (a muted dash when none is set).
 
+Inference model pickers show registry aliases
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The **Model version** dropdowns on the Inference page — in **Predict
+  console**, **Batch run**, and the **Serving** card — label each option
+  *alias - version* when a named alias has been set and show the plain version
+  otherwise. The selected ``value`` is still the exact version id, so a
+  per-request prediction or batch run resolves that id exactly as before.
+
 [0.3.0] - 2026-11-08
 --------------------
 

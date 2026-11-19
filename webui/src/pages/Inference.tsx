@@ -11,6 +11,7 @@ import {
   predict,
   predictBatch,
   predictServed,
+  registrySummary,
   retryUnlessNotFound,
   startServing,
   stopServing,
@@ -100,6 +101,31 @@ function ModelPicker({
   const bestVersion = bestQ.data?.model_version ?? null;
   const bestIsAvailable = !!bestVersion && versions.includes(bestVersion);
 
+  // Named registry aliases give versions human labels in the dropdown; the Registry page
+  // owns the cache entry under the same key, and a 404 just means "no registry state yet".
+  const aliasQ = useQuery({
+    queryKey: ["registry-summary", task],
+    queryFn: () => registrySummary(task),
+    enabled: !!task,
+    retry: retryUnlessNotFound,
+  });
+  /** Sorted named aliases pointing at each model version (empty when none has been set). */
+  const aliasByVersion = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const [name, entry] of Object.entries(aliasQ.data?.named_aliases ?? {})) {
+      const names = map.get(entry.model_version) ?? [];
+      names.push(name);
+      map.set(entry.model_version, names);
+    }
+    for (const names of map.values()) names.sort();
+    return map;
+  }, [aliasQ.data]);
+  /** Dropdown label: "{alias(es)} - {version}" when a named alias is set, otherwise the version. */
+  const labelOf = (version: string) => {
+    const aliases = aliasByVersion.get(version);
+    return aliases && aliases.length > 0 ? `${aliases.join(", ")} - ${version}` : version;
+  };
+
   return (
     <div className="row">
       <div className="field fixed" style={{ flex: "0 1 150px", minWidth: 120 }}>
@@ -115,7 +141,7 @@ function ModelPicker({
           <select value={modelVersion} onChange={(e) => setModelVersion(e.target.value)}>
             <option value="">— select —</option>
             {versions.map((v) => (
-              <option key={v}>{v}</option>
+              <option key={v} value={v}>{labelOf(v)}</option>
             ))}
           </select>
           {bestIsAvailable && (
