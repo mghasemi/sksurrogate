@@ -42,7 +42,6 @@ example*-checkpoints/
 # OS metadata
 .DS_Store
 Thumbs.db
-HANDOFF.md
 
 # SKSurrogate API runtime state (bundles, jobs, datasets, predictions, registry, mltrace DBs)
 /var/
@@ -58,16 +57,47 @@ benchmarks/results/
 /docs/*.pkl
 playwright-report/
 
-# Internal working documents and plans (kept out of the public repo; see P2.2)
-# Documents referenced from tracked/shipped files are committed instead, each
-# carrying an "Internal working document." banner in its header.
+# Internal working documents and plans — maintainer planning notes, not user
+# documentation. Kept local and out of the public repo (see P2.2).
+#
+# .gitignore is inert for files git already tracks: a name listed here that is
+# still in the index stays in the public repo until it leaves with
+# `git rm --cached`. Six are still tracked, because shipped code and published
+# docs cite them as design contracts and each carries an "Internal working
+# document." banner:
+#
+#   AI_LAYER02_D2_LLM_SYNTHESIS_SCOPE.md   api/synthesis.py, api/synthesis_facts.py
+#   AI_LAYER02_D3_ROW_LEVEL_CONTRACT.md    docs/mltrace.rst
+#   AI_LAYER02_D4_READINESS_ASSESSMENT.md  docs/experiment-design.rst,
+#                                          benchmarks/design_readiness.py
+#   AI_LAYER02_REMAINING_PLAN.md           benchmarks/datasets.py, dgps.py,
+#                                          methods.py, benchmarks/DESIGN.md
+#   HANDOFF-explainability-visibility.md   docs/images/make_stability_contour.py
+#   UI_DOCKER_UPGRADE_PLAN.md              docs/ui-plan.md
+#
+# Everything else listed here is untracked, so these rules apply directly.
 /AI_LAYER_ROADMAP.md
+/AI_LAYER02_B1_ARTIFACT_INGESTION_SCOPE.md
+/AI_LAYER02_B2_ARTIFACT_RECOVERY.md
+/AI_LAYER02_C1_SHAP_DECISION.md
+/AI_LAYER02_D2_LLM_SYNTHESIS_SCOPE.md
+/AI_LAYER02_D3_ROW_LEVEL_CONTRACT.md
+/AI_LAYER02_D4_READINESS_ASSESSMENT.md
+/AI_LAYER02_EDA_PLAN.md
 /AI_LAYER02_FOLLOWUP_PLAN.md
+/AI_LAYER02_REMAINING_PLAN.md
 /API_SIMPLIFICATION_PLAN.md
+/AUTH_AND_SHARING_PLAN.md
+/HANDOFF-explainability-visibility.md
 /HANDOFF-logging-telemetry.md
+/HANDOFF-website-seo.done.md
+/HANDOFF-website-seo.md
+/HANDOFF.md
+/LAUNCH_PLAN.md
+/LOGGING_TELEMETRY_PLAN.md
+/MCP_SERVER_SCOPE.md
+/UI_DOCKER_UPGRADE_PLAN.md
 /ai_layer02.md
 /ailayer.md
 /IDEA.md
 /logging.md
-/LOGGING_TELEMETRY_PLAN.md
-/UI_DOCKER_UPGRADE_PLAN.md
