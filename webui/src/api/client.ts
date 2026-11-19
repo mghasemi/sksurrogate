@@ -1305,6 +1305,13 @@ export function bundleDownloadUrl(task: string, modelVersion: string): string {
   return `${base}/api/bundles/${encodeURIComponent(task)}/${encodeURIComponent(modelVersion)}/download${key ? `?api_key=${encodeURIComponent(key)}` : ""}`;
 }
 
+/** Absolute URL that streams a persisted batch-prediction CSV (API key as query param, see above). */
+export function predictionDownloadUrl(task: string, modelVersion: string, filename: string): string {
+  const key = getApiKey();
+  const base = getEffectiveApiBase();
+  return `${base}/api/inference/${encodeURIComponent(task)}/predictions/${encodeURIComponent(modelVersion)}/${encodeURIComponent(filename)}${key ? `?api_key=${encodeURIComponent(key)}` : ""}`;
+}
+
 /* ------------------------------------------------------------------ */
 /* Quality gates                                                       */
 /* ------------------------------------------------------------------ */

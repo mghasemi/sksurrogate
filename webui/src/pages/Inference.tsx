@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
+import { Download } from "lucide-react";
 
 import {
   REGISTRY_STATES,
@@ -11,6 +12,7 @@ import {
   listBundles,
   predict,
   predictBatch,
+  predictionDownloadUrl,
   predictServed,
   registrySummary,
   retryUnlessNotFound,
@@ -248,6 +250,11 @@ function IgnoredColumns({ columns }: { columns?: string[] }) {
   );
 }
 
+/** Last path component of a server-side artifact path — the file to download. */
+function artifactFilename(outputPath: string): string {
+  return outputPath.replace(/\\/g, "/").split("/").pop() || "predictions.csv";
+}
+
 function buildSource(
   source: InputSourceKind,
   partition: string,
@@ -402,6 +409,16 @@ function BatchRun({ task, versions, partitions, initialVersion }: { task: string
           <div className="success-note" style={{ marginTop: 12 }}>
             Wrote <code>{fmtNum(result.rows)}</code> rows for model <code>{labelOf(result.model_version)}</code> →{" "}
             <span className="mono">{result.output_path}</span>
+          </div>
+          <div className="row top" style={{ marginTop: 10, gap: 8 }}>
+            <a
+              className="btn"
+              href={predictionDownloadUrl(task, result.model_version, artifactFilename(result.output_path))}
+              download
+              title={`Download ${result.output_path}`}
+            >
+              <Download size={15} /> Download CSV
+            </a>
           </div>
           <IgnoredColumns columns={result.ignored_columns} />
         </>

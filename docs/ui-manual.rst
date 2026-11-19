@@ -809,7 +809,10 @@ features.
 
 Use **Batch run** to score the selected input in bulk. The output is saved as
 a CSV artifact under the task's predictions directory and can be linked to
-monitoring and registry lineage. These actions wrap
+monitoring and registry lineage. The result note offers a **Download CSV** link,
+which streams that file back from the server through
+``GET /api/inference/{task}/predictions/{version}/{file}`` — no shell access is
+needed to retrieve an artifact. These actions wrap
 ``SKSurrogate.inference.predict_batch`` and its schema validation.
 
 .. figure:: images/ui-inference.png

@@ -105,6 +105,15 @@ together with the model version, request ID, latency/throughput metrics, and
 CSV under the task's predictions directory, returns its ``output_path``, and
 best-effort registers it as a prediction artifact so lineage stays complete.
 
+``GET /api/inference/{task_name}/predictions/{model_version}/{filename}``
+    Streams one persisted batch-prediction CSV back to the caller (media type
+    ``text/csv``, with a ``Content-Disposition`` carrying its filename). The
+    web UI's Inference page links it from the batch-run result note, so an
+    operator can retrieve the artifact without shell access. Filenames that are
+    not plain ``.csv`` names and path segments that would escape the task's
+    predictions directory answer **400**; a file that was never written answers
+    **404**.
+
 Input is either inline ``rows`` — the serving payload, validated exactly as
 sent — or a stored ``partition``, which is registered training data and is
 therefore projected onto the bundle schema first (the target and other

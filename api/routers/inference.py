@@ -12,16 +12,18 @@ shared with the serving router in :mod:`api.inference_service`.
 """
 
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from starlette.responses import FileResponse
 
 from SKSurrogate import ModelRegistry
 
 from ..config import settings
 from ..inference_service import resolve_input_frame, score
 from ..safety import safe_segment
-from ..deps import open_tracker, resolve_bundle, task_access
+from ..deps import bad_request, not_found, open_tracker, resolve_bundle, task_access
 
 router = APIRouter(prefix="/api/inference", tags=["inference"], dependencies=[Depends(task_access)])
 
@@ -108,3 +110,28 @@ def predict_batch_endpoint(task_name: str, body: PredictRequest):
         "output_path": str(output_path),
         "ignored_columns": ignored_columns,
     }
+
+
+@router.get("/{task_name}/predictions/{model_version}/{filename}")
+def download_prediction(task_name: str, model_version: str, filename: str):
+    """Stream a persisted batch-prediction CSV artifact back to the caller.
+
+    ``POST /{task_name}/predict-batch`` writes ``<predictions>/<task>/<version>/
+    <request_id>.csv``; this is the URL the Inference page's success note links,
+    so an operator can retrieve the file without shell access to the server. The
+    filename must be a single plain name ending in ``.csv``, and every segment
+    passes the same containment guard as other caller-supplied path components
+    (400), so nothing outside the task's predictions directory is served; an
+    unknown artifact answers 404 rather than failing with a traceback.
+    """
+    if Path(filename).name != filename or not filename.endswith(".csv"):
+        raise bad_request("Invalid prediction artifact filename")
+    path = (
+        settings.task_predictions_dir(task_name) / safe_segment(model_version, "model version") / filename
+    )
+    if not path.is_file():
+        raise not_found(
+            "No batch-prediction file %r stored for model %r under task %r"
+            % (filename, model_version, task_name)
+        )
+    return FileResponse(path, media_type="text/csv", filename=filename)
