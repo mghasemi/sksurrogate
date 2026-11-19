@@ -62,11 +62,20 @@ playwright-report/
 #
 # .gitignore is inert for files git already tracks: a name listed here that is
 # still in the index stays in the public repo until it leaves with
-# `git rm --cached`. Of the names below, the AI_LAYER02_*, AI_LAYER_ROADMAP,
-# API_SIMPLIFICATION_PLAN, HANDOFF-explainability-visibility, LAUNCH_PLAN and
-# UI_DOCKER_UPGRADE_PLAN documents are still tracked, because shipped code and
-# published docs cite them as design contracts; they each carry an
-# "Internal working document." banner. The rest are already untracked.
+# `git rm --cached`. Six are still tracked, because shipped code and published
+# docs cite them as design contracts and each carries an "Internal working
+# document." banner:
+#
+#   AI_LAYER02_D2_LLM_SYNTHESIS_SCOPE.md   api/synthesis.py, api/synthesis_facts.py
+#   AI_LAYER02_D3_ROW_LEVEL_CONTRACT.md    docs/mltrace.rst
+#   AI_LAYER02_D4_READINESS_ASSESSMENT.md  docs/experiment-design.rst,
+#                                          benchmarks/design_readiness.py
+#   AI_LAYER02_REMAINING_PLAN.md           benchmarks/datasets.py, dgps.py,
+#                                          methods.py, benchmarks/DESIGN.md
+#   HANDOFF-explainability-visibility.md   docs/images/make_stability_contour.py
+#   UI_DOCKER_UPGRADE_PLAN.md              docs/ui-plan.md
+#
+# Everything else listed here is untracked, so these rules apply directly.
 /AI_LAYER_ROADMAP.md
 /AI_LAYER02_B1_ARTIFACT_INGESTION_SCOPE.md
 /AI_LAYER02_B2_ARTIFACT_RECOVERY.md

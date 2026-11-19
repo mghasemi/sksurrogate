@@ -33,7 +33,7 @@ import { TaskProvider, useTask } from "./lib/task-context";
 import { useHealth } from "./lib/hooks";
 
 // Route-level code splitting: each page is its own chunk so the initial load
-// only pays for the shell + the first route (see docs/HANDOFF.md next steps).
+// only pays for the shell + the first route. Keep new pages lazy-imported.
 const DashboardPage = lazy(() => import("./pages/Dashboard"));
 const DatasetsPage = lazy(() => import("./pages/Datasets"));
 const PreprocessingPage = lazy(() => import("./pages/Preprocessing"));
