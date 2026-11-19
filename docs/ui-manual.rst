@@ -635,6 +635,11 @@ saved as a versioned ``.bundle`` file. You can also:
   existing snapshot into a new bundle version;
 * download the bundle or export it to an MLflow-compatible model directory.
 
+Bundles with a named alias (set with **Model aliases** on the Registry &
+Deployment page) show that alias in an **Alias** column next to the model
+version in the Bundles list (several aliases joined by ", "); versions
+without an alias keep their full version hash there.
+
 Bundle persistence and loading correspond to ``ModelBundle``, ``save_bundle``,
 ``load_bundle``, and ``export_mlflow`` in ``SKSurrogate.modelbundle``.
 Serialized models should only be loaded from trusted sources.

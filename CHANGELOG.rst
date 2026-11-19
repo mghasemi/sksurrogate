@@ -597,6 +597,15 @@ Explain page model dropdown shows registry aliases
   submits the exact version id, so explanation, interval and ALE calls resolve
   identically; lifecycle pointers are not used for labels.
 
+Model Bundles list shows registry aliases
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The **Bundles** table on the Model Bundles page gains an **Alias** column
+  beside the model version, showing the named alias(es) set on the Registry &
+  Deployment page (a muted dash when none has been set). The version cell still
+  holds the exact version id, so Inspect and every other action resolve that
+  id as-is.
+
 [0.3.0] - 2026-11-08
 --------------------
 
