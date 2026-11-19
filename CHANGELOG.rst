@@ -4,6 +4,86 @@ Changelog
 [Unreleased]
 ------------
 
+Combining trained models
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+* New ``SKSurrogate.ensembling``: combine a selection of trained bundles into one
+  scikit-learn meta-estimator — ``voting`` (hard/soft + positional weights),
+  ``averaging``, ``stacking`` (configurable final estimator and folds), ``bagging``
+  and ``boosting``. Bagging and boosting give every selected member its own
+  resampling/reweighting wrapper and aggregate the wrappers, so each member
+  contributes; the result is an ordinary ``ModelBundle``, so registration, serving,
+  learning curves, diagnostic curves, nested CV and the run report consume it
+  unchanged.
+* New **Ensembles** page and ``/api/ensembles`` routes: ``methods`` (the combiners
+  that apply to the task's problem family, with their parameter schema),
+  ``candidates`` (selectable models), ``fit`` (background job, ``kind: ensemble``),
+  list and per-version detail. Requests are validated at submit time — unknown
+  member (404), duplicate or mixed-family members, unknown method/parameter, soft
+  voting without ``predict_proba``, classification boosting without sample-weight
+  support, more than twelve members (400) — so a rejection is never a failed job.
+* Scores are reported two-sided: ``cv_score`` is out-of-fold on the task's stored
+  splitter (member rows use the same folds), while ``train_score`` is the refit
+  score and is flagged optimistic. Every response and every stored bundle carries
+  the caveat that member selection was made on this same data, so the comparison is
+  jointly optimistic and nested CV remains the honest estimate.
+* Two core fixes the combination depends on, both pinned by tests: ``ArrayAsFrame``
+  now infers dtypes when it rebuilds a frame from a positional array (a mixed-type
+  matrix is an object array, so a frame-first encoder fitted on one classified every
+  numeric column as categorical — measured 3 columns expanding to 423, and a bagged
+  member scoring AUC 0.55 against 0.95 for the same member fitted on the frame), and
+  ``preprocesses_frames`` now sees through aggregating meta-estimators, so nested CV
+  no longer stacks a second encoder in front of an ensemble's members.
+* Documented in ``docs/ensembles.rst`` (new chapter), the UI manual's *Combine
+  models into an ensemble* section, and the model-bundle chapter's cross-link.
+
+Calibrating members, optimizing weights, pricing the search
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Per-member calibration** (``calibration``): each member's outermost form is
+  wrapped in scikit-learn's ``CalibratedClassifierCV`` (sigmoid or isotonic, with
+  the calibrator count selectable), so the probabilities entering the merge are
+  calibrated. The calibrator sits *outside* any bagging/boosting wrapper — inside,
+  the bootstrap weights reach it and scikit-learn warns the calibration is
+  "likely to be incorrect". Recorded as a measured before/after pair per member
+  (Brier score and log loss on identical folds), so "calibrated" is evidence
+  rather than a claim; classification-only, refused for regression members.
+* **Weight optimization** (``weight_optimization``): member weights fitted on the
+  members' out-of-fold output by a convex simplex least-squares (Brier/MSE, no
+  metric needed), a Dirichlet search over the task's scorer, or Caruana greedy
+  selection (integer weights, so a member that never helps is visibly dropped and
+  named). Applies wherever members are merged by a weighted vote/average —
+  voting, averaging, bagging, boosting — and is refused for stacking, which
+  learns its own combination, and alongside an explicit ``weights`` vector.
+* **The honest estimate** (``honest_cv``): an outer cross-validation that refits
+  the members, their calibration *and* the weight search inside every training
+  fold, reporting the score of the procedure rather than of the one stored model,
+  with the per-fold weight vectors recorded so the stability of the search is
+  visible. Off by default (it costs outer-folds × (members + search) fits).
+  Measured across ten configurations, the gap between the in-sample and the
+  nested number ran 0.0000 (the search collapsed onto one member, so the ensemble
+  *is* that member) to 0.0233 — which is why both are reported side by side and
+  the caveat states the range instead of a single figure.
+* All three blocks are validated by the same core functions the library uses, so
+  a bad strategy, a fold count the data cannot fill, calibration on regression
+  members, or weights together with optimization are ``400`` at submit time. A
+  failed nested estimate is recorded as an error next to a fitted, scored,
+  usable ensemble rather than taking the model down.
+* The **Refinements** card on the Ensembles page renders those controls from the
+  server's schema and disables what the request would refuse; the detail view
+  adds the weight column, the calibration before/after table and the
+  nested-versus-optimistic gap.
+* Three robustness fixes found while auditing the above. ``ensemble="auto"`` for
+  the calibrator is resolved against the *installed* scikit-learn instead of being
+  hard-coded: that argument accepts only a boolean before 1.6 (so a literal
+  ``"auto"`` made every calibration call fail at the declared ``scikit-learn>=1.5``
+  floor) and names its default from 1.6 on. A member exposing only
+  ``decision_function`` is reported as calibrated *without* a Brier/log-loss pair
+  rather than surfacing a ``predict_proba`` AttributeError for a member whose
+  calibration worked. And a weight search that could not score any candidate now
+  reports ``objective: null`` instead of ``-Infinity``/``NaN``, which was not valid
+  JSON in the job result.
+
 Experiments: search strategy × surrogate family
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -42,6 +42,7 @@ from .routers import (
     datasets,
     design,
     synthesis,
+    ensembles,
     evaluation,
     experiments,
     explain,
@@ -344,6 +345,7 @@ app.include_router(jobs.router)
 app.include_router(retraining.router)
 app.include_router(lineage.router)
 app.include_router(evaluation.router)
+app.include_router(ensembles.router)
 app.include_router(explain.router)
 app.include_router(design.router)
 app.include_router(synthesis.router)

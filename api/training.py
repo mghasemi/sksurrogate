@@ -9,14 +9,36 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.validation import check_is_fitted
 
-from SKSurrogate import AML, Categorical, Integer, ModelBundle, Real
+from SKSurrogate import (
+    AML,
+    Categorical,
+    EnsembleError,
+    Integer,
+    ModelBundle,
+    ModelRegistry,
+    Real,
+    aggregate_forms,
+    aggregation_label,
+    build_ensemble,
+    calibration_report,
+    cross_validated_scores,
+    fit_ensemble,
+    member_forms,
+    member_scores,
+    nested_ensemble_cv,
+    problem_family_of,
+    resolve_family,
+    save_bundle,
+    validate_combination,
+    validate_params,
+)
 from SKSurrogate.DataProcess import FoldLocalDataPreprocessor, frame_tolerant
 
 from . import compute, control, logs
 from .columns import drop_ignored, read_ignored_columns
 from .config import settings
 from .safety import safe_segment
-from .deps import bad_request, finite_or_none, not_found, open_tracker
+from .deps import bad_request, finite_or_none, not_found, open_tracker, resolve_bundle
 
 BASELINE_ESTIMATORS = {
     "linear_regression": LinearRegression,
@@ -985,3 +1007,450 @@ def fit_pipeline_bundle(
         stacking=stacking or None,
     )
     return bundle
+
+
+# --------------------------------------------------------------------------- #
+# Ensembles: combining several trained bundles of one task                    #
+# --------------------------------------------------------------------------- #
+
+#: Cap on how many models one ensemble may combine. Each extra member costs one
+#: out-of-fold comparison fit per fold and one refit per bagging replica, so an
+#: unbounded selection would turn a page action into an hour-long job.
+MAX_ENSEMBLE_MEMBERS = 12
+
+#: Default metric per problem family, matching the Experiments presets.
+DEFAULT_ENSEMBLE_SCORING = {
+    "Classification": "accuracy",
+    "Regression": "neg_root_mean_squared_error",
+}
+
+#: Folds used for the member-versus-ensemble comparison when the task has no
+#: stored splitter. Fixed so the comparison rows are computed on identical folds.
+DEFAULT_ENSEMBLE_FOLDS = 5
+
+ENSEMBLE_CAVEATS = [
+    "Member models were fitted, and where searched also tuned, on this task's data, so "
+    "the member and ensemble cross-validated scores are jointly optimistic: a member "
+    "selected because it scored well here is scored on the same rows again. The "
+    "nested-CV evaluation is the estimate that accounts for that selection.",
+    "cv_score is out-of-fold under the splitter named in the record; train_score is the "
+    "score of the refitted ensemble on all training rows and is optimistic by construction.",
+    "Every member is refitted inside each comparison fold (scikit-learn clones the "
+    "estimator), so no member's fitted state reaches the score.",
+]
+
+#: Added only when the corresponding capability was requested, so the caveat list a caller
+#: reads always describes the ensemble in front of them.
+WEIGHT_OPTIMIZATION_CAVEAT = (
+    "Member weights were fitted on the same out-of-fold member output that this "
+    "ensemble's cv_score is computed on, so cv_score is optimistic for a *weighted* "
+    "ensemble: it does not pay for the weight search. Request the honest nested estimate "
+    "to price it. Measured across ten configurations (200-560 rows, 2-3 members, "
+    "least-squares and greedy searches, 3-5 scoring folds) the gap ran from 0.0000 to "
+    "0.0233; it is exactly zero whenever the search collapses onto one member, because "
+    "then the ensemble *is* that member and both protocols score the same estimator."
+)
+
+CALIBRATION_CAVEAT = (
+    "Member probabilities were calibrated inside every fold and the reported Brier and "
+    "log-loss columns are out-of-fold before/after values. Calibration changes "
+    "probabilities, not the members' decisions, so an accuracy-style metric may barely "
+    "move while log loss falls sharply on an overconfident member."
+)
+
+
+def load_member_bundle(task_name, model_version):
+    """Load one member bundle by version id or alias, and say where it lives.
+
+    Resolution order is the unregistered bundle directory first, then the registry,
+    matching every other consuming endpoint; ``source`` distinguishes the two for the
+    UI without a second round trip.
+    """
+    bundle = resolve_bundle(
+        task_name, model_version=model_version, strict_dependencies=False
+    )
+    local_path = settings.task_bundles_dir(task_name) / (
+        safe_segment(model_version, "model version") + ".bundle"
+    )
+    return bundle, ("bundle" if local_path.exists() else "registry")
+
+
+def resolve_ensemble_members(task_name, versions):
+    """Resolve member ids to bundles, refusing empty, over-long and duplicate selections.
+
+    Duplicates are refused rather than collapsed: the member order is part of the
+    request (voting weights are positional), so silently deduplicating would score a
+    different ensemble than the one asked for.
+    """
+    versions = list(versions or [])
+    if not versions:
+        raise bad_request("At least one member model version is required.")
+    cleaned = []
+    for version in versions:
+        if not isinstance(version, str) or not version.strip():
+            raise bad_request("Member model versions must be non-empty strings.")
+        version = version.strip()
+        if version in cleaned:
+            raise bad_request("Member model version %r was selected twice." % version)
+        cleaned.append(version)
+    if len(cleaned) > MAX_ENSEMBLE_MEMBERS:
+        raise bad_request(
+            "At most %d members can be combined in one ensemble; got %d."
+            % (MAX_ENSEMBLE_MEMBERS, len(cleaned))
+        )
+    resolved = []
+    for version in cleaned:
+        bundle, source = load_member_bundle(task_name, version)
+        resolved.append(
+            {
+                "model_version": version,
+                "bundle": bundle,
+                "source": source,
+                "label": (bundle.metadata or {}).get("label"),
+            }
+        )
+    return resolved
+
+
+def ensemble_plan(
+    task_name,
+    *,
+    members,
+    method,
+    params=None,
+    calibration=None,
+    weight_optimization=None,
+    columns=None,
+    random_state=None,
+    n_jobs=None,
+):
+    """Validate an ensemble request and return ``(resolved, family, cleaned_params)``.
+
+    Nothing is fitted here, so a submit-time call answers 400/404 straight away instead of
+    letting a bad member set, parameter, calibration or weight request fail inside the
+    background job: the per-member forms are *built* (which is what checks soft-voting
+    probability support, boosting's sample-weight support, calibration eligibility against
+    the members' family, and the stacking meta-learner) but never fitted.
+    """
+    resolved = resolve_ensemble_members(task_name, members)
+    pairs = [(entry["model_version"], entry["bundle"].model) for entry in resolved]
+    try:
+        validate_combination(method, params, calibration, weight_optimization)
+        forms, family, cleaned = member_forms(
+            method,
+            pairs,
+            params=params,
+            calibration=calibration,
+            columns=columns,
+            random_state=random_state,
+            n_jobs=n_jobs,
+        )
+        # The aggregation step is where soft voting's probability requirement and the
+        # stacking meta-learner are resolved; building it (never fitting it) is what makes
+        # those rejections submit-time errors instead of job failures.
+        aggregate_forms(method, forms, family, cleaned, n_jobs)
+    except EnsembleError as exc:
+        raise bad_request(str(exc)) from None
+    return resolved, family, cleaned
+
+
+def fit_ensemble_bundle(
+    task_name,
+    *,
+    members,
+    method,
+    params=None,
+    train_partition="train",
+    scoring=None,
+    random_state=None,
+    owner=None,
+    run_id=None,
+    label=None,
+    n_jobs=None,
+    register=False,
+    calibration=None,
+    weight_optimization=None,
+    honest_cv=None,
+):
+    """Combine several trained bundles of one task into an ensemble bundle.
+
+    The result is an ordinary :class:`~SKSurrogate.ModelBundle` whose estimator happens
+    to be a meta-estimator, so registration, serving, learning curves, diagnostic
+    curves and the run report all apply to it unchanged. What is ensemble-specific is
+    recorded in ``bundle.metadata["ensemble"]``: the method, the members, the same-fold
+    member scores, the ensemble's out-of-fold score, any per-member calibration report,
+    the optimized weight vector, the honest nested estimate when it was requested, and
+    the caveats that qualify all of it.
+
+    Returns ``(bundle, summary)`` where ``summary`` is the JSON-safe payload for the
+    job result.
+    """
+    target, metadata = get_registered_target(task_name)
+    frame = load_partition(task_name, train_partition)
+    feature_columns = [column for column in frame.columns if column != target]
+    # The frame, not `.values`: members may carry a DataFrame-first encoder, and
+    # handing them an object array is what made bagging misread every numeric column.
+    X = frame[feature_columns]
+    y = frame[target].values
+
+    # The process's compute budget, not scikit-learn's ``n_jobs=-1`` default: the four
+    # API job slots share one joblib pool (see api/compute.py).
+    n_jobs = int(compute.current()["job_threads"] if n_jobs is None else n_jobs)
+    resolved, family, cleaned = ensemble_plan(
+        task_name,
+        members=members,
+        method=method,
+        params=params,
+        calibration=calibration,
+        weight_optimization=weight_optimization,
+        columns=feature_columns,
+        random_state=random_state,
+        n_jobs=n_jobs,
+    )
+    scoring = scoring or DEFAULT_ENSEMBLE_SCORING.get(family, "accuracy")
+    cv_spec = get_stored_cv_spec(task_name)
+    cv = get_stored_cv(task_name)
+    if cv is None:
+        # Fixed fold count so the member rows and the ensemble row share folds.
+        cv = DEFAULT_ENSEMBLE_FOLDS
+
+    pairs = [(entry["model_version"], entry["bundle"].model) for entry in resolved]
+    try:
+        estimator, provenance = fit_ensemble(
+            method,
+            pairs,
+            X,
+            y,
+            family=family,
+            params=params,
+            calibration=calibration,
+            weight_optimization=weight_optimization,
+            columns=feature_columns,
+            cv=cv,
+            scoring=scoring,
+            random_state=random_state,
+            n_jobs=n_jobs,
+        )
+    except EnsembleError as exc:
+        raise bad_request(str(exc)) from None
+    # ``fit_ensemble`` reports the parameters it actually used (the optimized weights are
+    # injected there) and the per-member forms it combined, so the record describes the
+    # fitted estimator without re-deriving anything here.
+    cleaned = provenance["parameters"]
+    comparison_forms = provenance["forms"]
+    # The comparison rows describe the members *as they enter the ensemble*: when
+    # calibration is on, that is the calibrated member, not the raw bundle.
+    member_entries = []
+    try:
+        member_results = {
+            entry["member"]: entry
+            for entry in member_scores(
+                comparison_forms, X, y, cv=cv, scoring=scoring, n_jobs=n_jobs
+            )
+        }
+    except EnsembleError:
+        # A per-member scoring failure must not fail the ensemble that already fitted.
+        member_results = {}
+    for entry in resolved:
+        score = member_results.get(entry["model_version"], {})
+        member_entries.append(
+            {
+                "model_version": entry["model_version"],
+                "label": entry["label"],
+                "source": entry["source"],
+                "family": problem_family_of(entry["bundle"].model),
+                "metrics": entry["bundle"].metrics,
+                "cv_mean": score.get("mean"),
+                "cv_std": score.get("std"),
+                "cv_folds": score.get("folds"),
+                "error": score.get("error"),
+                "calibrated": bool(calibration),
+                "weight": (cleaned.get("weights") or [None] * len(resolved))[
+                    [item["model_version"] for item in resolved].index(entry["model_version"])
+                ],
+            }
+        )
+
+    try:
+        cv_mean, cv_std, cv_folds = cross_validated_scores(
+            estimator, X, y, cv=cv, scoring=scoring, n_jobs=n_jobs
+        )
+        cv_error = None
+    except EnsembleError as exc:
+        # The combined model exists and is usable; only its honest score is missing.
+        cv_mean, cv_std, cv_folds, cv_error = None, None, [], str(exc)
+    train_score = finite_or_none(estimator.score(X, y))
+
+    calibration_record = None
+    if calibration:
+        report = calibration_report(
+            comparison_forms,
+            X,
+            y,
+            cv=cv,
+            method=calibration.get("method", "sigmoid"),
+            ensemble=calibration.get("ensemble", "auto"),
+            n_jobs=n_jobs,
+        )
+        calibration_record = {
+            "method": calibration.get("method", "sigmoid"),
+            "cv": calibration.get("cv", 5),
+            "ensemble": calibration.get("ensemble", "auto"),
+            "members": report,
+        }
+
+    nested_record = None
+    if honest_cv:
+        try:
+            nested_record = nested_ensemble_cv(
+                method,
+                pairs,
+                X,
+                y,
+                family=family,
+                params=params,
+                calibration=calibration,
+                weight_optimization=weight_optimization,
+                columns=feature_columns,
+                outer_cv=honest_cv.get("folds", 5),
+                inner_cv=honest_cv.get("inner_folds", 3),
+                scoring=scoring,
+                random_state=random_state,
+                n_jobs=n_jobs,
+            )
+        except EnsembleError as exc:
+            # The ensemble itself fitted and is usable; only the honest estimate is
+            # missing, and it is recorded as an error rather than taking the model down.
+            nested_record = {
+                "scoring": scoring,
+                "outer_cv": honest_cv.get("folds", 5),
+                "inner_cv": honest_cv.get("inner_folds", 3),
+                "folds": [],
+                "mean": None,
+                "std": None,
+                "errors": [{"fold": -1, "detail": str(exc)}],
+                "per_fold_weights": None,
+            }
+
+    caveats = list(ENSEMBLE_CAVEATS)
+    if weight_optimization:
+        caveats.append(WEIGHT_OPTIMIZATION_CAVEAT)
+    if calibration:
+        caveats.append(CALIBRATION_CAVEAT)
+
+    metrics = {"train_score": train_score, "cv_score": cv_mean, "cv_score_std": cv_std}
+    run_record = _reproducibility_record(
+        task_name,
+        metadata,
+        frame,
+        target,
+        train_partition,
+        configuration={
+            "kind": "ensemble",
+            "method": method,
+            "parameters": cleaned,
+            "members": [
+                {"model_version": entry["model_version"], "source": entry["source"]}
+                for entry in resolved
+            ],
+            "calibration": (
+                {key: value for key, value in calibration.items() if key != "n_jobs"}
+                if calibration
+                else None
+            ),
+            "weight_optimization": (
+                {key: value for key, value in weight_optimization.items() if key != "n_jobs"}
+                if weight_optimization
+                else None
+            ),
+            "honest_cv": honest_cv or None,
+            "scoring": scoring,
+            "random_state": random_state,
+            "n_jobs": n_jobs,
+        },
+        transformations=[
+            {
+                "class": "%s.%s" % (type(estimator).__module__, type(estimator).__qualname__),
+                "parameters": {
+                    name: value
+                    for name, value in cleaned.items()
+                    if name != "weights"
+                },
+            }
+        ],
+        evaluation_protocol={
+            "scoring": scoring,
+            "cv": cv_spec if cv_spec is not None else {"folds": DEFAULT_ENSEMBLE_FOLDS, "source": "default"},
+            "metric_scope": (
+                "member and ensemble scores are out-of-fold on identical folds; "
+                "train_score is the refit training score"
+                + ("; a weight vector was fitted on those folds" if weight_optimization else "")
+                + ("; the nested estimate is the honest number" if honest_cv else "")
+            ),
+        },
+    )
+    bundle = _new_bundle(
+        estimator, metrics, task_name, {column: {"dtype": str(frame[column].dtype)} for column in feature_columns}, run_record, owner, run_id, label=label
+    )
+    ensemble_metadata = {
+        "schema": "sksurrogate.ensemble.v1",
+        "method": method,
+        "family": family,
+        "parameters": cleaned,
+        "aggregation": aggregation_label(method, family),
+        "members": member_entries,
+        "calibration": calibration_record,
+        "weight_optimization": provenance["weights"],
+        "scoring": scoring,
+        "cv": cv_spec if cv_spec is not None else {"folds": DEFAULT_ENSEMBLE_FOLDS, "source": "default"},
+        "scores": {
+            "train_score": train_score,
+            "cv_score": cv_mean,
+            "cv_score_std": cv_std,
+            "cv_folds": cv_folds,
+            "cv_error": cv_error,
+            "nested": nested_record,
+        },
+        "caveats": caveats,
+    }
+    bundle.metadata["ensemble"] = ensemble_metadata
+    bundle.record_audit_event(
+        "ensemble",
+        method=method,
+        members=[entry["model_version"] for entry in resolved],
+        scoring=scoring,
+        train_score=train_score,
+        cv_score=cv_mean,
+        calibrated=bool(calibration),
+        weights=(
+            [round(float(value), 6) for value in cleaned["weights"]]
+            if cleaned.get("weights")
+            else None
+        ),
+    )
+
+    bundles_dir = settings.task_bundles_dir(task_name)
+    bundles_dir.mkdir(parents=True, exist_ok=True)
+    bundle_path = save_bundle(
+        bundle,
+        bundles_dir / (safe_segment(bundle.model_version, "model version") + ".bundle"),
+    )
+    registered = False
+    if register:
+        ModelRegistry(settings.registry_dir).register(bundle)
+        registered = True
+
+    summary = {
+        "model_version": bundle.model_version,
+        "bundle_path": str(bundle_path),
+        "method": method,
+        "family": family,
+        "members": member_entries,
+        "metrics": metrics,
+        "calibration": calibration_record,
+        "weight_optimization": provenance["weights"],
+        "nested": nested_record,
+        "caveats": caveats,
+        "registered": registered,
+    }
+    return bundle, summary

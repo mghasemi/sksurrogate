@@ -91,8 +91,8 @@ The UI is organized around a task, which groups data, runs, bundles, registry
 history, inference records, and monitoring. The usual flow is:
 
 ``Task → Datasets → Data Preprocessing → Feature Analysis → Experiments →
-Evaluation → Explain → Model Bundles → Quality Gates → Registry & Deployment →
-Inference → Monitoring → Retraining``
+Ensembles → Evaluation → Explain → Model Bundles → Quality Gates → Registry &
+Deployment → Inference → Monitoring → Retraining``
 
 The sidebar groups pages by stage (Data, Model, Release, Operate). **Projects**
 groups the datasets, bundles and jobs of one investigation and shows which
@@ -522,6 +522,78 @@ checkpoints and project artifacts. Rename or clear the name later with
 
    Search-space editor and experiment settings. The run controls continue
    below the visible portion of the screen.
+
+Combine models into an ensemble
+-------------------------------
+
+Open **Ensembles** to combine the task's trained models with scikit-learn's own
+meta-estimators. The **Members** table lists every stored bundle and registered
+version — including ensembles you have already built, which then appear as
+``ensemble · <method>`` — with its family, stored score and source. Tick the models
+to combine; the ``#`` column records the selection order, because weights are
+applied positionally.
+
+In **Combination**, choose the method (**Voting**, **Averaging**, **Stacking**,
+**Bagging**, **Boosting**), the metric the comparison is scored by, and — from the
+schema the server publishes for that method — its parameters: voting mode and
+weights, the stacking meta-learner and fold count, bagging resamples and sample
+fraction, boosting rounds and learning rate. **Register as candidate** additionally
+puts the result into the model registry as a candidate version; without it the
+ensemble is stored as an unregistered bundle, exactly like an experiment's output.
+
+**Fit ensemble** submits a background job (``kind: ensemble``) and the tracker
+reports it live. When it finishes, the **Ensembles** table shows the combination
+with its method, member count, out-of-fold CV score, the honest nested score when
+one was requested, and the refinements it carries as badges (``calibrated``,
+``weighted``); **Details** opens the member-versus-ensemble comparison, computed on
+the same folds for every row, together with the fitted weights and the
+calibration before/after table.
+
+**Refinements** holds three optional stages, each of which is stored with the
+model:
+
+* **Calibrate each member** wraps every member's scores in a probability map
+  (sigmoid or isotonic) before the merge, with the number of folds used to fit the
+  calibrator. It applies to classification tasks only. **Details** then shows each
+  member's Brier score and log loss before and after calibration on the same
+  folds — the evidence, rather than a claim.
+* **Optimize member weights** fits the weights on the members' out-of-fold output:
+  *least squares* (convex, needs no metric), *random simplex search* over the
+  selected metric, or *greedy* forward selection, which produces integer weights
+  and shows a dropped member as a zero. It is unavailable for **Stacking** (the
+  meta-learner already learns the combination) and while a weight vector is typed
+  in the parameters above.
+* **Honest nested estimate** refits the members, their calibration and the weight
+  search inside every outer fold and reports the score of that procedure. It costs
+  roughly ``outer folds × (members + weight search)`` fits, which is why it is off
+  by default; when it is on, **Details** shows the gap between it and the
+  optimistic in-fold score.
+
+Read the score note above that table before interpreting it: the members were
+fitted and tuned on this same data, so their CV scores and the ensemble's are
+jointly optimistic, and the nested-CV evaluation below is the estimate that
+accounts for the selection. A weight search adds a second layer of optimism —
+the fitted vector was chosen on the same folds the score is computed on — which
+is what the honest estimate prices. A rejection — a member selected twice, mixed
+families, soft voting with a member that cannot predict probabilities,
+classification boosting with a member that cannot take sample weights, more than
+twelve members, weight optimization against stacking or together with typed
+weights, calibration on a regression task — is reported in the page and no job is
+started.
+
+.. figure:: images/ui-ensembles.png
+   :alt: Ensembles page with the member picker, the combination controls, the Refinements card, the stored ensembles with their nested score, and the member-versus-ensemble comparison with weights and per-member calibration
+   :width: 100%
+
+   The Refinements card, the stored ensemble (with its honest nested score and its
+   ``calibrated``/``weighted`` badges) and the comparison it opens: each member's
+   out-of-fold score next to the ensemble's own, the fitted weight vector with the
+   member it dropped, and the Brier/log-loss pair that shows what calibration did
+   to each member's probabilities.
+
+Evaluate a combination exactly like any other model: select its version on the
+**Evaluation** page for learning curves and classification diagnostics, or run
+**Nested CV** on it for an estimate that accounts for member selection.
 
 5. Evaluate candidate models
 ----------------------------

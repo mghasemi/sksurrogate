@@ -608,11 +608,11 @@ API and UI coverage
 ===================
 
 The API groups endpoints by workflow: dataset management, synthetic data,
-experiments and evaluation, sensitivity analysis, bundles and registry,
+experiments and evaluation, model ensembling, sensitivity analysis, bundles and registry,
 inference, quality gates, monitoring, retraining, lineage, research projects,
 optional LLM-assisted project synthesis, and background jobs. See the interactive OpenAPI reference at ``/docs`` for request and
 response schemas. The web UI provides corresponding workflow pages, including
-dashboard, datasets, experiments, evaluation, model bundles, registry and
+dashboard, datasets, experiments, ensembles, evaluation, model bundles, registry and
 deployment, inference, monitoring, retraining, and settings.
 
 Normal registry promotion requires a passing bundle-quality report by default;
