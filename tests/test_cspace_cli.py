@@ -8,6 +8,14 @@ small enough for CI. Runner semantics are covered in test_cspace_runner.py.
 import json
 
 import pandas as pd
+import pytest
+
+# The C-space harness needs the optional [benchmark] extra — openml for the pinned
+# datasets and optuna for the TPE arm. The base "Tests + smoke" CI job installs
+# only base deps, so skip these there; the benchmark-smoke job installs
+# .[benchmark] and runs them.
+pytest.importorskip("openml")
+pytest.importorskip("optuna")
 
 from benchmarks.run_cspace import run_suite
 

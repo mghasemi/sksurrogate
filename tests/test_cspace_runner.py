@@ -8,6 +8,10 @@ only exist in the real search loop.
 import pytest
 from sklearn.datasets import load_breast_cancer
 
+# The TPE arm needs the optional [benchmark] extra; skip when it is not installed
+# (the benchmark-smoke CI job installs .[benchmark] and runs these).
+pytest.importorskip("optuna")
+
 from benchmarks.cspace_methods import (
     SRS_MIN_EVALS,
     cv_splits,
