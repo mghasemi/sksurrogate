@@ -6,6 +6,7 @@ import {
   REGISTRY_STATES,
   findBestBundle,
   getDatasetMetadata,
+  getEffectiveApiBase,
   getServing,
   listBundles,
   predict,
@@ -80,6 +81,39 @@ function useModelInputs(initialVersion: string) {
   return { mode, setMode, modelVersion, setModelVersion, alias, setAlias };
 }
 
+/**
+ * Alias-aware display label for a model version: ``"{alias(es)} - {version}"``
+ * when a named registry alias has been set, otherwise just the version. The
+ * Registry page owns the ``["registry-summary", task]`` cache entry, so calling
+ * this from the several cards on the Inference page costs one request total.
+ */
+function useBundleLabel(task: string): (version: string | null | undefined) => string {
+  const aliasQ = useQuery({
+    queryKey: ["registry-summary", task],
+    queryFn: () => registrySummary(task),
+    enabled: !!task,
+    retry: retryUnlessNotFound,
+  });
+  const aliasByVersion = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const [name, entry] of Object.entries(aliasQ.data?.named_aliases ?? {})) {
+      const names = map.get(entry.model_version) ?? [];
+      names.push(name);
+      map.set(entry.model_version, names);
+    }
+    for (const names of map.values()) names.sort();
+    return map;
+  }, [aliasQ.data]);
+  return useMemo(
+    () => (version) => {
+      if (!version) return "—";
+      const aliases = aliasByVersion.get(version);
+      return aliases && aliases.length > 0 ? `${aliases.join(", ")} - ${version}` : version;
+    },
+    [aliasByVersion],
+  );
+}
+
 function ModelPicker({
   task,
   versions,
@@ -101,30 +135,7 @@ function ModelPicker({
   const bestVersion = bestQ.data?.model_version ?? null;
   const bestIsAvailable = !!bestVersion && versions.includes(bestVersion);
 
-  // Named registry aliases give versions human labels in the dropdown; the Registry page
-  // owns the cache entry under the same key, and a 404 just means "no registry state yet".
-  const aliasQ = useQuery({
-    queryKey: ["registry-summary", task],
-    queryFn: () => registrySummary(task),
-    enabled: !!task,
-    retry: retryUnlessNotFound,
-  });
-  /** Sorted named aliases pointing at each model version (empty when none has been set). */
-  const aliasByVersion = useMemo(() => {
-    const map = new Map<string, string[]>();
-    for (const [name, entry] of Object.entries(aliasQ.data?.named_aliases ?? {})) {
-      const names = map.get(entry.model_version) ?? [];
-      names.push(name);
-      map.set(entry.model_version, names);
-    }
-    for (const names of map.values()) names.sort();
-    return map;
-  }, [aliasQ.data]);
-  /** Dropdown label: "{alias(es)} - {version}" when a named alias is set, otherwise the version. */
-  const labelOf = (version: string) => {
-    const aliases = aliasByVersion.get(version);
-    return aliases && aliases.length > 0 ? `${aliases.join(", ")} - ${version}` : version;
-  };
+  const labelOf = useBundleLabel(task);
 
   return (
     <div className="row">
@@ -152,7 +163,7 @@ function ModelPicker({
                 title={`Highest ${bestQ.data?.metric ?? "score"} metric: ${bestQ.data?.value ?? "—"}`}
                 onClick={() => setModelVersion(bestVersion!)}
               >
-                ★ best: {bestVersion}
+                ★ best: {labelOf(bestVersion)}
               </button>
             </div>
           )}
@@ -272,6 +283,7 @@ function buildBody(
 
 function PredictConsole({ task, versions, partitions, initialVersion }: { task: string; versions: string[]; partitions: string[]; initialVersion: string }) {
   const inputs = useModelInputs(initialVersion);
+  const labelOf = useBundleLabel(task);
   const [source, setSource] = useState<InputSourceKind>("partition");
   const [partition, setPartition] = useState("");
   const [rowsJson, setRowsJson] = useState("");
@@ -325,7 +337,7 @@ function PredictConsole({ task, versions, partitions, initialVersion }: { task: 
         <div style={{ marginTop: 14 }}>
           <LineageRail task={task} modelVersion={result.model_version} />
           <div className="grid cols-3">
-            <Stat label="Model version" value={result.model_version} />
+            <Stat label="Model version" value={labelOf(result.model_version)} />
             <Stat label="Rows" value={fmtNum(result.metrics.rows)} />
             <Stat label="Latency" value={`${fmtNum(result.metrics.latency_ms)} ms`} />
           </div>
@@ -340,6 +352,7 @@ function PredictConsole({ task, versions, partitions, initialVersion }: { task: 
 
 function BatchRun({ task, versions, partitions, initialVersion }: { task: string; versions: string[]; partitions: string[]; initialVersion: string }) {
   const inputs = useModelInputs(initialVersion);
+  const labelOf = useBundleLabel(task);
   const [source, setSource] = useState<InputSourceKind>("partition");
   const [partition, setPartition] = useState("");
   const [rowsJson, setRowsJson] = useState("");
@@ -387,7 +400,7 @@ function BatchRun({ task, versions, partitions, initialVersion }: { task: string
         <>
           <LineageRail task={task} modelVersion={result.model_version} />
           <div className="success-note" style={{ marginTop: 12 }}>
-            Wrote <code>{fmtNum(result.rows)}</code> rows for model <code>{result.model_version}</code> →{" "}
+            Wrote <code>{fmtNum(result.rows)}</code> rows for model <code>{labelOf(result.model_version)}</code> →{" "}
             <span className="mono">{result.output_path}</span>
           </div>
           <IgnoredColumns columns={result.ignored_columns} />
@@ -450,9 +463,13 @@ function ServingCard({ task, versions, partitions }: { task: string; versions: s
 
   const pin = pinQ.data;
   const active = !!pin?.active;
+  const labelOf = useBundleLabel(task);
   const needsModel = inputs.mode === "version" ? !inputs.modelVersion : !inputs.alias;
   const busy = startMut.isPending || stopMut.isPending || predictMut.isPending;
   const history = [...(pin?.history ?? [])].reverse();
+  // The reachable endpoint a deployment client points at (same-origin base, so it
+  // honors both the dev-server proxy and the container's served origin).
+  const endpointUrl = `${getEffectiveApiBase()}/api/serving/${encodeURIComponent(task)}/predict`;
 
   return (
     <Card
@@ -461,13 +478,13 @@ function ServingCard({ task, versions, partitions }: { task: string; versions: s
     >
       <div className="row top" style={{ alignItems: "center", marginBottom: 4 }}>
         <Badge tone={pin?.resolve_error ? "warn" : active ? "ok" : "muted"}>
-          {active ? `Serving ${pin?.model_version ?? "…"}` : "Not serving"}
+          {active ? `Serving ${pin?.model_version ? labelOf(pin.model_version) : "…"}` : "Not serving"}
         </Badge>
         {active && pin && (
           <span className="hint">
             {pin.resolve_mode === "alias"
               ? `follows alias “${pin.requested}” — a promotion or rollback changes the served model`
-              : `frozen at model version “${pin.model_version}” — later promotions do not change it`}
+              : `frozen at model version “${labelOf(pin.model_version)}” — later promotions do not change it`}
           </span>
         )}
       </div>
@@ -480,7 +497,11 @@ function ServingCard({ task, versions, partitions }: { task: string; versions: s
       {active && pin && (
         <dl className="kv" style={{ marginTop: 10 }}>
           <dt>Model version</dt>
-          <dd className="mono">{pin.model_version ?? "—"}</dd>
+          <dd className="mono">{labelOf(pin.model_version)}</dd>
+          <dt>Endpoint</dt>
+          <dd>
+            <code className="mono">{endpointUrl}</code>
+          </dd>
           <dt>Resolve mode</dt>
           <dd>
             {pin.resolve_mode} · <span className="mono">{pin.requested}</span>
@@ -565,7 +586,7 @@ function ServingCard({ task, versions, partitions }: { task: string; versions: s
       {result && (
         <div style={{ marginTop: 14 }}>
           <div className="success-note">
-            Answered by <code>{result.model_version}</code> (
+            Answered by <code>{labelOf(result.model_version)}</code> (
             {result.resolve_mode === "alias" ? `alias “${result.requested}”` : "pinned version"}) ·{" "}
             {fmtNum(result.metrics.rows)} row(s) · {fmtNum(result.metrics.latency_ms)} ms
           </div>
@@ -582,7 +603,7 @@ function ServingCard({ task, versions, partitions }: { task: string; versions: s
             {history.slice(0, 8).map((event, index) => (
               <li key={`${event.at}-${index}`}>
                 <Badge tone={event.event === "stop" ? "warn" : "ok"}>{event.event}</Badge>
-                <span className="mono">{event.model_version ?? "—"}</span>
+                <span className="mono">{labelOf(event.model_version)}</span>
                 <span className="muted">
                   {event.resolve_mode === "alias" ? `alias ${event.requested}` : `version ${event.requested}`} ·{" "}
                   {event.actor ?? "—"} · {new Date(event.at).toLocaleString()}

@@ -646,6 +646,21 @@ Pre-flight prediction validation checks the model's feature schema
   "Validate before run" checkbox (Predict console, Batch run, Serving) works
   for subset-trained models as documented.
 
+Serving card shows the reachable endpoint; aliases label every version on Inference
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* When a model is being served, the **Serving** card now shows the **reachable
+  endpoint** — the absolute ``POST /api/serving/{task}/predict`` URL (built
+  from the effective API base) that a deployment client points at, so an
+  operator can see exactly where the served model answers without hunting for
+  it.
+* Alias-aware labels now apply everywhere the Inference page names a model, not
+  just the Model version dropdown: the Serving badge, the "frozen at / follows
+  alias" hint, the model-version details, the Predict-console and Batch-run
+  results, the "Answered by" line and the pin history. Each shows
+  *alias - version* when a named alias is set and the plain version otherwise;
+  option values and resolution keep the exact version id.
+
 [0.3.0] - 2026-11-08
 --------------------
 

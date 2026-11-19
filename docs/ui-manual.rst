@@ -748,8 +748,10 @@ place that says *which model this task serves*, as opposed to which model a
 single request should use. Pick a model version or a registry alias and click
 **Serve this model**. While a model is served the top bar shows a
 ``Serving <version> · <task>`` pill on every page, and the card shows the
-resolved version, the resolve mode, when and by whom it was pinned, and the pin
-history. **Replace served model** changes the pin; **Stop serving** ends the
+resolved version, the resolve mode, when and by whom it was pinned, the pin
+history, and the **reachable serving endpoint** — the absolute
+``POST /api/serving/{task}/predict`` URL a deployment client points at.
+**Replace served model** changes the pin; **Stop serving** ends the
 declaration (the history keeps the record, so nothing is silently forgotten).
 
 Which mode is in force is stated on the card, and it decides what a later
@@ -785,7 +787,11 @@ ignored columns; batch runs are additionally registered in registry lineage.
 In each card's **Model version** dropdown, bundles that have a named alias (set
 with **Model aliases** on the Registry & Deployment page) are listed as
 *alias - version* (several aliases joined with ", "); bundles without one keep
-their plain version, and the selected value is still the exact version id.
+their plain version, and the selected value is still the exact version id. The
+same alias-aware labels are used wherever the page names a model — the Serving
+badge, the frozen-at / follows-alias hint, the model-version details, the
+prediction and batch results, and the pin history — so a version is always
+recognizable without reading the full hash.
 
 For stored partitions, the API projects the data onto the bundle's feature
 schema, which removes the target label and normalizes feature order. Inline
