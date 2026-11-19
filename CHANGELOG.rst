@@ -4,6 +4,48 @@ Changelog
 [Unreleased]
 ------------
 
+Pipeline-space benchmark track (C-space)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A second benchmark track alongside the fixed-pipeline suite (`benchmarks/DESIGN.md`,
+frozen at v1.9). It searches a **heterogeneous** space — preprocessing transformers ×
+estimator families — which is the AutoML question the fixed-pipeline suite does not answer.
+Its contract is `benchmarks/DESIGN-cspace.md` (v0.3), including pre-registered hypotheses
+with explicit falsifiers; results are in `docs/benchmarks-cspace.md` (630 cells, 0 errors).
+
+**Headline:** no arm separates on held-out accuracy in either currency. Surrogate guidance
+is evaluation-efficient (median 6 evaluations to within 1 % of best, versus 11--17 for the
+other arms) but **not** wall-clock efficient: 49 % of the SRS time budget goes to surface
+fitting and the acquisition optimiser, so it buys 281 candidates where random buys 553.
+The ordinal-encoding defect is load-bearing — a mixed categorical surface gains $\geq 0.3$
+pt best-CV in 4/6 datasets. Default TPE re-proposes seen configurations for 28 % (40 evals)
+to 65 % (350+ evals) of its budget.
+
+* **Space** (`benchmarks/cspace.py`): 4 preprocessors × 5 reducers × 61 classifier
+  configurations = **1,220 enumerable pipelines** across LogReg, RandomForest, ExtraTrees,
+  HistGradientBoosting, SVC and KNN, with per-family knobs gated by conditional rules.
+  Every pipeline starts with a fixed `SimpleImputer(median, add_indicator=True)` — arrhythmia
+  carries 408 missing cells, and without it three families fail there for reasons unrelated
+  to search quality.
+* **Arms** (`benchmarks/cspace_methods.py`): uniform random, Optuna-TPE, Optuna-Random
+  (sampler control), SRS with the default GP surface, SRS with a mixed categorical surface,
+  and the no-surrogate ablation; FLAML and AutoGluon at the system level only.
+* **Currencies**: equal wall-clock (primary; one evaluation ranges 5 ms to ~2 s across
+  families) and equal 40 candidate evaluations (secondary, comparable to `DESIGN.md`).
+* **Runner/Analysis**: `python -m benchmarks.run_cspace --protocol {A,B,C}` writes a
+  provenance manifest (git SHA + dirty, package versions, thread policy), a crash-resilient
+  `results.jsonl`, per-cell JSON and `summary.csv`; `benchmarks.analyze_cspace` reports exact
+  sign tests, Cliff's delta, bootstrap CIs and Holm-Bonferroni within family.
+* **Gates**: `python -m benchmarks.gate_cspace_fit` fits every configuration on every pinned
+  dataset before a full run may start (this gate is what caught the arrhythmia NaNs).
+
+Three library defects surfaced while building the track and are documented, with verified
+reproducers, in `benchmarks/upstream_issues.md`: the combinatorial `MinEvals` floor that
+silently disables the surrogate above ~5 parameters, `'passthrough'`/`None` steps being
+rejected by the zero-feature probe, and ordinal encoding of `Categorical` parameters in
+heterogeneous spaces. The benchmark measures all three; the library is unpatched in this
+release per the `DESIGN.md` v1.4 principle.
+
 Experiments: search strategy × surrogate family
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

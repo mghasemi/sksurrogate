@@ -44,6 +44,7 @@ Welcome to SKSurrogate's documentation!
    ui-plan
 
 See also the :doc:`benchmark results <benchmarks>`, the
+:doc:`pipeline-space (C-space) benchmark results <benchmarks-cspace>`, the
 :doc:`Hilbert-space (D-track) study <dtrack-study>` and the
 :doc:`Web UI & API design plan <ui-plan>`.
 
