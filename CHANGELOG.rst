@@ -558,6 +558,18 @@ Logging and telemetry
   one callback list receives trial events from all searches of a run. No
   existing result key changes.
 
+Evaluation page shows registry aliases
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The Evaluation page now displays the named model aliases set on the Registry
+  & Deployment page: the Bundle metrics table gains an **Alias** column beside
+  the Model version (a muted dash when no alias has been set), and the Metric
+  comparison charts — overview bars and per-metric learning-curve lines — label
+  their series with the alias(es) instead of the raw version hash. Versions
+  without a named alias are labelled exactly as before, so existing views are
+  unchanged; lifecycle pointers (``latest``, ``production``, …) are not used
+  here because they move between versions on promotion/rollback.
+
 [0.3.0] - 2026-11-08
 --------------------
 

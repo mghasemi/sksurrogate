@@ -22,6 +22,8 @@ import {
   getLearningCurves,
   listBundles,
   listJobs,
+  registrySummary,
+  retryUnlessNotFound,
   runNestedCV,
 } from "../api/client";
 import type { BundleSummary, NestedCVJobResult } from "../api/client";
@@ -450,6 +452,33 @@ export default function EvaluationPage() {
 
   const jobsQ = useQuery({ queryKey: ["jobs", task], queryFn: () => listJobs(task), enabled: !!task });
 
+  // Named registry aliases give bundles human labels on this page; the Registry page owns the
+  // cache entry under the same key, and a 404 just means "no registry state yet".
+  const aliasQ = useQuery({
+    queryKey: ["registry-summary", task],
+    queryFn: () => registrySummary(task),
+    enabled: !!task,
+    retry: retryUnlessNotFound,
+  });
+
+  /** Sorted named aliases pointing at each model version (empty when none has been set). */
+  const aliasByVersion = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const [name, entry] of Object.entries(aliasQ.data?.named_aliases ?? {})) {
+      const names = map.get(entry.model_version) ?? [];
+      names.push(name);
+      map.set(entry.model_version, names);
+    }
+    for (const names of map.values()) names.sort();
+    return map;
+  }, [aliasQ.data]);
+
+  /** Series/table label: the alias if one has been set, otherwise the raw version. */
+  const displayNameOf = (version: string) => {
+    const aliases = aliasByVersion.get(version);
+    return aliases && aliases.length > 0 ? aliases.join(", ") : version;
+  };
+
   const bundles = bundleQs.data ?? [];
 
   const metricNames = useMemo(() => {
@@ -574,7 +603,7 @@ export default function EvaluationPage() {
                     <Tooltip contentStyle={{ background: "#131926", border: "1px solid #232c40" }} />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
                     {bundles.map((b, i) => (
-                      <Bar key={b.model_version} dataKey={b.model_version} fill={CHART_COLORS[i % CHART_COLORS.length]} radius={[3, 3, 0, 0]} />
+                      <Bar key={b.model_version} dataKey={b.model_version} name={displayNameOf(b.model_version)} fill={CHART_COLORS[i % CHART_COLORS.length]} radius={[3, 3, 0, 0]} />
                     ))}
                   </BarChart>
                 </ResponsiveContainer>
@@ -635,6 +664,7 @@ export default function EvaluationPage() {
                               key={`${s.model_version}:validation`}
                               type="monotone"
                               dataKey={`${s.model_version} (validation)`}
+                              name={`${displayNameOf(s.model_version)} (validation)`}
                               stroke={CHART_COLORS[i % CHART_COLORS.length]}
                               strokeWidth={2}
                               dot={{ r: 2 }}
@@ -645,6 +675,7 @@ export default function EvaluationPage() {
                               key={`${s.model_version}:train`}
                               type="monotone"
                               dataKey={`${s.model_version} (train)`}
+                              name={`${displayNameOf(s.model_version)} (train)`}
                               stroke={CHART_COLORS[i % CHART_COLORS.length]}
                               strokeDasharray="4 4"
                               strokeWidth={1.5}
@@ -674,11 +705,17 @@ export default function EvaluationPage() {
 
           <Card title="Bundle metrics">
             <Table<BundleSummary>
-              columns={["Model version", ...metricNames, "Created"]}
+              columns={["Model version", "Alias", ...metricNames, "Created"]}
               rows={bundles}
               keyOf={(b) => b.model_version}
               render={(b) => [
                 <td key="v" className="mono">{b.model_version}</td>,
+                <td key="alias">
+                  {(() => {
+                    const aliases = aliasByVersion.get(b.model_version);
+                    return aliases && aliases.length > 0 ? aliases.join(", ") : <span className="muted">—</span>;
+                  })()}
+                </td>,
                 ...metricNames.map((m) => (
                   <td key={m}>{fmtNum(b.metrics[m])}</td>
                 )),

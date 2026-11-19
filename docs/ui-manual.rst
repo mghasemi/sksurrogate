@@ -523,6 +523,11 @@ overview compares the bundles side by side; metric tabs compute learning
 curves across training sizes using the task's saved splitter. Classification
 bundles also provide ROC, calibration, cumulative-gain, and lift diagnostics.
 
+Bundles that have a named alias (set with **Model aliases** on the Registry &
+Deployment page) are shown by those names in the Bundle metrics table and used
+as the series labels of the Metric comparison charts; versions without an
+alias keep their full version hash everywhere.
+
 For a more rigorous estimate, choose a bundle in **Nested CV**, set inner and
 outer fold counts and repeats, and click **Run nested CV**. The inner loop
 selects/tunes the estimator; the outer loop estimates generalization. This is
