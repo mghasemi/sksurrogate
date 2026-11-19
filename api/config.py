@@ -120,6 +120,10 @@ class Settings:
         return self.root / "checkpoints"
 
     @property
+    def reports_dir(self):
+        return self.root / "reports"
+
+    @property
     def projects_dir(self):
         return self.root / "projects"
 
@@ -148,6 +152,7 @@ class Settings:
             self.jobs_dir,
             self.logs_dir,
             self.checkpoints_dir,
+            self.reports_dir,
             self.projects_dir,
             self.settings_dir,
             self.serving_dir,
@@ -187,6 +192,13 @@ class Settings:
     def task_checkpoint_dir(self, task_name, job_id):
         return (
             self.checkpoints_dir
+            / safe_segment(task_name, "task name")
+            / safe_segment(job_id, "job id")
+        )
+
+    def task_report_dir(self, task_name, job_id):
+        return (
+            self.reports_dir
             / safe_segment(task_name, "task name")
             / safe_segment(job_id, "job id")
         )

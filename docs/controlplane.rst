@@ -241,6 +241,34 @@ dataset fingerprints stay valid.
 ``GET /api/datasets/{task_name}/{partition}/eda-report``
     The same payload rendered as a self-contained Markdown report.
 
+``GET /api/datasets/{task_name}/{partition}/eda-report/{pdf|zip}``
+    Compile the bounded EDA report as a branded PDF, or download the LaTeX
+    sources, vector figures and style assets. Plots and formatted tables are
+    based on the same bounded payload, with full-partition missingness and class
+    counts and sample-based numeric profiles. Figure captions disclose limits.
+    Feature-target association heatmaps are separated by statistic, and the
+    Pearson feature-correlation heatmap leaves unavailable pairs blank. A
+    sensitivity heatmap is included only for the latest completed job matching
+    the selected partition, fingerprint and active features; the report
+    otherwise states that no matching sensitivity job is available.
+    The ZIP does not require a local TeX installation;
+    PDF compilation requires LuaLaTeX and the template fonts and packages.
+
+``POST /api/reports/{task_name}/explain``
+    Submit a background report for every local bundle present at submission.
+    The request accepts ``max_rows``, ``stability_samples``, ``ale_bins``,
+    ``row_index``, ``row_orders``, ``alpha``, and ``group_by`` as on the
+    Explain page. The job reports per-method refusals rather than treating
+    inapplicable diagnostics as successful results.
+
+``GET /api/reports/{task_name}/{job_id}/{pdf|zip}``
+    Download a completed task-scoped explainability report. The source ZIP
+    includes the vector figures and full diagnostic results as JSON. Available
+    diagnostics are summarized in model-specific plots and tables, with
+    grouped, styled tables and limitation notes in the detailed appendix.
+    Non-finite interval previews are not plotted, but remain in the full results. The files are retained in
+    ``reports/<task>/<job>`` under API home and removed by task data reset.
+
 Ignored columns are dropped wherever a stored partition becomes a feature matrix:
 experiments, pipeline optimization, baselines, explanations, sensitivity and
 correlation analysis, dataset profiles, the Data-page EDA statistics (the

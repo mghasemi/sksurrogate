@@ -11,11 +11,12 @@ import json
 import re
 from datetime import datetime, timezone
 from io import BytesIO
-from typing import Annotated
+from typing import Annotated, Literal
 
 import pandas as pd
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, Depends
 from pydantic import BaseModel, Field
+from starlette.responses import Response
 
 from SKSurrogate import (
     STANDARD_CV_SPLITTERS,
@@ -40,6 +41,7 @@ from ..eda import (
     stability,
 )
 from ..features import NumericFeatureError, numeric_train_xy
+from ..jobs import job_manager
 from ..preflight import submit_preflight
 from ..preprocessing import (
     CLIP_METHODS,
@@ -55,6 +57,7 @@ from ..preprocessing import (
     target_balance,
 )
 from ..safety import safe_segment
+from ..reports import ReportCompilationError, compile_report, eda_latex, source_archive
 from ..deps import bad_request, current_principal, finite_or_none as _finite, not_found, open_tracker, unprocessable, task_access
 
 router = APIRouter(prefix="/api/datasets", tags=["datasets"], dependencies=[Depends(task_access)])
@@ -683,6 +686,9 @@ def _preprocessing_payload(
         "target_profile": target_profile,
         "target_composition": target_composition,
         "row_sampling": (profile or {}).get("row_sampling"),
+        "sampled_rows": (profile or {}).get("sampled_rows"),
+        "row_limit": max_rows,
+        "category_limit": max_categories,
         "profile_features_truncated": max(len(active) - len(profile_features), 0),
         "column_profiles": (profile or {}).get("columns") or [],
         "feature_count": (profile or {}).get("feature_count"),
@@ -808,6 +814,70 @@ def eda_report(task_name: str, partition: str, max_rows: int = 5000, max_categor
         "generated_at": generated_at,
         "markdown": markdown_report(payload, generated_at=generated_at),
     }
+
+
+@router.get("/{task_name}/{partition}/eda-report/{format}")
+def download_eda_report(
+    task_name: str, partition: str, format: Literal["pdf", "zip"],
+):
+    """Compile the preprocessing EDA report as a PDF or LaTeX source archive."""
+    from fastapi import HTTPException
+
+    from ..report_plots import eda_figures
+
+    payload = _preprocessing_payload(task_name, partition, preview_limit=0)
+    payload["report_sensitivity"] = _report_sensitivity(task_name, partition, payload)
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    markdown = markdown_report(payload, generated_at=generated_at)
+    figures = eda_figures(payload)
+    source = eda_latex(markdown, task_name, partition, generated_at, figures=figures,
+                       sensitivity=payload["report_sensitivity"])
+    if format == "pdf":
+        try:
+            content = compile_report(source, figures=figures)
+        except ReportCompilationError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+    else:
+        content = source_archive(source, markdown, figures=figures)
+    media_type = "application/pdf" if format == "pdf" else "application/zip"
+    return Response(
+        content, media_type=media_type,
+        headers={"Content-Disposition": 'attachment; filename="eda-report.%s"' % format},
+    )
+
+
+def _report_sensitivity(task_name, partition, payload):
+    """Find a completed sensitivity run for this exact partition and feature selection."""
+    jobs = [job for job in job_manager.list(task_name)
+            if job.get("kind") == "sensitivity" and job.get("status") == "completed"]
+    if not jobs:
+        return None
+    with open_tracker(task_name) as tracker:
+        fingerprint = (tracker.dataset_splits().get(partition) or {}).get("fingerprint")
+    if not fingerprint:
+        return None
+    active = {column for column in payload["columns"]
+              if column != payload["target"] and column not in payload["ignored_columns"]}
+    for job in jobs:
+        result = job.get("result") or {}
+        protocol = result.get("evaluation_protocol") or {}
+        features, weights = result.get("feature_columns"), result.get("weights")
+        excluded = protocol.get("excluded_columns")
+        if (protocol.get("train_partition") != partition
+                or protocol.get("train_fingerprint") != fingerprint
+                or not isinstance(features, list) or not features
+                or not isinstance(weights, list) or len(features) != len(weights)
+                or not isinstance(excluded, list)
+                or not {"row_count", "rows_dropped"} <= protocol.keys()
+                or result.get("method") not in {"sobol", "morris", "delta-mmnt"}):
+            continue
+        excluded_names = [entry.get("column") for entry in excluded if isinstance(entry, dict)]
+        if (len(excluded_names) != len(excluded)
+                or set(features) | set(excluded_names) != active
+                or len(features) + len(excluded_names) != len(active)):
+            continue
+        return {**result, "job_id": job["job_id"], "created_at": job["created_at"]}
+    return None
 
 
 class ImputeRequest(BaseModel):

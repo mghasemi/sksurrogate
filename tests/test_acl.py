@@ -219,6 +219,27 @@ def test_share_grants_view_then_edit(alice, bob):
     assert put(bob, "/api/datasets/iris/cv").status_code != 403
 
 
+def test_explain_report_download_obeys_task_sharing(alice, bob):
+    import json
+
+    _make_task("iris")
+    put(alice, "/api/datasets/iris/cv")
+    settings.job_record_path("report-job").write_text(json.dumps({
+        "job_id": "report-job", "task_name": "iris", "kind": "explain_report",
+        "status": "completed", "created_at": "2026-01-01T00:00:00Z",
+    }))
+    report_dir = settings.task_report_dir("iris", "report-job")
+    report_dir.mkdir(parents=True)
+    (report_dir / "report.pdf").write_bytes(b"%PDF-1.7")
+    assert bob.get("/api/reports/iris/report-job/pdf").status_code == 404
+    shared = alice.post(
+        "/api/access/tasks/iris/shares", json={"username": "bob", "role": "viewer"}, headers=ORIGIN
+    )
+    assert shared.status_code == 200
+    assert bob.get("/api/reports/iris/report-job/pdf").content == b"%PDF-1.7"
+    assert bob.post("/api/reports/iris/explain", json={}, headers=ORIGIN).status_code == 403
+
+
 def test_only_an_owner_may_share(alice, bob, root_client):
     _make_task("iris")
     put(alice, "/api/datasets/iris/cv")

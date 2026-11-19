@@ -53,6 +53,7 @@ from .routers import (
     monitoring,
     projects,
     quality_gates,
+    reports,
     registry,
     retraining,
     sensitivity,
@@ -347,6 +348,7 @@ app.include_router(lineage.router)
 app.include_router(evaluation.router)
 app.include_router(ensembles.router)
 app.include_router(explain.router)
+app.include_router(reports.router)
 app.include_router(design.router)
 app.include_router(synthesis.router)
 app.include_router(logs.router)
@@ -394,6 +396,7 @@ def list_tasks():
         settings.registry_dir,
         settings.monitoring_dir,
         settings.checkpoints_dir,
+        settings.reports_dir,
     ):
         if directory.is_dir():
             names.update(p.name for p in directory.iterdir() if p.is_dir())

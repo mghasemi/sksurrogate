@@ -16,14 +16,18 @@ import {
 import {
   ApiError,
   computeAle,
+  downloadExplainReport,
   explainBundle,
   explainRow,
   getIntervals,
   listBundles,
+  listJobs,
+  runExplainReport,
 } from "../api/client";
+import { JobTracker } from "../components/JobTracker";
 import { LineageRail } from "../components/LineageRail";
 import { Card, EmptyState, ErrorNote, Loading, Stat, fmtNum, fmtPct, fmtSci } from "../components/ui";
-import { useBundleLabel } from "../lib/hooks";
+import { useBundleLabel, useLiveJob } from "../lib/hooks";
 import { useTask } from "../lib/task-context";
 
 export default function ExplainPage() {
@@ -36,6 +40,7 @@ export default function ExplainPage() {
   const [aleBins, setAleBins] = useState(20);
   const [rowIndex, setRowIndex] = useState(0);
   const [rowOrders, setRowOrders] = useState(5);
+  const [submittedReport, setSubmittedReport] = useState<{ task: string; jobId: string } | null>(null);
 
   const bundlesQ = useQuery({
     queryKey: ["bundles", task],
@@ -44,6 +49,31 @@ export default function ExplainPage() {
   });
   const bundles = bundlesQ.data?.bundles ?? [];
   const selected = version || bundles[0] || "";
+  const reportsQ = useQuery({
+    queryKey: ["explain-reports", task],
+    queryFn: () => listJobs(task),
+    enabled: !!task,
+  });
+  const reportId = submittedReport?.task === task
+    ? submittedReport.jobId
+    : reportsQ.data?.jobs.find((job) => job.kind === "explain_report")?.job_id ?? null;
+  const reportJob = useLiveJob(reportId);
+  const reportMut = useMutation({
+    mutationFn: async () => ({
+      taskName: task,
+      ...(await runExplainReport(task, {
+        max_rows: maxRows, stability_samples: stabilitySamples, ale_bins: aleBins,
+        row_index: rowIndex, row_orders: rowOrders, alpha, group_by: groupBy.trim() || null,
+      })),
+    }),
+    onSuccess: (result) => setSubmittedReport({ task: result.taskName, jobId: result.job_id }),
+  });
+  const downloadReportMut = useMutation({
+    mutationFn: (format: "pdf" | "zip") => {
+      if (!reportId) throw new Error("No report is available.");
+      return downloadExplainReport(task, reportId, format);
+    },
+  });
 
   // Alias-aware label ("{alias(es)}-{version}"), shared with the other pages.
   const labelOf = useBundleLabel(task);
@@ -125,6 +155,31 @@ export default function ExplainPage() {
       )}
 
       {selected && <LineageRail task={task} modelVersion={selected} />}
+
+      {bundles.length > 0 && (
+        <Card title="Explainability report" sub="Run all Explain diagnostics for every current model bundle on the train partition. Uses the controls on this page, limiting row orders to the distinct orders available; unsupported or failed diagnostics are recorded in the report.">
+          <div className="row">
+            <button className="btn primary" disabled={reportMut.isPending || (reportJob?.job_id === reportId && (reportJob.status === "running" || reportJob.status === "queued"))} onClick={() => reportMut.mutate()}>
+              {reportMut.isPending ? "Starting…" : "Generate report for all models"}
+            </button>
+            {reportJob?.job_id === reportId && reportJob.status === "completed" && (
+              <>
+                <button className="btn" disabled={downloadReportMut.isPending} onClick={() => downloadReportMut.mutate("pdf")}>Download PDF</button>
+                <button className="btn" disabled={downloadReportMut.isPending} onClick={() => downloadReportMut.mutate("zip")}>Download LaTeX sources</button>
+              </>
+            )}
+          </div>
+          {reportMut.isError && <ErrorNote error={reportMut.error} />}
+          {downloadReportMut.isError && <ErrorNote error={downloadReportMut.error} />}
+          {reportsQ.isError && <ErrorNote error={reportsQ.error} />}
+          {reportJob?.job_id === reportId && reportJob.status === "completed" && (
+            <p className="hint">
+              {String(reportJob.result?.model_count ?? 0)} model(s); {String(reportJob.result?.diagnostic_failures ?? 0)} unavailable diagnostic(s). Inspect the report for details and per-feature skips.
+            </p>
+          )}
+          {reportId && <JobTracker jobId={reportId} label="Explainability report" />}
+        </Card>
+      )}
 
       {selected && (
         <>

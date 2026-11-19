@@ -53,6 +53,7 @@ def _task_names() -> set[str]:
         settings.registry_dir,
         settings.monitoring_dir,
         settings.checkpoints_dir,
+        settings.reports_dir,
         settings.predictions_dir,
     ):
         if directory.is_dir():
@@ -132,6 +133,7 @@ def _task_paths(task_name: str):
         settings.task_predictions_dir(task_name),
         settings.monitoring_dir / task_name,
         settings.checkpoints_dir / task_name,
+        settings.reports_dir / task_name,
         mltrace_path,
         Path(str(mltrace_path) + "-wal"),
         Path(str(mltrace_path) + "-shm"),

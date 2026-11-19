@@ -1353,10 +1353,13 @@ def stability(frame, *, target=None, ignored=None, max_rows=2000, max_columns=20
 
 
 def _markdown_table(headers, rows):
-    lines = ["| " + " | ".join(headers) + " |",
+    def cell(value):
+        return ("" if value is None else str(value)).replace("\n", " ").replace("\\", r"\\").replace("|", r"\|")
+
+    lines = ["| " + " | ".join(cell(header) for header in headers) + " |",
              "| " + " | ".join("---" for _ in headers) + " |"]
     for row in rows:
-        lines.append("| " + " | ".join("" if value is None else str(value) for value in row) + " |")
+        lines.append("| " + " | ".join(cell(value) for value in row) + " |")
     return "\n".join(lines)
 
 
@@ -1399,8 +1402,9 @@ def markdown_report(payload, *, generated_at=None, max_rows=25):
     lines.append("- Target: `%s`; rows: %s; columns: %s"
                  % (payload.get("target"), payload.get("rows"), len(payload.get("columns") or [])))
     lines.append("- Ignored columns: %s" % (", ".join(payload.get("ignored_columns") or []) or "none"))
-    lines.append("- Row sampling: %s (limit %s)"
-                 % (sampling.get("method", "none"), payload.get("feature_limit")))
+    lines.append("- Row sampling: %s; sampled rows: %s; row limit: %s; feature limit: %s"
+                 % (sampling.get("method", "not profiled"), payload.get("sampled_rows"),
+                    payload.get("row_limit"), payload.get("feature_limit")))
     lines.append("- All statistics are descriptive unless a section is labelled as a test;"
                  " no causal claim is made anywhere in this report.")
     lines.append("")
@@ -1630,7 +1634,11 @@ def markdown_report(payload, *, generated_at=None, max_rows=25):
     lines.append("## Methods and limits")
     lines.append("")
     lines.append("- Numeric summaries and associations come from the bounded `dataset_profile`"
-                 " contract (≤5,000 sampled rows, ≤100 features, ≤10 categories).")
+                 " contract (row limit %s, feature limit %s, category limit %s)."
+                 % (payload.get("row_limit"), payload.get("feature_limit"),
+                    payload.get("category_limit")))
+    lines.append("- Many report tables show at most %s entries; missingness shifts show at most"
+                 " 12 and categorical distribution summaries at most 4 levels." % max_rows)
     lines.append("- Formal tests are Anderson-Darling (normality) and Little's MCAR; effect"
                  " intervals are percentile bootstrap; nothing is corrected for multiplicity.")
     lines.append("- Counts labelled *exact* (target composition, duplicate rows) cover the full"

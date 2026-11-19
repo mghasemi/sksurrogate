@@ -1008,6 +1008,51 @@ export const getEdaReport = (task: string, partition: string) =>
     `/api/datasets/${encodeURIComponent(task)}/${encodeURIComponent(partition)}/eda-report`,
   );
 
+/** Compile and download the selected partition's EDA PDF or LaTeX sources. */
+export async function downloadEdaLatex(task: string, partition: string, format: "pdf" | "zip"): Promise<void> {
+  const path = `/api/datasets/${encodeURIComponent(task)}/${encodeURIComponent(partition)}/eda-report/${format}`;
+  return downloadReport(path, `eda-${task}-${partition}.${format}`);
+}
+
+async function downloadReport(path: string, filename: string): Promise<void> {
+  const res = await fetch(`${base()}${path}`, { credentials: "include", headers: authHeaders() });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const data = (await res.json()) as { detail?: unknown };
+      if (typeof data.detail === "string") detail = data.detail;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new ApiError(res.status, `GET ${path} -> ${res.status}: ${detail}`);
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+export const runExplainReport = (task: string, settings: {
+  max_rows: number;
+  stability_samples: number;
+  ale_bins: number;
+  row_index: number;
+  row_orders: number;
+  alpha: number;
+  group_by: string | null;
+}) => post<{ job_id: string; status: string }>(
+  `/api/reports/${encodeURIComponent(task)}/explain`, settings,
+);
+
+export function downloadExplainReport(task: string, jobId: string, format: "pdf" | "zip"): Promise<void> {
+  const path = `/api/reports/${encodeURIComponent(task)}/${encodeURIComponent(jobId)}/${format}`;
+  return downloadReport(path, `explainability-${task}.${format}`);
+}
+
 /** Advisory pre-flight warnings/hints for a pending experiment run. */
 export const getPreflight = (task: string, partition = "train") =>
   get<PreflightReport>(

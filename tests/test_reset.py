@@ -101,6 +101,9 @@ def test_open_mode_reset_wipes_tasks_projects_jobs_and_logs(client):
     job_id = job_manager.submit("alpha", "experiment", lambda _id: lambda: {"ok": True})
     _wait(job_id)
     assert settings.job_record_path(job_id).exists()
+    report_dir = settings.task_report_dir("alpha", job_id)
+    report_dir.mkdir(parents=True)
+    (report_dir / "report.pdf").write_bytes(b"private report")
 
     response = client.post(
         "/api/settings/reset", json={"confirm": "reset everything"}
@@ -116,6 +119,7 @@ def test_open_mode_reset_wipes_tasks_projects_jobs_and_logs(client):
         assert not _task_paths_exist(task)
     assert not (settings.projects_dir / (project_id + ".json")).exists()
     assert not settings.job_record_path(job_id).exists()
+    assert not report_dir.exists()
     assert not (settings.logs_dir / (job_id + ".jsonl")).exists()
 
     # The registry index no longer advertises the deleted tasks.

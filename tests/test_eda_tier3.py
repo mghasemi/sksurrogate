@@ -146,6 +146,9 @@ def test_markdown_report_carries_every_section_and_scope():
         "columns": list(frame.columns),
         "ignored_columns": [],
         "feature_limit": 100,
+        "row_limit": 120,
+        "sampled_rows": 120,
+        "category_limit": 10,
         "row_sampling": {"method": "none"},
         "missing": {"missing_cells": 0, "total_cells": 3 * n, "missing_pct": 0.0,
                     "complete_rows": n, "complete_pct": 1.0, "target_missing": 0,
@@ -208,5 +211,7 @@ def test_markdown_report_carries_every_section_and_scope():
     ):
         assert heading in markdown, heading
     assert "2026-11-12T00:00:00Z" in markdown
+    assert "sampled rows: 120; row limit: 120; feature limit: 100" in markdown
+    assert "row limit 120, feature limit 100, category limit 10" in markdown
     assert "never modifies the partition" in markdown
     assert "demo" in markdown

@@ -296,6 +296,30 @@ columns with more than 50 levels skip the test.
    Anderson–Darling verdicts, bootstrap effect sizes by target class, KS/PSI
    drift against a holdout partition, and IQR-scaled half-sample stability.
 
+In **Stability & drift**, the summary stability card can download the selected
+partition's EDA report as Markdown, a branded PDF, or a ZIP containing the
+LaTeX source, vector figures and style assets. The PDF uses formatted tables,
+formulas and plots of missingness, target classes and numeric feature quantiles
+when available. Missingness and class counts cover the full partition; numeric
+profiles use the bounded sample. Figure captions identify display limits. The
+associations section includes separate feature-target heatmaps by statistic
+and a Pearson feature-correlation heatmap when available; these describe
+association, not importance or sensitivity. It also includes the latest
+completed sensitivity heatmap for the same partition, dataset fingerprint and
+active features, with job and sampling provenance. Run sensitivity on the
+**Feature analysis** page first; if no matching job exists, the report says so
+rather than starting a new analysis. Sensitivity describes a surrogate's
+response to generated inputs and is not causal. The report retains the
+Markdown table limits and sampling caveats; it does not
+include the separate partition-drift comparison. Each download recomputes the
+report. PDF generation requires LuaLaTeX and the style's fonts and packages;
+the Docker images include these. The source ZIP includes build instructions.
+The Docker font set substitutes Fira Code and Latin Modern Math when Fira Mono
+and Libertinus Math are unavailable.
+PDF text extraction may split words in headings set in Inter Display, although
+the rendered headings are unaffected.
+Downloaded reports may contain dataset-derived information.
+
 **Transform** — the write paths. Pick an imputation method — drop rows, mean,
 median, most frequent, constant, K-nearest neighbours or iterative/MICE — and the
 columns to fill (the target is never imputed, and ignored columns are not
@@ -654,6 +678,34 @@ selected, the partial-dependence charts also gain dashed mean ± sample-standard
 deviation lines computed over the same grid for each distinct subset; like the
 importance summary, this describes reference-sample sensitivity and is not a
 confidence band.
+
+**Generate report for all models** starts a background job for every local
+bundle available when the job is submitted. It runs permutation importance and
+partial dependence, ALE, the selected row explanation, and prediction
+intervals with the page's current settings on the train partition. The report
+records each method's settings, results, limitations, and any per-feature skips
+or errors. If fewer distinct row-feature orders exist than requested, the
+report uses all available orders and records the adjustment. Methods that are
+not applicable or cannot be computed are marked
+unavailable with their reason (for example, prediction intervals for a
+classifier); an unexpected job failure is shown instead of producing a
+success-shaped report. The resulting PDF and LaTeX source ZIP can be downloaded
+from the card after the job finishes. For each model the PDF includes available
+permutation sensitivity, partial dependence, ALE, row-contribution and
+finite-interval preview plots, alongside tables, formulas, assumptions and
+diagnostic details. The detailed appendix groups diagnostic fields and indexed
+values into tables and highlights limitations; arrays in the same table are
+aligned by index only, with absent entries distinguished from null values.
+Figures are bounded and models are not mixed on a shared
+score scale; unbounded interval points are excluded from the preview plot.
+The ZIP contains the figures and the complete machine-readable results in
+``results.json``.
+
+The generated reports can include row values, baseline values, and prediction
+previews; treat them as sensitive. Completed reports are stored under the API
+data directory and remain available after restart. Resetting the owning task
+deletes them. Stop requests are honored between diagnostics and after PDF
+compilation, not while a single calculation is running.
 
 The **Accumulated local effects (ALE)** card supplements partial dependence
 when features are dependent: choose 10, 20 or 30 quantile bins and click

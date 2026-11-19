@@ -1,0 +1,339 @@
+%% sk.sty — SKSurrogate proposal document style.
+%% The paper translation of the product's identity: hairlines instead of
+%% shadows, mono metadata, graphite ink, and one ember accent per view.
+%%
+%% Usage (LuaLaTeX, run from the folder that holds logo/):
+%%   \documentclass[10.5pt,letterpaper]{article}
+%%   \usepackage{sk}
+%%   \skdoctype{Project Proposal}
+%%   \sktitle{Surrogate-Driven Process Optimisation}
+%%   \sksubtitle{...}
+%%   \skclient{Client Name}
+%%   \skauthor{Mehdi Ghasemi}
+%%   \skversion{v1.0}
+%%   \skdate{Autumn 2026}
+%%   \begin{document}
+%%   \skcover
+%%   ...
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{sk}[2026/11/18 v1.0 SKSurrogate proposal identity]
+% Engine gate. Tested with \ifdefined rather than iftex: some packages
+% (preview, for one) disturb iftex's detection inside other documents.
+\ifdefined\directlua\else\ifdefined\XeTeXversion\else
+  \PackageError{sk}{This style needs LuaLaTeX or XeLaTeX: the type stack is
+    Inter / Inter Display / Fira Mono over Libertinus Math, loaded by
+    fontspec, and pdfLaTeX cannot open OpenType fonts}{}
+\fi\fi
+
+\RequirePackage{sk-brand}
+\makeatletter
+\input{logo/cover-surface.tikz}
+
+\RequirePackage[letterpaper,left=1.0in,right=1.0in,top=1.0in,bottom=1.10in,
+  headheight=30pt,headsep=18pt,footskip=36pt]{geometry}
+\RequirePackage{graphicx}
+\RequirePackage{amsmath,mathtools}
+\RequirePackage{booktabs}
+\RequirePackage{tabularray}
+\RequirePackage{enumitem}
+\RequirePackage{fancyhdr}
+\RequirePackage{titlesec}
+\RequirePackage[most]{tcolorbox}
+\RequirePackage{listings}
+\RequirePackage{caption}
+\RequirePackage{lastpage}
+\RequirePackage{etoolbox}
+\RequirePackage{float}
+
+%% ------------------------------------------------------------- metadata
+\newcommand{\sk@doctype}{Project Proposal}
+\newcommand{\sk@title}{Title}
+\newcommand{\sk@subtitle}{}
+\newcommand{\sk@client}{Client}
+\newcommand{\sk@author}{Author}
+\newcommand{\sk@version}{v1.0}
+\newcommand{\sk@date}{\today}
+\newcommand{\skdoctype}[1]{\renewcommand{\sk@doctype}{#1}}
+\newcommand{\sk@headtitle}{}
+\newcommand{\sktitle}[2][]{\renewcommand{\sk@title}{#2}%
+  \ifx&#1&\renewcommand{\sk@headtitle}{#2}\else\renewcommand{\sk@headtitle}{#1}\fi}
+\newcommand{\sksubtitle}[1]{\renewcommand{\sk@subtitle}{#1}}
+\newcommand{\skclient}[1]{\renewcommand{\sk@client}{#1}}
+\newcommand{\skauthor}[1]{\renewcommand{\sk@author}{#1}}
+\newcommand{\skversion}[1]{\renewcommand{\sk@version}{#1}}
+\newcommand{\skdate}[1]{\renewcommand{\sk@date}{#1}}
+% argument-free accessors, for signatures and footers in the document body
+\newcommand{\sktitletext}{\sk@title}
+\newcommand{\skdoctypetext}{\sk@doctype}
+\newcommand{\skclientname}{\sk@client}
+\newcommand{\skauthorname}{\sk@author}
+\newcommand{\skdatetext}{\sk@date}
+
+%% ------------------------------------------------------------- typeset
+\linespread{1.32}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.62\baselineskip plus 0.12\baselineskip minus 0.1\baselineskip}
+\frenchspacing
+\setlist[itemize]{leftmargin=1.1em,labelsep=0.6em,itemsep=0.28\baselineskip,
+  topsep=0.35\baselineskip,parsep=0pt,label={\color{skUltraInk}\textbullet}}
+\setlist[enumerate]{leftmargin=1.4em,labelsep=0.6em,itemsep=0.28\baselineskip,
+  topsep=0.35\baselineskip,parsep=0pt,
+  label={\skmonofam\fontsize{8.4}{8.4}\selectfont\color{skUltraInk}\theenumi}}
+
+\color{skInk}
+
+%% ------------------------------------------------------------- links
+\RequirePackage[unicode]{hyperref}
+\hypersetup{
+  colorlinks = true,
+  linkcolor  = skUltraInk,
+  urlcolor   = skTealInk,
+  citecolor  = skEmberInk,
+  filecolor  = skUltraInk,
+  pdftitle   = {\sk@title},
+  pdfauthor  = {\sk@author},
+  pdfsubject = {\sk@doctype\ for \sk@client},
+  pdfcreator = {LuaLaTeX + sk.sty},
+  pdfproducer = {SKSurrogate identity v1.0}}
+
+%% ------------------------------------------------------------- heads
+\raggedbottom
+\renewcommand{\headrulewidth}{0pt}
+\fancypagestyle{sk}{%
+  \fancyhf{}%
+  \fancyhead[L]{\sklabel{\sk@headtitle}}%
+  \fancyhead[R]{\sklabel{\sk@doctype\ \textperiodcentered\ \sk@date}}%
+  \fancyfoot[L]{\raisebox{-1.2pt}{\skfootmark}\hspace{7pt}%
+    \sklabelc[skSlate]{SK SURROGATE}}%
+  \fancyfoot[R]{\sklabelc[skSlate]{PAGE \thepage\ / \pageref{LastPage}}}%
+  \renewcommand{\headrule}{{\color{skHair}\hrule width\headwidth height 0.5pt}}%
+  \renewcommand{\footrulewidth}{0pt}}
+\pagestyle{sk}
+
+% section: Inter Display Light, mono number in ultramarine ink, hairline above
+\titleformat{\section}[hang]
+  {\skdisplay\fontsize{16.5}{20}\selectfont\color{skGraphite}}
+  {\raisebox{1pt}{\skmonofam\fontsize{9}{9}\selectfont\color{skUltraInk}\thesection}}
+  {11pt}{}[{\vspace{3pt}{\color{skHair}\titlerule[0.5pt]}}]
+\titlespacing*{\section}{0pt}{22pt plus 2pt}{9pt}
+\titleformat{\subsection}[hang]
+  {\skdisplaysb\fontsize{11}{13.5}\selectfont\color{skGraphite}}
+  {\thesubsection}{9pt}{}
+\titlespacing*{\subsection}{0pt}{15pt plus 2pt}{4pt}
+\titleformat{\subsubsection}[runin]
+  {\skmonofam\fontsize{8.6}{8.6}\selectfont\color{skSlate}}
+  {}{0pt}{\textls[120]}
+\titlespacing*{\subsubsection}{0pt}{10pt}{0.7em}
+
+%% ------------------------------------------------------------- blocks
+\tcbset{skbase/.style={
+  enhanced, breakable, sharp corners, boxrule=0.5pt, colframe=skHair,
+  left=12pt, right=12pt, top=9pt, bottom=9pt, arc=0pt,
+  fonttitle=\skmonofam\fontsize{7.4}{7.4}\selectfont,
+  before skip=10pt, after skip=12pt}}
+
+% Executive summary: white, ember rule on the binding edge.
+\newtcolorbox{skextra}[1][Executive summary]{skbase,
+  colback=white,
+  borderline west={2.4pt}{0pt}{skEmber},
+  title={\textls[130]{#1}\hfill},
+  coltitle=skEmberInk, attach title to upper, after title={\par\vspace{4pt}}}
+
+% Note / guidance block: measured-data teal.
+\newtcolorbox{sknote}[1][Note]{skbase,
+  colback=skTealTint,
+  borderline west={2.4pt}{0pt}{skTeal},
+  title={\textls[130]{#1}\hfill},
+  coltitle=skTealInk, attach title to upper, after title={\par\vspace{4pt}}}
+
+% Deliverable / requirement block, ultramarine (planned work).
+\newtcolorbox{skcall}[1][Deliverable]{skbase,
+  colback=skUltraTint,
+  borderline west={2.4pt}{0pt}{skUltra},
+  title={\textls[130]{#1}\hfill},
+  coltitle=skUltraInk, attach title to upper, after title={\par\vspace{4pt}}}
+
+% Run-in label for the first words of a paragraph.
+\newcommand{\skterm}[1]{\textsf{\textbf{#1}}}
+% Ember tick before a sentence that states the decision.
+\newcommand{\sktick}{\raisebox{0.42ex}{\color{skEmber}\rule{4.4pt}{4.4pt}}\hspace{0.42em}}
+
+%% ------------------------------------------------------------- tables
+\SetTblrInner{
+  hline{1,Z} = {solid, 0.9pt, skInk},
+  hline{2}   = {solid, 0.5pt, skInk},
+  hline{3-Z} = {solid, 0.4pt, skHair!80},
+  row{1}     = {font=\skdisplaysb\fontsize{8.8}{10}\selectfont, fg=skInk,
+                abovesep=6pt, belowsep=5pt},
+  row{2-Z}   = {font=\fontsize{9.4}{12.4}\selectfont, abovesep=5pt, belowsep=5pt}}
+\NewTblrTheme{sklast}{% the closing "total" row is ruled off in ember above,
+  % and closed with the table's own ink rule below
+  \SetTblrInner{hline{Z-1}={solid, 0.9pt, skEmber},
+                row{Z}={font=\fontsize{9.4}{12.4}\selectfont\bfseries}}}
+
+%% ------------------------------------------------------------- figures
+\captionsetup{font={small}, labelfont={sf,bf,color=skSlate},
+  labelsep=quad, skip=7pt, textfont={color=skSlate}}
+\newcommand{\skfiglabel}[1]{\sklabel{#1}}
+
+%% ------------------------------------------------------------- code
+\lstdefinestyle{skcode}{
+  basicstyle=\skmonofam\fontsize{8.3}{11}\selectfont,
+  backgroundcolor=\color{skFaint}, commentstyle=\color{skTealInk},
+  keywordstyle=\color{skUltraInk}, stringstyle=\color{skEmberInk},
+  numberstyle=\skmonofam\fontsize{7}{7}\selectfont\color{skSlate},
+  numbers=left, numbersep=9pt, xleftmargin=18pt, frame=none, aboveskip=10pt,
+  belowskip=12pt, breaklines=true, showstringspaces=false, tabsize=2,
+  columns=fullflexible, keepspaces=true}
+
+%% ------------------------------------------------------------- cover
+% Two variants. `dark` (default) gives the lower 45% of the page to the product's
+% own graphite, with the level sets drawn light on it -- the screen identity
+% showing through on paper. `light` keeps the same composition on a 2% tint, for
+% documents that must stay toner-cheap. Same type, same grid, same art.
+\newif\ifsk@coverdark
+\sk@coverdarktrue
+
+\newcommand{\sk@coverart}{%
+  \ifsk@coverdark
+    \tikzset{
+      skccontour/.style      = {draw=skTeal!55!skMist, line width=0.34pt},
+      skccontourmajor/.style = {draw=skTeal!90!skMist, line width=0.46pt},
+      skcpath/.style         = {draw=skUltra!90!skMist, line width=1.15pt,
+                                line join=round},
+      skcruns/.style         = {draw=skMist, fill=skInk, line width=0.45pt}}%
+  \else
+    \tikzset{
+      skccontour/.style      = {draw=skTeal!48, line width=0.38pt},
+      skccontourmajor/.style = {draw=skTeal!80, line width=0.5pt},
+      skcpath/.style         = {draw=skUltra, line width=1.05pt, line join=round},
+      skcruns/.style         = {draw=skInk, fill=white, line width=0.45pt}}%
+  \fi
+  \clip (0,0) rectangle (620,216);
+  \skCoverContours
+  \skCoverRuns
+  \skCoverPath
+  \fill[skEmber] \skCoverDot circle[radius=2.2pt];
+  \draw[skEmber, line width=0.45pt] \skCoverDot circle[radius=4.6pt];}
+
+% A link on paper: the underline is the affordance, since colour alone is not
+% one in print. 0.35pt rule sits 1.6pt under the baseline, in the link's colour.
+\newcommand{\underlink}[1]{%
+  \underline{\raisebox{-0.15ex}{#1}}}
+
+\newcommand{\sk@plate}{% band height and the colours that live on it
+  \ifsk@coverdark
+    \def\sk@bandfill{skInk}%
+    \def\sk@dim{skMist!72}\def\sk@bright{skMist}\def\sk@hair{skMist!20}%
+  \else
+    \def\sk@bandfill{skUltraTint}%
+    \def\sk@dim{skSlate}\def\sk@bright{skInk}\def\sk@hair{skHair}%
+  \fi}
+
+\newcommand{\skcover}[1][dark]{%
+  \def\sk@opt{#1}\def\sk@dark{dark}%
+  \ifx\sk@opt\sk@dark\sk@coverdarktrue\else\sk@coverdarkfalse\fi
+  \sk@plate
+  \newgeometry{margin=0pt}%
+  \thispagestyle{empty}%
+  \begin{tikzpicture}[remember picture, overlay, x=1pt, y=1pt]
+    % ---- the plate: full-bleed ground for the level sets ---------------
+    \fill[\sk@bandfill] (current page.south west) rectangle
+      ([yshift=356pt]current page.south east);
+    \begin{scope}[shift={([xshift=-4pt, yshift=112pt]current page.south west)}]
+      \sk@coverart
+    \end{scope}
+    % ---- head, on paper ------------------------------------------------
+    \node[anchor=north west, inner sep=0] at
+      ([xshift=61.2pt, yshift=-52pt]current page.north west)
+      {\sklockup[10mm]{colour}};
+    \node[anchor=north east, inner sep=0] at
+      ([xshift=-61.2pt, yshift=-58pt]current page.north east)
+      {\sklabelc[skSlate]{\sk@version}};
+    \draw[skHair, line width=0.5pt]
+      ([xshift=61.2pt, yshift=-100pt]current page.north west) --
+      ([xshift=-61.2pt, yshift=-100pt]current page.north east);
+    % ---- title block ---------------------------------------------------
+    \node[anchor=north west, inner sep=0, align=flush left,
+          text width=390pt] at
+      ([xshift=61.2pt, yshift=-150pt]current page.north west)
+      {\sklabelc[skEmberInk]{REPORT FOR \MakeUppercase{\sk@client}}\par
+       \vspace{10pt}%
+       {\color{skEmber}\rule{74pt}{2.4pt}}\par
+       \vspace{16pt}%
+       {\skdisplay\fontsize{30}{35}\selectfont\color{skGraphite}\sk@title\par}
+       \vspace{12pt}%
+       \ifx\sk@subtitle\empty\else
+       {\fontsize{10.6}{15.2}\selectfont\color{skSlate}\sk@subtitle\par}\fi};
+    % ---- captions, pinned at the plate's top edge ----------------------
+    \node[anchor=south west, inner sep=0] at
+      ([xshift=61.2pt, yshift=366pt]current page.south west)
+      {\sklabelc[skTealInk]{ILLUSTRATIVE OPTIMIZATION \textperiodcentered\ CONDITIONING
+        \skCoverConditioning}};
+    \node[anchor=south east, inner sep=0] at
+      ([xshift=-61.2pt, yshift=366pt]current page.south east)
+      {\sklabelc[skSlate]{\skCoverRunsCount\ RUNS \textperiodcentered\
+        \skCoverSteps\ STEPS \textperiodcentered\ CONVERGENCE \skCoverConv}};
+    % ---- the plate's own foot: rule, then one line of attribution -------
+    \draw[\sk@hair, line width=0.5pt]
+      ([xshift=61.2pt, yshift=84pt]current page.south west) --
+      ([xshift=-61.2pt, yshift=84pt]current page.south east);
+    \node[anchor=west, inner sep=0] at
+      ([xshift=61.2pt, yshift=60pt]current page.south west)
+      {\begin{minipage}[b]{210pt}
+         {\color{\sk@bright}\fontsize{9.4}{11}\selectfont\sk@author}\par
+         \vspace{3pt}%
+         {\color{\sk@dim}\skmonofam\fontsize{7.6}{9}\selectfont
+          \sk@date\ \ \textperiodcentered\ \ \sk@doctype}
+       \end{minipage}};
+    \node[anchor=west, inner sep=0] at
+      ([xshift=300pt, yshift=60pt]current page.south west)
+      {\begin{minipage}[b]{160pt}
+         {\color{\sk@dim}\skmonofam\fontsize{7.6}{9}\selectfont PREPARED FOR}\par
+         \vspace{3pt}%
+         {\color{\sk@bright}\fontsize{9.4}{11}\selectfont
+          \MakeUppercase{\sk@client}}
+       \end{minipage}};
+    \node[anchor=east, inner sep=0] at
+      ([xshift=-61.2pt, yshift=62pt]current page.south east)
+      {\begin{minipage}[b]{120pt}\raggedleft
+         {\color{\sk@bright}\skword[11pt]}\par\vspace{2pt}
+         {\color{\sk@dim}\skmonofam\fontsize{7.6}{9}\selectfont
+          \href{https://sksurrogate.com/}{\underlink{sksurrogate.com}}}
+       \end{minipage}};
+  \end{tikzpicture}%
+  \null\clearpage
+  \restoregeometry}
+
+%% ------------------------------------------------------------- figure: the loop
+% Two sources feeding a contracting search region into one answer, with the
+% next run returning to the data. Coordinates in points, origin top-left.
+\newcommand{\skloop}{%
+  \begin{tikzpicture}[x=1pt, y=1pt,
+      font=\skmonofam\fontsize{7}{7}\selectfont,
+      every node/.style={inner sep=0}]
+    \tikzset{
+      skb/.style  = {draw=skHair, fill=white, line width=0.5pt,
+                     minimum height=30pt, inner xsep=7pt, text=skSlate,
+                     font=\skmonofam\fontsize{7}{7}\selectfont},
+      sko/.style  = {draw=skEmber, fill=skEmberTint, line width=0.7pt,
+                     minimum height=30pt, inner xsep=7pt, text=skEmberInk,
+                     font=\skmonofam\fontsize{7}{7}\selectfont},
+      skl/.style  = {draw=skUltraInk, line width=0.7pt, -{Stealth[length=4pt]}},
+      skr/.style  = {draw=skTeal, line width=0.7pt, -{Stealth[length=4pt]}}}
+    \node[skb, anchor=west, minimum width=92pt] (d) at (0,   0) {DATA};
+    \node[skb, anchor=west, minimum width=92pt] (e) at (0, -40) {EXPENSIVE RUNS};
+    \node[skb, anchor=west, minimum width=86pt] (s) at (124,-20) {SURROGATE};
+    \node[skb, anchor=west, minimum width=78pt] (a) at (240,-20) {ACQUISITION};
+    \node[sko, anchor=west, minimum width=76pt] (o) at (348,-20) {ANSWER};
+    \draw[skl] (d.east) -- (s.west);
+    \draw[skl] (e.east) -- (s.west);
+    \draw[skl] (s.east) -- (a.west);
+    \draw[skl] (a.east) -- (o.west);
+    % next run: acquisition back to the data record
+    \draw[skr] (a.south) -- (a.south |- 0,-58) -- (46,-58) -- (46,-15);
+    \node[anchor=west, text=skTealInk] at (52,-54) {next run};
+  \end{tikzpicture}}
+
+\makeatother
+\endinput

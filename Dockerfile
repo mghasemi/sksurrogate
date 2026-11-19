@@ -13,8 +13,18 @@ FROM webdeps AS webbuild
 COPY webui/ ./
 RUN npm run build
 
+# ---- Shared TeX and Python runtime ----
+FROM python:3.12-slim-bookworm AS texbase
+# The branded style uses LuaLaTeX, TikZ, tabularray and system OpenType fonts.
+# Fira Code and Latin Modern Math are lightweight fallbacks for Fira Mono and
+# Libertinus Math when the latter are not installed.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       texlive-luatex texlive-latex-extra fonts-inter fonts-firacode fontconfig \
+    && rm -rf /var/lib/apt/lists/*
+
 # ---- Shared Python base ----
-FROM python:3.12-slim AS base
+FROM texbase AS base
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1

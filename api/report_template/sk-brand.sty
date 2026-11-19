@@ -1,0 +1,184 @@
+%% sk-brand.tex — SKSurrogate paper identity: palette, type, mark, lockup.
+%% Derived from designs/sksurrogate/palette.json and brand.md ("a measuring
+%% instrument, not an AI dashboard") translated from graphite ground to paper.
+%% Load with LuaLaTeX or XeLaTeX: the type stack is Inter / Inter Display /
+%% Fira Mono (all OFL, installed system-wide) over Libertinus Math.
+\RequirePackage{fontspec}
+\RequirePackage{mathtools}
+\RequirePackage{unicode-math}
+\RequirePackage{xcolor}
+\RequirePackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,calc}
+\makeatletter
+
+%% ---------------------------------------------------------------- palette
+% Foundation: the site's graphite, used as ink on paper.
+\definecolor{skInk}{HTML}{0B0F14}       % Graphite 900 — body text (19.2:1 on white)
+\definecolor{skGraphite}{HTML}{141C24}  % Graphite 800 — display type
+\definecolor{skSlate}{HTML}{3A4552}     % secondary text (9.8:1)
+\definecolor{skMist}{HTML}{E6E9EE}      % Chalk — text on ink
+\definecolor{skHair}{HTML}{D7DDE6}      % hairlines (non-text)
+\definecolor{skFaint}{HTML}{EFF2F6}     % 2% tint washes
+
+% Structure · Ultramarine
+\definecolor{skUltra}{HTML}{5B7CFA}
+\definecolor{skUltraInk}{HTML}{2B44A8}  % 8.4:1 — safe for links and labels
+\definecolor{skUltraTint}{HTML}{EDF1FE}
+
+% Measured data · Signal teal
+\definecolor{skTeal}{HTML}{4FB3BF}
+\definecolor{skTealInk}{HTML}{17727E}   % 5.6:1
+\definecolor{skTealTint}{HTML}{F1F9FA}
+
+% Action / convergence · Ember (one per view)
+\definecolor{skEmber}{HTML}{E07A3C}
+\definecolor{skEmberInk}{HTML}{B4521A}  % 5.1:1
+\definecolor{skEmberTint}{HTML}{FDF3EC}
+
+% Status (only where a result is reported: pass / gate / drift)
+\definecolor{skPass}{HTML}{0F7A45}
+\definecolor{skGate}{HTML}{8A6A00}
+\definecolor{skDrift}{HTML}{A83232}
+
+% Ring colours of the mark ramp, sampled at the nine ring heights.
+\definecolor{skRampA}{HTML}{7E9BFE}
+\definecolor{skRampB}{HTML}{7391FD}
+\definecolor{skRampC}{HTML}{6988FB}
+\definecolor{skRampD}{HTML}{5D7EFA}
+\definecolor{skRampE}{HTML}{578CE9}
+\definecolor{skRampF}{HTML}{539FD4}
+\definecolor{skRampG}{HTML}{4FB1C1}
+\definecolor{skRampH}{HTML}{77A39B}
+\definecolor{skRampI}{HTML}{949881}
+
+%% ------------------------------------------------------------------- type
+% Inter for body — the paper equivalent of the site's 16.5px/1.62.
+% Every shape carries RawFeature={-kern} explicitly. luaotfload writes pair
+% kerning as per-glyph TJ offsets, and pdftotext then reads every letter as a
+% separate word, so a PDF set with Inter kerning cannot be copied or searched.
+% Dropping the kern feature costs a fraction of a point of spacing and buys
+% back a text layer. microtype still handles tracking and protrusion.
+\newcommand{\skface}[1]{RawFeature={-kern}, Ligatures=TeX}
+\setmainfont{Inter}[
+  UprightFont = *-Regular,          UprightFeatures = {RawFeature={-kern}, Ligatures=TeX},
+  ItalicFont  = *-Italic,           ItalicFeatures = {RawFeature={-kern}, Ligatures=TeX},
+  BoldFont    = *-SemiBold,         BoldFeatures = {RawFeature={-kern}, Ligatures=TeX},
+  BoldItalicFont = *-SemiBoldItalic, BoldItalicFeatures = {RawFeature={-kern}, Ligatures=TeX}]
+\setsansfont{Inter}[
+  UprightFont = *-Regular,          UprightFeatures = {RawFeature={-kern}, Ligatures=TeX},
+  ItalicFont  = *-Italic,           ItalicFeatures = {RawFeature={-kern}, Ligatures=TeX},
+  BoldFont    = *-SemiBold,         BoldFeatures = {RawFeature={-kern}, Ligatures=TeX},
+  BoldItalicFont = *-SemiBoldItalic, BoldItalicFeatures = {RawFeature={-kern}, Ligatures=TeX}]
+% Inter Display for headings and the wordmark (site: 300 weight, −3% tracking).
+\newfontfamily\skdisplay{Inter Display}[
+  UprightFont = *-Light,            UprightFeatures = {RawFeature={-kern}, Ligatures=TeX},
+  ItalicFont  = *-LightItalic,      ItalicFeatures = {RawFeature={-kern}, Ligatures=TeX},
+  BoldFont    = *-Medium,           BoldFeatures = {RawFeature={-kern}, Ligatures=TeX},
+  BoldItalicFont = *-MediumItalic,  BoldItalicFeatures = {RawFeature={-kern}, Ligatures=TeX}]
+\newfontfamily\skdisplaysb{Inter Display}[
+  UprightFont = *-Medium,           UprightFeatures = {RawFeature={-kern}, Ligatures=TeX},
+  ItalicFont  = *-MediumItalic,     ItalicFeatures = {RawFeature={-kern}, Ligatures=TeX},
+  BoldFont    = *-SemiBold,         BoldFeatures = {RawFeature={-kern}, Ligatures=TeX},
+  BoldItalicFont = *-SemiBoldItalic, BoldItalicFeatures = {RawFeature={-kern}, Ligatures=TeX}]
+% Fira Mono for metadata only: versions, phases, axis labels, code.
+\IfFontExistsTF{Fira Mono}{
+  \newfontfamily\skmonofam{Fira Mono}[
+    UprightFont = *-Regular,          UprightFeatures = {RawFeature={-kern}, Ligatures=TeX},
+    BoldFont    = *-Medium,           BoldFeatures = {RawFeature={-kern}, Ligatures=TeX},
+    Scale = 0.96]
+}{
+  \newfontfamily\skmonofam{Fira Code}[
+    UprightFont = *-Regular,          UprightFeatures = {RawFeature={-kern}, Ligatures=TeX},
+    BoldFont    = *-Medium,           BoldFeatures = {RawFeature={-kern}, Ligatures=TeX},
+    Scale = 0.96]
+}
+% Math: Libertinus Math, with Inter for upright math letters so it sits in the body.
+\IfFontExistsTF{Libertinus Math}{\setmathfont{Libertinus Math}}{\setmathfont{Latin Modern Math}}
+\setmathrm{Inter}
+
+\RequirePackage{microtype}
+
+% Letterspaced mono label (the "this came out of a machine" voice).
+\newcommand{\skLabelInk}{skSlate}
+\newcommand{\sksetlabelcolor}[1]{\renewcommand{\skLabelInk}{#1}}
+\newcommand{\sklabel}[1]{{\skmonofam\fontsize{7.1}{7.1}\selectfont
+  \color{\skLabelInk}\textls[130]{#1}}}
+% \sklabelc[colour]{text} — a label in an explicit colour, no state change
+\newcommand{\sklabelc}[2][skSlate]{{\skmonofam\fontsize{7.1}{7.1}\selectfont
+  \color{#1}\textls[130]{#2}}}
+% \sklabelbig{text} — 8.6pt mono, for cover kickers and table heads
+\newcommand{\sklabelbig}[1]{{\skmonofam\fontsize{8.6}{8.6}\selectfont\textls[120]{#1}}}
+
+%% ------------------------------------------------------------------- mark
+% Geometry from logo/sk-mark.tikz (ring heights, meridians, ember throat).
+\input{logo/sk-mark.tikz}
+
+\newcommand{\sk@ramprings}{%
+  \colorlet{skringcolor0}{skRampA}\colorlet{skringcolor1}{skRampB}%
+  \colorlet{skringcolor2}{skRampC}\colorlet{skringcolor3}{skRampD}%
+  \colorlet{skringcolor4}{skRampE}\colorlet{skringcolor5}{skRampF}%
+  \colorlet{skringcolor6}{skRampG}\colorlet{skringcolor7}{skRampH}%
+  \colorlet{skringcolor8}{skRampI}}
+\newcommand{\sk@flatrings}[1]{%
+  \colorlet{skringcolor0}{#1}\colorlet{skringcolor1}{#1}%
+  \colorlet{skringcolor2}{#1}\colorlet{skringcolor3}{#1}%
+  \colorlet{skringcolor4}{#1}\colorlet{skringcolor5}{#1}%
+  \colorlet{skringcolor6}{#1}\colorlet{skringcolor7}{#1}%
+  \colorlet{skringcolor8}{#1}}
+
+% \skmark[height]{colour mode}  modes: colour | ink | reverse | ember
+\newcommand{\skmark}[2][9mm]{%
+  \begingroup
+  \pgfmathsetlengthmacro{\sk@u}{#1/132}%
+  \pgfmathsetlengthmacro{\sk@swA}{2.1*(#1)/132}%
+  \pgfmathsetlengthmacro{\sk@swB}{1.5*(#1)/132}%
+  \pgfmathsetlengthmacro{\sk@base}{-0.18*(#1)}%
+  \tikzset{skring/.style={draw, line width=\sk@swA, line cap=round},
+           skmeridian/.style={draw, line width=\sk@swB, line cap=round}}
+  \def\sk@apex{skEmber}%
+  \def\sk@mer{skRampC}%
+  \def\skmode{#2}%
+  \ifx\skmode\sk@modeink
+    \sk@flatrings{skInk}\def\sk@mer{skSlate}\def\sk@apex{skInk}%
+  \else\ifx\skmode\sk@modereverse
+    \sk@flatrings{skMist}\def\sk@mer{skMist}\def\sk@apex{skEmber}%
+  \else\ifx\skmode\sk@modeember
+    \sk@flatrings{skEmber}\def\sk@mer{skEmber}\def\sk@apex{skEmber}%
+  \else
+    \sk@ramprings
+  \fi\fi\fi
+  \colorlet{skApexColour}{\sk@apex}%
+  \colorlet{skMeridianColour}{\sk@mer}%
+  \begin{tikzpicture}[x=\sk@u, y=\sk@u, line cap=round, line join=round,
+                      baseline=\sk@base]
+    \skRings
+    \begin{scope}[every path/.append style={draw=skMeridianColour}]
+      \skMeridians
+    \end{scope}
+    \fill[skApexColour] \skApex circle[radius=\skApexRadius];
+  \end{tikzpicture}%
+  \endgroup}
+\def\sk@modecolour{colour}
+\def\sk@modeink{ink}
+\def\sk@modereverse{reverse}
+\def\sk@modeember{ember}
+
+%% wordmark: SK in Medium, Surrogate in Light, −2% tracking
+\newcommand{\skword}[1][11pt]{{\skdisplay\fontsize{#1}{#1}\selectfont
+  \textls[-20]{\skdisplaysb S\kern-0.01em K}\textls[-20]{Surrogate}}}
+
+%% \sklockup[mark height]{mode} — mark + wordmark on a shared baseline
+\newcommand{\sklockup}[2][9mm]{%
+  \begingroup
+  \pgfmathsetlengthmacro{\sk@gap}{0.36*(#1)}%
+  \pgfmathsetlengthmacro{\sk@ws}{0.50*(#1)}%
+  \pgfmathsetlengthmacro{\sk@bl}{-0.5*(#1)}%
+  \begin{tikzpicture}[baseline=\sk@bl]
+    \node[inner sep=0, anchor=west] (sk@m) {\skmark[#1]{#2}};
+    \node[inner sep=0, anchor=west, xshift=\sk@gap] at (sk@m.east) {\skword[\sk@ws]};
+  \end{tikzpicture}%
+  \endgroup}
+
+%% running-footer mark
+\newcommand{\skfootmark}{\skmark[2.6mm]{ink}}
+\makeatother

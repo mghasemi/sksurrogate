@@ -5,6 +5,7 @@ import { useSearchParams } from "react-router-dom";
 import {
   clipDataset,
   deduplicateDataset,
+  downloadEdaLatex,
   getDatasetMetadata,
   getDuplicates,
   getEdaReport,
@@ -941,6 +942,9 @@ function StabilityCard({
   partition: string;
 }) {
   const reportMut = useMutation({ mutationFn: () => getEdaReport(task, partition) });
+  const latexMut = useMutation({
+    mutationFn: (format: "pdf" | "zip") => downloadEdaLatex(task, partition, format),
+  });
   const download = () => {
     const payload = reportMut.data;
     if (!payload) return;
@@ -986,8 +990,15 @@ function StabilityCard({
             Save {`eda-${task}-${partition}.md`}
           </button>
         )}
+        <button onClick={() => latexMut.mutate("pdf")} disabled={latexMut.isPending}>
+          {latexMut.isPending ? "Compiling…" : "Download EDA PDF"}
+        </button>
+        <button onClick={() => latexMut.mutate("zip")} disabled={latexMut.isPending}>
+          Download EDA LaTeX sources
+        </button>
       </div>
       {reportMut.isError && <ErrorNote error={reportMut.error} />}
+      {latexMut.isError && <ErrorNote error={latexMut.error} />}
       {reportMut.data && (
         <p className="hint">
           Report generated at {reportMut.data.generated_at}; it repeats the sample scope and limits
