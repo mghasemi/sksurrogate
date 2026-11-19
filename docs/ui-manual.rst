@@ -693,10 +693,14 @@ Open **Registry & Deployment**:
 4. If a production alias needs to point to another version, use **Rollback**
    to select the target model version and lifecycle alias.
 5. Use **Model aliases** to give a version a stable, human-chosen name such as
-   ``baseline`` or ``credit-card-v2``. Unlike lifecycle aliases, a named alias is
-   not rewritten by promotion; it always points at the version you chose, is
-   resolvable by the API and the Python registry, and can be deleted without
-   touching the version. Every set/delete appears in the history and audit log.
+   ``baseline`` or ``credit-card-v2``. A name must be a lowercase slug — letters
+   and digits plus '.', '_' or '-' after the first character, at most 64 long —
+   and the lifecycle pointer names (``latest``, ``candidate``, ...) are reserved;
+   the form checks both before submitting. Unlike lifecycle aliases, a named
+   alias is not rewritten by promotion; it always points at the version you
+   chose, is resolvable by the API and the Python registry, and can be deleted
+   without touching the version. Every set/delete appears in the history and
+   audit log.
 6. Use **Use in Inference** to open the selected registry alias in the
    Inference page.
 

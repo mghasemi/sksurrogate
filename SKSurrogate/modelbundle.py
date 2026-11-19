@@ -593,8 +593,9 @@ class ModelRegistry:
         """Return ``name`` if it is a legal, non-reserved alias, else raise ValueError."""
         if not isinstance(name, str) or not ALIAS_NAME_PATTERN.match(name):
             raise ValueError(
-                "Alias names must be lowercase letters/digits starting with a letter or digit, "
-                "using '.', '_' or '-' (max 64 characters)"
+                "Alias names must start with a lowercase letter or digit and use only "
+                "'a-z', '0-9', '.', '_' or '-' (max 64 characters), e.g. 'rf-v1' or "
+                "'baseline-2026-11'"
             )
         if name in LIFECYCLE_ALIAS_NAMES:
             raise ValueError("%r is a reserved lifecycle alias name" % name)

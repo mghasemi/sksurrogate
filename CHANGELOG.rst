@@ -570,6 +570,18 @@ Evaluation page shows registry aliases
   unchanged; lifecycle pointers (``latest``, ``production``, …) are not used
   here because they move between versions on promotion/rollback.
 
+Model alias form validates names before submission
+==================================================
+
+* The **Model aliases** card on Registry & Deployment now checks the name
+  against the registry grammar as you type — lowercase letters/digits with '.',
+  '_' or '-' after the first character, max 64 characters — and flags reserved
+  lifecycle pointer names (``latest``, ``candidate``, …), disabling Save until
+  the name is legal. An invalid name no longer round-trips to a raw API 400; an
+  inline hint under the input states the rule either way. The 400 message itself
+  now includes examples (e.g. ``rf-v1`` or ``baseline-2026-11``) so any remaining
+  backend rejection is actionable.
+
 [0.3.0] - 2026-11-08
 --------------------
 

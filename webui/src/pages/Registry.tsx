@@ -28,6 +28,11 @@ function countInState(versions: Record<string, string>, state: string): number {
   return Object.values(versions).filter((s) => s === state).length;
 }
 
+/** Grammar for user-chosen alias names — must stay in sync with ``ModelRegistry.validate_alias_name``. */
+const ALIAS_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+/** Lifecycle pointer names the registry rewrites itself — never usable as named aliases. */
+const RESERVED_ALIAS_NAMES: ReadonlySet<string> = new Set([...REGISTRY_STATES, "latest"]);
+
 export default function RegistryPage() {
   const { task } = useTask();
   const qc = useQueryClient();
@@ -349,12 +354,24 @@ function AliasCard({
   const [name, setName] = useState("");
   const [version, setVersion] = useState("");
 
+  // Client-side mirror of ModelRegistry.validate_alias_name so invalid names get
+  // feedback before the round-trip instead of a raw API error.
+  const cleanedName = name.trim();
+  let aliasProblem: string | null = null;
+  if (cleanedName) {
+    if (!ALIAS_NAME_RE.test(cleanedName)) {
+      aliasProblem = "Use only lowercase letters/digits with '.', '_' or '-' after the first character — e.g. 'rf-v1'. No capitals, spaces, or other symbols.";
+    } else if (RESERVED_ALIAS_NAMES.has(cleanedName)) {
+      aliasProblem = `'${cleanedName}' is reserved for lifecycle states; choose a different name.`;
+    }
+  }
+
   const setMut = useMutation({
     mutationFn: () => {
-      const cleaned = name.trim();
-      if (!cleaned) throw new Error("Give the alias a name (lowercase letters, digits, '.', '_' or '-').");
+      if (!cleanedName) throw new Error("Give the alias a name (lowercase letters, digits, '.', '_' or '-').");
+      if (aliasProblem) throw new Error(aliasProblem);
       if (!version) throw new Error("Pick the model version the alias should point at.");
-      return setRegistryAlias(task, cleaned, version);
+      return setRegistryAlias(task, cleanedName, version);
     },
     onSuccess: () => {
       setName("");
@@ -406,10 +423,15 @@ function AliasCard({
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="baseline"
+            placeholder="rf-v1 or baseline-2026-11"
             spellCheck={false}
             maxLength={64}
           />
+          {aliasProblem ? (
+            <span className="hint" style={{ color: "var(--err)" }}>{aliasProblem}</span>
+          ) : (
+            <span className="hint">lowercase a–z / 0–9, then '.', '_' or '-'; max 64</span>
+          )}
         </div>
         <div className="field fixed" style={{ flex: "0 1 320px", minWidth: 240 }}>
           <label>Model version</label>
@@ -423,7 +445,7 @@ function AliasCard({
       </div>
       {setMut.isError && <ErrorNote error={setMut.error} />}
       {deleteMut.isError && <ErrorNote error={deleteMut.error} />}
-      <button className="btn primary" disabled={!task || setMut.isPending} onClick={() => setMut.mutate()}>
+      <button className="btn primary" disabled={!task || aliasProblem !== null || setMut.isPending} onClick={() => setMut.mutate()}>
         {setMut.isPending ? "Saving…" : "Save alias"}
       </button>
     </Card>
