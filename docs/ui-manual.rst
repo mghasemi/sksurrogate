@@ -534,7 +534,7 @@ bundles also provide ROC, calibration, cumulative-gain, and lift diagnostics.
 Bundles that have a named alias (set with **Model aliases** on the Registry &
 Deployment page) are shown by those names in the Bundle metrics table and used
 as the series labels of the Metric comparison charts; the bundle selectors in
-**Nested CV** and **Diagnostic curves** list each aliased bundle as *alias - version*
+**Nested CV** and **Diagnostic curves** list each aliased bundle as *alias-version*
 (several aliases joined with ", "), so an alias never hides which exact version
 a run will use. Versions without an alias keep their full version hash everywhere.
 
@@ -663,7 +663,7 @@ Serialized models should only be loaded from trusted sources.
 
 In **Quality Gates**, select the bundle version. Bundles that have a named
 alias (set with **Model aliases** on the Registry & Deployment page) are listed
-in the **Bundle (model version)** picker as *alias - version*; bundles without
+in the **Bundle (model version)** picker as *alias-version*; bundles without
 one keep their plain version, and the check still runs against the exact
 version id. Optionally set a maximum
 bundle file size and define numeric metric minimums as a JSON object, for
@@ -724,7 +724,7 @@ Open **Registry & Deployment**:
    Inference page.
 
 The version selectors in **Register a bundle**, **Promote**, **Rollback**, and
-**Artifact cleanup** list each bundle as *alias - version* when it has a named
+**Artifact cleanup** list each bundle as *alias-version* when it has a named
 alias (several joined with ", "), so an operator can tell versions apart
 without reading full hashes; the selected value is still the exact version id.
 The **Audit log** table — on this page and under **Settings / Audit** — shows
@@ -794,7 +794,7 @@ ignored columns; batch runs are additionally registered in registry lineage.
 
 In each card's **Model version** dropdown, bundles that have a named alias (set
 with **Model aliases** on the Registry & Deployment page) are listed as
-*alias - version* (several aliases joined with ", "); bundles without one keep
+*alias-version* (several aliases joined with ", "); bundles without one keep
 their plain version, and the selected value is still the exact version id. The
 same alias-aware labels are used wherever the page names a model — the Serving
 badge, the frozen-at / follows-alias hint, the model-version details, the
@@ -843,6 +843,11 @@ Open **Monitoring** after scoring data:
   Supply correctly aligned ``y_true``, ``y_pred``, and group arrays.
 * **Delayed-label performance** compares saved predictions with labels that
   arrive later; choose the task type and model version.
+
+The model-version selectors on every Monitoring card list an aliased bundle as
+*alias-version* (several aliases joined with ", "), the same convention used
+elsewhere in the UI, so an alias never hides which exact version a report
+covers; versions without an alias keep their full version hash.
 
 Inference requests are logged automatically. The reports correspond to
 ``drift_report``, ``prediction_distribution_report``,

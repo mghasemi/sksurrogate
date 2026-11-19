@@ -21,6 +21,7 @@ import {
 import type { AuditEvent, RegistryAliasEntry, RegistryArtifact, RegistryHistoryEntry } from "../api/client";
 import { LineageRail } from "../components/LineageRail";
 import { Badge, Card, ErrorNote, Loading, StatusBadge, Table, fmtBytes, fmtNum } from "../components/ui";
+import { useBundleLabel } from "../lib/hooks";
 import { useTask } from "../lib/task-context";
 
 /** How many registered versions currently sit in a given lifecycle state. */
@@ -75,11 +76,8 @@ export default function RegistryPage() {
     return map;
   }, [summaryQ.data]);
 
-  /** Dropdown label: "{alias(es)} - {version}" when a named alias is set, otherwise the version. */
-  const labelOf = (version: string) => {
-    const aliases = aliasByVersion.get(version);
-    return aliases && aliases.length > 0 ? `${aliases.join(", ")} - ${version}` : version;
-  };
+  /** Dropdown label: "{alias(es)}-{version}" when a named alias is set, otherwise the version. */
+  const labelOf = useBundleLabel(task);
   const loadRegisteredMut = useMutation({
     mutationFn: (alias: string) => loadRegisteredBundle(task, alias),
     onSuccess: (bundle) => {
@@ -183,6 +181,7 @@ export default function RegistryPage() {
         versions={versions}
         registered={registeredVersions}
         namedAliases={summaryQ.data?.named_aliases ?? {}}
+        labelOf={labelOf}
         onDone={invalidate}
       />
       <RegisterCard task={task} versions={versions} labelOf={labelOf} onDone={() => { invalidate(); qc.invalidateQueries({ queryKey: ["bundles-list", task] }); }} />
@@ -372,12 +371,14 @@ function AliasCard({
   versions,
   registered,
   namedAliases,
+  labelOf,
   onDone,
 }: {
   task: string;
   versions: string[];
   registered?: Set<string>;
   namedAliases: Record<string, RegistryAliasEntry>;
+  labelOf: (version: string) => string;
   onDone: () => void;
 }) {
   const [name, setName] = useState("");
@@ -471,7 +472,7 @@ function AliasCard({
             <option value="">— select —</option>
             {versions.map((v) => (
               <option key={v} value={v} disabled={registered !== undefined && !registered.has(v)}>
-                {v}{registered !== undefined && !registered.has(v) ? " — register first" : ""}
+                {labelOf(v)}{registered !== undefined && !registered.has(v) ? " — register first" : ""}
               </option>
             ))}
           </select>

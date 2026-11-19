@@ -14,7 +14,6 @@ import {
   predictBatch,
   predictionDownloadUrl,
   predictServed,
-  registrySummary,
   retryUnlessNotFound,
   startServing,
   stopServing,
@@ -28,6 +27,7 @@ import type {
 } from "../api/client";
 import { LineageRail } from "../components/LineageRail";
 import { Badge, Card, ErrorNote, JsonView, Stat, fmtNum } from "../components/ui";
+import { useBundleLabel } from "../lib/hooks";
 import { useTask } from "../lib/task-context";
 
 export default function InferencePage() {
@@ -83,39 +83,6 @@ function useModelInputs(initialVersion: string) {
   return { mode, setMode, modelVersion, setModelVersion, alias, setAlias };
 }
 
-/**
- * Alias-aware display label for a model version: ``"{alias(es)} - {version}"``
- * when a named registry alias has been set, otherwise just the version. The
- * Registry page owns the ``["registry-summary", task]`` cache entry, so calling
- * this from the several cards on the Inference page costs one request total.
- */
-function useBundleLabel(task: string): (version: string | null | undefined) => string {
-  const aliasQ = useQuery({
-    queryKey: ["registry-summary", task],
-    queryFn: () => registrySummary(task),
-    enabled: !!task,
-    retry: retryUnlessNotFound,
-  });
-  const aliasByVersion = useMemo(() => {
-    const map = new Map<string, string[]>();
-    for (const [name, entry] of Object.entries(aliasQ.data?.named_aliases ?? {})) {
-      const names = map.get(entry.model_version) ?? [];
-      names.push(name);
-      map.set(entry.model_version, names);
-    }
-    for (const names of map.values()) names.sort();
-    return map;
-  }, [aliasQ.data]);
-  return useMemo(
-    () => (version) => {
-      if (!version) return "—";
-      const aliases = aliasByVersion.get(version);
-      return aliases && aliases.length > 0 ? `${aliases.join(", ")} - ${version}` : version;
-    },
-    [aliasByVersion],
-  );
-}
-
 function ModelPicker({
   task,
   versions,
@@ -161,7 +128,7 @@ function ModelPicker({
             <div className="chips" style={{ marginTop: 6 }}>
               <button
                 type="button"
-                className="chip"
+                className="chip chip-best"
                 title={`Highest ${bestQ.data?.metric ?? "score"} metric: ${bestQ.data?.value ?? "—"}`}
                 onClick={() => setModelVersion(bestVersion!)}
               >

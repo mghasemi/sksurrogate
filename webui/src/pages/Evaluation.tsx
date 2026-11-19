@@ -29,6 +29,7 @@ import {
 import type { BundleSummary, NestedCVJobResult } from "../api/client";
 import { Card, EmptyState, ErrorNote, Loading, Stat, Table, Tabs, fmtNum } from "../components/ui";
 import { JobTracker } from "../components/JobTracker";
+import { useBundleLabel } from "../lib/hooks";
 import { useTask } from "../lib/task-context";
 
 const CHART_COLORS = ["#4f8cff", "#7c5cff", "#34d399", "#fbbf24", "#f87171", "#60a5fa"];
@@ -490,11 +491,8 @@ export default function EvaluationPage() {
     return aliases && aliases.length > 0 ? aliases.join(", ") : version;
   };
 
-  /** Bundle picker label (Nested CV / Diagnostic curves): "{alias(es)} - {version}" when an alias is set, otherwise the version. */
-  const bundleLabelOf = (version: string) => {
-    const aliases = aliasByVersion.get(version);
-    return aliases && aliases.length > 0 ? `${aliases.join(", ")} - ${version}` : version;
-  };
+  /** Bundle picker label (Nested CV / Diagnostic curves): "{alias(es)}-{version}" when an alias is set, otherwise the version. */
+  const bundleLabelOf = useBundleLabel(task);
 
   const bundles = bundleQs.data ?? [];
 

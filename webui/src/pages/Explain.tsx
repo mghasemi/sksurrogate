@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import {
@@ -20,11 +20,10 @@ import {
   explainRow,
   getIntervals,
   listBundles,
-  registrySummary,
-  retryUnlessNotFound,
 } from "../api/client";
 import { LineageRail } from "../components/LineageRail";
 import { Card, EmptyState, ErrorNote, Loading, Stat, fmtNum, fmtPct, fmtSci } from "../components/ui";
+import { useBundleLabel } from "../lib/hooks";
 import { useTask } from "../lib/task-context";
 
 export default function ExplainPage() {
@@ -46,32 +45,8 @@ export default function ExplainPage() {
   const bundles = bundlesQ.data?.bundles ?? [];
   const selected = version || bundles[0] || "";
 
-  // Named registry aliases give bundles human labels in this dropdown; the Registry page
-  // owns the cache entry under the same key, and a 404 just means "no registry state yet".
-  const aliasQ = useQuery({
-    queryKey: ["registry-summary", task],
-    queryFn: () => registrySummary(task),
-    enabled: !!task,
-    retry: retryUnlessNotFound,
-  });
-
-  /** Sorted named aliases pointing at each model version (empty when none has been set). */
-  const aliasByVersion = useMemo(() => {
-    const map = new Map<string, string[]>();
-    for (const [name, entry] of Object.entries(aliasQ.data?.named_aliases ?? {})) {
-      const names = map.get(entry.model_version) ?? [];
-      names.push(name);
-      map.set(entry.model_version, names);
-    }
-    for (const names of map.values()) names.sort();
-    return map;
-  }, [aliasQ.data]);
-
-  /** Dropdown label: "alias - version" when an alias is set, otherwise just the version. */
-  const labelOf = (version: string) => {
-    const aliases = aliasByVersion.get(version);
-    return aliases && aliases.length > 0 ? `${aliases.join(", ")} - ${version}` : version;
-  };
+  // Alias-aware label ("{alias(es)}-{version}"), shared with the other pages.
+  const labelOf = useBundleLabel(task);
 
   const explainMut = useMutation({
     mutationFn: () =>

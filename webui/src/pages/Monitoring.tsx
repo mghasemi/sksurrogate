@@ -24,6 +24,7 @@ import type {
 } from "../api/client";
 import { LineageRail } from "../components/LineageRail";
 import { Badge, Card, ErrorNote, Loading, Stat, Table, fmtNum, fmtPct } from "../components/ui";
+import { useBundleLabel } from "../lib/hooks";
 import { useTask } from "../lib/task-context";
 
 const CHART_COLORS = ["#4f8cff", "#7c5cff", "#34d399", "#fbbf24", "#f87171"];
@@ -83,6 +84,7 @@ export default function MonitoringPage() {
 
 function SummaryCard({ task, versions, initialVersion }: { task: string; versions: string[]; initialVersion: string }) {
   const [version, setVersion] = useState(initialVersion);
+  const labelOf = useBundleLabel(task);
   const q = useQuery<MonitorSummary>({
     queryKey: ["monitor-summary", task, version],
     queryFn: () => monitorSummary(task, version),
@@ -98,7 +100,7 @@ function SummaryCard({ task, versions, initialVersion }: { task: string; version
           <select value={version} onChange={(e) => setVersion(e.target.value)}>
             <option value="">— select —</option>
             {versions.map((v) => (
-              <option key={v}>{v}</option>
+              <option key={v} value={v}>{labelOf(v)}</option>
             ))}
           </select>
         </div>
@@ -124,6 +126,7 @@ function DriftCard({ task, partitions, versions }: { task: string; partitions: s
   const [reference, setReference] = useState("");
   const [current, setCurrent] = useState("");
   const [modelVersion, setModelVersion] = useState("");
+  const labelOf = useBundleLabel(task);
   const [psiThreshold, setPsiThreshold] = useState("0.2");
   const [categoricalThreshold, setCategoricalThreshold] = useState("0.2");
   const [missingnessThreshold, setMissingnessThreshold] = useState("0.1");
@@ -172,7 +175,7 @@ function DriftCard({ task, partitions, versions }: { task: string; partitions: s
           <select value={modelVersion} onChange={(e) => setModelVersion(e.target.value)}>
             <option value="">— none —</option>
             {versions.map((v) => (
-              <option key={v}>{v}</option>
+              <option key={v} value={v}>{labelOf(v)}</option>
             ))}
           </select>
         </div>
@@ -388,6 +391,7 @@ function parseJsonArraySafe(s: string): unknown[] | null {
 
 function PredictionDriftCard({ task, partitions, columns, versions }: { task: string; partitions: string[]; columns: string[]; versions: string[] }) {
   const [version, setVersion] = useState("");
+  const labelOf = useBundleLabel(task);
   const [threshold, setThreshold] = useState("0.2");
   const [bins, setBins] = useState("10");
   const [reference, setReference] = useState<PredictionSource | null>(null);
@@ -418,7 +422,7 @@ function PredictionDriftCard({ task, partitions, columns, versions }: { task: st
           <select value={version} onChange={(e) => setVersion(e.target.value)}>
             <option value="">— select —</option>
             {versions.map((v) => (
-              <option key={v}>{v}</option>
+              <option key={v} value={v}>{labelOf(v)}</option>
             ))}
           </select>
         </div>
@@ -503,6 +507,7 @@ function PredictionDriftCard({ task, partitions, columns, versions }: { task: st
 
 function SubgroupPerformanceCard({ task, partitions, columns, versions }: { task: string; partitions: string[]; columns: string[]; versions: string[] }) {
   const [version, setVersion] = useState("");
+  const labelOf = useBundleLabel(task);
   const [metric, setMetric] = useState<SubgroupMetric>("accuracy");
   const [yTrue, setYTrue] = useState<PredictionSource | null>(null);
   const [yPred, setYPred] = useState<PredictionSource | null>(null);
@@ -533,7 +538,7 @@ function SubgroupPerformanceCard({ task, partitions, columns, versions }: { task
           <select value={version} onChange={(e) => setVersion(e.target.value)}>
             <option value="">— select —</option>
             {versions.map((v) => (
-              <option key={v}>{v}</option>
+              <option key={v} value={v}>{labelOf(v)}</option>
             ))}
           </select>
         </div>
@@ -753,6 +758,7 @@ function FairnessCard({ task }: { task: string }) {
 
 function DelayedLabelCard({ task, versions }: { task: string; versions: string[] }) {
   const [predictions, setPredictions] = useState("");
+  const labelOf = useBundleLabel(task);
   const [labels, setLabels] = useState("");
   const [modelVersion, setModelVersion] = useState("");
   const [taskType, setTaskType] = useState<"classification" | "regression">("classification");
@@ -798,7 +804,7 @@ function DelayedLabelCard({ task, versions }: { task: string; versions: string[]
             <select value={modelVersion} onChange={(e) => setModelVersion(e.target.value)}>
               <option value="">— none —</option>
               {versions.map((v) => (
-                <option key={v}>{v}</option>
+                <option key={v} value={v}>{labelOf(v)}</option>
               ))}
             </select>
           </div>
