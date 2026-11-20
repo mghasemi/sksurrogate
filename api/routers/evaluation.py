@@ -21,7 +21,7 @@ import numpy as np
 from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel, Field
 
-from SKSurrogate import build_cv, load_bundle, mltrack, save_bundle
+from SKSurrogate import BASELINE_METHODS, build_cv, load_bundle, mltrack, save_bundle
 
 from ..config import settings
 from ..columns import drop_ignored, read_ignored_columns
@@ -203,6 +203,8 @@ class BacktestRequest(BaseModel):
     scoring: str | None = None
     train_partition: str = "train"
     features: dict[str, object] = Field(default_factory=dict)
+    seasonality: int = Field(default=1, ge=1)
+    baselines: list[str] | None = None
     cost_limit: int = Field(default=64, ge=1, le=512)
 
 
@@ -225,6 +227,10 @@ def _nested_cv_scorer(scoring, pinball_alpha):
         )
     if scoring is None:
         return None
+    if scoring in ("neg_smape",):
+        from ..training import build_custom_scorer
+
+        return build_custom_scorer(scoring)[0]
 
     from sklearn.metrics import get_scorer
 
@@ -410,6 +416,8 @@ def run_backtest(task_name: str, body: BacktestRequest):
                 train_partition=body.train_partition,
                 exclude_columns=read_ignored_columns(task_name),
                 feature_kwargs=body.features or None,
+                seasonality=body.seasonality,
+                baselines=body.baselines if body.baselines is not None else BASELINE_METHODS,
                 cost_limit=body.cost_limit,
             )
         result["model_version"] = bundle.model_version

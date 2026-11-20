@@ -31,6 +31,8 @@ from peewee import (
 )
 from datetime import datetime
 
+from .forecast_metrics import BASELINE_METHODS
+
 from .temporal import (
     TEMPORAL_METADATA_KEY,
     TEMPORAL_REPORT_METADATA_KEY,
@@ -1553,6 +1555,8 @@ class mltrack(object):
         train_partition="train",
         exclude_columns=None,
         feature_kwargs=None,
+        seasonality=1,
+        baselines=BASELINE_METHODS,
         cost_limit=64,
         max_records=5000,
         store=True,
@@ -1585,6 +1589,11 @@ class mltrack(object):
             multi-step evaluation needs the serving state (phase P6).
         :param feature_kwargs: forwarded to ``make_supervised`` (e.g. ``lags``,
             ``rolling``, ``calendar``); defaults to ``lags=[horizon]``.
+        :param seasonality: season length in steps, used both for the MASE
+            denominator and by the ``seasonal_naive`` baseline.
+        :param baselines: baseline methods scored on the same origins
+            (``naive``, ``seasonal_naive``, ``drift``, ``mean``); a model that
+            cannot beat them has not earned the word "forecast".
         :param cost_limit: hard ceiling on the number of fits, so a large grid of
             origins fails with a clear message instead of running for hours.
         :param max_records: how many per-origin records to persist.
@@ -1594,6 +1603,13 @@ class mltrack(object):
         import numpy as np
         from sklearn.base import clone
         from sklearn.metrics import mean_absolute_error, mean_squared_error
+
+        from .forecast_metrics import (
+            baseline_prediction,
+            forecast_ranking,
+            mase_denominator,
+            smape,
+        )
 
         spec_dict = self.GetTemporalSpec()
         if spec_dict is None:
@@ -1610,6 +1626,18 @@ class mltrack(object):
             raise ValueError(
                 "backtest evaluates the 'direct' strategy only today; recursive "
                 "multi-step evaluation requires the serving state (phase P6)"
+            )
+        seasonality = int(seasonality)
+        if seasonality < 1:
+            raise ValueError("seasonality must be >= 1")
+        baseline_methods = tuple(baselines or ())
+        unknown_baselines = [
+            method for method in baseline_methods if method not in BASELINE_METHODS
+        ]
+        if unknown_baselines:
+            raise ValueError(
+                "unknown baseline method(s) %s; expected one of %s"
+                % (", ".join(unknown_baselines), ", ".join(BASELINE_METHODS))
             )
 
         # The control plane lists the temporal columns in `ignored_columns` so they
@@ -1767,17 +1795,86 @@ class mltrack(object):
                     }
                 )
 
-        def _metrics(records):
+        # MASE needs the in-sample scale of each origin's own training history, and
+        # the naive baselines need that history too. Both come from the partition,
+        # not from the design matrix (which only carries features).
+        history = {}
+        if spec.series_id is None:
+            ordered = frame.sort_values(spec.time_column)
+            history["None"] = (
+                {str(value): position for position, value in enumerate(ordered[spec.time_column])},
+                ordered[target].to_numpy(dtype="float64"),
+            )
+        else:
+            for key, group in frame.groupby(spec.series_id, sort=False):
+                ordered = group.sort_values(spec.time_column)
+                history[str(_scalar(key))] = (
+                    {
+                        str(value): position
+                        for position, value in enumerate(ordered[spec.time_column])
+                    },
+                    ordered[target].to_numpy(dtype="float64"),
+                )
+
+        for record in origin_records:
+            times, values = history[str(record["series"])]
+            position = times.get(record["origin_time"])
+            if position is None:
+                record["mase_scale"] = None
+                record["baselines"] = {}
+                continue
+            insample = values[: position + 1]
+            try:
+                scale = mase_denominator(insample, seasonality)
+            except ValueError:
+                scale = float("nan")
+            record["mase_scale"] = float(scale) if np.isfinite(scale) else None
+            predictions = {}
+            for method in baseline_methods:
+                try:
+                    predictions[method] = baseline_prediction(
+                        insample, method, horizon, seasonality
+                    )
+                except ValueError:
+                    predictions[method] = None
+            record["baselines"] = predictions
+
+        def _metrics(records, predicted_values=None):
             if not records:
-                return {"rows": 0, "mae": None, "rmse": None, "bias": None}
+                return {
+                    "rows": 0,
+                    "mae": None,
+                    "rmse": None,
+                    "bias": None,
+                    "smape": None,
+                    "mase": None,
+                }
             actual = np.asarray([record["y_true"] for record in records], dtype=float)
-            predicted = np.asarray([record["y_pred"] for record in records], dtype=float)
-            return {
+            if predicted_values is None:
+                predicted = np.asarray([record["y_pred"] for record in records], dtype=float)
+            else:
+                predicted = np.asarray(predicted_values, dtype=float)
+            block = {
                 "rows": int(actual.size),
                 "mae": float(mean_absolute_error(actual, predicted)),
                 "rmse": float(np.sqrt(mean_squared_error(actual, predicted))),
                 "bias": float(np.mean(predicted - actual)),
+                "smape": float(smape(actual, predicted)),
+                "mase": None,
             }
+            scales = np.asarray(
+                [
+                    record["mase_scale"] if record.get("mase_scale") is not None else np.nan
+                    for record in records
+                ],
+                dtype=float,
+            )
+            usable = np.isfinite(scales) & (scales > 0)
+            if usable.any():
+                block["mase"] = float(
+                    np.mean(np.abs(actual[usable] - predicted[usable]) / scales[usable])
+                )
+            return block
 
         per_series = {}
         for record in origin_records:
@@ -1785,6 +1882,27 @@ class mltrack(object):
         per_horizon = {}
         for record in origin_records:
             per_horizon.setdefault(str(record["target_step"]), []).append(record)
+
+        # Baselines are scored on exactly the same origins, so the comparison is
+        # apples to apples: same folds, same horizon, same MASE scale.
+        baseline_metrics = {}
+        for method in baseline_methods:
+            usable = [
+                (record, record["baselines"].get(method))
+                for record in origin_records
+                if record["baselines"].get(method) is not None
+            ]
+            if not usable:
+                baseline_metrics[method] = _metrics([])
+                continue
+            baseline_metrics[method] = _metrics(
+                [record for record, _ in usable],
+                [prediction for _, prediction in usable],
+            )
+            baseline_metrics[method]["scored_origins"] = len(usable)
+            baseline_metrics[method]["skipped_origins"] = int(
+                len(origin_records) - len(usable)
+            )
 
         config = {
             "task_name": self.task,
@@ -1797,6 +1915,8 @@ class mltrack(object):
             "refit": refit,
             "strategy": strategy,
             "scoring": scoring_label,
+            "seasonality": seasonality,
+            "baselines": list(baseline_methods),
             "feature_kwargs": {
                 key: value for key, value in builder_kwargs.items()
             },
@@ -1808,6 +1928,18 @@ class mltrack(object):
         digest = hashlib.sha1(
             _json.dumps(config, sort_keys=True, default=str).encode("utf-8")
         ).hexdigest()[:12]
+        ranking = forecast_ranking(
+            [
+                {"label": "model", "metrics": _metrics(origin_records)},
+                *[
+                    {"label": "baseline:%s" % method, "metrics": metrics}
+                    for method, metrics in baseline_metrics.items()
+                    if metrics.get("rows")
+                ],
+            ],
+            metric="mase",
+            baseline="seasonal_naive" if seasonality > 1 else "naive",
+        )
         result = {
             "task_name": self.task,
             "config": config,
@@ -1821,6 +1953,7 @@ class mltrack(object):
             ),
             "folds": fold_records,
             "pooled": _metrics(origin_records),
+            "baselines": baseline_metrics,
             "per_series": {
                 key: _metrics(records) for key, records in per_series.items()
             },
@@ -1828,6 +1961,7 @@ class mltrack(object):
                 key: _metrics(records) for key, records in per_horizon.items()
             },
             "skipped_series": skipped,
+            "ranking": ranking,
             "design": {
                 "rows": int(len(design.X)),
                 "dropped_rows": int(design.dropped_rows),

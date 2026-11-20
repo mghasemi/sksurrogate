@@ -102,6 +102,41 @@ CV approximation.
 * **Tests** — ``tests/test_backtest.py`` (14 tests) plus 2 seasonal-lag tests in
   ``tests/test_forecast_features.py``.
 
+Forecast metrics and naive baselines (time-series phase 4)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``SKSurrogate/forecast_metrics.py`` adds the metrics that make a forecast score
+interpretable, and scores the naive baselines on the same origins as the model.
+
+* **Point metrics** — ``mae``, ``rmse``, ``bias``, ``smape`` (percent, zero-safe),
+  ``mase`` and ``rmse_scaled``. MASE is scaled by the in-sample mean absolute
+  ``seasonality``-step difference, so a seasonal-naive forecast scores exactly 1.0;
+  a constant series has no scale and yields ``nan`` rather than a fabricated number.
+* **Quantile/interval metrics** — ``pinball_loss`` (0.5 quantile equals half the MAE),
+  ``winkler_score`` (width plus ``2/alpha`` per miss), ``interval_coverage`` and
+  ``interval_width``; ``summarize`` bundles them with optional ``per_series`` and
+  ``per_horizon`` blocks and a ``pooled`` / ``macro`` aggregation choice.
+* **Baselines** — ``baseline_prediction`` implements ``naive``, ``seasonal_naive``
+  (phase-correct for any horizon, not just ``h == m``), ``drift`` and ``mean``.
+  ``mltrack.backtest`` scores them on the identical origins and returns
+  ``result["baselines"]`` with the same MAE/RMSE/bias/sMAPE/MASE block as the model.
+* **Ranking guard** — ``forecast_ranking`` orders candidates by MASE and distinguishes
+  parity (MASE == 1, ``beats_baseline: false``, ``worse_than_baseline: false``) from
+  failure (> 1), and lists non-finite entries as ``unranked`` instead of sorting them
+  to the bottom. Every backtest result carries ``result["ranking"]``.
+* **Per-origin provenance** — each origin record now carries ``mase_scale`` (its
+  in-sample denominator) and ``baselines`` (the baseline predictions), so a reported
+  MASE can be audited from the record itself.
+* **Scoring options** — ``neg_smape`` is available as a learning-curve and nested-CV
+  scorer and appears in a new "Forecast" group of ``standard_scoring_options``.
+  MASE is deliberately **not** a scorer: it needs the in-sample history, which a
+  ``(y_true, y_pred)`` scorer never sees — it is a backtest metric.
+* **API** — ``POST /api/evaluation/{task}/backtest`` accepts ``seasonality`` and
+  ``baselines``.
+* **Docs** — new "Forecast metrics and baselines" section in ``docs/forecasting.rst``,
+  including why MASE is not a scikit-learn scorer.
+* **Tests** — ``tests/test_forecast_metrics.py`` (31 tests).
+
 Pipeline-space benchmark track (C-space)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

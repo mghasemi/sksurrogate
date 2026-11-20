@@ -16,11 +16,11 @@ before: no timestamp inference, no re-ordering, no splitter restrictions.
    Current scope (this page documents what ships today): the temporal **data
    contract** — declaration, validation, metadata, ignore-list wiring and
    splitter enforcement — and the **leakage-safe feature builder**
-   (``ForecastFeatureBuilder`` / ``make_supervised``) and **rolling-origin
-   backtesting** (``RollingOriginSplit`` / ``mltrack.backtest``). Forecast-specific
-   metrics (MASE, sMAPE, pinball/Winkler) and naive baselines are the next phase and
-   are not available yet; backtests report MAE/RMSE/bias plus an optional
-   scikit-learn scorer.
+   (``ForecastFeatureBuilder`` / ``make_supervised``), **rolling-origin backtesting**
+   (``RollingOriginSplit`` / ``mltrack.backtest``) and **forecast metrics with naive
+   baselines** (MASE, sMAPE, pinball/Winkler, naive/seasonal-naive/drift/mean).
+   Horizon-aware prediction intervals, multi-step inference and the forecast UI are
+   later phases.
 
 Declaring a temporal spec
 -------------------------
@@ -238,7 +238,9 @@ forward::
         feature_kwargs={"lags": [7, 14], "rolling": [{"window": 28, "stats": ["mean"]}]},
     )
 
-    result["pooled"]        # {"rows", "mae", "rmse", "bias"}
+    result["pooled"]        # mae, rmse, bias, smape, mase for the model
+    result["baselines"]     # the same metrics for each naive baseline
+    result["ranking"]       # MASE ordering with the "worse than baseline" flags
     result["folds"]         # per-fold score/metrics, train/test sizes, whether it refitted
     result["origins"]       # per-origin series, origin_time, target_time, y_true, y_pred
     result["per_series"]    # the same metrics per series on a panel
@@ -272,6 +274,80 @@ than silently returning one-step numbers labelled as multi-step.
 the estimator on the design it builds, so a bundle trained on a different feature
 set will fail on width rather than produce a misleading score. Keep the
 ``feature_kwargs`` in the request/bundle metadata alongside the model.
+
+
+Forecast metrics and baselines
+------------------------------
+
+Point metrics (``SKSurrogate.forecast_metrics``):
+
+* **MAE** $\frac1n\sum\lvert y_t-\hat y_t\rvert$ and **RMSE**
+  $\sqrt{\frac1n\sum(y_t-\hat y_t)^2}$ — in the target's units.
+* **bias** $\frac1n\sum(\hat y_t-y_t)$ — positive means over-forecasting.
+* **sMAPE**, reported in percent:
+  $\frac{100}{n}\sum \frac{2\lvert\hat y_t-y_t\rvert}
+  {\lvert\hat y_t\rvert+\lvert y_t\rvert}$.
+  A term where both values are zero contributes 0, never ``inf``.
+* **MASE** $\frac{\frac1n\sum\lvert y_t-\hat y_t\rvert}
+  {\frac{1}{n-m}\sum_t\lvert y_t-y_{t-m}\rvert}$,
+  where the denominator is the mean absolute $m$-step difference of the **in-sample
+  history**. Because that scale is fixed by the history, a seasonal-naive forecast
+  scores exactly 1.0 — which is what makes "worse than naive" a precise statement.
+* **RMSE scaled** — the same scaling applied to RMSE.
+
+Interval and quantile metrics:
+
+* **pinball_loss(y, ŷ, q)** — the quantile loss; at $q=0.5$ it is exactly
+  $\tfrac12\,\mathrm{MAE}$.
+* **winkler_score(y, lower, upper, α)** — interval width plus
+  $\tfrac{2}{α}$ times each miss, for central intervals at level $1-α$.
+* **interval_coverage** and **interval_width** — empirical coverage and mean width.
+
+``summarize(...)`` returns one block with all of these, plus optional
+``per_series`` / ``per_horizon`` groupings. Its ``aggregation`` argument chooses
+what ``primary`` reports: ``"pooled"`` (every prediction weighted equally — honest for
+one series, misleading across series of different magnitude) or ``"macro"`` (each
+series counts once). The per-series block is always returned alongside it.
+
+Baselines
+~~~~~~~~~
+
+Every backtest scores four naive baselines on **the same origins** as the model:
+
+* ``naive`` — the last observation, $\hat y_{T+h} = y_T$;
+* ``seasonal_naive`` — the same phase one season earlier,
+  $\hat y_{T+h} = y_{T+h-m\lceil h/m\rceil}$ (for $h=m$ this is $y_T$);
+* ``drift`` — last value plus the average change per step, times $h$;
+* ``mean`` — the arithmetic mean of the history.
+
+``baseline_prediction(history, method, horizon, seasonality)`` computes any of them
+from an ordered history array; ``baselines=(...)`` on ``backtest`` selects which are
+scored (default: all four). A model that cannot beat ``seasonal_naive`` on MASE has
+not earned the word "forecast", and the result says so:
+
+.. code-block:: python
+
+    result["ranking"]
+    # {"metric": "mase",
+    #  "best": {"label": "baseline:seasonal_naive", "value": 1.0,
+    #           "beats_baseline": False, "worse_than_baseline": False},
+    #  "ranked": [...], "unranked": [], "winner_beats_baseline": False}
+
+The guard distinguishes parity from failure: MASE **equal** to 1 is exact parity with
+the benchmark (``beats_baseline: false``, ``worse_than_baseline: false``), while
+``> 1`` is worse. Candidates whose metric is missing or non-finite are listed under
+``unranked`` instead of being sorted to the bottom, so a broken run cannot look like
+a bad one.
+
+MASE is not a scikit-learn scorer
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+MASE needs the in-sample history of each training window, and a scikit-learn scorer
+only ever sees ``(y_true, y_pred)``. Rather than invent a denominator, MASE is
+computed by the rolling-origin backtest, where the training window of every origin is
+known. For plain CV and learning curves, **sMAPE** is available as
+``neg_smape`` (sign-flipped, as scikit-learn scorers are), and pinball loss via
+``neg_mean_pinball_loss`` with an explicit ``pinball_alpha``.
 
 Control-plane endpoints
 -----------------------

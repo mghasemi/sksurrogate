@@ -130,12 +130,44 @@ def standard_scoring_options():
     groups = {"Classification": [], "Regression": [], "Clustering": [], "Other": []}
     for name in sorted(get_scorer_names()):
         groups[_scoring_family(name)].append({"value": name, "label": _scoring_label(name)})
-    return [{"label": label, "options": options} for label, options in groups.items() if options]
+    # Project-defined metrics that scikit-learn does not ship. MASE is not here on
+    # purpose: it needs the in-sample history of the fold, so it is a backtest
+    # metric (mltrack.backtest), not a (y_true, y_pred) scorer.
+    forecast = [
+        {"value": "neg_smape", "label": "sMAPE (%) (negated)"},
+    ]
+    options = [
+        {"label": label, "options": entries}
+        for label, entries in groups.items()
+        if entries
+    ]
+    options.append({"label": "Forecast", "options": forecast})
+    return options
 
 
 #: Curated short-list of metrics offered as learning-curve tabs on the Evaluation
 #: page. `negate` marks `neg_*` scikit-learn scorers whose sign is flipped so the
 #: curve plots the metric in its natural units (RMSE rather than "… (negated)").
+#: Scorers this project defines because scikit-learn has no equivalent. They are
+#: accepted by the learning-curve and nested-CV paths but are not in
+#: ``get_scorer_names()``. MASE is deliberately absent: it scales by the in-sample
+#: seasonal difference, which a ``(y_true, y_pred)`` scorer never sees — compute it
+#: from a rolling-origin backtest (``mltrack.backtest``), where the training window
+#: is known per origin.
+_CUSTOM_SCORERS = ("neg_smape",)
+
+
+def build_custom_scorer(name):
+    """Return ``(scorer, higher_is_better)`` for a project-defined metric name."""
+    from sklearn.metrics import make_scorer
+
+    from SKSurrogate.forecast_metrics import smape
+
+    if name == "neg_smape":
+        return make_scorer(smape, greater_is_better=False), False
+    raise ValueError("Unknown custom scorer %r" % (name,))
+
+
 _LEARNING_CURVE_METRICS = {
     "Classification": [
         {"value": "accuracy", "label": "Accuracy", "negate": False, "higher_is_better": True},
@@ -154,6 +186,12 @@ _LEARNING_CURVE_METRICS = {
             "negate": True,
             "higher_is_better": False,
             "requires_alpha": True,
+        },
+        {
+            "value": "neg_smape",
+            "label": "sMAPE (%)",
+            "negate": True,
+            "higher_is_better": False,
         },
         {"value": "explained_variance", "label": "Explained Variance", "negate": False, "higher_is_better": True},
     ],
@@ -184,7 +222,7 @@ def learning_curve_metric_options(family):
             **({"requires_alpha": True} if entry.get("requires_alpha") else {}),
         }
         for entry in entries
-        if entry["value"] in available or entry.get("requires_alpha")
+        if entry["value"] in available or entry.get("requires_alpha") or entry["value"] in _CUSTOM_SCORERS
     ]
     return {
         "family": family,
@@ -250,6 +288,12 @@ def compute_learning_curve(
             alpha=pinball_alpha,
             greater_is_better=False,
         )
+    elif scoring in _CUSTOM_SCORERS:
+        if pinball_alpha is not None:
+            raise bad_request(
+                "pinball_alpha is only valid when scoring is 'neg_mean_pinball_loss'"
+            )
+        scorer = build_custom_scorer(scoring)[0]
     else:
         if pinball_alpha is not None:
             raise bad_request(

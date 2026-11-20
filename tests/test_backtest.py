@@ -344,6 +344,8 @@ class TestBacktestEndpoint(unittest.TestCase):
                 n_splits=4,
                 step=3,
                 features={"lags": [3]},
+                seasonality=3,
+                baselines=["naive", "seasonal_naive"],
             ),
         )
         self.assertEqual(response["status"], "queued")
@@ -354,6 +356,11 @@ class TestBacktestEndpoint(unittest.TestCase):
         self.assertEqual(len(result["origins"]), 12)
         self.assertLess(result["pooled"]["mae"], 0.05)
         self.assertEqual(result["model_version"], "v1")
+        # P4: baselines scored on the same origins, and a MASE ranking guard.
+        self.assertIn("naive", result["baselines"])
+        self.assertEqual(set(result["baselines"]), {"naive", "seasonal_naive"})
+        self.assertIn("ranking", result)
+        self.assertEqual(result["config"]["seasonality"], 3)
 
         from SKSurrogate import load_bundle
 
