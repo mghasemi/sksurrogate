@@ -180,6 +180,32 @@ class NestedCVRequest(BaseModel):
     confidence_level: float = Field(default=0.95, gt=0.0, lt=1.0)
 
 
+class BacktestRequest(BaseModel):
+    """Rolling-origin backtest parameters for one bundle.
+
+    The bundle's estimator is cloned per fit, so a pre-fitted bundle is fine: the
+    backtest refits on the generated design matrix. ``features`` is forwarded to
+    ``make_supervised`` (``lags``, ``rolling``, ``diffs``, ``calendar``,
+    ``fourier``, ``exogenous``); it must match how the bundle's features were
+    built, otherwise the estimator sees a different width.
+
+    Runs as a background job because it fits once per origin.
+    """
+
+    model_version: str | None = None
+    alias: str | None = None
+    horizon: int | None = Field(default=None, ge=1)
+    n_splits: int = Field(default=5, ge=1, le=50)
+    step: int | None = Field(default=None, ge=1)
+    min_train: int | None = Field(default=None, ge=1)
+    expanding: bool = True
+    refit: str = "every_fold"
+    scoring: str | None = None
+    train_partition: str = "train"
+    features: dict[str, object] = Field(default_factory=dict)
+    cost_limit: int = Field(default=64, ge=1, le=512)
+
+
 def _nested_cv_scorer(scoring, pinball_alpha):
     if scoring == "neg_mean_pinball_loss":
         if pinball_alpha is None:
@@ -347,6 +373,100 @@ def run_nested_cv(task_name: str, body: NestedCVRequest):
     )
     return {"job_id": job_id, "status": "queued"}
 
+
+
+@router.post("/{task_name}/backtest")
+def run_backtest(task_name: str, body: BacktestRequest):
+    """Submit a rolling-origin backtest for one bundle and return its job id.
+
+    The job re-opens the tracker, builds the design matrix from the registered
+    partition with the requested feature configuration, and walks origins forward
+    with ``mltrack.backtest``: per-origin truth/prediction records plus pooled,
+    per-fold, per-series and per-horizon MAE/RMSE/bias. The result lands in the
+    job record and is appended to the bundle's ``evaluations`` metadata.
+    """
+    if (body.model_version is None) == (body.alias is None):
+        raise bad_request("Exactly one of model_version or alias must be provided")
+    scoring_fn = _nested_cv_scorer(body.scoring, None)
+    bundle = resolve_bundle(
+        task_name,
+        model_version=body.model_version,
+        alias=body.alias,
+        strict_dependencies=False,
+    )
+
+    def _task():
+        with open_tracker(task_name) as tracker:
+            result = tracker.backtest(
+                bundle.model,
+                horizon=body.horizon,
+                n_splits=body.n_splits,
+                step=body.step,
+                min_train=body.min_train,
+                expanding=body.expanding,
+                refit=body.refit,
+                scoring=scoring_fn,
+                scoring_label=body.scoring,
+                train_partition=body.train_partition,
+                exclude_columns=read_ignored_columns(task_name),
+                feature_kwargs=body.features or None,
+                cost_limit=body.cost_limit,
+            )
+        result["model_version"] = bundle.model_version
+        result["task_name"] = task_name
+
+        bundle.metadata = dict(bundle.metadata or {})
+        evaluations = list(bundle.metadata.get("evaluations", []))
+        evaluations.append(
+            {
+                "type": "rolling_origin_backtest",
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+                "protocol": {
+                    "horizon": result["config"]["horizon"],
+                    "n_splits": result["config"]["n_splits"],
+                    "step": result["config"]["step"],
+                    "expanding": result["config"]["expanding"],
+                    "refit": result["config"]["refit"],
+                    "scoring": body.scoring,
+                    "features": body.features,
+                },
+                "metrics": {
+                    "mean_fold_score": result.get("mean_fold_score"),
+                    "pooled": result.get("pooled"),
+                },
+            }
+        )
+        bundle.metadata["evaluations"] = evaluations[-20:]
+        local_bundle_path = (
+            settings.task_bundles_dir(task_name)
+            / (safe_segment(bundle.model_version, "model version") + ".bundle")
+        )
+        registry_bundle_path = (
+            settings.registry_dir
+            / task_name
+            / (safe_segment(bundle.model_version, "model version") + ".bundle")
+        )
+        bundle_paths = (
+            (registry_bundle_path, local_bundle_path)
+            if body.alias is not None
+            else (local_bundle_path, registry_bundle_path)
+        )
+        bundle_path = next((path for path in bundle_paths if path.exists()), None)
+        if bundle_path is None:
+            raise FileNotFoundError(
+                "Resolved bundle %r has no persistent bundle file"
+                % bundle.model_version
+            )
+        save_bundle(bundle, bundle_path)
+        return result
+
+    job_id = job_manager.submit(
+        task_name,
+        "backtest",
+        lambda job_id: _task,
+        metadata_factory=lambda job_id: {"request": body.model_dump(mode="json")},
+    )
+    return {"job_id": job_id, "status": "queued"}
 
 def _positive_scores(model, X_test):
     """Probability (or normalized decision value) of the positive class for ROC/calibration."""

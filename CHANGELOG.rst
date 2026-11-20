@@ -66,6 +66,42 @@ code rather than documented and hoped for.
   leakage-verification sections.
 * **Tests** — ``tests/test_forecast_features.py`` (22 tests).
 
+Rolling-origin backtesting (time-series phase 3)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Forecast-quality evaluation is now a rolling-origin walk-forward, not a fixed-window
+CV approximation.
+
+* **`RollingOriginSplit`** (``SKSurrogate/temporal.py``) states the horizon directly:
+  each test window is exactly ``horizon`` steps, origins advance by ``step``, and the
+  training window either expands or slides a fixed ``min_train``. Registered in
+  ``TEMPORAL_CV_SPLITTERS``, serializes through ``cv_to_spec``/``build_cv`` and renders
+  in ``cv_param_defs`` (including the optional ``min_train``).
+* **`rolling_origin_indices`** is the single geometry source; short series raise a
+  message naming the geometry instead of silently shrinking.
+* **`mltrack.backtest`** builds the design matrix with the feature builder, walks
+  origins, and returns per-origin records (series, origin/target time, y_true, y_pred),
+  per-fold scores and MAE/RMSE/bias, pooled and per-series/per-horizon aggregates, and
+  the features used. Refit policies are enforced by counting fits: ``"every_fold"``,
+  ``"first"``, ``"every:k"``. ``cost_limit`` turns an oversized run into a clear error,
+  and the result is persisted under ``backtest:<config hash>``.
+* **Panel semantics** — with a ``series_id`` each series gets its own origins, the model
+  is fitted on the union of the series' training windows, and series too short for the
+  geometry are listed in ``skipped_series``.
+* **API** — ``POST /api/evaluation/{task}/backtest`` queues the backtest for a bundle
+  (``model_version`` or ``alias``, horizon, n_splits, step, refit, features) and appends
+  a ``rolling_origin_backtest`` entry to the bundle's ``evaluations`` metadata.
+* **`seasonal_lags`** — readability alias for a lag at the season period: column
+  ``<target>__seasonal_lag_<p>``, ``op="seasonal_lag"`` in the provenance, same horizon
+  validation as any other lag.
+* **Known limit** — only the ``direct`` strategy is evaluated; ``strategy="recursive"``
+  raises until multi-step inference lands (phase 6), rather than reporting one-step
+  numbers as multi-step.
+* **Docs** — ``docs/forecasting.rst`` gains the backtesting section and the backtest
+  endpoint row.
+* **Tests** — ``tests/test_backtest.py`` (14 tests) plus 2 seasonal-lag tests in
+  ``tests/test_forecast_features.py``.
+
 Pipeline-space benchmark track (C-space)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

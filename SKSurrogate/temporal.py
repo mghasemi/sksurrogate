@@ -728,6 +728,7 @@ class ForecastFeatureBuilder(BaseEstimator, TransformerMixin):
         spec: Any,
         target: str,
         lags: Any = (1,),
+        seasonal_lags: Any = (),
         rolling: Any = (),
         diffs: Any = (),
         pct_changes: Any = (),
@@ -740,6 +741,7 @@ class ForecastFeatureBuilder(BaseEstimator, TransformerMixin):
         self.spec = spec
         self.target = target
         self.lags = lags
+        self.seasonal_lags = seasonal_lags
         self.rolling = rolling
         self.diffs = diffs
         self.pct_changes = pct_changes
@@ -751,12 +753,23 @@ class ForecastFeatureBuilder(BaseEstimator, TransformerMixin):
 
     # -- validation -------------------------------------------------------
     def _resolved(self):
-        """Normalize constructor arguments into validated structures."""
+        """Normalize constructor arguments into a validated options mapping.
+
+        A mapping rather than a tuple: every operation added here would otherwise
+        shift the unpacking in ``fit`` and ``transform`` at the same time.
+        """
         spec = TemporalSpec.from_dict(self.spec)
         lags = tuple(sorted({int(lag) for lag in (self.lags or ())}))
         if any(lag < 1 for lag in lags):
             raise ValueError("lags must be >= 1")
-        too_short = [lag for lag in lags if lag < spec.horizon]
+        seasonal_lags = tuple(
+            sorted({int(period) for period in (self.seasonal_lags or ())})
+        )
+        if any(period < 1 for period in seasonal_lags):
+            raise ValueError("seasonal_lags periods must be >= 1")
+        # A seasonal lag is just a lag with a season-length name; the same
+        # horizon rule applies, so it is validated once, here.
+        too_short = [lag for lag in lags + seasonal_lags if lag < spec.horizon]
         if too_short:
             raise ValueError(
                 "lag(s) %s are shorter than the forecast horizon %d: a lag below "
@@ -797,13 +810,23 @@ class ForecastFeatureBuilder(BaseEstimator, TransformerMixin):
             min_periods = int(min_periods)
             if min_periods < 1:
                 raise ValueError("min_periods must be >= 1")
-        return spec, lags, rolling, diffs, pct_changes, calendar, fourier, exogenous, min_periods
+        return {
+            "spec": spec,
+            "lags": lags,
+            "seasonal_lags": seasonal_lags,
+            "rolling": rolling,
+            "diffs": diffs,
+            "pct_changes": pct_changes,
+            "calendar": calendar,
+            "fourier": fourier,
+            "exogenous": exogenous,
+            "min_periods": min_periods,
+        }
 
     def fit(self, X: Any, y: Any = None):
         """Validate the frame, the columns and the horizon rules; store provenance."""
-        spec, lags, rolling, diffs, pct_changes, calendar, fourier, exogenous, _ = (
-            self._resolved()
-        )
+        options = self._resolved()
+        spec = options["spec"]
         frame = self._as_frame(X)
         required = [spec.time_column]
         if spec.series_id is not None:
@@ -815,12 +838,16 @@ class ForecastFeatureBuilder(BaseEstimator, TransformerMixin):
                 "ForecastFeatureBuilder is missing required column(s): %s"
                 % ", ".join(missing)
             )
-        missing_exog = [column for column in exogenous if column not in frame.columns]
+        missing_exog = [
+            column for column in options["exogenous"] if column not in frame.columns
+        ]
         if missing_exog:
             raise ValueError(
                 "exogenous column(s) not found: %s" % ", ".join(missing_exog)
             )
-        if calendar and not pd.api.types.is_datetime64_any_dtype(frame[spec.time_column]):
+        if options["calendar"] and not pd.api.types.is_datetime64_any_dtype(
+            frame[spec.time_column]
+        ):
             raise ValueError(
                 "calendar features require a datetime time column; %r is not one"
                 % spec.time_column
@@ -828,17 +855,16 @@ class ForecastFeatureBuilder(BaseEstimator, TransformerMixin):
         # Ordering is the contract's job: fail here rather than build features on
         # a shuffled frame, where every lag silently reads the wrong row.
         validate_temporal_frame(frame, spec)
-        self.feature_specs_ = self._feature_specs(
-            spec, lags, rolling, diffs, pct_changes, calendar, fourier, exogenous
-        )
+        self.feature_specs_ = self._feature_specs(options)
         self.n_features_in_ = len(frame.columns)
         self.temporal_spec_ = spec
         return self
 
-    def _feature_specs(self, spec, lags, rolling, diffs, pct_changes, calendar, fourier, exogenous):
+    def _feature_specs(self, options):
+        spec = options["spec"]
         horizon = spec.horizon
         specs = []
-        for lag in lags:
+        for lag in options["lags"]:
             specs.append(
                 FeatureSpec(
                     name="%s__lag_%d" % (self.target, lag),
@@ -847,7 +873,17 @@ class ForecastFeatureBuilder(BaseEstimator, TransformerMixin):
                     shift=lag,
                 )
             )
-        for window, stats in rolling:
+        for period in options["seasonal_lags"]:
+            specs.append(
+                FeatureSpec(
+                    name="%s__seasonal_lag_%d" % (self.target, period),
+                    op="seasonal_lag",
+                    column=self.target,
+                    shift=period,
+                    params={"period": period},
+                )
+            )
+        for window, stats in options["rolling"]:
             for stat in stats:
                 specs.append(
                     FeatureSpec(
@@ -858,7 +894,7 @@ class ForecastFeatureBuilder(BaseEstimator, TransformerMixin):
                         window=window,
                     )
                 )
-        for step in diffs:
+        for step in options["diffs"]:
             specs.append(
                 FeatureSpec(
                     name="%s__diff_%d" % (self.target, step),
@@ -868,7 +904,7 @@ class ForecastFeatureBuilder(BaseEstimator, TransformerMixin):
                     params={"step": step},
                 )
             )
-        for step in pct_changes:
+        for step in options["pct_changes"]:
             specs.append(
                 FeatureSpec(
                     name="%s__pct_change_%d" % (self.target, step),
@@ -878,10 +914,10 @@ class ForecastFeatureBuilder(BaseEstimator, TransformerMixin):
                     params={"step": step},
                 )
             )
-        for name in calendar:
+        for name in options["calendar"]:
             specs.append(FeatureSpec(name="cal__%s" % name, op="calendar", params={"field": name}))
-        if fourier is not None:
-            periods, terms = fourier
+        if options["fourier"] is not None:
+            periods, terms = options["fourier"]
             for period in periods:
                 for term in range(1, terms + 1):
                     for fn in ("sin", "cos"):
@@ -892,7 +928,7 @@ class ForecastFeatureBuilder(BaseEstimator, TransformerMixin):
                                 params={"period": period, "term": term},
                             )
                         )
-        for column in exogenous:
+        for column in options["exogenous"]:
             specs.append(
                 FeatureSpec(name=column, op="exogenous", column=column, shift=0)
             )
@@ -913,9 +949,7 @@ class ForecastFeatureBuilder(BaseEstimator, TransformerMixin):
         check_is_fitted(self, "feature_specs_")
         frame = self._as_frame(X)
         spec = self.temporal_spec_
-        (
-            _, lags, rolling, diffs, pct_changes, calendar, fourier, exogenous, min_periods
-        ) = self._resolved()
+        options = self._resolved()
         if self.target not in frame.columns:
             raise ValueError(
                 "transform requires the target column %r: lag features are built "
@@ -924,12 +958,20 @@ class ForecastFeatureBuilder(BaseEstimator, TransformerMixin):
 
         horizon = spec.horizon
         features: dict[str, pd.Series] = {}
-        for lag in lags:
+        for lag in options["lags"]:
             features["%s__lag_%d" % (self.target, lag)] = self._apply(
                 frame, spec, lambda series, lag=lag: series.shift(lag)
             )
-        for window, stats in rolling:
-            periods = min_periods if min_periods is not None else window
+        # Readability alias: seasonal_lag(p) is lag(p) with a season name, so it
+        # shares the same shift and the same horizon validation.
+        for period in options["seasonal_lags"]:
+            features["%s__seasonal_lag_%d" % (self.target, period)] = self._apply(
+                frame, spec, lambda series, period=period: series.shift(period)
+            )
+        for window, stats in options["rolling"]:
+            periods = (
+                options["min_periods"] if options["min_periods"] is not None else window
+            )
             for stat in stats:
                 features["%s__roll_%s_%d" % (self.target, stat, window)] = self._apply(
                     frame,
@@ -940,25 +982,27 @@ class ForecastFeatureBuilder(BaseEstimator, TransformerMixin):
                         .agg(stat)
                     ),
                 )
-        for step in diffs:
+        for step in options["diffs"]:
             features["%s__diff_%d" % (self.target, step)] = self._apply(
                 frame,
                 spec,
                 lambda series, step=step: series.shift(horizon) - series.shift(horizon + step),
             )
-        for step in pct_changes:
+        for step in options["pct_changes"]:
             features["%s__pct_change_%d" % (self.target, step)] = self._apply(
                 frame, spec, lambda series, step=step: _safe_pct_change(series, horizon, step)
             )
-        if calendar or fourier is not None:
+        if options["calendar"] or options["fourier"] is not None:
             time_values = pd.to_datetime(frame[spec.time_column])
-            if calendar:
-                features.update(_calendar_features(time_values, calendar))
-            if fourier is not None:
+            if options["calendar"]:
                 features.update(
-                    _fourier_features(time_values, frame, fourier)
+                    _calendar_features(time_values, options["calendar"])
                 )
-        for column in exogenous:
+            if options["fourier"] is not None:
+                features.update(
+                    _fourier_features(time_values, frame, options["fourier"])
+                )
+        for column in options["exogenous"]:
             features[column] = pd.to_numeric(frame[column], errors="coerce")
 
         result = pd.DataFrame(features, index=frame.index)
@@ -1207,3 +1251,127 @@ def assert_no_leakage(
                 )
             checks += 1
     return {"ok": True, "cut_points_checked": checks, "temporal_spec": spec.to_dict()}
+
+
+# ---------------------------------------------------------------------------
+# Rolling-origin cross-validation and backtesting (plan phase P3)
+# ---------------------------------------------------------------------------
+
+
+def rolling_origin_indices(
+    n_samples: int,
+    n_splits: int = 3,
+    horizon: int = 1,
+    step: int = 1,
+    min_train: int | None = None,
+    expanding: bool = True,
+) -> list[tuple[np.ndarray, np.ndarray]]:
+    """Row-index folds for a rolling-origin (walk-forward) evaluation.
+
+    Each fold trains on observations strictly before an origin and tests on the
+    ``horizon`` observations immediately after it, so the test window is always
+    the *future* of the training window. Origins move forward by ``step`` between
+    folds; the last fold ends at the final observation.
+
+    :param n_samples: number of ordered observations.
+    :param n_splits: number of origins to evaluate.
+    :param horizon: test-window length in steps; also the forecast horizon.
+    :param step: distance between consecutive origins.
+    :param min_train: training-window length when ``expanding=False``.
+    :param expanding: grow the training window from the first observation
+        (default) or slide a fixed ``min_train`` window.
+    :raises ValueError: when the series is too short for the requested geometry.
+    """
+    n_samples, n_splits, horizon, step = (
+        int(n_samples),
+        int(n_splits),
+        int(horizon),
+        int(step),
+    )
+    if n_splits < 1:
+        raise ValueError("n_splits must be >= 1")
+    if horizon < 1:
+        raise ValueError("horizon must be >= 1")
+    if step < 1:
+        raise ValueError("step must be >= 1")
+    last_end = n_samples - horizon
+    first_end = last_end - (n_splits - 1) * step
+    if first_end < 1:
+        raise ValueError(
+            "not enough observations for %d origin(s) with horizon=%d and step=%d: "
+            "the first origin would leave %d training row(s)"
+            % (n_splits, horizon, step, first_end)
+        )
+    folds = []
+    for fold in range(n_splits):
+        end = first_end + fold * step
+        if expanding:
+            start = 0
+        else:
+            if min_train is None:
+                raise ValueError("min_train is required when expanding=False")
+            start = end - int(min_train)
+            if start < 0:
+                raise ValueError(
+                    "min_train=%d does not fit before origin %d" % (int(min_train), end)
+                )
+        folds.append(
+            (np.arange(start, end, dtype="int64"), np.arange(end, end + horizon, dtype="int64"))
+        )
+    return folds
+
+
+class RollingOriginSplit:
+    """Walk-forward splitter with an explicit forecast horizon.
+
+    ``TimeSeriesSplit`` is a fixed-window approximation: its test window must be
+    smaller than the training window, which makes long horizons impossible on
+    short series. ``RollingOriginSplit`` states the horizon directly and lets
+    origins advance by ``step`` instead.
+
+    Compatible with ``cv_to_spec``/``build_cv`` and with scikit-learn's
+    ``split``/``get_n_splits`` protocol; listed in
+    :data:`SKSurrogate.mltrace.TEMPORAL_CV_SPLITTERS`.
+    """
+
+    def __init__(
+        self,
+        n_splits: int = 3,
+        horizon: int = 1,
+        step: int = 1,
+        min_train: int | None = None,
+        expanding: bool = True,
+    ):
+        self.n_splits = n_splits
+        self.horizon = horizon
+        self.step = step
+        self.min_train = min_train
+        self.expanding = expanding
+
+    def split(self, X, y=None, groups=None):
+        """Yield ``(train_indices, test_indices)`` for each origin."""
+        n_samples = X.shape[0] if hasattr(X, "shape") else len(X)
+        yield from rolling_origin_indices(
+            n_samples,
+            n_splits=self.n_splits,
+            horizon=self.horizon,
+            step=self.step,
+            min_train=self.min_train,
+            expanding=self.expanding,
+        )
+
+    def get_n_splits(self, X=None, y=None, groups=None) -> int:
+        return int(self.n_splits)
+
+    def __repr__(self) -> str:  # pragma: no cover - cosmetic
+        return (
+            "RollingOriginSplit(n_splits=%r, horizon=%r, step=%r, min_train=%r, "
+            "expanding=%r)"
+            % (
+                self.n_splits,
+                self.horizon,
+                self.step,
+                self.min_train,
+                self.expanding,
+            )
+        )

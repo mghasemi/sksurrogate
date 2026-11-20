@@ -34,8 +34,11 @@ from datetime import datetime
 from .temporal import (
     TEMPORAL_METADATA_KEY,
     TEMPORAL_REPORT_METADATA_KEY,
+    RollingOriginSplit,
     TemporalSpec,
     TemporalValidationError,
+    make_supervised,
+    rolling_origin_indices,
     temporal_columns,
     validate_temporal_frame,
 )
@@ -64,7 +67,15 @@ STANDARD_CV_SPLITTERS = [
 #: offer a horizon-blind option.
 TEMPORAL_CV_SPLITTERS = [
     "TimeSeriesSplit",
+    "RollingOriginSplit",
 ]
+
+#: Order-respecting splitters implemented by this library rather than by
+#: scikit-learn; ``build_cv`` resolves these names before falling back to
+#: ``sklearn.model_selection``.
+TEMPORAL_SPLITTER_CLASSES = {
+    "RollingOriginSplit": RollingOriginSplit,
+}
 
 
 def cv_to_spec(cv):
@@ -138,10 +149,13 @@ def build_cv(spec):
         return value
     import sklearn.model_selection
 
-    cls = getattr(sklearn.model_selection, name, None)
+    cls = TEMPORAL_SPLITTER_CLASSES.get(name)
+    if cls is None:
+        cls = getattr(sklearn.model_selection, name, None)
     if cls is None or not isinstance(cls, type):
         raise ValueError(
-            "Unknown cv splitter %r; expected one of %s" % (name, ", ".join(STANDARD_CV_SPLITTERS))
+            "Unknown cv splitter %r; expected one of %s"
+            % (name, ", ".join(STANDARD_CV_SPLITTERS + list(TEMPORAL_SPLITTER_CLASSES)))
         )
     params = {key: value for key, value in spec.items() if key != "type"}
     return cls(**params)
@@ -561,7 +575,9 @@ def cv_param_defs(splitter_name):
 
     import sklearn.model_selection
 
-    cls = getattr(sklearn.model_selection, splitter_name, None)
+    cls = TEMPORAL_SPLITTER_CLASSES.get(splitter_name)
+    if cls is None:
+        cls = getattr(sklearn.model_selection, splitter_name, None)
     if cls is None or not isinstance(cls, type):
         return []
     try:
@@ -575,8 +591,9 @@ def cv_param_defs(splitter_name):
             continue
         value = getattr(instance, name, None)
         # test_size defaults to None ("auto") on the (Stratified)ShuffleSplit
-        # splitters; surface it as an optional field with a null default.
-        if value is None and name != "test_size":
+        # splitters and min_train defaults to None on RollingOriginSplit; both
+        # are surfaced as optional fields with a null default.
+        if value is None and name not in ("test_size", "min_train"):
             continue
         if isinstance(value, bool):
             kind = "bool"
@@ -584,6 +601,8 @@ def cv_param_defs(splitter_name):
             kind = "int"
         elif isinstance(value, float) or (value is None and name == "test_size"):
             kind = "float"
+        elif value is None and name == "min_train":
+            kind = "int"
         else:
             continue
         defs.append({"name": name, "kind": kind, "default": value})
@@ -1517,6 +1536,310 @@ class mltrack(object):
 
         df = read_sql("SELECT * FROM %s" % table_name, self.conn)
         return df
+
+    def backtest(
+        self,
+        estimator,
+        *,
+        horizon=None,
+        n_splits=3,
+        step=None,
+        min_train=None,
+        expanding=True,
+        refit="every_fold",
+        scoring=None,
+        scoring_label=None,
+        strategy="direct",
+        train_partition="train",
+        exclude_columns=None,
+        feature_kwargs=None,
+        cost_limit=64,
+        max_records=5000,
+        store=True,
+    ):
+        """Evaluate an estimator with a rolling-origin (walk-forward) backtest.
+
+        Origins move forward through the registered partition; each fold trains
+        on everything before the origin and predicts the next ``horizon``
+        observations. Features come from
+        :class:`SKSurrogate.temporal.ForecastFeatureBuilder`, so every training
+        row only ever reads observations up to ``origin - horizon``.
+
+        The refit policy is recorded and enforced by counting fits:
+
+        * ``"every_fold"`` — refit at every origin;
+        * ``"first"`` — fit once on the first training window, reuse after;
+        * ``"every:k"`` — refit when ``fold_index % k == 0``.
+
+        :param estimator: any scikit-learn compatible estimator; it is cloned per
+            fit, so a fitted instance is not mutated.
+        :param horizon: forecast horizon in steps (default: the task's declared
+            horizon; also the length of each test window).
+        :param n_splits: number of origins to evaluate.
+        :param step: distance between origins (default: ``horizon``).
+        :param min_train: fixed training-window length when ``expanding=False``.
+        :param refit: refit policy, see above.
+        :param scoring: scikit-learn scorer callable; defaults to the estimator's
+            ``score`` method.
+        :param strategy: only ``"direct"`` is supported today; recursive
+            multi-step evaluation needs the serving state (phase P6).
+        :param feature_kwargs: forwarded to ``make_supervised`` (e.g. ``lags``,
+            ``rolling``, ``calendar``); defaults to ``lags=[horizon]``.
+        :param cost_limit: hard ceiling on the number of fits, so a large grid of
+            origins fails with a clear message instead of running for hours.
+        :param max_records: how many per-origin records to persist.
+        :return: a JSON-safe result dict (also stored in task metadata under
+            ``backtest:<config hash>`` unless ``store=False``).
+        """
+        import numpy as np
+        from sklearn.base import clone
+        from sklearn.metrics import mean_absolute_error, mean_squared_error
+
+        spec_dict = self.GetTemporalSpec()
+        if spec_dict is None:
+            raise ValueError(
+                "task %r has no temporal spec; declare one with SetTemporalSpec "
+                "before backtesting" % self.task
+            )
+        spec = TemporalSpec.from_dict(spec_dict)
+        horizon = int(spec.horizon if horizon is None else horizon)
+        if horizon < 1:
+            raise ValueError("horizon must be >= 1")
+        step = int(horizon if step is None else step)
+        if strategy != "direct":
+            raise ValueError(
+                "backtest evaluates the 'direct' strategy only today; recursive "
+                "multi-step evaluation requires the serving state (phase P6)"
+            )
+
+        # The control plane lists the temporal columns in `ignored_columns` so they
+        # never become model features. They must still reach the feature builder
+        # here, which reads the time index; only genuinely ignored features drop.
+        excluded = [
+            column
+            for column in (exclude_columns or [])
+            if column not in spec.temporal_columns
+        ]
+        frame = self.get_dataframe(train_partition)
+        if excluded:
+            present = [column for column in excluded if column in frame.columns]
+            if present:
+                frame = frame.drop(columns=present)
+        metadata = self.GetMetadata()
+        target = self.target or metadata.get("target_name") or frame.columns[-1]
+        if target not in frame.columns:
+            raise ValueError(
+                "target column %r is not present in partition %r"
+                % (target, train_partition)
+            )
+
+        design_spec = TemporalSpec(**{**spec.to_dict(), "horizon": horizon})
+        builder_kwargs = dict(feature_kwargs or {})
+        builder_kwargs.setdefault("lags", [horizon])
+        design = make_supervised(
+            frame, design_spec, target, strategy="direct", **builder_kwargs
+        )
+        if not len(design.X):
+            raise ValueError(
+                "the feature configuration leaves no usable rows in partition %r"
+                % train_partition
+            )
+
+        def _scalar(value):
+            if value is None:
+                return None
+            if isinstance(value, (int, float, bool)):
+                return value
+            return str(value)
+
+        if spec.series_id is None:
+            group_positions = {None: list(range(len(design.X)))}
+        else:
+            group_positions = {}
+            for position, label in enumerate(design.meta["series"].tolist()):
+                group_positions.setdefault(label, []).append(position)
+
+        per_group_folds = {}
+        skipped = {}
+        for label, positions in group_positions.items():
+            try:
+                folds_for_group = rolling_origin_indices(
+                    len(positions),
+                    n_splits=n_splits,
+                    horizon=horizon,
+                    step=step,
+                    min_train=min_train,
+                    expanding=expanding,
+                )
+            except ValueError as exc:
+                skipped[str(_scalar(label))] = str(exc)
+                continue
+            per_group_folds[label] = (positions, folds_for_group)
+        if not per_group_folds:
+            raise ValueError(
+                "no series has enough history for n_splits=%d, horizon=%d: %s"
+                % (n_splits, horizon, skipped)
+            )
+
+        folds = []
+        for fold in range(n_splits):
+            train_positions, test_positions = [], []
+            for positions, folds_for_group in per_group_folds.values():
+                train_part, test_part = folds_for_group[fold]
+                train_positions.extend(positions[index] for index in train_part)
+                test_positions.extend(positions[index] for index in test_part)
+            folds.append(
+                (
+                    np.asarray(sorted(train_positions), dtype="int64"),
+                    np.asarray(test_positions, dtype="int64"),
+                )
+            )
+
+        if refit == "every_fold":
+            refit_every = 1
+        elif refit == "first":
+            refit_every = None
+        elif isinstance(refit, str) and refit.startswith("every:"):
+            try:
+                refit_every = int(refit.split(":", 1)[1])
+            except (IndexError, ValueError):
+                raise ValueError("refit must be 'every_fold', 'first' or 'every:k'")
+            if refit_every < 1:
+                raise ValueError("refit 'every:k' requires k >= 1")
+        else:
+            raise ValueError("refit must be 'every_fold', 'first' or 'every:k'")
+        fits_needed = len(folds) if refit_every is not None else 1
+        if fits_needed > int(cost_limit):
+            raise ValueError(
+                "the backtest would fit %d model(s), above cost_limit=%d; reduce "
+                "n_splits, use refit='first'/'every:k', or raise the limit"
+                % (fits_needed, int(cost_limit))
+            )
+
+        X, y = design.X, design.y
+        label = scoring_label or ("estimator.score" if scoring is None else "scoring")
+        fitted = None
+        fit_count = 0
+        fold_records = []
+        origin_records = []
+        for fold_index, (train_idx, test_idx) in enumerate(folds):
+            if fitted is None or (refit_every is not None and fold_index % refit_every == 0):
+                fitted = clone(estimator)
+                fitted.fit(X.iloc[train_idx], y.iloc[train_idx])
+                fit_count += 1
+                refitted = True
+            else:
+                refitted = False
+            predictions = np.asarray(fitted.predict(X.iloc[test_idx]), dtype=float).ravel()
+            truth = y.iloc[test_idx].to_numpy(dtype=float)
+            X_test, y_test = X.iloc[test_idx], y.iloc[test_idx]
+            if scoring is None:
+                fold_score = float(fitted.score(X_test, y_test))
+                label = scoring_label or "estimator.score"
+            else:
+                fold_score = float(scoring(fitted, X_test, y_test))
+                label = scoring_label or "scoring"
+            fold_records.append(
+                {
+                    "fold": fold_index,
+                    "train_rows": int(len(train_idx)),
+                    "test_rows": int(len(test_idx)),
+                    "refitted": bool(refitted),
+                    "score": fold_score,
+                    "mae": float(mean_absolute_error(truth, predictions)),
+                    "rmse": float(np.sqrt(mean_squared_error(truth, predictions))),
+                    "bias": float(np.mean(predictions - truth)),
+                }
+            )
+            for position, prediction, actual in zip(test_idx, predictions, truth):
+                row = design.meta.iloc[position]
+                origin_time = row.get("origin_time")
+                target_time = row.get("target_time")
+                origin_records.append(
+                    {
+                        "fold": fold_index,
+                        "series": _scalar(row.get("series")),
+                        "origin_time": None if origin_time is None else str(origin_time),
+                        "target_time": None if target_time is None else str(target_time),
+                        "target_step": int(row.get("target_step", horizon)),
+                        "y_true": float(actual),
+                        "y_pred": float(prediction),
+                    }
+                )
+
+        def _metrics(records):
+            if not records:
+                return {"rows": 0, "mae": None, "rmse": None, "bias": None}
+            actual = np.asarray([record["y_true"] for record in records], dtype=float)
+            predicted = np.asarray([record["y_pred"] for record in records], dtype=float)
+            return {
+                "rows": int(actual.size),
+                "mae": float(mean_absolute_error(actual, predicted)),
+                "rmse": float(np.sqrt(mean_squared_error(actual, predicted))),
+                "bias": float(np.mean(predicted - actual)),
+            }
+
+        per_series = {}
+        for record in origin_records:
+            per_series.setdefault(str(record["series"]), []).append(record)
+        per_horizon = {}
+        for record in origin_records:
+            per_horizon.setdefault(str(record["target_step"]), []).append(record)
+
+        config = {
+            "task_name": self.task,
+            "train_partition": train_partition,
+            "horizon": horizon,
+            "n_splits": int(n_splits),
+            "step": step,
+            "min_train": min_train,
+            "expanding": bool(expanding),
+            "refit": refit,
+            "strategy": strategy,
+            "scoring": scoring_label,
+            "feature_kwargs": {
+                key: value for key, value in builder_kwargs.items()
+            },
+            "temporal_spec": design_spec.to_dict(),
+        }
+        import hashlib
+        import json as _json
+
+        digest = hashlib.sha1(
+            _json.dumps(config, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()[:12]
+        result = {
+            "task_name": self.task,
+            "config": config,
+            "score_label": label,
+            "fits": fit_count,
+            "fold_scores": [record["score"] for record in fold_records],
+            "mean_fold_score": (
+                float(np.mean([record["score"] for record in fold_records]))
+                if fold_records
+                else None
+            ),
+            "folds": fold_records,
+            "pooled": _metrics(origin_records),
+            "per_series": {
+                key: _metrics(records) for key, records in per_series.items()
+            },
+            "per_horizon": {
+                key: _metrics(records) for key, records in per_horizon.items()
+            },
+            "skipped_series": skipped,
+            "design": {
+                "rows": int(len(design.X)),
+                "dropped_rows": int(design.dropped_rows),
+                "features": [spec.to_dict() for spec in design.feature_specs],
+            },
+            "origins": origin_records[: int(max_records)],
+            "origins_truncated": max(len(origin_records) - int(max_records), 0),
+            "artifact_key": "backtest:" + digest,
+        }
+        if store:
+            self.UpdateMetadata({result["artifact_key"]: result})
+        return result
 
     def nested_cv_evaluation(
         self,

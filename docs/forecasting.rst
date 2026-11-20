@@ -16,11 +16,11 @@ before: no timestamp inference, no re-ordering, no splitter restrictions.
    Current scope (this page documents what ships today): the temporal **data
    contract** — declaration, validation, metadata, ignore-list wiring and
    splitter enforcement — and the **leakage-safe feature builder**
-   (``ForecastFeatureBuilder`` / ``make_supervised``). Rolling-origin
-   backtesting and forecast-specific metrics are planned phases and are *not*
-   available yet; until they land, evaluate a temporal task with
-   ``nested_cv_evaluation`` and an explicit scorer, or with your own backtest
-   loop over the design matrix.
+   (``ForecastFeatureBuilder`` / ``make_supervised``) and **rolling-origin
+   backtesting** (``RollingOriginSplit`` / ``mltrack.backtest``). Forecast-specific
+   metrics (MASE, sMAPE, pinball/Winkler) and naive baselines are the next phase and
+   are not available yet; backtests report MAE/RMSE/bias plus an optional
+   scikit-learn scorer.
 
 Declaring a temporal spec
 -------------------------
@@ -132,6 +132,7 @@ Leakage-safe feature construction
         spec,
         target="sales",
         lags=[7, 14, 28],           # each lag must be >= horizon
+        seasonal_lags=[7, 365],     # readable alias: lag at the season period
         rolling=[{"window": 28, "stats": ["mean", "std"]}, 7],
         diffs=[1],
         pct_changes=[1],
@@ -152,6 +153,8 @@ The rules the builder enforces, not merely documents:
   $t - h$: ``lag_k`` is $y_{t-k}$ ($k \ge h$), and a rolling window of width $w$
   covers $y_{t-h-w+1},\dots,y_{t-h}$. A lag shorter than the horizon is rejected
   at ``fit`` time — it would read an observation the forecast is meant to predict.
+  ``seasonal_lags=[p]`` is the same rule under a readable name (column
+  ``sales__seasonal_lag_7``, ``op="seasonal_lag"`` in the provenance).
 * **No centring.** ``center=True`` does not exist in this API.
 * **Per-series isolation.** On a panel, every operation is computed inside its own
   series, so one store's history never enters another store's lags.
@@ -208,27 +211,94 @@ fallback is still: keep rows chronological, shift every feature by at least the
 horizon per series, never use ``center=True``, and never aggregate a window that
 includes the target step.
 
+
+Rolling-origin backtesting
+--------------------------
+
+``TimeSeriesSplit`` is a fixed-window approximation; ``RollingOriginSplit`` states
+the forecast horizon directly, so each test window is exactly ``horizon`` steps
+long and origins advance by ``step``::
+
+    from SKSurrogate import RollingOriginSplit, mltrack
+
+    tracker = mltrack("weekly-sales", db_name="tracking.db")
+    tracker.SetCV(RollingOriginSplit(n_splits=6, horizon=7, step=7))
+
+The tracker-level entry point builds the design matrix itself and walks origins
+forward::
+
+    result = tracker.backtest(
+        LinearRegression(),
+        n_splits=6,
+        horizon=7,
+        step=7,
+        refit="every_fold",          # or "first", or "every:2"
+        scoring=get_scorer("neg_mean_absolute_error"),
+        scoring_label="neg_mean_absolute_error",
+        feature_kwargs={"lags": [7, 14], "rolling": [{"window": 28, "stats": ["mean"]}]},
+    )
+
+    result["pooled"]        # {"rows", "mae", "rmse", "bias"}
+    result["folds"]         # per-fold score/metrics, train/test sizes, whether it refitted
+    result["origins"]       # per-origin series, origin_time, target_time, y_true, y_pred
+    result["per_series"]    # the same metrics per series on a panel
+    result["design"]        # features actually used, with their provenance
+
+What the result guarantees:
+
+* **No overlap.** Training rows stop one step before the origin and the test window
+  starts there; the geometry comes from :func:`rolling_origin_indices`, which is
+  validated against the available history and raises instead of silently shrinking.
+* **Honest labels.** Each record pairs a prediction with the actual value at
+  ``origin_time + horizon`` (``target_step`` in ``meta``).
+* **Counted fits.** The refit policy is enforced, not just recorded: ``"every_fold"``
+  fits once per origin, ``"first"`` fits once in total, ``"every:k"`` every k-th
+  fold. ``result["folds"][i]["refitted"]`` says which folds refitted.
+* **A cost ceiling.** ``cost_limit`` (default 64 fits) turns an accidental
+  hundreds-of-origins run into a clear ``ValueError``.
+* **Panel semantics.** With a ``series_id``, every series gets its own origins and
+  the model is fitted on the union of all series' training windows; series too short
+  for the geometry are skipped and listed in ``skipped_series``.
+* **Persistence.** The full result is stored in task metadata under
+  ``backtest:<config hash>`` unless ``store=False``; per-origin records are capped
+  by ``max_records`` with an ``origins_truncated`` count.
+
+Only the **direct** strategy is evaluated today. A recursive forecast predicts one
+step at a time by feeding its own output back, which needs the serving state that
+arrives with multi-step inference; passing ``strategy="recursive"`` raises rather
+than silently returning one-step numbers labelled as multi-step.
+
+**Feature configuration must match how the model was trained.** ``backtest`` refits
+the estimator on the design it builds, so a bundle trained on a different feature
+set will fail on width rather than produce a misleading score. Keep the
+``feature_kwargs`` in the request/bundle metadata alongside the model.
+
 Control-plane endpoints
 -----------------------
 
-======================================================  ============================================
-Endpoint                                                Purpose
-======================================================  ============================================
-``POST /api/datasets/{task}/register``                  Accepts an optional ``temporal`` form field
-                                                        (JSON) and validates the upload before
-                                                        storing it; returns the report.
-``GET  /api/datasets/{task}/temporal``                  Current spec, per-partition validation
-                                                        reports, temporal columns, ignore list and
-                                                        whether the stored CV splitter is
-                                                        temporal-safe.
-``PUT  /api/datasets/{task}/temporal``                  Declare or replace the spec; validates every
-                                                        registered partition; merges the temporal
-                                                        columns into the ignore list. Answers 422
-                                                        with the report when a partition violates
-                                                        it.
-``DELETE /api/datasets/{task}/temporal``                Remove the declaration; drops only the
-                                                        ignore entries this feature added.
-======================================================  ============================================
+========================================================  ============================================
+Endpoint                                                  Purpose
+========================================================  ============================================
+``POST /api/datasets/{task}/register``                    Accepts an optional ``temporal`` form field
+                                                          (JSON) and validates the upload before
+                                                          storing it; returns the report.
+``GET  /api/datasets/{task}/temporal``                    Current spec, per-partition validation
+                                                          reports, temporal columns, ignore list and
+                                                          whether the stored CV splitter is
+                                                          temporal-safe.
+``PUT  /api/datasets/{task}/temporal``                    Declare or replace the spec; validates every
+                                                          registered partition; merges the temporal
+                                                          columns into the ignore list. Answers 422
+                                                          with the report when a partition violates
+                                                          it.
+``DELETE /api/datasets/{task}/temporal``                  Remove the declaration; drops only the
+                                                          ignore entries this feature added.
+``POST /api/evaluation/{task}/backtest``                  Queue a rolling-origin backtest for a bundle
+                                                          (``model_version`` or ``alias``, horizon,
+                                                          n_splits, refit, features); returns a job id
+                                                          whose result holds per-origin records and
+                                                          metrics.
+========================================================  ============================================
 
 Non-goals
 ---------

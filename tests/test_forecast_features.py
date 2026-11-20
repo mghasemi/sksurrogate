@@ -60,6 +60,34 @@ class TestFeatureValues(unittest.TestCase):
         self.assertEqual(features.index.min(), 3)  # first row with lag_3 present
         self.assertEqual(len(features), len(frame) - 3)
 
+    def test_seasonal_lag_reads_the_season_length_back(self):
+        """``seasonal_lags`` is the readable alias of a lag at the season period."""
+        frame = _series()
+        builder = ForecastFeatureBuilder(
+            spec=TemporalSpec(time_column="time", horizon=2),
+            target="y",
+            lags=[2],
+            seasonal_lags=[7],
+        )
+        builder.fit(frame)
+        features = builder.transform(frame)
+        self.assertEqual(features.loc[9, "y__seasonal_lag_7"], 2.0)
+        provenance = {spec.name: spec for spec in builder.feature_specs_}
+        self.assertEqual(provenance["y__seasonal_lag_7"].op, "seasonal_lag")
+        self.assertEqual(provenance["y__seasonal_lag_7"].shift, 7)
+        self.assertEqual(provenance["y__seasonal_lag_7"].params, {"period": 7})
+
+    def test_seasonal_lag_respects_the_horizon(self):
+        frame = _series(periods=30)
+        with self.assertRaises(ValueError) as ctx:
+            ForecastFeatureBuilder(
+                spec=TemporalSpec(time_column="time", horizon=8),
+                target="y",
+                lags=(),
+                seasonal_lags=[7],
+            ).fit(frame)
+        self.assertIn("shorter than the forecast horizon", str(ctx.exception))
+
     def test_rolling_window_ends_at_the_horizon(self):
         frame = _series()
         builder = ForecastFeatureBuilder(
