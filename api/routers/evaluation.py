@@ -205,6 +205,9 @@ class BacktestRequest(BaseModel):
     features: dict[str, object] = Field(default_factory=dict)
     seasonality: int = Field(default=1, ge=1)
     baselines: list[str] | None = None
+    alpha: float = Field(default=0.1, gt=0.0, lt=1.0)
+    interval_method: str = "absolute"
+    min_residuals: int = Field(default=10, ge=1)
     cost_limit: int = Field(default=64, ge=1, le=512)
 
 
@@ -418,10 +421,20 @@ def run_backtest(task_name: str, body: BacktestRequest):
                 feature_kwargs=body.features or None,
                 seasonality=body.seasonality,
                 baselines=body.baselines if body.baselines is not None else BASELINE_METHODS,
+                alpha=body.alpha,
+                interval_method=body.interval_method,
+                min_residuals=body.min_residuals,
                 cost_limit=body.cost_limit,
             )
         result["model_version"] = bundle.model_version
         result["task_name"] = task_name
+
+        # P5: keep the residual calibration on the bundle so serving can emit an
+        # interval without re-running the backtest. Only a usable calibration is
+        # stored; an unavailable one leaves the field untouched.
+        intervals = result.get("intervals") or {}
+        if intervals.get("available") and intervals.get("calibration"):
+            bundle.interval_calibration = dict(intervals["calibration"])
 
         bundle.metadata = dict(bundle.metadata or {})
         evaluations = list(bundle.metadata.get("evaluations", []))
@@ -441,6 +454,12 @@ def run_backtest(task_name: str, body: BacktestRequest):
                 "metrics": {
                     "mean_fold_score": result.get("mean_fold_score"),
                     "pooled": result.get("pooled"),
+                },
+                "intervals": {
+                    "available": bool(intervals.get("available")),
+                    "alpha": body.alpha,
+                    "method": body.interval_method,
+                    "calibration": intervals.get("calibration"),
                 },
             }
         )

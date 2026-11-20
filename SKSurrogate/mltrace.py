@@ -1557,6 +1557,9 @@ class mltrack(object):
         feature_kwargs=None,
         seasonality=1,
         baselines=BASELINE_METHODS,
+        alpha=0.1,
+        interval_method="absolute",
+        min_residuals=10,
         cost_limit=64,
         max_records=5000,
         store=True,
@@ -1594,6 +1597,14 @@ class mltrack(object):
         :param baselines: baseline methods scored on the same origins
             (``naive``, ``seasonal_naive``, ``drift``, ``mean``); a model that
             cannot beat them has not earned the word "forecast".
+        :param alpha: miscoverage level for the prediction intervals calibrated
+            from the backtest residuals (``0.1`` targets 90 % coverage).
+        :param interval_method: ``"absolute"`` (symmetric conformal interval) or
+            ``"asymmetric"`` (empirical alpha/2 and 1-alpha/2 residual quantiles,
+            for skewed errors).
+        :param min_residuals: refuse to calibrate from fewer held-out residuals
+            than this; the result then reports ``intervals.available = False``
+            with the reason instead of a quantile built from three points.
         :param cost_limit: hard ceiling on the number of fits, so a large grid of
             origins fails with a clear message instead of running for hours.
         :param max_records: how many per-origin records to persist.
@@ -1630,6 +1641,9 @@ class mltrack(object):
         seasonality = int(seasonality)
         if seasonality < 1:
             raise ValueError("seasonality must be >= 1")
+        alpha = float(alpha)
+        if not 0.0 < alpha < 1.0:
+            raise ValueError("alpha must be strictly between 0 and 1")
         baseline_methods = tuple(baselines or ())
         unknown_baselines = [
             method for method in baseline_methods if method not in BASELINE_METHODS
@@ -1762,7 +1776,12 @@ class mltrack(object):
             truth = y.iloc[test_idx].to_numpy(dtype=float)
             X_test, y_test = X.iloc[test_idx], y.iloc[test_idx]
             if scoring is None:
-                fold_score = float(fitted.score(X_test, y_test))
+                # R^2 on a single held-out row is undefined (and scikit-learn warns);
+                # a one-step test window is legitimate for horizon-1 backtests, so the
+                # score is recorded as None rather than as a warning-generating number.
+                fold_score = (
+                    float(fitted.score(X_test, y_test)) if len(test_idx) >= 2 else None
+                )
                 label = scoring_label or "estimator.score"
             else:
                 fold_score = float(scoring(fitted, X_test, y_test))
@@ -1917,6 +1936,9 @@ class mltrack(object):
             "scoring": scoring_label,
             "seasonality": seasonality,
             "baselines": list(baseline_methods),
+            "alpha": alpha,
+            "interval_method": interval_method,
+            "min_residuals": int(min_residuals),
             "feature_kwargs": {
                 key: value for key, value in builder_kwargs.items()
             },
@@ -1940,6 +1962,43 @@ class mltrack(object):
             metric="mase",
             baseline="seasonal_naive" if seasonality > 1 else "naive",
         )
+        from .forecast_intervals import (
+            CONFORMAL_METHODS,
+            calibrate_from_residuals,
+            interval_diagnostics,
+        )
+
+        if interval_method not in CONFORMAL_METHODS:
+            raise ValueError(
+                "unknown interval method %r; expected one of %s"
+                % (interval_method, ", ".join(CONFORMAL_METHODS))
+            )
+        try:
+            calibration = calibrate_from_residuals(
+                [record["y_true"] - record["y_pred"] for record in origin_records],
+                alpha=alpha,
+                method=interval_method,
+                target_step=horizon,
+                min_residuals=min_residuals,
+            )
+            lower, upper = calibration.bounds(
+                [record["y_pred"] for record in origin_records]
+            )
+            diagnostics = interval_diagnostics(
+                [record["y_true"] for record in origin_records],
+                lower,
+                upper,
+                alpha=alpha,
+                horizon=[record["target_step"] for record in origin_records],
+            )
+            intervals = {
+                "available": True,
+                "calibration": calibration.to_dict(),
+                "diagnostics": diagnostics,
+            }
+        except (TypeError, ValueError) as exc:
+            intervals = {"available": False, "reason": str(exc)}
+
         result = {
             "task_name": self.task,
             "config": config,
@@ -1947,8 +2006,16 @@ class mltrack(object):
             "fits": fit_count,
             "fold_scores": [record["score"] for record in fold_records],
             "mean_fold_score": (
-                float(np.mean([record["score"] for record in fold_records]))
-                if fold_records
+                float(
+                    np.mean(
+                        [
+                            record["score"]
+                            for record in fold_records
+                            if record["score"] is not None
+                        ]
+                    )
+                )
+                if any(record["score"] is not None for record in fold_records)
                 else None
             ),
             "folds": fold_records,
@@ -1962,6 +2029,7 @@ class mltrack(object):
             },
             "skipped_series": skipped,
             "ranking": ranking,
+            "intervals": intervals,
             "design": {
                 "rows": int(len(design.X)),
                 "dropped_rows": int(design.dropped_rows),

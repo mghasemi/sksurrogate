@@ -53,6 +53,15 @@ from .temporal import (
     temporal_columns,
     validate_temporal_frame,
 )
+from .forecast_intervals import (
+    CONFORMAL_METHODS,
+    IntervalCalibration,
+    apply_calibration,
+    calibrate_backtest,
+    calibrate_from_residuals,
+    conformal_quantile_level,
+    interval_diagnostics,
+)
 from .forecast_metrics import (
     BASELINE_METHODS,
     baseline_prediction,
@@ -169,6 +178,13 @@ __all__ = [
     "make_supervised",
     "rolling_origin_indices",
     "BASELINE_METHODS",
+    "CONFORMAL_METHODS",
+    "IntervalCalibration",
+    "apply_calibration",
+    "calibrate_backtest",
+    "calibrate_from_residuals",
+    "conformal_quantile_level",
+    "interval_diagnostics",
     "baseline_prediction",
     "bias",
     "forecast_ranking",

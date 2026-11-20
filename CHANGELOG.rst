@@ -137,6 +137,40 @@ interpretable, and scores the naive baselines on the same origins as the model.
   including why MASE is not a scikit-learn scorer.
 * **Tests** — ``tests/test_forecast_metrics.py`` (31 tests).
 
+Horizon-aware prediction intervals (time-series phase 5)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``SKSurrogate/forecast_intervals.py`` calibrates prediction intervals from the
+held-out residuals of a rolling-origin backtest, so a served model can put a width on
+its point forecast without recomputing anything.
+
+* **Split-conformal calibration** — ``calibrate_from_residuals`` / ``calibrate_backtest``
+  produce ``lower_offset``/``upper_offset`` from the conformal order statistics.
+  ``method="absolute"`` uses the ``ceil((n+1)(1-alpha))/n`` quantile of ``|residual|``;
+  ``method="asymmetric"`` uses the empirical ``alpha/2`` and ``1-alpha/2`` order
+  statistics for skewed errors.
+* **Refuses rather than fudges** — below ``min_residuals`` (default 10) the backtest
+  result reports ``intervals.available = false`` with the reason instead of computing a
+  quantile from three points.
+* **Diagnostics, not assertions** — ``interval_diagnostics`` reports empirical coverage
+  with a Wilson interval, mean/median width and the Winkler score, and passes the
+  horizon step as the grouping key so a horizon-1 and a horizon-12 interval are
+  reported separately. The docs state that walk-forward residuals are ordered, so the
+  exchangeability assumption behind nominal coverage is approximate.
+* **Bundles carry the calibration** — ``ModelBundle(interval_calibration=...)``
+  persists it through save/load (a legacy record without the key still loads), and
+  ``bundle.interval_bounds(predictions)`` applies it. An uncalibrated bundle raises
+  instead of returning a zero-width interval.
+* **Backtest wiring** — ``mltrack.backtest(alpha=, interval_method=, min_residuals=)``
+  adds ``result["intervals"]``; the backtest route persists a usable calibration onto
+  the bundle and records it in the bundle's ``evaluations`` entry.
+* **Fix** — the per-fold ``score`` is now ``None`` instead of calling ``R^2`` on a
+  one-row test window (which is undefined and emitted an ``UndefinedMetricWarning``),
+  and ``mean_fold_score`` averages the folds that have a score.
+* **Docs** — new "Prediction intervals" section in ``docs/forecasting.rst``.
+* **Tests** — ``tests/test_forecast_intervals.py`` (19 tests), including a Monte-Carlo
+  coverage check and width monotonicity across horizons 1–4.
+
 Pipeline-space benchmark track (C-space)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -19,8 +19,8 @@ before: no timestamp inference, no re-ordering, no splitter restrictions.
    (``ForecastFeatureBuilder`` / ``make_supervised``), **rolling-origin backtesting**
    (``RollingOriginSplit`` / ``mltrack.backtest``) and **forecast metrics with naive
    baselines** (MASE, sMAPE, pinball/Winkler, naive/seasonal-naive/drift/mean).
-   Horizon-aware prediction intervals, multi-step inference and the forecast UI are
-   later phases.
+   **Horizon-aware prediction intervals** (split-conformal calibration on backtest
+   residuals). Multi-step inference and the forecast UI are later phases.
 
 Declaring a temporal spec
 -------------------------
@@ -241,6 +241,7 @@ forward::
     result["pooled"]        # mae, rmse, bias, smape, mase for the model
     result["baselines"]     # the same metrics for each naive baseline
     result["ranking"]       # MASE ordering with the "worse than baseline" flags
+    result["intervals"]     # calibrated offsets + coverage diagnostics (alpha=0.1)
     result["folds"]         # per-fold score/metrics, train/test sizes, whether it refitted
     result["origins"]       # per-origin series, origin_time, target_time, y_true, y_pred
     result["per_series"]    # the same metrics per series on a panel
@@ -348,6 +349,67 @@ computed by the rolling-origin backtest, where the training window of every orig
 known. For plain CV and learning curves, **sMAPE** is available as
 ``neg_smape`` (sign-flipped, as scikit-learn scorers are), and pinball loss via
 ``neg_mean_pinball_loss`` with an explicit ``pinball_alpha``.
+
+
+Prediction intervals
+--------------------
+
+``result["intervals"]`` calibrates an interval from the held-out residuals of the
+backtest::
+
+    result = tracker.backtest(
+        LinearRegression(), n_splits=20, horizon=7, alpha=0.1,
+        interval_method="absolute",       # or "asymmetric"
+        min_residuals=10,
+        feature_kwargs={"lags": [7, 14]},
+    )
+
+    result["intervals"]["available"]     # False when the calibration was refused
+    result["intervals"]["calibration"]   # {"lower_offset": ..., "upper_offset": ...}
+    result["intervals"]["diagnostics"]   # coverage, width, Winkler, per-horizon groups
+
+The construction is split-conformal on the residuals $r_i = y_i - \hat y_i$ of
+origins the model never trained on:
+
+* ``absolute`` — the interval is $\hat y \pm q$ with $q$ the
+  $\lceil (n+1)(1-\alpha)\rceil/n$ quantile of $\lvert r \rvert$;
+* ``asymmetric`` — $[\hat y + r_{(k_{\text{low}})},\; \hat y + r_{(k_{\text{high}})})]$
+  using the empirical ``alpha/2`` and ``1 - alpha/2`` order statistics, for skewed
+  residuals.
+
+Two properties are reported rather than assumed:
+
+* **Coverage is marginal and approximate.** The finite-sample guarantee needs
+  exchangeable residuals; a walk-forward backtest is *ordered*, so the diagnostics
+  report the empirical coverage with a Wilson interval instead of asserting the
+  nominal number.
+* **A short calibration set is refused, not fudged.** Below ``min_residuals`` the
+  result carries ``available: false`` plus the reason, so a three-point quantile
+  never becomes an "interval".
+
+Per-horizon diagnostics come from ``interval_diagnostics``, which passes the horizon
+step as the grouping key to ``prediction_interval_diagnostics`` — a horizon-1 and a
+horizon-12 interval are reported separately instead of being averaged into one
+number::
+
+    from SKSurrogate import interval_diagnostics
+
+    interval_diagnostics(y_true, lower, upper, alpha=0.1, horizon=steps)
+    # {... "subgroup_coverage": {"groups": [{"group": "1", ...}, {"group": "12", ...}]}}
+
+Serving without recomputation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Calibration is a bundle field, so a served model can widen a point forecast without
+re-running the backtest::
+
+    bundle.interval_calibration = result["intervals"]["calibration"]
+    save_bundle(bundle, path)
+
+    lower, upper = bundle.interval_bounds(predictions)   # arrays
+
+``interval_bounds`` **raises** when the bundle was never calibrated. An uncalibrated
+bundle must not emit a zero-width interval that reads as "certain".
 
 Control-plane endpoints
 -----------------------

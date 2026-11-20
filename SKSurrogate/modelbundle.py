@@ -77,6 +77,7 @@ class ModelBundle:
         run_id=None,
         sensitive_features=None,
         audit_events=None,
+        interval_calibration=None,
     ):
         self.model = model
         self.task_name = task_name
@@ -92,6 +93,12 @@ class ModelBundle:
         self.run_id = run_id
         self.sensitive_features = list(sensitive_features) if sensitive_features is not None else []
         self.audit_events = list(audit_events) if audit_events is not None else []
+        # Residual offsets from a rolling-origin backtest: the calibration serving
+        # needs to emit an interval without recomputing anything. ``None`` means the
+        # bundle has never been calibrated, and asking for an interval raises.
+        self.interval_calibration = (
+            dict(interval_calibration) if interval_calibration is not None else None
+        )
         self.created_at = datetime.now(timezone.utc).isoformat()
 
     def record_audit_event(self, event_type, **details):
@@ -122,6 +129,7 @@ class ModelBundle:
             "run_id": self.run_id,
             "sensitive_features": list(self.sensitive_features),
             "audit_events": self.audit_events,
+            "interval_calibration": self.interval_calibration,
         }
 
     def save(self, path):
@@ -154,6 +162,7 @@ class ModelBundle:
             run_id=record.get("run_id"),
             sensitive_features=record.get("sensitive_features"),
             audit_events=record.get("audit_events", []),
+            interval_calibration=record.get("interval_calibration"),
         )
         bundle.created_at = record.get("created_at", bundle.created_at)
         return bundle
@@ -161,6 +170,23 @@ class ModelBundle:
     def predict(self, *args, **kwargs):
         """Delegate prediction to the fitted model in the bundle."""
         return self.model.predict(*args, **kwargs)
+
+    def interval_bounds(self, predictions):
+        """Apply the bundle's stored interval calibration to point predictions.
+
+        :raises ValueError: when the bundle has no calibration — an uncalibrated
+            bundle must not silently emit a zero-width interval.
+        """
+        if not self.interval_calibration:
+            raise ValueError(
+                "bundle %r has no interval calibration; run a rolling-origin "
+                "backtest (mltrack.backtest) and store result['intervals']["
+                "'calibration'] first" % self.model_version
+            )
+        from .forecast_intervals import IntervalCalibration
+
+        calibration = IntervalCalibration.from_dict(self.interval_calibration)
+        return calibration.bounds(predictions)
 
 
 def save_bundle(bundle, path):
