@@ -208,6 +208,31 @@ class TestBacktest(unittest.TestCase):
         finally:
             tracker.close()
 
+    def test_nested_cv_warns_when_timeseriessplit_gap_is_shorter_than_the_horizon(self):
+        import warnings
+
+        from sklearn.model_selection import TimeSeriesSplit
+
+        tracker = self._tracker(temporal={"time_column": "time", "horizon": 7})
+        try:
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                tracker.nested_cv_evaluation(
+                    LinearRegression(),
+                    inner_cv=TimeSeriesSplit(n_splits=3, gap=1),
+                    outer_cv=TimeSeriesSplit(n_splits=4, gap=7),
+                    train_partition="train",
+                )
+        finally:
+            tracker.close()
+        messages = [str(item.message) for item in caught]
+        self.assertTrue(
+            any("forecast horizon is 7" in message for message in messages), messages
+        )
+        # The outer splitter already satisfies the horizon rule, so only inner_cv warns.
+        self.assertEqual(sum("inner_cv" in message for message in messages), 1)
+        self.assertEqual(sum("outer_cv" in message for message in messages), 0)
+
     def test_task_without_temporal_spec_is_refused(self):
         tracker = mltrack(TASK, db_name=self.db)
         try:

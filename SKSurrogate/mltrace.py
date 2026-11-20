@@ -1885,6 +1885,31 @@ class mltrack(object):
         if not 0.0 < confidence_level < 1.0:
             raise ValueError("confidence_level must be between 0 and 1.")
 
+        # A TimeSeriesSplit whose gap is shorter than the forecast horizon lets a
+        # training row share information with the step it is scored on. Warn instead
+        # of silently reporting a number that looks like a horizon-h score.
+        temporal_spec = self.GetTemporalSpec()
+        if temporal_spec is not None and int(temporal_spec.get("horizon", 1)) > 1:
+            horizon = int(temporal_spec["horizon"])
+            for label, candidate in (("inner_cv", inner_cv), ("outer_cv", outer_cv)):
+                try:
+                    splitter = build_cv(candidate) if isinstance(candidate, dict) else candidate
+                except (TypeError, ValueError):
+                    continue
+                if type(splitter).__name__ != "TimeSeriesSplit":
+                    continue
+                gap = int(getattr(splitter, "gap", 0) or 0)
+                if gap < horizon:
+                    warnings.warn(
+                        "%s uses TimeSeriesSplit(gap=%d) on a task whose declared "
+                        "forecast horizon is %d; the gap should be >= the horizon, "
+                        "or use RollingOriginSplit, otherwise fold scores mix "
+                        "horizon-step performance with one-step performance."
+                        % (label, gap, horizon),
+                        UserWarning,
+                        stacklevel=2,
+                    )
+
         train_frame = self.get_dataframe(train_partition)
         if exclude_columns:
             present = [column for column in exclude_columns if column in train_frame.columns]
