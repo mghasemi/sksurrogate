@@ -198,8 +198,124 @@ def eda_figures(payload):
 def explain_figures(models):
     """Return per-model figures without mixing scores from different estimators."""
     figures = {}
+    metric_names = list(dict.fromkeys(
+        name for model in models
+        for name, value in (model.get("diagnostics", {}).get("Stored model metrics", {}).get("metrics") or {}).items()
+        if _number(value) is not None
+    ))[:6]
+    for metric_index, name in enumerate(metric_names):
+        entries = [(model["model_version"], _number(
+            (model.get("diagnostics", {}).get("Stored model metrics", {}).get("metrics") or {}).get(name)
+        )) for model in models[:12]]
+        entries = [(version, value) for version, value in entries if value is not None]
+        if not entries:
+            continue
+
+        def draw_comparison(fig):
+            ax = fig.subplots()
+            ax.barh(range(len(entries)), [value for _, value in entries], color=_BLUE)
+            ax.set_yticks(range(len(entries)), [_label(version, 28) for version, _ in entries])
+            ax.invert_yaxis()
+            ax.set_xlabel(_label(name))
+            _axes(ax)
+
+        figures["figures/evaluation-metric-%d.pdf" % metric_index] = _figure(
+            draw_comparison, (7, max(2.5, 0.34 * len(entries) + 1.1)),
+        )
     for index, model in enumerate(models):
         diagnostics = model.get("diagnostics") or {}
+        for curve_index, curve in enumerate((diagnostics.get("Learning curves") or {}).get("curves") or []):
+            series = curve.get("series") or {}
+            sizes = series.get("train_sizes") or []
+            means = series.get("validation_scores_mean") or []
+            if not any(_number(x) is not None and _number(y) is not None for x, y in zip(sizes, means)):
+                continue
+
+            def draw_learning(fig):
+                ax = fig.subplots()
+                for label, key, color in (("Training", "train", _BLUE), ("Validation", "validation", _TEAL)):
+                    points = list(zip(sizes, series.get(key + "_scores_mean") or [],
+                                      series.get(key + "_scores_std") or []))
+                    x = [_number(a) if _number(a) is not None else np.nan for a, _, _ in points]
+                    y = [_number(b) if _number(b) is not None else np.nan for _, b, _ in points]
+                    ax.plot(x, y, color=color, marker="o", markersize=3, linewidth=1.2, label=label)
+                    errors = [(a, b, c) for a, b, c in points
+                              if _number(a) is not None and _number(b) is not None
+                              and _number(c) is not None and c >= 0]
+                    if errors:
+                        ax.errorbar([p[0] for p in errors], [p[1] for p in errors],
+                                    yerr=[p[2] for p in errors], fmt="none",
+                                    color=color, capsize=2, linewidth=0.8)
+                ax.set(xlabel="Training rows per fold", ylabel=curve["scoring_label"])
+                ax.legend(fontsize=8)
+                _axes(ax)
+
+            figures["figures/model-%d-learning-%d.pdf" % (index, curve_index)] = _figure(draw_learning, (7, 3.2))
+
+        classification = diagnostics.get("Classification evaluation curves") or {}
+        plots = []
+        for key, xkey, ykeys, title, xlabel, ylabel in (
+            ("roc", "fpr", ("tpr",), "ROC", "False positive rate", "True positive rate"),
+            ("calibration", "mean_predicted_value", ("fraction_of_positives",), "Reliability",
+             "Mean predicted score", "Fraction positive"),
+            ("cumulative_gain", "percentages", ("gains_class0", "gains_class1"), "Cumulative gain",
+             "Fraction of sample", "Gain"),
+            ("lift", "percentages", ("lifts_class0", "lifts_class1"), "Lift",
+             "Fraction of sample", "Lift"),
+        ):
+            data = classification.get(key) or {}
+            if any(_number(x) is not None and _number(y) is not None
+                   for ykey in ykeys for x, y in zip(data.get(xkey) or [], data.get(ykey) or [])):
+                plots.append((key, data, xkey, ykeys, title, xlabel, ylabel))
+        calibration = classification.get("calibration") or {}
+        counts = calibration.get("histogram_counts") or []
+        edges = calibration.get("histogram_edges") or []
+        if counts and len(edges) == len(counts) + 1 and all(_number(v) is not None for v in counts + edges):
+            plots.append(("histogram", calibration, None, (), "Predicted-score histogram", "Score", "Count"))
+        if plots:
+            def draw_evaluation(fig):
+                axes = fig.subplots(3, 2, squeeze=False)
+                for ax, (key, data, xkey, ykeys, title, xlabel, ylabel) in zip(axes.flat, plots):
+                    if key == "histogram":
+                        ax.bar(edges[:-1], counts, width=np.diff(edges), align="edge", color=_TEAL)
+                    else:
+                        if key in ("roc", "calibration", "cumulative_gain"):
+                            ax.plot([0, 1], [0, 1], "--", color=_SLATE, linewidth=0.8, label="Baseline")
+                        elif key == "lift":
+                            ax.axhline(1, linestyle="--", color=_SLATE, linewidth=0.8, label="Baseline")
+                        for position, ykey in enumerate(ykeys):
+                            pairs = list(zip(data.get(xkey) or [], data.get(ykey) or []))
+                            x = [_number(a) if _number(a) is not None else np.nan for a, _ in pairs]
+                            y = [_number(b) if _number(b) is not None else np.nan for _, b in pairs]
+                            label = "class %s" % data["class%d" % position] if len(ykeys) == 2 else "Model"
+                            ax.plot(x, y, color=(_TEAL, _EMBER)[position], linewidth=1.3, label=label)
+                        ax.legend(fontsize=7)
+                    ax.set(title=title, xlabel=xlabel, ylabel=ylabel)
+                    ax.title.set_fontsize(9)
+                    _axes(ax)
+                for ax in list(axes.flat)[len(plots):]:
+                    ax.set_visible(False)
+
+            figures["figures/model-%d-evaluation-curves.pdf" % index] = _figure(draw_evaluation, (7, 8))
+
+        nested = (diagnostics.get("Nested cross-validation") or {}).get("result") or {}
+        folds = [fold for fold in nested.get("fold_metrics") or []
+                 if _number(fold.get("outer_score")) is not None]
+        if folds:
+            def draw_nested(fig):
+                ax = fig.subplots()
+                ax.bar(range(len(folds)), [fold["outer_score"] for fold in folds], color=_BLUE)
+                ax.set_xticks(range(len(folds)), [_label(fold.get("outer_fold"), 12) for fold in folds],
+                              rotation=45 if len(folds) > 10 else 0)
+                mean = _number(nested.get("mean_outer_score"))
+                if mean is not None:
+                    ax.axhline(mean, color=_EMBER, linestyle="--", label="Mean outer score")
+                    ax.legend(fontsize=8)
+                ax.set(xlabel="Outer fold (first repeat)", ylabel="Outer score")
+                _axes(ax)
+
+            figures["figures/model-%d-nested-cv.pdf" % index] = _figure(draw_nested, (7, 3.2))
+
         global_result = diagnostics.get("Permutation importance and partial dependence") or {}
         importance = [item for item in global_result.get("importance", [])
                       if _number(item.get("mean")) is not None][:12]

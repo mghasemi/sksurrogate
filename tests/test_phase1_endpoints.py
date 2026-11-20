@@ -218,6 +218,10 @@ class TestPhase1Endpoints(unittest.TestCase):
         self.assertEqual(len(payload["classes"]), 2)
         self.assertGreater(payload["n_test_samples"], 0)
         self.assertEqual(payload["errors"], [])
+        self.assertEqual(payload["evaluation_protocol"]["pool_partition"], "train")
+        self.assertEqual(payload["evaluation_protocol"]["pool_fingerprint"], self._train_fingerprint)
+        self.assertFalse(payload["evaluation_protocol"]["model_refit"])
+        self.assertIn("may overlap", payload["evaluation_protocol"]["note"])
 
         roc = payload["roc"]
         self.assertGreaterEqual(roc["auc"], 0.0)

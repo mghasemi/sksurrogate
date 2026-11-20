@@ -14,13 +14,18 @@ from starlette.responses import FileResponse
 from SKSurrogate.structsearch import SearchStopped
 
 from .. import control, logs
+from ..columns import read_ignored_columns
 from ..config import settings
-from ..deps import bad_request, not_found, task_access
+from ..deps import bad_request, not_found, open_tracker, task_access
 from ..eda import _format_number, _markdown_table
 from ..jobs import job_manager
 from ..report_plots import explain_figures
 from ..reports import compile_report, explain_appendix_latex, figure_latex, report_latex, source_archive
-from . import explain
+from ..training import (
+    compute_learning_curve, get_stored_cv_spec, learning_curve_metric_label,
+    learning_curve_metric_options, problem_family,
+)
+from . import evaluation, explain
 from .evaluation import _bundle_versions
 
 router = APIRouter(prefix="/api/reports", tags=["reports"], dependencies=[Depends(task_access)])
@@ -65,7 +70,7 @@ def _flatten(value, prefix=""):
         yield "%s: %s" % (prefix, json.dumps(value, ensure_ascii=False))
 
 
-def _markdown(task_name, generated_at, models):
+def _markdown(task_name, generated_at, models, history=None):
     lines = [
         "# Explainability report",
         "- Task: %s" % task_name,
@@ -78,18 +83,29 @@ def _markdown(task_name, generated_at, models):
         for name, result in model["diagnostics"].items():
             lines.extend(["", "### %s" % name])
             lines.extend("- " + line for line in _flatten(result))
+    lines.extend(["", "## Experiment evaluation history"])
+    lines.extend("- " + line for line in _flatten(history or []))
     return "\n".join(lines) + "\n"
 
 
-def _summary_markdown(task_name, generated_at, models):
+def _summary_markdown(task_name, generated_at, models, history=None):
     lines = [
         "# Explainability report",
         "- Task: %s" % task_name,
         "- Generated: %s (UTC)" % generated_at,
-        "- Models are presented separately: scores and response scales need not be comparable.",
-        "- Curves require at least two finite grid/response pairs; interval plots require finite preview points.",
-        "- Full diagnostic results, settings, sampling information and errors follow in the appendix and results.json.",
+        "- Model scores and response scales need not be comparable.",
+        "- Explain response profiles require at least two finite grid/response pairs; interval plots require finite preview points.",
+        "- The appendix previews large collections; complete diagnostic results, settings, sampling information and errors are in results.json in the source ZIP.",
     ]
+    lines.extend(["", "## Model metric comparison",
+                  "- Stored bundle metrics are shown as recorded; differing evaluation protocols and data may make comparisons invalid."])
+    metric_rows = [[model["model_version"], metric, _format_number(value)]
+                   for model in models
+                   for metric, value in (model["diagnostics"].get("Stored model metrics", {}).get("metrics") or {}).items()]
+    if metric_rows:
+        lines.append(_markdown_table(["Model", "Metric", "Stored value"], metric_rows))
+    else:
+        lines.append("- No stored metrics are available.")
     for model in models:
         lines.extend(["", "## Model: %s" % model["model_version"]])
         for name, result in model["diagnostics"].items():
@@ -102,7 +118,48 @@ def _summary_markdown(task_name, generated_at, models):
                 lines.append("- Reference: %s partition; %s of %s rows; %s."
                              % (sample.get("partition"), sample.get("used_rows"),
                                 sample.get("source_rows"), sample.get("sampling")))
-            if name == "Permutation importance and partial dependence":
+            if name == "Stored model metrics":
+                lines.append("- Stored bundle metrics; their evaluation scope is determined by the recorded training provenance and may differ between models.")
+                metrics = result.get("metrics") or {}
+                if metrics:
+                    lines.append(_markdown_table(
+                        ["Metric", "Stored value"],
+                        [[key, _format_number(value)] for key, value in metrics.items()],
+                    ))
+                else:
+                    lines.append("- No stored metrics are available.")
+            elif name == "Learning curves":
+                lines.append("- Cross-validation on the train partition using the task's stored splitter (or default 3-fold); estimator clones are fitted at each size.")
+                rows = []
+                for curve in result.get("curves") or []:
+                    if curve.get("error"):
+                        lines.append("- %s unavailable: %s" % (curve["scoring_label"], curve["error"]))
+                    else:
+                        series = curve["series"]
+                        rows.append([
+                            curve["scoring_label"], series["train_sizes"][-1],
+                            _format_number(series["train_scores_mean"][-1]),
+                            _format_number(series["validation_scores_mean"][-1]),
+                            _format_number(series["validation_scores_std"][-1]),
+                        ])
+                if rows:
+                    lines.append("- At the largest training size: fold mean scores and validation standard deviation.")
+                    lines.append(_markdown_table(["Metric", "Rows per fold", "Train mean", "Validation mean", "Validation SD"], rows))
+            elif name == "Classification evaluation curves":
+                lines.append("- " + result["evaluation_protocol"]["note"])
+                lines.append("- Partition: %s; 25%% deterministic slice; rows: %s; bins: %s."
+                             % (result["evaluation_protocol"]["pool_partition"], result["n_test_samples"], result["bins"]))
+                if result.get("roc"):
+                    lines.append("- ROC AUC: %s." % _format_number(result["roc"].get("auc")))
+            elif name == "Nested cross-validation":
+                lines.append("- Latest completed nested-CV job; historical results are not recomputed and may refer to a different dataset version. See the detailed output for fingerprints and settings.")
+                nested = result["result"]
+                lines.append(_markdown_table(
+                    ["Metric", "Value"],
+                    [[key, _format_number(nested.get(key))]
+                     for key in ("mean_outer_score", "final_validation_score", "repeat_count")],
+                ))
+            elif name == "Permutation importance and partial dependence":
                 importance = result.get("importance") or []
                 if importance:
                     lines.append(_markdown_table(
@@ -159,14 +216,36 @@ def _summary_markdown(task_name, generated_at, models):
                     )))
             for limitation in (result.get("interpretation") or {}).get("limitations") or []:
                 lines.append("- %s" % limitation)
+    lines.extend(["", "## Experiment evaluation history",
+                  "- Completed task-level experiment jobs; these are not necessarily comparable to model metrics."])
+    if history:
+        lines.append(_markdown_table(
+            ["Job", "Created", "Train score", "History length"],
+            [[item["job_id"], item["created_at"], _format_number(item["train_score"]),
+              item["history_length"]] for item in history],
+        ))
+    else:
+        lines.append("- No completed experiment jobs are available.")
     return "\n".join(lines) + "\n"
 
 
 def _figure_inserts(models, figures):
     inserts = {}
+    for metric_index in range(6):
+        filename = "figures/evaluation-metric-%d.pdf" % metric_index
+        if filename in figures:
+            inserts.setdefault(("Model metric comparison", None), []).extend(figure_latex(
+                filename,
+                "Stored metric for up to 12 models, using the first six metrics. "
+                "Values may have different evaluation provenance and are not necessarily comparable.",
+            ))
     for index, model in enumerate(models):
         section = "Model: %s" % model["model_version"]
         specs = (
+            ("Classification evaluation curves", "evaluation-curves",
+             "Classification diagnostic curves and predicted-score histogram on the deterministic 25% slice. The fitted bundle was not refit and the slice may overlap its training data."),
+            ("Nested cross-validation", "nested-cv",
+             "Outer-fold scores from the first repeat of the latest completed nested-CV job; the dashed line is the reported mean outer score. Check the historical settings and data fingerprints."),
             ("Permutation importance and partial dependence", "importance",
              "Permutation score sensitivity for up to 12 features, measured as the decrease in estimator score after shuffling. Error bars show the standard deviation across repeats."),
             ("Permutation importance and partial dependence", "pdp",
@@ -182,6 +261,14 @@ def _figure_inserts(models, figures):
             filename = "figures/model-%d-%s.pdf" % (index, suffix)
             if filename in figures:
                 inserts.setdefault((section, subsection), []).extend(figure_latex(filename, caption))
+        learning = model["diagnostics"].get("Learning curves") or {}
+        for curve_index, curve in enumerate(learning.get("curves") or []):
+            filename = "figures/model-%d-learning-%d.pdf" % (index, curve_index)
+            if filename in figures:
+                caption = ("Cross-validated learning curve for %s on the train partition. "
+                           "Training and validation scores are fold means; error bars show fold standard deviations."
+                           % curve["scoring_label"])
+                inserts.setdefault((section, "Learning curves"), []).extend(figure_latex(filename, caption))
         global_result = model["diagnostics"].get("Permutation importance and partial dependence") or {}
         if global_result.get("importance"):
             inserts.setdefault((section, "Permutation importance and partial dependence"), []).insert(
@@ -199,6 +286,79 @@ def _figure_inserts(models, figures):
                 0, r"\[ \text{Nominal coverage} = 1 - \alpha \]"
             )
     return inserts
+
+
+def _evaluation_diagnostics(task_name, version, jobs):
+    bundle = evaluation._load_bundle(task_name, version)
+    family = problem_family(bundle.model)
+    metadata = bundle.metadata if isinstance(bundle.metadata, dict) else {}
+    stored = {
+        "family": family,
+        "metrics": bundle.metrics or {},
+        "created_at": bundle.created_at,
+        "dataset_fingerprint": bundle.dataset_fingerprint,
+        "run_id": bundle.run_id,
+        "reproducibility": metadata.get("reproducibility"),
+        "recorded_evaluations": metadata.get("evaluations", []),
+    }
+    with open_tracker(task_name) as tracker:
+        train_fingerprint = (tracker.dataset_splits().get("train") or {}).get("fingerprint")
+    learning = {"family": family, "train_partition": "train",
+                "train_fingerprint": train_fingerprint, "ignored_columns": read_ignored_columns(task_name),
+                "cv_spec": get_stored_cv_spec(task_name), "curves": []}
+    for metric in learning_curve_metric_options(family)["metrics"]:
+        _check_stop()
+        scoring = metric["value"]
+        alpha = 0.5 if metric.get("requires_alpha") else None
+        logs.log_event("INFO", "Computing learning curve %s for %s" % (scoring, version))
+        curve = {"scoring": scoring, "scoring_label": learning_curve_metric_label(scoring, alpha),
+                 "pinball_alpha": alpha, "higher_is_better": metric["higher_is_better"]}
+        try:
+            series = compute_learning_curve(
+                bundle, task_name=task_name, scoring=scoring, pinball_alpha=alpha,
+                train_partition="train", n_points=5,
+            )
+            curve["series"] = series
+            if not any(value is not None for value in series["validation_scores_mean"]):
+                curve["error"] = "No finite validation scores were produced."
+        except SearchStopped:
+            raise
+        except Exception as exc:  # Match the Evaluation page's per-bundle fit/scorer errors.
+            curve["error"] = "%s: %s" % (type(exc).__name__, exc)
+        if curve.get("error"):
+            logs.log_event("WARNING", "Learning curve %s unavailable for %s: %s"
+                           % (scoring, version, curve["error"]))
+        learning["curves"].append(curve)
+    if not learning["curves"]:
+        learning["status"] = "unavailable"
+        learning["detail"] = "No learning-curve metrics are available for this estimator family."
+    _check_stop()
+    if family == "Classification":
+        try:
+            curves = evaluation.bundle_curves(task_name, version, bins=10)
+        except HTTPException as exc:
+            if exc.status_code >= 500:
+                raise
+            curves = {"status": "unavailable", "detail": exc.detail, "http_status": exc.status_code}
+        except (ValueError, AttributeError) as exc:
+            curves = {"status": "unavailable", "detail": "%s: %s" % (type(exc).__name__, exc)}
+        if curves.get("status") == "unavailable":
+            logs.log_event("WARNING", "Classification curves unavailable for %s: %s" % (version, curves["detail"]))
+    else:
+        curves = {"status": "unavailable", "detail": "Classification diagnostic curves require a classifier."}
+    nested = next((job for job in jobs if job.get("kind") == "nested-cv"
+                   and job.get("status") == "completed"
+                   and (job.get("result") or {}).get("model_version") == version), None)
+    nested_result = ({"job_id": nested["job_id"], "created_at": nested["created_at"],
+                      "request": nested.get("request"), "result": nested["result"]}
+                     if nested else {"status": "unavailable",
+                                     "detail": "No completed nested-CV job is available for this model."})
+    return {
+        "Stored model metrics": stored,
+        "Learning curves": learning,
+        "Classification evaluation curves": curves,
+        "Nested cross-validation": nested_result,
+    }
 
 
 def _make_report(task_name, versions, body, job_id):
@@ -221,8 +381,18 @@ def _make_report(task_name, versions, body, job_id):
     )
     models = []
     failures = 0
+    jobs = job_manager.list(task_name)
+    history = [
+        {"job_id": job["job_id"], "created_at": job["created_at"],
+         "train_score": (job.get("result") or {}).get("train_score"),
+         "history_length": len((job.get("result") or {}).get("evaluation_history") or [])}
+        for job in jobs if job.get("kind") == "experiment" and job.get("status") == "completed"
+    ]
     for version in versions:
-        model = {"model_version": version, "diagnostics": {}}
+        model = {"model_version": version, "diagnostics": _evaluation_diagnostics(task_name, version, jobs)}
+        failures += sum(
+            1 for value in model["diagnostics"].values() if value.get("status") == "unavailable"
+        ) + sum(1 for curve in model["diagnostics"]["Learning curves"]["curves"] if curve.get("error"))
         for name, function, request in diagnostics:
             _check_stop()
             logs.log_event("INFO", "Computing %s for %s" % (name, version))
@@ -247,9 +417,9 @@ def _make_report(task_name, versions, body, job_id):
     _check_stop()
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     data = {"task_name": task_name, "generated_at": generated_at,
-            "settings": body.model_dump(mode="json"), "models": models}
-    markdown = _markdown(task_name, generated_at, models)
-    summary = _summary_markdown(task_name, generated_at, models)
+            "settings": body.model_dump(mode="json"), "models": models, "experiment_history": history}
+    markdown = _markdown(task_name, generated_at, models, history)
+    summary = _summary_markdown(task_name, generated_at, models, history)
     figures = explain_figures(models)
     _check_stop()
     source = report_latex(

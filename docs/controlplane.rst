@@ -259,13 +259,24 @@ dataset fingerprints stay valid.
     The request accepts ``max_rows``, ``stability_samples``, ``ale_bins``,
     ``row_index``, ``row_orders``, ``alpha``, and ``group_by`` as on the
     Explain page. The job reports per-method refusals rather than treating
-    inapplicable diagnostics as successful results.
+    inapplicable diagnostics as successful results. It also computes all
+    available family-specific learning curves on the train partition with five
+    sizes (pinball quantile 0.5), and classification diagnostic curves with ten
+    bins. These fits can be costly. The fitted classifier is evaluated on a
+    deterministic 25% slice of the preferred registered partition, which can
+    overlap its training data; it is not guaranteed to be an independent
+    holdout. Stored bundle metrics, the latest completed nested-CV job for each
+    model, and completed task-level experiment summaries are included with
+    their available provenance. Nested CV is not launched by the report; old
+    results may refer to a different dataset.
 
 ``GET /api/reports/{task_name}/{job_id}/{pdf|zip}``
     Download a completed task-scoped explainability report. The source ZIP
     includes the vector figures and full diagnostic results as JSON. Available
     diagnostics are summarized in model-specific plots and tables, with
     grouped, styled tables and limitation notes in the detailed appendix.
+    Collections over 50 entries are previewed in the PDF appendix (the first
+    and last 25 entries); the ZIP's JSON and Markdown retain the complete data.
     Non-finite interval previews are not plotted, but remain in the full results. The files are retained in
     ``reports/<task>/<job>`` under API home and removed by task data reset.
 

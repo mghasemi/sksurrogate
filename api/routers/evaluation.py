@@ -524,6 +524,19 @@ def bundle_curves(task_name: str, model_version: str, bins: int = Query(default=
     return {
         "task_name": task_name,
         "model_version": model_version,
+        "evaluation_protocol": {
+            "pool_partition": pool_partition,
+            "pool_fingerprint": (splits.get(pool_partition) or {}).get("fingerprint"),
+            "test_fraction": 0.25,
+            "random_state": 0,
+            "model_refit": False,
+            "note": (
+                "The fitted bundle is evaluated on a deterministic slice of the selected partition. "
+                "The slice may overlap the data used to train the bundle and is not guaranteed "
+                "to be an independent holdout. Decision-function scores may be min-max normalized "
+                "rather than calibrated probabilities."
+            ),
+        },
         "bins": bins,
         "n_test_samples": int(len(y_true)),
         "classes": [str(cls) for cls in classes],

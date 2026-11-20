@@ -683,6 +683,22 @@ confidence band.
 bundle available when the job is submitted. It runs permutation importance and
 partial dependence, ALE, the selected row explanation, and prediction
 intervals with the page's current settings on the train partition. The report
+also includes the Evaluation page's stored bundle metrics and metric comparison,
+cross-validated learning curves for available metrics (five training sizes;
+pinball quantile 0.5), and classification ROC, calibration and score histogram,
+gain, and lift curves where available. Learning curves fit estimator clones on
+the full train partition with the saved task splitter or the default three-fold
+splitter, so generating a report may take substantially longer for large
+datasets or many models. The classification curves use a deterministic 25%
+slice of the preferred registered partition and the already-fitted model; that
+slice can overlap training data and is not guaranteed to be an independent
+holdout. Normalized decision scores are not necessarily probabilities.
+The latest completed nested-CV job for each model and completed task-level
+experiment history are included when available; nested CV is not started by
+report generation. Historical data fingerprints and settings should be
+checked before comparing these results with current models or data. Stored
+bundle metrics may also have different evaluation provenance.
+The report
 records each method's settings, results, limitations, and any per-feature skips
 or errors. If fewer distinct row-feature orders exist than requested, the
 report uses all available orders and records the adjustment. Methods that are
@@ -696,6 +712,10 @@ finite-interval preview plots, alongside tables, formulas, assumptions and
 diagnostic details. The detailed appendix groups diagnostic fields and indexed
 values into tables and highlights limitations; arrays in the same table are
 aligned by index only, with absent entries distinguished from null values.
+To keep PDF generation practical, collections longer than 50 entries show
+their first and last 25 entries in the appendix with their original indices
+and an explicit truncation notice. The source ZIP's ``results.json`` and
+``report.md`` retain all returned values.
 Figures are bounded and models are not mixed on a shared
 score scale; unbounded interval points are excluded from the preview plot.
 The ZIP contains the figures and the complete machine-readable results in

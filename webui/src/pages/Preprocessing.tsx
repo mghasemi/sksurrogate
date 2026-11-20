@@ -981,19 +981,19 @@ function StabilityCard({
           ]}
         />
       )}
-      <div className="row" style={{ marginTop: 12 }}>
-        <button className="primary" onClick={() => reportMut.mutate()} disabled={reportMut.isPending}>
+      <div className="row eda-report-actions" style={{ marginTop: 12 }}>
+        <button className="btn" onClick={() => reportMut.mutate()} disabled={reportMut.isPending}>
           {reportMut.isPending ? "Building report…" : "Download EDA report (Markdown)"}
         </button>
         {reportMut.data && (
-          <button className="link-btn" onClick={download}>
+          <button className="btn" onClick={download}>
             Save {`eda-${task}-${partition}.md`}
           </button>
         )}
-        <button onClick={() => latexMut.mutate("pdf")} disabled={latexMut.isPending}>
+        <button className="btn" onClick={() => latexMut.mutate("pdf")} disabled={latexMut.isPending}>
           {latexMut.isPending ? "Compiling…" : "Download EDA PDF"}
         </button>
-        <button onClick={() => latexMut.mutate("zip")} disabled={latexMut.isPending}>
+        <button className="btn" onClick={() => latexMut.mutate("zip")} disabled={latexMut.isPending}>
           Download EDA LaTeX sources
         </button>
       </div>

@@ -41,15 +41,69 @@ def test_explain_appendix_groups_complete_diagnostic_values_safely():
     }}]
     source = "\n".join(explain_appendix_latex(models))
     assert r"m\_\%\textbackslash{}input\{bad\}" in source
-    assert r"\begin{longtblr}" in source and "bg=skTealTint" in source
-    assert r"Index & actual & prediction & lower & upper \\" in source
+    assert r"\begin{longtable}" in source and r"\rowcolor{skTealTint}" in source
+    assert r"\textcolor{skTealInk}{actual}" in source
     assert r"0 & 1.25 & 2 & null & 3 \\" in source
     assert "Diagnostic details / curves [0] / indexed arrays" in source
-    assert r"Index & grid & average & counts \\" in source
+    assert r"\textcolor{skTealInk}{grid}" in source
     assert r"1 & 2 & null & not present \\" in source
     assert "a|b" in source and "Not applicable" in source
     assert r"\begin{sknote}[Limitations]" in source
     assert r"Diagnostic details / errors" in source and r"\noindent []\par" in source
+
+
+def test_explain_appendix_previews_large_collections_with_original_indices():
+    from api.reports import explain_appendix_latex
+
+    models = [{"model_version": "m", "diagnostics": {"Test": {
+        "arrays": {"x": list(range(51)), "y": list(range(49))},
+        "points": [{"value": i} for i in range(51)],
+        "values": list(range(50)),
+        "complex": [{"nested": {"value": i}} for i in range(51)],
+        "many_fields": {"key%d" % i: i for i in range(51)},
+    }}}]
+    source = "\n".join(explain_appendix_latex(models))
+    assert source.count("Showing the first 25 and last 25 of 51 entries.") == 4
+    assert "25 & 25 & 25" not in source
+    assert r"26 & 26 & 26 \\" in source
+    assert r"50 & 50 & not present \\" in source
+    assert "complex [24]" in source and "complex [26]" in source
+    assert "complex [25]" not in source
+    assert "key24" in source and "key26" in source and "key25" not in source
+    assert r"25 & 25 \\" in source  # A list of exactly 50 is not truncated.
+    assert r"\texttt{results.json}" in source
+
+
+def test_large_explain_appendix_compiles_without_losing_archive_data():
+    import shutil
+    import subprocess
+    from api.reports import compile_report, explain_appendix_latex, report_latex, source_archive
+    from api.routers.reports import _markdown
+
+    if not shutil.which("lualatex"):
+        pytest.skip("LuaLaTeX is required to compile the PDF")
+    values = list(range(1500))
+    models = [{"model_version": "m", "diagnostics": {"Classification evaluation curves": {
+        "cumulative_gain": {"percentages": values, "gains_class0": values, "gains_class1": values},
+        "lift": {"percentages": values, "lifts_class0": values, "lifts_class1": values},
+    }}}]
+    source = report_latex("## Model: m\n", "task", "title", "subtitle", "today",
+                          appendix_latex=explain_appendix_latex(models))
+    pdf = compile_report(source)
+    assert pdf.startswith(b"%PDF-")
+    assert source.count("Showing the first 25 and last 25 of 1500 entries.") == 2
+    if shutil.which("pdftotext"):
+        text = subprocess.run(["pdftotext", "-layout", "-", "-"], input=pdf,
+                              capture_output=True, check=True).stdout.decode()
+        assert "first 25 and last 25 of 1500 entries" in text
+        assert "1499" in text
+    markdown = _markdown("task", "today", models)
+    archive = source_archive(source, markdown, data_json=json.dumps({"models": models}))
+    with zipfile.ZipFile(io.BytesIO(archive)) as package:
+        stored = json.loads(package.read("results.json"))
+        assert stored["models"][0]["diagnostics"]["Classification evaluation curves"]["lift"]["percentages"] == values
+        assert b"[1496-1499]: 1496, 1497, 1498, 1499" in package.read("report.md")
+        assert package.read("report.tex").decode() == source
 
 
 def test_figures_use_report_values_and_skip_unavailable_data(monkeypatch):
@@ -143,6 +197,51 @@ def test_eda_heatmaps_preserve_methods_missing_pairs_and_sensitivity(monkeypatch
     assert list(plots[3].images[0].get_array().flatten()) == [0.7, 0.2]
     assert report_plots.eda_figures({"feature_associations": [
         {"feature_a": "a", "feature_b": "b", "method": "pearson", "value": None}]}) == {}
+
+
+def test_evaluation_figures_plot_scores_and_keep_missing_values(monkeypatch):
+    import numpy as np
+    from matplotlib.figure import Figure
+    from api import report_plots
+
+    plots = {}
+
+    def inspect(draw, size):
+        fig = Figure(figsize=size)
+        draw(fig)
+        plots[len(plots)] = fig
+        return b"%PDF-figure"
+
+    monkeypatch.setattr(report_plots, "_figure", inspect)
+    models = [{"model_version": "m", "diagnostics": {
+        "Stored model metrics": {"metrics": {"accuracy": 0.75}},
+        "Learning curves": {"curves": [
+            {"scoring_label": "Accuracy", "series": {
+                "train_sizes": [10, 20], "train_scores_mean": [None, None],
+                "train_scores_std": [None, None], "validation_scores_mean": [0.5, 0.7],
+                "validation_scores_std": [0.1, None]}},
+            {"scoring_label": "Unavailable", "series": {
+                "train_sizes": [10, 20], "validation_scores_mean": [None, None]}},
+        ]},
+        "Classification evaluation curves": {
+            "roc": {"fpr": [0, 0.2, 1], "tpr": [0, 0.8, 1]},
+            "calibration": {"mean_predicted_value": [0.2], "fraction_of_positives": [0.3],
+                            "histogram_counts": [2, 3], "histogram_edges": [0, 0.5, 1]},
+            "lift": {"percentages": [0.5, 1], "lifts_class0": [1.5, 1],
+                     "lifts_class1": [0.5, 1], "class0": "no", "class1": "yes"},
+        },
+    }}]
+    figures = report_plots.explain_figures(models)
+    assert set(figures) == {"figures/evaluation-metric-0.pdf", "figures/model-0-learning-0.pdf",
+                            "figures/model-0-evaluation-curves.pdf"}
+    assert plots[0].axes[0].patches[0].get_width() == 0.75
+    learning = plots[1].axes[0]
+    assert np.isnan(learning.lines[0].get_ydata()).all()
+    assert list(learning.lines[1].get_ydata()) == [0.5, 0.7]
+    dashboard = plots[2].axes
+    assert list(dashboard[0].lines[1].get_ydata()) == [0, 0.8, 1]
+    assert [patch.get_height() for patch in dashboard[3].patches] == [2, 3]
+    assert not dashboard[4].get_visible() and not dashboard[5].get_visible()
 
 
 @pytest.fixture
@@ -251,9 +350,59 @@ def test_eda_download_includes_only_matching_sensitivity_and_correlation(client,
 
 
 def test_explain_report_runs_every_diagnostic_and_preserves_unavailable_results(client, monkeypatch):
+    from types import SimpleNamespace
+    from sklearn.linear_model import LinearRegression, LogisticRegression
     from api.routers import reports
 
     calls = []
+    evaluation_calls = []
+
+    def load_bundle(task, version):
+        return SimpleNamespace(
+            model=LinearRegression() if version == "regressor" else LogisticRegression(),
+            metrics={"score": 0.8 if version == "regressor" else 0.7},
+            metadata={"reproducibility": {"metric_scope": "training"}},
+            created_at="2026-01-01", dataset_fingerprint="original", run_id="run",
+            model_version=version,
+        )
+
+    def learning(bundle, *, task_name, scoring, pinball_alpha, train_partition, n_points):
+        evaluation_calls.append((bundle.model_version, scoring, pinball_alpha))
+        if bundle.model_version == "classifier" and scoring == "f1":
+            raise ValueError("f1 unavailable")
+        return {
+            "model_version": bundle.model_version, "train_sizes": [10, 20],
+            "train_scores_mean": [0.8, 0.9], "train_scores_std": [0.1, 0.1],
+            "validation_scores_mean": [0.6, 0.7], "validation_scores_std": [0.2, 0.1],
+            "train_sizes_fraction": [0.1, 0.2],
+        }
+
+    def curves(task, version, bins):
+        return {
+            "evaluation_protocol": {"pool_partition": "train", "pool_fingerprint": "current",
+                                    "note": "The slice may overlap training data."},
+            "n_test_samples": 10, "bins": bins,
+            "roc": {"fpr": [0, 1], "tpr": [0, 1], "auc": 0.5},
+            "calibration": {"mean_predicted_value": [0.2, 0.8], "fraction_of_positives": [0.1, 0.9],
+                            "histogram_counts": [4, 6], "histogram_edges": [0, 0.5, 1]},
+            "cumulative_gain": {"percentages": [0, 1], "gains_class0": [0, 1], "gains_class1": [0, 1],
+                                "class0": "no", "class1": "yes"},
+            "lift": {"percentages": [0.5, 1], "lifts_class0": [2, 1], "lifts_class1": [0, 1],
+                     "class0": "no", "class1": "yes"},
+            "errors": [],
+        }
+
+    jobs = [
+        {"kind": "nested-cv", "status": "completed", "job_id": "nested", "created_at": "2026-01-01",
+         "request": {"outer_cv": 3}, "result": {"model_version": "regressor", "mean_outer_score": 0.4,
+                                                   "fold_metrics": [{"outer_fold": 1, "outer_score": 0.3},
+                                                                    {"outer_fold": 2, "outer_score": 0.5}],
+                                                   "evaluation_protocol": {"train_fingerprint": "old"}}},
+        {"kind": "nested-cv", "status": "failed", "job_id": "failed", "created_at": "2026-01-02",
+         "result": {"model_version": "classifier"}},
+        {"kind": "experiment", "status": "completed", "job_id": "experiment", "created_at": "2026-01-01",
+         "result": {"train_score": 0.95, "evaluation_history": [{}, {}]}},
+    ]
 
     def diagnostic(name):
         def run(task, version, request):
@@ -281,6 +430,11 @@ def test_explain_report_runs_every_diagnostic_and_preserves_unavailable_results(
 
     monkeypatch.setattr(reports, "_bundle_versions", lambda task: ["regressor", "classifier"])
     monkeypatch.setattr(reports.explain, "_features_and_target", lambda task, partition: (pd.DataFrame(columns=["x", "z"]), []))
+    monkeypatch.setattr(reports.evaluation, "_load_bundle", load_bundle)
+    monkeypatch.setattr(reports.evaluation, "bundle_curves", curves)
+    monkeypatch.setattr(reports, "compute_learning_curve", learning)
+    monkeypatch.setattr(reports, "get_stored_cv_spec", lambda task: {"type": "KFold", "n_splits": 3})
+    monkeypatch.setattr(reports.job_manager, "list", lambda task: jobs)
     for name in ("explain_bundle", "accumulated_local_effects_bundle", "explain_row", "prediction_intervals"):
         monkeypatch.setattr(reports.explain, name, diagnostic("intervals" if name == "prediction_intervals" else name))
     monkeypatch.setattr(reports, "compile_report", lambda source, *, figures: b"%PDF-1.7\n" + source.encode())
@@ -298,7 +452,9 @@ def test_explain_report_runs_every_diagnostic_and_preserves_unavailable_results(
         time.sleep(0.05)
     assert job["status"] == "completed", job.get("error")
     assert job["result"]["model_count"] == 2
-    assert job["result"]["diagnostic_failures"] == 1
+    assert job["result"]["diagnostic_failures"] == 4
+    assert ("regressor", "neg_mean_pinball_loss", 0.5) in evaluation_calls
+    assert ("classifier", "f1", None) in evaluation_calls
     assert len(calls) == 8
     by_name = {name: request for name, version, request in calls if version == "regressor"}
     assert by_name["explain_bundle"].max_rows == 100
@@ -313,6 +469,15 @@ def test_explain_report_runs_every_diagnostic_and_preserves_unavailable_results(
     with zipfile.ZipFile(io.BytesIO(package.content)) as archive:
         results = json.loads(archive.read("results.json"))
         assert len(results["models"]) == 2
+        regression = results["models"][0]["diagnostics"]
+        classification = results["models"][1]["diagnostics"]
+        assert regression["Stored model metrics"]["reproducibility"]["metric_scope"] == "training"
+        assert regression["Learning curves"]["cv_spec"]["n_splits"] == 3
+        assert regression["Nested cross-validation"]["result"]["evaluation_protocol"]["train_fingerprint"] == "old"
+        assert regression["Classification evaluation curves"]["status"] == "unavailable"
+        assert classification["Nested cross-validation"]["status"] == "unavailable"
+        assert next(c for c in classification["Learning curves"]["curves"] if c["scoring"] == "f1")["error"] == "ValueError: f1 unavailable"
+        assert results["experiment_history"][0]["history_length"] == 2
         failed = results["models"][1]["diagnostics"]["Prediction intervals"]
         assert failed["status"] == "unavailable"
         assert failed["reason"] == "intervals_require_regression_bundle"
@@ -322,6 +487,13 @@ def test_explain_report_runs_every_diagnostic_and_preserves_unavailable_results(
         assert b"Regression only" in source
         assert b"x|1" in source and b"longtblr" in source
         assert b"Nominal coverage" in source and b"1 - \\alpha" in source
+        assert b"The slice may overlap training data" in source
+        assert b"historical results are not recomputed" in source
+        assert b"f1 unavailable" in source and b"experiment" in source
+        for name in ("figures/evaluation-metric-0.pdf", "figures/model-0-learning-0.pdf",
+                     "figures/model-0-nested-cv.pdf", "figures/model-1-evaluation-curves.pdf"):
+            assert archive.read(name).startswith(b"%PDF-")
+            assert name.encode() in source
         for suffix in ("importance", "pdp", "ale", "row", "intervals"):
             name = "figures/model-0-%s.pdf" % suffix
             assert archive.read(name).startswith(b"%PDF-")
@@ -335,3 +507,84 @@ def test_explain_report_requires_models_and_does_not_expose_unfinished_jobs(clie
     monkeypatch.setattr(reports, "_bundle_versions", lambda task: [])
     assert client.post("/api/reports/example/explain", json={}).status_code == 400
     assert client.get("/api/reports/example/not-a-job/pdf").status_code == 404
+
+
+def test_evaluation_report_records_unavailable_scores_and_preserves_cancellation(client, monkeypatch):
+    from types import SimpleNamespace
+    from sklearn.linear_model import LogisticRegression
+    from SKSurrogate.structsearch import SearchStopped
+    from api.routers import reports
+
+    monkeypatch.setattr(reports.evaluation, "_load_bundle", lambda task, version: SimpleNamespace(
+        model=LogisticRegression(), metadata={}, metrics={}, created_at="now",
+        dataset_fingerprint=None, run_id=None,
+    ))
+    monkeypatch.setattr(reports, "get_stored_cv_spec", lambda task: None)
+    monkeypatch.setattr(reports, "learning_curve_metric_options", lambda family: {
+        "metrics": [{"value": "accuracy", "higher_is_better": True}],
+    })
+    monkeypatch.setattr(reports, "compute_learning_curve", lambda *args, **kwargs: {
+        "train_sizes": [2], "validation_scores_mean": [None],
+    })
+    def fail_curves(*args, **kwargs):
+        raise ValueError("no classifier scores")
+
+    monkeypatch.setattr(reports.evaluation, "bundle_curves", fail_curves)
+    diagnostics = reports._evaluation_diagnostics("example", "model", [])
+    curve = diagnostics["Learning curves"]["curves"][0]
+    assert curve["error"] == "No finite validation scores were produced."
+    assert curve["series"]["validation_scores_mean"] == [None]
+    assert diagnostics["Classification evaluation curves"]["detail"] == "ValueError: no classifier scores"
+    monkeypatch.setattr(reports.control, "stop_requested", lambda: True)
+    with pytest.raises(SearchStopped):
+        reports._evaluation_diagnostics("example", "model", [])
+
+
+def test_real_model_evaluation_report_compiles(client, monkeypatch):
+    import shutil
+    from sklearn.datasets import make_classification
+    from sklearn.linear_model import LinearRegression, LogisticRegression
+    from SKSurrogate import ModelBundle, save_bundle
+    from api.deps import open_tracker
+    from api.routers import reports
+
+    if not shutil.which("lualatex"):
+        pytest.skip("LuaLaTeX is required to compile the PDF")
+    X, y = make_classification(n_samples=90, n_features=4, random_state=4)
+    frame = pd.DataFrame(X, columns=["a", "b", "c", "d"])
+    frame["target"] = y
+    response = client.post(
+        "/api/datasets/example/register", data={"target": "target", "partition": "train"},
+        files={"file": ("data.csv", frame.to_csv(index=False), "text/csv")},
+    )
+    assert response.status_code == 200, response.text
+    with open_tracker("example") as tracker:
+        fingerprint = tracker.dataset_splits()["train"]["fingerprint"]
+    directory = settings.task_bundles_dir("example")
+    directory.mkdir(parents=True, exist_ok=True)
+    for version, estimator in (("classifier", LogisticRegression(max_iter=300)), ("regressor", LinearRegression())):
+        model = estimator.fit(frame.drop(columns="target"), y)
+        bundle = ModelBundle(model, task_name="example", model_version=version,
+                             schema={key: "float" for key in ("a", "b", "c", "d")},
+                             metrics={"score": model.score(frame.drop(columns="target"), y)})
+        save_bundle(bundle, directory / (version + ".bundle"))
+    for name in ("explain_bundle", "accumulated_local_effects_bundle", "explain_row", "prediction_intervals"):
+        monkeypatch.setattr(reports.explain, name, lambda task, version, request: {})
+    reports._make_report("example", ["classifier", "regressor"], reports.ExplainReportRequest(), "real")
+    root = settings.task_report_dir("example", "real")
+    assert (root / "report.pdf").read_bytes().startswith(b"%PDF-")
+    with zipfile.ZipFile(root / "report.zip") as archive:
+        data = json.loads(archive.read("results.json"))
+        classifier, regressor = [item["diagnostics"] for item in data["models"]]
+        assert classifier["Learning curves"]["train_fingerprint"] == fingerprint
+        assert classifier["Classification evaluation curves"]["evaluation_protocol"]["pool_fingerprint"] == fingerprint
+        assert classifier["Classification evaluation curves"]["roc"]["auc"] is not None
+        assert regressor["Classification evaluation curves"]["status"] == "unavailable"
+        assert len(classifier["Learning curves"]["curves"]) >= 5
+        assert any(c["scoring"] == "neg_mean_pinball_loss" and c["pinball_alpha"] == 0.5
+                   for c in regressor["Learning curves"]["curves"])
+        source = archive.read("report.tex")
+        for name in ("figures/model-0-learning-0.pdf", "figures/model-1-learning-0.pdf",
+                     "figures/model-0-evaluation-curves.pdf", "figures/evaluation-metric-0.pdf"):
+            assert archive.read(name).startswith(b"%PDF-")
+            assert name.encode() in source

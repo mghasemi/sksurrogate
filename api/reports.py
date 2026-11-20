@@ -13,6 +13,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 _TEMPLATE = Path(__file__).parent / "report_template"
+_DETAIL_PREVIEW_LIMIT = 50
 _TEX_SPECIAL = {
     "\\": r"\textbackslash{}",
     "{": r"\{",
@@ -116,21 +117,45 @@ def figure_latex(name, caption):
 
 def _detail_table(headers, rows, *, field_values=False):
     if field_values:
-        columns = r"X[3,l] X[7,l]"
+        weights = [3, 7]
     elif headers[0] == "Index":
-        columns = "X[1,l] " + " ".join("X[3,l]" for _ in headers[1:])
+        weights = [1] + [3] * (len(headers) - 1)
     else:
-        columns = " ".join("X[l]" for _ in headers)
+        weights = [1] * len(headers)
+    columns = " ".join(
+        r"p{\dimexpr %.6f\linewidth-2\tabcolsep\relax}" % (weight / sum(weights))
+        for weight in weights
+    )
+    header = (r"\rowcolor{skTealTint}" + " & ".join(
+        r"\textbf{\textcolor{skTealInk}{" + _table_value(str(value)) + "}}"
+        for value in headers
+    ) + r" \\")
     lines = [
         r"\begingroup\small" if field_values else r"\begingroup\footnotesize",
-        r"\begin{longtblr}[entry=none,label=none]{width=\linewidth,colspec={" + columns +
-        r"},rowhead=1,hline{1,Z}={0.9pt,skInk},hline{2}={0.5pt,skInk},"
-        r"hline{3-Z}={0.4pt,skHair!80},row{1}={bg=skTealTint,font=\bfseries,fg=skTealInk}}",
+        r"\renewcommand{\arraystretch}{1.2}",
+        r"\begin{longtable}{" + columns + "}",
+        r"\toprule", header, r"\midrule", r"\endfirsthead",
+        r"\toprule", header, r"\midrule", r"\endhead",
+        r"\bottomrule", r"\endfoot",
     ]
-    for row in [headers, *rows]:
+    for row in rows:
         lines.append(" & ".join(_table_value(str(value)) for value in row) + r" \\")
-    lines.extend([r"\end{longtblr}", r"\endgroup"])
+    lines.extend([r"\end{longtable}", r"\endgroup"])
     return lines
+
+
+def _detail_indices(length):
+    if length <= _DETAIL_PREVIEW_LIMIT:
+        return range(length)
+    half = _DETAIL_PREVIEW_LIMIT // 2
+    return [*range(half), *range(length - half, length)]
+
+
+def _detail_preview_note(length):
+    half = _DETAIL_PREVIEW_LIMIT // 2
+    return (r"\noindent Showing the first %d and last %d of %d entries. "
+            r"Complete values are in \texttt{results.json} in the source ZIP.\par"
+            % (half, half, length))
 
 
 def _detail_scalar(value):
@@ -144,15 +169,20 @@ def _detail_heading(path):
 
 
 def _detail_value(value, path):
-    """Render every diagnostic value in bounded-width, breakable groups."""
+    """Render diagnostic values in breakable tables, previewing large collections."""
     lines = [_detail_heading(path)]
     if isinstance(value, dict):
         if not value:
             return lines + [r"\noindent \{\}\par"]
+        keys = list(value)
+        if len(keys) > _DETAIL_PREVIEW_LIMIT:
+            lines.append(_detail_preview_note(len(keys)))
         rows = []
         nested = []
         arrays = []
-        for key, item in value.items():
+        for index in _detail_indices(len(keys)):
+            key = keys[index]
+            item = value[key]
             if (isinstance(item, list) and item
                     and all(not isinstance(entry, (dict, list, str)) for entry in item)):
                 arrays.append((key, item))
@@ -168,10 +198,13 @@ def _detail_value(value, path):
                           r"``not present'' and are distinct from null values.\par"])
             for start in range(0, len(arrays), 3):
                 group = arrays[start:start + 3]
+                length = max(len(array) for _, array in group)
+                if length > _DETAIL_PREVIEW_LIMIT:
+                    lines.append(_detail_preview_note(length))
                 table_rows = [
                     [index] + [_detail_scalar(array[index]) if index < len(array) else "not present"
                                for _, array in group]
-                    for index in range(max(len(array) for _, array in group))
+                    for index in _detail_indices(length)
                 ]
                 lines.extend(_detail_table(["Index"] + [key for key, _ in group], table_rows))
         else:
@@ -181,26 +214,30 @@ def _detail_value(value, path):
     elif isinstance(value, list):
         if not value:
             return lines + [r"\noindent []\par"]
-        if all(isinstance(item, dict) and item for item in value):
-            keys = list(dict.fromkeys(key for item in value for key in item))
+        indices = _detail_indices(len(value))
+        entries = [(index, value[index]) for index in indices]
+        if len(value) > _DETAIL_PREVIEW_LIMIT:
+            lines.append(_detail_preview_note(len(value)))
+        if all(isinstance(item, dict) and item for _, item in entries):
+            keys = list(dict.fromkeys(key for _, item in entries for key in item))
             if (len(keys) <= 5 and all(not isinstance(entry, (dict, list))
                                        and len(_detail_scalar(entry)) <= 100
-                                       for item in value for entry in item.values())):
+                                       for _, item in entries for entry in item.values())):
                 rows = [[index] + [_detail_scalar(item[key]) if key in item else "not present"
-                                   for key in keys] for index, item in enumerate(value)]
+                                   for key in keys] for index, item in entries]
                 return lines + _detail_table(["Index"] + keys, rows)
-        if path.endswith(" / limitations") and all(isinstance(item, str) for item in value):
+        if path.endswith(" / limitations") and all(isinstance(item, str) for _, item in entries):
             lines.append(r"\begin{sknote}[Limitations]")
-            for index, item in enumerate(value):
+            for index, item in entries:
                 lines.append(r"\noindent\textbf{" + str(index) + r".} " + _escape(item) + r"\par")
             return lines + [r"\end{sknote}"]
         if all(not isinstance(item, (dict, list)) and len(_detail_scalar(item)) <= 100
-               for item in value):
+               for _, item in entries):
             return lines + _detail_table(
-                ["Index", "Value"], [[index, _detail_scalar(item)] for index, item in enumerate(value)],
+                ["Index", "Value"], [[index, _detail_scalar(item)] for index, item in entries],
                 field_values=True,
             )
-        for index, item in enumerate(value):
+        for index, item in entries:
             lines.extend(_detail_value(item, "%s [%d]" % (path, index)))
     else:
         lines.append(r"\noindent " + _escape(_detail_scalar(value)) + r"\par")
@@ -208,7 +245,7 @@ def _detail_value(value, path):
 
 
 def explain_appendix_latex(models):
-    """Present complete model diagnostics as grouped tables and readable notes."""
+    """Present model diagnostics as grouped tables and readable notes."""
     body = []
     for model in models:
         body.append(r"\section{Model: " + _escape(model["model_version"]) + "}")
@@ -229,6 +266,7 @@ def report_latex(markdown: str, task: str, title: str, subtitle: str, generated_
     return "\n".join([
         r"\documentclass[11pt,letterpaper]{article}",
         r"\usepackage{sk}",
+        r"\usepackage{longtable,colortbl}",
         r"\skdoctype{Report}",
         r"\sktitle[SKSurrogate]{" + _escape(title) + "}",
         r"\sksubtitle{" + _escape(subtitle) + "}",
@@ -337,7 +375,7 @@ def source_archive(source: str, markdown: str, *, data_json: str | None = None, 
             "README.txt",
             "Build report.tex twice with LuaLaTeX. The SKSurrogate style requires "
             "Inter, Inter Display, and Fira Mono or Fira Code; Libertinus Math or "
-            "Latin Modern Math; and the TeX packages used by sk.sty.\n",
+            "Latin Modern Math; the TeX packages used by sk.sty; and longtable and colortbl.\n",
         )
         for name in ("sk.sty", "sk-brand.sty", "logo/sk-mark.tikz", "logo/cover-surface.tikz"):
             output.write(_TEMPLATE / name, name)
