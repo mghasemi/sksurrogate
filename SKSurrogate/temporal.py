@@ -31,6 +31,8 @@ from typing import Any, Iterable, Mapping
 import numpy as np
 import pandas as pd
 from pandas.tseries.frequencies import to_offset
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.utils.validation import check_is_fitted
 
 #: Task-metadata key under which a task's temporal spec is stored.
 TEMPORAL_METADATA_KEY = "temporal_spec"
@@ -555,3 +557,653 @@ def validate_temporal_frame(frame: pd.DataFrame, spec: Any) -> dict[str, Any]:
     report["warnings"] = warnings
     report["errors"] = []
     return report
+
+
+# ---------------------------------------------------------------------------
+# Leakage-safe feature construction (plan phase P2)
+# ---------------------------------------------------------------------------
+
+#: Rolling statistics the builder understands.
+ROLL_STATS = ("mean", "std", "min", "max", "median", "sum")
+
+#: Calendar features the builder understands (datetime axes only).
+CALENDAR_FEATURES = (
+    "hour",
+    "minute",
+    "dow",
+    "dom",
+    "doy",
+    "month",
+    "week",
+    "is_weekend",
+)
+
+
+class LeakageError(ValueError):
+    """Raised when a generated feature depends on observations after its origin."""
+
+
+@dataclass
+class FeatureSpec:
+    """Provenance of one generated feature column.
+
+    ``shift`` is the minimum number of steps back from the prediction origin that
+    the feature reads. For every target-derived feature it is at least the
+    forecast horizon, which is what makes the design leakage-safe by
+    construction.
+    """
+
+    name: str
+    op: str
+    column: str | None = None
+    shift: int = 0
+    window: int | None = None
+    params: dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "op": self.op,
+            "column": self.column,
+            "shift": int(self.shift),
+            "window": self.window,
+            "params": dict(self.params or {}),
+        }
+
+
+@dataclass
+class ForecastDesign:
+    """A supervised design matrix for a forecasting problem.
+
+    ``X``, ``y`` and ``meta`` share a positional index: row *i* is the origin
+    described by ``meta.iloc[i]`` (series, origin time, target time) whose
+    feature vector is ``X.iloc[i]`` and whose target is ``y.iloc[i]``.
+    """
+
+    X: pd.DataFrame
+    y: pd.Series
+    meta: pd.DataFrame
+    feature_specs: list[FeatureSpec]
+    strategy: str
+    horizon: int
+    dropped_rows: int
+    temporal_spec: TemporalSpec
+    target_step: int = 0
+
+    @property
+    def feature_names(self) -> list[str]:
+        return list(self.X.columns)
+
+    def describe(self) -> dict[str, Any]:
+        """JSON-serializable summary for logging into task metadata."""
+        return {
+            "strategy": self.strategy,
+            "horizon": int(self.horizon),
+            "target_step": int(self.target_step),
+            "rows": int(len(self.X)),
+            "dropped_rows": int(self.dropped_rows),
+            "features": [spec.to_dict() for spec in self.feature_specs],
+            "temporal_spec": self.temporal_spec.to_dict(),
+        }
+
+
+def _normalize_rolling(rolling: Any) -> list[tuple[int, tuple[str, ...]]]:
+    """Normalize the ``rolling`` argument to ``[(window, (stats...)), ...]``.
+
+    Accepts ``[{"window": 14, "stats": ["mean", "std"]}, (7, "mean"), 30]``.
+    """
+    if rolling is None:
+        return []
+    if isinstance(rolling, (int, np.integer)):
+        rolling = [int(rolling)]
+    normalized = []
+    for entry in rolling:
+        if isinstance(entry, (int, np.integer)):
+            window, stats = int(entry), ("mean",)
+        elif isinstance(entry, Mapping):
+            unknown = sorted(set(entry) - {"window", "stats", "min_periods"})
+            if unknown:
+                raise ValueError(
+                    "unknown rolling field(s): %s" % ", ".join(unknown)
+                )
+            if "window" not in entry:
+                raise ValueError("rolling entries require a 'window'")
+            window = int(entry["window"])
+            stats = entry.get("stats", ("mean",))
+        elif isinstance(entry, (tuple, list)) and len(entry) == 2:
+            window, stats = int(entry[0]), entry[1]
+        else:
+            raise ValueError(
+                "rolling entries must be an int, a (window, stats) pair, or a "
+                "mapping with 'window'/'stats'"
+            )
+        if isinstance(stats, str):
+            stats = (stats,)
+        stats = tuple(stats)
+        if window < 1:
+            raise ValueError("rolling windows must be >= 1")
+        bad = [stat for stat in stats if stat not in ROLL_STATS]
+        if bad:
+            raise ValueError(
+                "unknown rolling statistic(s) %s; expected one of %s"
+                % (", ".join(bad), ", ".join(ROLL_STATS))
+            )
+        normalized.append((window, stats))
+    return normalized
+
+
+class ForecastFeatureBuilder(BaseEstimator, TransformerMixin):
+    """Build leakage-safe lag / rolling / calendar features for a temporal dataset.
+
+    Every target-derived feature is shifted by at least the declared forecast
+    horizon *within each series*, so a row at origin ``t`` never reads an
+    observation after ``t - horizon``. ``center=True`` does not exist in this API.
+
+    The frame passed to :meth:`fit`/:meth:`transform` must still contain the
+    target column (lag features are built from it). The control plane's feature
+    matrix drops the target, so materialize the design matrix *before*
+    registration, or keep the target in the frame you hand to the builder.
+
+    :param spec: :class:`TemporalSpec` or mapping describing time/series/horizon.
+    :param target: column to predict; source of every lag/rolling/diff feature.
+    :param lags: steps back to read, each must be ``>= horizon``.
+    :param rolling: ``[{"window": 14, "stats": ["mean", "std"]}, 7, ...]``;
+        windows always end at ``t - horizon``.
+    :param diffs: step sizes for ``x[t-h] - x[t-h-k]`` features.
+    :param pct_changes: step sizes for relative differences; zero denominators
+        produce ``NaN``, never ``inf``.
+    :param calendar: calendar fields (datetime axes only).
+    :param fourier: ``{"periods": [7, 365.25], "terms": 2}`` — periods are counted
+        in time *steps*, and the phase comes from the timestamp itself, so it is
+        known at forecast time.
+    :param exogenous: extra column names passed through unchanged; they must be
+        known at the forecast origin.
+    :param dropna: drop rows with an incomplete feature vector or missing target.
+    :param min_periods: minimum observations per rolling window (default: the
+        window length, so no partial windows leak in early rows).
+    """
+
+    def __init__(
+        self,
+        spec: Any,
+        target: str,
+        lags: Any = (1,),
+        rolling: Any = (),
+        diffs: Any = (),
+        pct_changes: Any = (),
+        calendar: Any = (),
+        fourier: Mapping[str, Any] | None = None,
+        exogenous: Any = (),
+        dropna: bool = True,
+        min_periods: int | None = None,
+    ):
+        self.spec = spec
+        self.target = target
+        self.lags = lags
+        self.rolling = rolling
+        self.diffs = diffs
+        self.pct_changes = pct_changes
+        self.calendar = calendar
+        self.fourier = fourier
+        self.exogenous = exogenous
+        self.dropna = dropna
+        self.min_periods = min_periods
+
+    # -- validation -------------------------------------------------------
+    def _resolved(self):
+        """Normalize constructor arguments into validated structures."""
+        spec = TemporalSpec.from_dict(self.spec)
+        lags = tuple(sorted({int(lag) for lag in (self.lags or ())}))
+        if any(lag < 1 for lag in lags):
+            raise ValueError("lags must be >= 1")
+        too_short = [lag for lag in lags if lag < spec.horizon]
+        if too_short:
+            raise ValueError(
+                "lag(s) %s are shorter than the forecast horizon %d: a lag below "
+                "the horizon reads an observation the forecast is supposed to "
+                "predict" % (", ".join(str(lag) for lag in too_short), spec.horizon)
+            )
+        rolling = _normalize_rolling(self.rolling)
+        diffs = tuple(sorted({int(step) for step in (self.diffs or ())}))
+        if any(step < 1 for step in diffs):
+            raise ValueError("diff steps must be >= 1")
+        pct_changes = tuple(sorted({int(step) for step in (self.pct_changes or ())}))
+        if any(step < 1 for step in pct_changes):
+            raise ValueError("pct_change steps must be >= 1")
+        calendar = tuple(self.calendar or ())
+        bad_calendar = [name for name in calendar if name not in CALENDAR_FEATURES]
+        if bad_calendar:
+            raise ValueError(
+                "unknown calendar feature(s) %s; expected one of %s"
+                % (", ".join(bad_calendar), ", ".join(CALENDAR_FEATURES))
+            )
+        exogenous = tuple(self.exogenous or ())
+        fourier = None
+        if self.fourier:
+            unknown = sorted(set(self.fourier) - {"periods", "terms"})
+            if unknown:
+                raise ValueError("unknown fourier field(s): %s" % ", ".join(unknown))
+            periods = tuple(float(period) for period in self.fourier.get("periods", ()))
+            if not periods:
+                raise ValueError("fourier requires at least one period")
+            if any(period <= 0 for period in periods):
+                raise ValueError("fourier periods must be positive")
+            terms = int(self.fourier.get("terms", 1))
+            if terms < 1:
+                raise ValueError("fourier terms must be >= 1")
+            fourier = (periods, terms)
+        min_periods = self.min_periods
+        if min_periods is not None:
+            min_periods = int(min_periods)
+            if min_periods < 1:
+                raise ValueError("min_periods must be >= 1")
+        return spec, lags, rolling, diffs, pct_changes, calendar, fourier, exogenous, min_periods
+
+    def fit(self, X: Any, y: Any = None):
+        """Validate the frame, the columns and the horizon rules; store provenance."""
+        spec, lags, rolling, diffs, pct_changes, calendar, fourier, exogenous, _ = (
+            self._resolved()
+        )
+        frame = self._as_frame(X)
+        required = [spec.time_column]
+        if spec.series_id is not None:
+            required.append(spec.series_id)
+        required.append(self.target)
+        missing = [column for column in required if column not in frame.columns]
+        if missing:
+            raise ValueError(
+                "ForecastFeatureBuilder is missing required column(s): %s"
+                % ", ".join(missing)
+            )
+        missing_exog = [column for column in exogenous if column not in frame.columns]
+        if missing_exog:
+            raise ValueError(
+                "exogenous column(s) not found: %s" % ", ".join(missing_exog)
+            )
+        if calendar and not pd.api.types.is_datetime64_any_dtype(frame[spec.time_column]):
+            raise ValueError(
+                "calendar features require a datetime time column; %r is not one"
+                % spec.time_column
+            )
+        # Ordering is the contract's job: fail here rather than build features on
+        # a shuffled frame, where every lag silently reads the wrong row.
+        validate_temporal_frame(frame, spec)
+        self.feature_specs_ = self._feature_specs(
+            spec, lags, rolling, diffs, pct_changes, calendar, fourier, exogenous
+        )
+        self.n_features_in_ = len(frame.columns)
+        self.temporal_spec_ = spec
+        return self
+
+    def _feature_specs(self, spec, lags, rolling, diffs, pct_changes, calendar, fourier, exogenous):
+        horizon = spec.horizon
+        specs = []
+        for lag in lags:
+            specs.append(
+                FeatureSpec(
+                    name="%s__lag_%d" % (self.target, lag),
+                    op="lag",
+                    column=self.target,
+                    shift=lag,
+                )
+            )
+        for window, stats in rolling:
+            for stat in stats:
+                specs.append(
+                    FeatureSpec(
+                        name="%s__roll_%s_%d" % (self.target, stat, window),
+                        op="roll_%s" % stat,
+                        column=self.target,
+                        shift=horizon,
+                        window=window,
+                    )
+                )
+        for step in diffs:
+            specs.append(
+                FeatureSpec(
+                    name="%s__diff_%d" % (self.target, step),
+                    op="diff",
+                    column=self.target,
+                    shift=horizon,
+                    params={"step": step},
+                )
+            )
+        for step in pct_changes:
+            specs.append(
+                FeatureSpec(
+                    name="%s__pct_change_%d" % (self.target, step),
+                    op="pct_change",
+                    column=self.target,
+                    shift=horizon,
+                    params={"step": step},
+                )
+            )
+        for name in calendar:
+            specs.append(FeatureSpec(name="cal__%s" % name, op="calendar", params={"field": name}))
+        if fourier is not None:
+            periods, terms = fourier
+            for period in periods:
+                for term in range(1, terms + 1):
+                    for fn in ("sin", "cos"):
+                        specs.append(
+                            FeatureSpec(
+                                name="fourier__%s_%g_%d" % (fn, period, term),
+                                op="fourier_%s" % fn,
+                                params={"period": period, "term": term},
+                            )
+                        )
+        for column in exogenous:
+            specs.append(
+                FeatureSpec(name=column, op="exogenous", column=column, shift=0)
+            )
+        return specs
+
+    # -- transform --------------------------------------------------------
+    @staticmethod
+    def _as_frame(X: Any) -> pd.DataFrame:
+        if not isinstance(X, pd.DataFrame):
+            raise TypeError(
+                "ForecastFeatureBuilder works on pandas DataFrames: lag features "
+                "need the named target column, which an array cannot carry"
+            )
+        return X
+
+    def transform(self, X: Any) -> pd.DataFrame:
+        """Return the generated feature matrix for ``X`` (target column required)."""
+        check_is_fitted(self, "feature_specs_")
+        frame = self._as_frame(X)
+        spec = self.temporal_spec_
+        (
+            _, lags, rolling, diffs, pct_changes, calendar, fourier, exogenous, min_periods
+        ) = self._resolved()
+        if self.target not in frame.columns:
+            raise ValueError(
+                "transform requires the target column %r: lag features are built "
+                "from it" % self.target
+            )
+
+        horizon = spec.horizon
+        features: dict[str, pd.Series] = {}
+        for lag in lags:
+            features["%s__lag_%d" % (self.target, lag)] = self._apply(
+                frame, spec, lambda series, lag=lag: series.shift(lag)
+            )
+        for window, stats in rolling:
+            periods = min_periods if min_periods is not None else window
+            for stat in stats:
+                features["%s__roll_%s_%d" % (self.target, stat, window)] = self._apply(
+                    frame,
+                    spec,
+                    lambda series, window=window, stat=stat, periods=periods: (
+                        series.shift(horizon)
+                        .rolling(window, min_periods=periods)
+                        .agg(stat)
+                    ),
+                )
+        for step in diffs:
+            features["%s__diff_%d" % (self.target, step)] = self._apply(
+                frame,
+                spec,
+                lambda series, step=step: series.shift(horizon) - series.shift(horizon + step),
+            )
+        for step in pct_changes:
+            features["%s__pct_change_%d" % (self.target, step)] = self._apply(
+                frame, spec, lambda series, step=step: _safe_pct_change(series, horizon, step)
+            )
+        if calendar or fourier is not None:
+            time_values = pd.to_datetime(frame[spec.time_column])
+            if calendar:
+                features.update(_calendar_features(time_values, calendar))
+            if fourier is not None:
+                features.update(
+                    _fourier_features(time_values, frame, fourier)
+                )
+        for column in exogenous:
+            features[column] = pd.to_numeric(frame[column], errors="coerce")
+
+        result = pd.DataFrame(features, index=frame.index)
+        if self.dropna:
+            result = result.dropna(axis=0, how="any")
+        return result
+
+    def build(self, X: Any, target_horizon: int | None = None) -> ForecastDesign:
+        """Materialize a supervised :class:`ForecastDesign` from ``frame``.
+
+        :param target_horizon: steps ahead for the *label*, defaulting to the
+            declared horizon. The recursive strategy passes ``1`` while the
+            declared horizon still governs the minimum lag/feature shift.
+        """
+        check_is_fitted(self, "feature_specs_")
+        frame = self._as_frame(X)
+        spec = self.temporal_spec_
+        step = int(spec.horizon if target_horizon is None else target_horizon)
+        if step < 1:
+            raise ValueError("target_horizon must be >= 1")
+        features = self.transform(frame)
+        target_values, meta = self._target_and_meta(frame, spec, step)
+
+        if self.dropna:
+            mask = features.notna().all(axis=1) & target_values.notna()
+        else:
+            mask = pd.Series(True, index=frame.index)
+        X_out = features.loc[mask].reset_index(drop=True)
+        y_out = target_values.loc[mask].reset_index(drop=True)
+        meta_out = meta.loc[mask].reset_index(drop=True)
+        dropped = int(len(frame) - len(X_out))
+        return ForecastDesign(
+            X=X_out,
+            y=y_out,
+            meta=meta_out,
+            feature_specs=list(self.feature_specs_),
+            # A ForecastFeatureBuilder always builds targets `step` steps ahead;
+            # make_supervised() sets the strategy label that produced the design.
+            strategy="direct",
+            horizon=spec.horizon,
+            target_step=step,
+            dropped_rows=dropped,
+            temporal_spec=spec,
+        )
+
+    # -- helpers ----------------------------------------------------------
+    def _apply(self, frame: pd.DataFrame, spec: TemporalSpec, operation):
+        """Apply ``operation`` to the target series, per series when a panel.
+
+        Grouping is what keeps one store's history out of another store's lags;
+        the operation itself always shifts at least ``horizon`` steps.
+        """
+        target = frame[self.target].astype(float)
+        if spec.series_id is None:
+            return operation(target)
+        grouped = frame.groupby(spec.series_id, sort=False)[self.target]
+        return grouped.transform(lambda series: operation(series.astype(float)))
+
+    def _target_and_meta(self, frame: pd.DataFrame, spec: TemporalSpec, step: int | None = None):
+        """Target values at ``t + step`` plus per-row origin/target times."""
+        step = int(spec.horizon if step is None else step)
+        time_column = spec.time_column
+        if spec.series_id is None:
+            target_values = frame[self.target].astype(float).shift(-step)
+            target_time = frame[time_column].shift(-step)
+            series = pd.Series([None] * len(frame), index=frame.index, dtype=object)
+        else:
+            grouped = frame.groupby(spec.series_id, sort=False)
+            target_values = grouped[self.target].transform(
+                lambda values: values.astype(float).shift(-step)
+            )
+            target_time = grouped[time_column].transform(
+                lambda values: values.shift(-step)
+            )
+            series = frame[spec.series_id]
+        meta = pd.DataFrame(
+            {
+                "series": series,
+                "origin_time": frame[time_column],
+                "target_time": target_time,
+                "horizon": int(spec.horizon),
+                "target_step": step,
+            },
+            index=frame.index,
+        )
+        return target_values, meta
+
+
+def _safe_pct_change(series: pd.Series, horizon: int, step: int) -> pd.Series:
+    """Relative change from ``t-h-step`` to ``t-h``; zero denominators give NaN."""
+    numerator = series.shift(horizon)
+    denominator = series.shift(horizon + step)
+    safe = denominator.where(denominator != 0)
+    return (numerator - denominator) / safe.abs()
+
+
+def _calendar_features(time_values: pd.Series, fields) -> dict[str, pd.Series]:
+    index = time_values.index
+    mapping = {
+        "hour": time_values.dt.hour,
+        "minute": time_values.dt.minute,
+        "dow": time_values.dt.dayofweek,
+        "dom": time_values.dt.day,
+        "doy": time_values.dt.dayofyear,
+        "month": time_values.dt.month,
+        "week": time_values.dt.isocalendar().week.astype(int),
+        "is_weekend": (time_values.dt.dayofweek >= 5).astype(int),
+    }
+    return {"cal__%s" % name: mapping[name].set_axis(index) for name in fields}
+
+
+def _fourier_features(time_values, frame, fourier) -> dict[str, pd.Series]:
+    """Sine/cosine terms driven by the timestamp, so they are known in advance."""
+    periods, terms = fourier
+    step_ns = _step_nanoseconds(time_values)
+    position = time_values.astype("int64").to_numpy(dtype="float64") / step_ns
+    position = position - position.min()
+    out = {}
+    for period in periods:
+        for term in range(1, terms + 1):
+            angle = 2.0 * np.pi * term * position / period
+            out["fourier__sin_%g_%d" % (period, term)] = pd.Series(
+                np.sin(angle), index=frame.index
+            )
+            out["fourier__cos_%g_%d" % (period, term)] = pd.Series(
+                np.cos(angle), index=frame.index
+            )
+    return out
+
+
+def _step_nanoseconds(time_values: pd.Series) -> float:
+    """Median sampling step of a datetime series, in nanoseconds."""
+    unique = np.unique(time_values.astype("int64").to_numpy())
+    if len(unique) < 2:
+        return 1.0
+    deltas = np.diff(unique)
+    deltas = deltas[deltas > 0]
+    if deltas.size == 0:
+        return 1.0
+    return float(np.median(deltas))
+
+
+def make_supervised(
+    frame: pd.DataFrame,
+    spec: Any,
+    target: str,
+    strategy: str = "direct",
+    **builder_kwargs: Any,
+) -> ForecastDesign:
+    """Build a supervised design matrix in one call.
+
+    ``strategy="direct"`` predicts the target ``horizon`` steps ahead (one model
+    per horizon); ``strategy="recursive"`` predicts the next step only and feeds
+    its own prediction back at serve time, so ``horizon`` stays the metadata
+    horizon and lags must still respect it.
+
+    Any further keyword is forwarded to :class:`ForecastFeatureBuilder`.
+    """
+    if strategy not in ("direct", "recursive"):
+        raise ValueError("strategy must be 'direct' or 'recursive'")
+    resolved = TemporalSpec.from_dict(spec)
+    builder = ForecastFeatureBuilder(spec=resolved, target=target, **builder_kwargs)
+    builder.fit(frame)
+    design = builder.build(frame, target_horizon=1 if strategy == "recursive" else None)
+    design.strategy = strategy
+    return design
+
+
+def assert_no_leakage(
+    transform: Any,
+    frame: pd.DataFrame,
+    spec: Any,
+    cuts: int = 3,
+    tolerance: float = 1e-9,
+) -> dict[str, Any]:
+    """Empirically verify that ``transform`` reads no post-origin observations.
+
+    The check corrupts every non-temporal column strictly after a cut time (so
+    the "future" becomes missing) and rebuilds the features. Rows whose origin is
+    at or before that cut must be unchanged — a feature that shifts the future in
+    will change value, or disappear because it now reads a missing observation.
+
+    This is a strong structural guard, not a proof: it is exactly the property
+    the builder promises, tested by perturbation. Returns a small report.
+
+    :param transform: a fitted :class:`ForecastFeatureBuilder` or any callable
+        taking the frame and returning a feature DataFrame.
+    :param cuts: how many cut points (from the end of each series) to test.
+    :raises LeakageError: on the first feature that changes.
+    """
+    spec = TemporalSpec.from_dict(spec)
+    callable_transform = transform if callable(transform) else transform.transform
+    baseline = callable_transform(frame)
+    if not isinstance(baseline, pd.DataFrame):
+        raise TypeError("assert_no_leakage expects a DataFrame-returning transform")
+
+    temporal = set(spec.temporal_columns)
+    corruptible = [column for column in frame.columns if column not in temporal]
+    time_values = frame[spec.time_column]
+    groups = (
+        [frame]
+        if spec.series_id is None
+        else [sub for _, sub in frame.groupby(spec.series_id, sort=False)]
+    )
+
+    checks = 0
+    for group in groups:
+        ordered = group.sort_values(spec.time_column)
+        if len(ordered) <= spec.horizon + 1:
+            continue
+        candidates = ordered.index[-(spec.horizon + 1):]
+        for cut_position in candidates[:cuts]:
+            cut_time = frame.loc[cut_position, spec.time_column]
+            corrupted = frame.copy()
+            after = (time_values > cut_time).to_numpy()
+            if not after.any():
+                continue
+            corrupted.loc[after, corruptible] = np.nan
+            rebuilt = callable_transform(corrupted)
+            # Only origins the baseline actually produced can be compared: rows
+            # dropped by the baseline (incomplete lag vectors) are not evidence.
+            eligible = frame.index[(time_values <= cut_time).to_numpy()]
+            before = baseline.index.intersection(eligible)
+            common = before.intersection(rebuilt.index)
+            missing = before.difference(rebuilt.index)
+            if len(missing):
+                raise LeakageError(
+                    "feature rows for origins at or before %r disappeared when the "
+                    "future was masked (rows %s): a feature reads post-origin data"
+                    % (cut_time, list(missing[:5]))
+                )
+            left = baseline.loc[common].to_numpy(dtype="float64")
+            right = rebuilt.loc[common].to_numpy(dtype="float64")
+            if not np.allclose(left, right, atol=tolerance, equal_nan=True, rtol=0.0):
+                names = list(baseline.columns)
+                differing = [
+                    names[index]
+                    for index in range(len(names))
+                    if not np.allclose(
+                        left[:, index], right[:, index], atol=tolerance, equal_nan=True, rtol=0.0
+                    )
+                ]
+                raise LeakageError(
+                    "feature(s) %s change when observations after %r are masked"
+                    % (", ".join(differing), cut_time)
+                )
+            checks += 1
+    return {"ok": True, "cut_points_checked": checks, "temporal_spec": spec.to_dict()}

@@ -37,6 +37,35 @@ no ``TemporalSpec`` keeps its current behaviour exactly.
   time-series paragraph.
 * **Tests** — ``tests/test_temporal_contract.py`` (32 tests).
 
+Leakage-safe forecast feature builder (time-series phase 2)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``ForecastFeatureBuilder`` / ``make_supervised`` construct lag, rolling, difference,
+calendar and Fourier features for a temporal task, with the shift rule enforced in
+code rather than documented and hoped for.
+
+* **Shift $\ge$ horizon, per series** — ``lag_k`` reads $y_{t-k}$ for $k \ge h$; a
+  rolling window of width $w$ covers $y_{t-h-w+1..t-h}$; a lag shorter than the
+  horizon is rejected at ``fit``. On a panel every operation is computed inside its
+  own series, so one series' history never enters another's features.
+* **No silent degradation** — no ``center=True`` path exists, ``min_periods``
+  defaults to the window width (no partial windows), and a zero denominator in
+  ``pct_change`` yields ``NaN`` rather than ``inf``.
+* **Supervised designs** — ``make_supervised(..., strategy="direct")`` labels
+  $y_{t+h}$; ``"recursive"`` labels $y_{t+1}$ while the declared horizon still
+  constrains the features. ``ForecastDesign`` carries ``X``, ``y``, per-row
+  ``meta`` (series, origin/target time, horizon, target step), feature provenance
+  with each column's minimum shift, and a JSON-safe ``describe()``.
+* **Verifiable invariant** — ``assert_no_leakage`` masks every post-cut observation
+  and requires pre-cut features to be unchanged, catching future-reading and centred
+  windows with ``LeakageError``.
+* **Exports** — ``ForecastFeatureBuilder``, ``ForecastDesign``, ``FeatureSpec``,
+  ``make_supervised``, ``assert_no_leakage``, ``LeakageError``, ``ROLL_STATS``,
+  ``CALENDAR_FEATURES``.
+* **Docs** — ``docs/forecasting.rst`` gains the builder, direct/recursive and
+  leakage-verification sections.
+* **Tests** — ``tests/test_forecast_features.py`` (22 tests).
+
 Pipeline-space benchmark track (C-space)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

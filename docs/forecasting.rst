@@ -13,12 +13,14 @@ before: no timestamp inference, no re-ordering, no splitter restrictions.
 
 .. note::
 
-   Current scope (this page documents what ships today): the temporal **data contract**
-   — declaration, validation, metadata, ignore-list wiring and splitter enforcement.
-   Leakage-safe lag/rolling feature generation, rolling-origin backtesting and
-   forecast-specific metrics are planned phases and are *not* available yet. Until they
-   land, build lag and rolling features yourself, with the shift discipline described in
-   :ref:`forecasting-manual-features`.
+   Current scope (this page documents what ships today): the temporal **data
+   contract** — declaration, validation, metadata, ignore-list wiring and
+   splitter enforcement — and the **leakage-safe feature builder**
+   (``ForecastFeatureBuilder`` / ``make_supervised``). Rolling-origin
+   backtesting and forecast-specific metrics are planned phases and are *not*
+   available yet; until they land, evaluate a temporal task with
+   ``nested_cv_evaluation`` and an explicit scorer, or with your own backtest
+   loop over the design matrix.
 
 Declaring a temporal spec
 -------------------------
@@ -117,49 +119,116 @@ contains observations that overlap the test window's information set.
 
 .. _forecasting-manual-features:
 
-Building features by hand (until feature generation lands)
-----------------------------------------------------------
+Leakage-safe feature construction
+---------------------------------
 
-Keep rows in chronological order and construct every lag/rolling column with an
-explicit shift of at least the horizon, per series::
+.. code-block:: python
 
-    frame = frame.sort_values(["store", "date"])
-    grouped = frame.groupby("store", sort=False)["sales"]
-    frame["lag_7"] = grouped.shift(7)
-    frame["roll_mean_28"] = grouped.transform(
-        lambda series: series.shift(7).rolling(28, min_periods=28).mean()
+    from SKSurrogate import TemporalSpec, make_supervised
+
+    spec = TemporalSpec(time_column="date", series_id="store", freq="D", horizon=7)
+    design = make_supervised(
+        frame,                      # must be ordered; still contains the target
+        spec,
+        target="sales",
+        lags=[7, 14, 28],           # each lag must be >= horizon
+        rolling=[{"window": 28, "stats": ["mean", "std"]}, 7],
+        diffs=[1],
+        pct_changes=[1],
+        calendar=["dow", "doy", "is_weekend"],
+        fourier={"periods": [7, 365.25], "terms": 2},
+        exogenous=["promo_flag"],   # must be known at the forecast origin
     )
 
-Never use ``center=True``, and never aggregate a window that includes the target step.
-Register the resulting frame as the ``train`` partition and the strictly later
-observations as ``validation``/``test``.
+    design.X            # feature matrix
+    design.y            # label at t + horizon (direct) or t + 1 (recursive)
+    design.meta         # series, origin_time, target_time, horizon, target_step
+    design.feature_names
+    design.describe()   # JSON-safe provenance for task metadata
+
+The rules the builder enforces, not merely documents:
+
+* **Shift $\ge$ horizon.** Every target-derived feature reads at most up to
+  $t - h$: ``lag_k`` is $y_{t-k}$ ($k \ge h$), and a rolling window of width $w$
+  covers $y_{t-h-w+1},\dots,y_{t-h}$. A lag shorter than the horizon is rejected
+  at ``fit`` time — it would read an observation the forecast is meant to predict.
+* **No centring.** ``center=True`` does not exist in this API.
+* **Per-series isolation.** On a panel, every operation is computed inside its own
+  series, so one store's history never enters another store's lags.
+* **No partial windows by default.** ``min_periods`` defaults to the window width.
+* **NaN, never ``inf``.** A zero denominator in ``pct_change`` yields ``NaN``.
+* **Immutability of the past.** Calendar and Fourier terms come from the timestamp
+  itself, which is known at forecast time; the exogenous columns are passed
+  through unchanged and documented as known-at-origin.
+
+Feature names encode their provenance (``sales__lag_7``, ``sales__roll_mean_28``,
+``sales__diff_1``, ``cal__dow``, ``fourier__sin_7_1``), and
+``design.feature_specs`` carries the same information structurally, including the
+minimum ``shift`` of each column.
+
+Direct vs recursive
+~~~~~~~~~~~~~~~~~~~
+
+``strategy="direct"`` (default) builds one label per horizon, $y_{t+h}$, so a model
+learns the multi-step mapping directly. ``strategy="recursive"`` labels only the
+next step ($y_{t+1}$) while the declared horizon still constrains the features;
+at serve time the model feeds its own prediction back. ``design.horizon`` is the
+declared horizon and ``design.target_step`` is what the label actually is.
+
+Verifying the invariant
+~~~~~~~~~~~~~~~~~~~~~~~
+
+``assert_no_leakage`` turns the claim into a test: it masks every non-temporal
+column strictly after a cut time and rebuilt features for origins at or before
+that cut must be unchanged. A feature that reads the future either changes value
+or disappears (it now reads a missing observation), and the guard raises
+:class:`~SKSurrogate.temporal.LeakageError` naming the columns:
+
+.. code-block:: python
+
+    from SKSurrogate import assert_no_leakage
+
+    assert_no_leakage(builder, frame, spec)     # {'ok': True, 'cut_points_checked': 3, ...}
+
+This is an empirical guard over structural properties, not a proof; run it once per
+feature configuration in your test suite.
+
+Scikit-learn interoperability
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``ForecastFeatureBuilder`` is an estimator with ``get_params``/``set_params`` and
+``fit``/``transform``, so it clones inside pipelines. One wrinkle is deliberate:
+``transform`` needs the **target column in the frame** because lag features are
+built from it. The control plane's feature matrix drops the target, so materialize
+the design matrix before registration, or keep the target in the frame you hand to
+the builder.
+
+If you cannot use the builder (exotic features, existing pipeline), the manual
+fallback is still: keep rows chronological, shift every feature by at least the
+horizon per series, never use ``center=True``, and never aggregate a window that
+includes the target step.
 
 Control-plane endpoints
 -----------------------
 
-======================================================  =============================================
+======================================================  ============================================
 Endpoint                                                Purpose
-======================================================  =============================================
-``POST /api/datasets/{task}/register``                   Accepts an optional ``temporal`` form field
-                                                        (JSON object) and validates the upload before
+======================================================  ============================================
+``POST /api/datasets/{task}/register``                  Accepts an optional ``temporal`` form field
+                                                        (JSON) and validates the upload before
                                                         storing it; returns the report.
-``GET  /api/datasets/{task}/temporal``                   Current spec, per-partition validation
+``GET  /api/datasets/{task}/temporal``                  Current spec, per-partition validation
                                                         reports, temporal columns, ignore list and
-                                                        whether the stored CV splitter is temporal-safe.
-``PUT  /api/datasets/{task}/temporal``                   Declare/replace the spec; validates every
-                                                        registered partition; adds the temporal columns
-                                                        to the ignore list. Answers **422**
-                                                        (``X-Reason: temporal-validation``) with the
-                                                        report when a partition violates it.
-``DELETE /api/datasets/{task}/temporal``                 Remove the declaration; drops only the ignore
-                                                        entries this feature added.
-======================================================  =============================================
-
-Example::
-
-    curl -X PUT http://127.0.0.1:8000/api/datasets/weekly-sales/temporal \
-      -H 'Content-Type: application/json' \
-      -d '{"time_column": "date", "series_id": "store", "freq": "D", "horizon": 7}'
+                                                        whether the stored CV splitter is
+                                                        temporal-safe.
+``PUT  /api/datasets/{task}/temporal``                  Declare or replace the spec; validates every
+                                                        registered partition; merges the temporal
+                                                        columns into the ignore list. Answers 422
+                                                        with the report when a partition violates
+                                                        it.
+``DELETE /api/datasets/{task}/temporal``                Remove the declaration; drops only the
+                                                        ignore entries this feature added.
+======================================================  ============================================
 
 Non-goals
 ---------
