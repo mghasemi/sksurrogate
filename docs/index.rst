@@ -21,6 +21,7 @@ Welcome to SKSurrogate's documentation!
    opd
    dataproc
    mltrace
+   forecasting
    modelbundles
    ensembles
    notebooks

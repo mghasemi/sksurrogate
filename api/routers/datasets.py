@@ -20,8 +20,12 @@ from starlette.responses import Response
 
 from SKSurrogate import (
     STANDARD_CV_SPLITTERS,
+    TEMPORAL_CV_SPLITTERS,
     DataPreprocess,
     ModelRegistry,
+    TemporalSpec,
+    TemporalValidationError,
+    cv_is_temporal_safe,
     cv_param_defs,
     dataset_profile,
     default_cv_spec,
@@ -119,6 +123,23 @@ class IgnoredColumnsRequest(BaseModel):
     columns: list[str] = []
 
 
+class TemporalSpecRequest(BaseModel):
+    """Temporal structure declaration for a task's registered dataset.
+
+    Mirrors :class:`SKSurrogate.TemporalSpec`. Declaring a spec is opt-in: it
+    validates row order, duplicate timestamps and gaps, excludes the time and
+    series columns from every feature matrix, and restricts the task's
+    cross-validation splitter to order-respecting ones.
+    """
+
+    time_column: str
+    series_id: str | None = None
+    freq: str | None = None
+    horizon: int = Field(default=1, ge=1)
+    order: Literal["increasing", "decreasing"] = "increasing"
+    gap_tolerance: int = Field(default=0, ge=0)
+
+
 class SetTargetRequest(BaseModel):
     """Re-point the registered dataset's prediction target column."""
 
@@ -210,6 +231,123 @@ def set_cv(task_name: str, body: SetCVRequest):
     except (ValueError, KeyError, TypeError) as exc:
         raise bad_request(str(exc))
     return {"task_name": task_name, "cv": stored_spec}
+
+
+def _temporal_ignored_columns(metadata, spec):
+    """Return ``(ignored_columns, auto_added)`` for a declared temporal spec.
+
+    The time and series columns must never reach a feature matrix. They are
+    recorded as ignored columns so every existing training/analysis path drops
+    them, and their names are remembered separately so clearing the temporal
+    declaration removes only what this feature added.
+    """
+    previous_auto = [
+        column for column in (metadata.get("temporal_ignored_columns") or [])
+    ]
+    ignored = [
+        column
+        for column in (metadata.get("ignored_columns") or [])
+        if column not in previous_auto
+    ]
+    added = [column for column in spec.temporal_columns if column not in ignored]
+    return list(dict.fromkeys(ignored + added)), added
+
+
+def _temporal_payload(tracker, metadata):
+    """Read-side payload shared by GET and PUT responses."""
+    spec = tracker.GetTemporalSpec()
+    reports = metadata.get("temporal_validation") or {}
+    cv_spec = tracker.GetCVSpec()
+    return {
+        "task_name": tracker.task,
+        "spec": spec,
+        "validation": reports,
+        "partitions": tracker.available_partitions(),
+        "columns": metadata.get("dataset_columns") or [],
+        "temporal_columns": TemporalSpec.from_dict(spec).temporal_columns if spec else [],
+        "ignored_columns": metadata.get("ignored_columns") or [],
+        "cv": cv_spec,
+        "temporal_splitters": list(TEMPORAL_CV_SPLITTERS),
+        "cv_temporal_safe": cv_is_temporal_safe(cv_spec) if spec else None,
+    }
+
+
+@router.get("/{task_name}/temporal")
+def get_temporal(task_name: str):
+    """Return the task's temporal declaration, its validation report and CV state."""
+    if not settings.mltrace_db_path(task_name).exists():
+        raise not_found("No dataset registered for task %r" % task_name)
+    with open_tracker(task_name) as tracker:
+        payload = _temporal_payload(tracker, tracker.GetMetadata())
+    return payload
+
+
+@router.put("/{task_name}/temporal")
+def set_temporal(task_name: str, body: TemporalSpecRequest):
+    """Declare the task's temporal structure and validate every registered partition.
+
+    Refuses (422) when a partition violates the declaration — unordered rows,
+    duplicate timestamps, unparseable times, or gaps beyond ``gap_tolerance``
+    for a declared ``freq`` — and returns the per-partition report on success.
+    The time/series columns are added to the dataset's ignored columns so they
+    never become model features.
+    """
+    if not settings.mltrace_db_path(task_name).exists():
+        raise not_found("No dataset registered for task %r" % task_name)
+    try:
+        spec = TemporalSpec.from_dict(body.model_dump())
+    except (TypeError, ValueError) as exc:
+        raise bad_request(str(exc))
+    try:
+        with open_tracker(task_name) as tracker:
+            metadata = tracker.GetMetadata()
+            known = metadata.get("dataset_columns") or []
+            unknown = [column for column in spec.temporal_columns if column not in known]
+            if unknown:
+                raise bad_request(
+                    "temporal column(s) not present in the registered dataset: %s"
+                    % ", ".join(unknown)
+                )
+            tracker.SetTemporalSpec(spec)
+            ignored, added = _temporal_ignored_columns(metadata, spec)
+            tracker.UpdateMetadata(
+                {"ignored_columns": ignored, "temporal_ignored_columns": added}
+            )
+            metadata = tracker.GetMetadata()
+            payload = _temporal_payload(tracker, metadata)
+    except TemporalValidationError as exc:
+        report = dict(exc.report)
+        raise HTTPException(
+            status_code=422,
+            detail={"message": str(exc), "report": report},
+            headers={"X-Reason": "temporal-validation"},
+        )
+    except ValueError as exc:
+        raise bad_request(str(exc))
+    return payload
+
+
+@router.delete("/{task_name}/temporal")
+def clear_temporal(task_name: str):
+    """Remove the task's temporal declaration.
+
+    Columns added to the ignore list by this feature are removed again; columns
+    the user had ignored separately are preserved.
+    """
+    if not settings.mltrace_db_path(task_name).exists():
+        raise not_found("No dataset registered for task %r" % task_name)
+    with open_tracker(task_name) as tracker:
+        metadata = tracker.GetMetadata()
+        tracker.ClearTemporalSpec()
+        auto_added = set(metadata.get("temporal_ignored_columns") or [])
+        ignored = [
+            column
+            for column in (metadata.get("ignored_columns") or [])
+            if column not in auto_added
+        ]
+        tracker.UpdateMetadata({"ignored_columns": ignored, "temporal_ignored_columns": []})
+        payload = _temporal_payload(tracker, tracker.GetMetadata())
+    return payload
 
 
 @router.put("/{task_name}/ignored-columns")
@@ -358,7 +496,8 @@ async def register_dataset(task_name: str, target: str = Form(...), partition: s
                             file: UploadFile = File(...),
                             type_overrides: Annotated[str | None, Form()] = None,
                             binarize_label: Annotated[bool, Form()] = False,
-                            ignored_columns: Annotated[str | None, Form()] = None):
+                            ignored_columns: Annotated[str | None, Form()] = None,
+                            temporal: Annotated[str | None, Form()] = None):
     """Upload a CSV, deduce its schema, and register it for a task/partition.
 
     ``type_overrides`` (JSON object of column -> type) is applied via
@@ -367,7 +506,10 @@ async def register_dataset(task_name: str, target: str = Form(...), partition: s
     target's unique values to 0..n-1 through ``transform_label_bin`` (Phase 5.1).
     ``ignored_columns`` (JSON array of names) is stored in the task metadata: the
     columns stay in the stored CSV but are dropped by every training/analysis
-    path (see ``api.columns``).
+    path (see ``api.columns``). ``temporal`` (JSON object) declares the frame's
+    temporal structure in the same request — see ``TemporalSpecRequest``; the
+    frame is validated before it is stored and the time/series columns are added
+    to the ignore list.
     """
     if not (file.filename or "").lower().endswith(".csv"):
         raise bad_request("Only CSV uploads are supported")
@@ -405,15 +547,59 @@ async def register_dataset(task_name: str, target: str = Form(...), partition: s
             ignored = normalize_ignored_columns(parsed_ignored, frame.columns, target)
         except ValueError as exc:
             raise bad_request(str(exc))
+
+    temporal_spec = None
+    if isinstance(temporal, str) and temporal.strip():
+        try:
+            parsed_temporal = json.loads(temporal)
+        except (TypeError, ValueError):
+            raise bad_request("temporal must be a JSON object describing the time column")
+        try:
+            temporal_spec = TemporalSpec.from_dict(parsed_temporal)
+        except (TypeError, ValueError) as exc:
+            raise bad_request(str(exc))
+        missing_temporal = [
+            column for column in temporal_spec.temporal_columns if column not in frame.columns
+        ]
+        if missing_temporal:
+            raise bad_request(
+                "temporal column(s) not found in the uploaded dataset: %s"
+                % ", ".join(missing_temporal)
+            )
+        if target in temporal_spec.temporal_columns:
+            raise bad_request(
+                "the target column cannot also be a temporal column (%s)"
+                % ", ".join(temporal_spec.temporal_columns)
+            )
+        ignored = list(dict.fromkeys(ignored + temporal_spec.temporal_columns))
     dataset_dir = settings.task_dataset_dir(task_name)
     dataset_dir.mkdir(parents=True, exist_ok=True)
     csv_path = dataset_dir / (safe_segment(partition, "partition") + ".csv")
 
     weights_stored = []
+    temporal_report = None
     with open_tracker(task_name) as tracker:
-        tracker.RegisterData(frame, target, partition=partition)
+        try:
+            tracker.RegisterData(
+                frame, target, partition=partition, temporal=temporal_spec
+            )
+        except TemporalValidationError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"message": str(exc), "report": dict(exc.report)},
+                headers={"X-Reason": "temporal-validation"},
+            )
+        if temporal_spec is not None:
+            reports = tracker.GetMetadata().get("temporal_validation") or {}
+            temporal_report = reports.get(partition)
         tracker.UpdateMetadata(
-            {"dataset_deduced_types": pivot_types, "ignored_columns": ignored}
+            {
+                "dataset_deduced_types": pivot_types,
+                "ignored_columns": ignored,
+                "temporal_ignored_columns": (
+                    temporal_spec.temporal_columns if temporal_spec is not None else []
+                ),
+            }
         )
         metadata = tracker.GetMetadata()
         # Seed the ``weights`` table with the two cheap dataset-level weightings
@@ -481,6 +667,10 @@ async def register_dataset(task_name: str, target: str = Form(...), partition: s
         "sensitive_scan": sensitive_feature_report(frame),
         # Which weighting columns this registration seeded (numeric features only).
         "weights_stored": weights_stored,
+        "temporal": {
+            "spec": temporal_spec.to_dict() if temporal_spec is not None else None,
+            "validation": temporal_report,
+        },
     }
 
 

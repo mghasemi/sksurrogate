@@ -4,6 +4,39 @@ Changelog
 [Unreleased]
 ------------
 
+Temporal data contract (time-series support, phase 1)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Opt-in temporal declaration for datasets. Nothing changes for tabular tasks: a task with
+no ``TemporalSpec`` keeps its current behaviour exactly.
+
+* **`SKSurrogate/temporal.py`** — ``TemporalSpec`` (time column, optional series id,
+  frequency, horizon, row order, gap tolerance), ``infer_freq``, and
+  ``validate_temporal_frame``, which returns a structured report and raises
+  ``TemporalValidationError`` for unordered rows, duplicate timestamps, unparseable or
+  missing times, missing series identifiers, and gaps beyond the declared tolerance.
+  Datetime axes are compared as integer nanoseconds (never floats); numeric columns are
+  treated as an index axis rather than 1970 timestamps.
+* **`mltrack`** — ``RegisterData(..., temporal=...)`` validates before writing and
+  persists the spec plus a per-partition report; ``GetTemporalSpec`` /
+  ``SetTemporalSpec`` / ``ClearTemporalSpec`` and ``available_partitions`` are new. The
+  time and series columns are excluded from ``X``/``get_data``. A temporal task may only
+  use ``TEMPORAL_CV_SPLITTERS`` (``TimeSeriesSplit``): ``SetCV`` rejects ``KFold``,
+  ``ShuffleSplit``, integer fold counts and the default splitter. New exports:
+  ``TemporalSpec``, ``TemporalValidationError``, ``validate_temporal_frame``,
+  ``infer_freq``, ``temporal_columns``, ``TEMPORAL_CV_SPLITTERS``,
+  ``cv_is_temporal_safe``.
+* **API** — ``POST /api/datasets/{task}/register`` accepts a ``temporal`` JSON form field;
+  new ``GET``/``PUT``/``DELETE /api/datasets/{task}/temporal``. ``PUT`` validates every
+  registered partition and answers 422 (``X-Reason: temporal-validation``) with the
+  report; declaring a spec adds the time/series columns to the dataset's ignored columns,
+  and ``DELETE`` removes only those entries.
+* **Fix** — a brand-new task now sets ``mltrack.task`` in ``__init__`` (it was only set
+  when reopening an existing task, which broke error messages and payloads that read it).
+* **Docs** — new :doc:`forecasting` chapter; ``docs/mltrace.rst`` points to it at the
+  time-series paragraph.
+* **Tests** — ``tests/test_temporal_contract.py`` (32 tests).
+
 Pipeline-space benchmark track (C-space)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

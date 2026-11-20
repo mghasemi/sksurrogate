@@ -251,6 +251,12 @@ fold counts. This is splitter-level support: forecast target construction,
 horizon-specific scoring, and time-aware feature engineering remain the
 caller's responsibility.
 
+A task can declare its temporal structure instead of leaving it implicit — see
+:doc:`forecasting`. ``RegisterData(..., temporal=...)`` validates row order,
+duplicate timestamps and gaps, excludes the time/series columns from the feature
+matrix, and restricts ``SetCV`` to order-respecting splitters
+(``TEMPORAL_CV_SPLITTERS``).
+
 The generic Python estimator path also works with scikit-learn's
 ``QuantileRegressor``. To evaluate the selected quantile, pass a matching
 pinball-loss scorer; the scorer's ``alpha`` must match the estimator's

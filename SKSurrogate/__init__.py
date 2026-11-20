@@ -24,7 +24,9 @@ from .aml import Words, StackingEstimator, AML
 from .eoa import EOA, UniformRand, MaxGenTermination, UniformCrossover, Elites, Mutation
 from .mltrace import (
     STANDARD_CV_SPLITTERS,
+    TEMPORAL_CV_SPLITTERS,
     build_cv,
+    cv_is_temporal_safe,
     cv_param_defs,
     cv_to_spec,
     default_cv_spec,
@@ -33,6 +35,13 @@ from .mltrace import (
     prediction_interval_diagnostics,
     split_conformal_regression_interval,
     split_conformal_quantile_interval,
+)
+from .temporal import (
+    TemporalSpec,
+    TemporalValidationError,
+    infer_freq,
+    temporal_columns,
+    validate_temporal_frame,
 )
 from .DataProcess import DataPreprocess, FoldLocalDataPreprocessor
 from .ci import BundleQualityGateError, assert_bundle_quality, check_bundle_quality
@@ -119,6 +128,13 @@ __all__ = [
     "Regression",
     "RetrainingJob",
     "STANDARD_CV_SPLITTERS",
+    "TEMPORAL_CV_SPLITTERS",
+    "TemporalSpec",
+    "TemporalValidationError",
+    "cv_is_temporal_safe",
+    "infer_freq",
+    "temporal_columns",
+    "validate_temporal_frame",
     "SensAprx",
     "SphereSample",
     "StackingEstimator",

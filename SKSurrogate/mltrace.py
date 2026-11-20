@@ -31,6 +31,15 @@ from peewee import (
 )
 from datetime import datetime
 
+from .temporal import (
+    TEMPORAL_METADATA_KEY,
+    TEMPORAL_REPORT_METADATA_KEY,
+    TemporalSpec,
+    TemporalValidationError,
+    temporal_columns,
+    validate_temporal_frame,
+)
+
 MLTRACK_DB = SqliteDatabase(None)
 
 #: Metadata key under which the task's cross-validation splitter is stored.
@@ -45,6 +54,15 @@ STANDARD_CV_SPLITTERS = [
     "LeavePOut",
     "ShuffleSplit",
     "StratifiedShuffleSplit",
+    "TimeSeriesSplit",
+]
+
+#: Splitters that respect observation order. A task with a declared temporal
+#: spec may only use these: shuffled splitters train on the future and score on
+#: the past, which leaks information and makes the reported score meaningless.
+#: Kept separate from :data:`STANDARD_CV_SPLITTERS` so the tabular pickers never
+#: offer a horizon-blind option.
+TEMPORAL_CV_SPLITTERS = [
     "TimeSeriesSplit",
 ]
 
@@ -134,6 +152,25 @@ def default_cv_spec():
     from sklearn.model_selection import ShuffleSplit
 
     return cv_to_spec(ShuffleSplit(n_splits=3, test_size=0.25))
+
+
+def cv_is_temporal_safe(cv):
+    """Whether ``cv`` respects observation order.
+
+    Accepts the same shapes :func:`cv_to_spec` accepts (a splitter instance, a
+    spec dictionary, an integer fold count, or ``None``). ``None``, integer fold
+    counts and the library default all resolve to a shuffled splitter, so they
+    are *not* temporal-safe.
+    """
+    if cv is None:
+        return False
+    if isinstance(cv, dict):
+        name = cv.get("type")
+    elif isinstance(cv, (int, numpy.integer)):
+        return False
+    else:
+        name = type(cv).__name__
+    return name in TEMPORAL_CV_SPLITTERS
 
 
 def prediction_interval_diagnostics(
@@ -753,6 +790,7 @@ class mltrack(object):
             self.target = res[0].target
         else:
             new_task = Task.create(name=task, description="Initiated automatically")
+            self.task = new_task.name
             self.task_id = new_task.task_id
         import sqlite3
 
@@ -853,6 +891,10 @@ class mltrack(object):
         """
         Persist the task's cross-validation splitter and activate it on this tracker.
 
+        A task with a declared temporal spec may only use an order-respecting
+        splitter (:data:`TEMPORAL_CV_SPLITTERS`): shuffled folds train on future
+        observations and score on past ones, which leaks information.
+
         :param cv: an integer fold count, ``None`` (library default), or a
             scikit-learn splitter from ``sklearn.model_selection``; also accepts
             a spec dictionary as produced by :func:`cv_to_spec`.
@@ -862,14 +904,124 @@ class mltrack(object):
             splitter = build_cv(cv)
         else:
             splitter = cv
-        self.cv = splitter
         spec = cv_to_spec(splitter)
+        temporal_spec = self.GetTemporalSpec()
+        if temporal_spec is not None and not cv_is_temporal_safe(spec):
+            raise ValueError(
+                "task %r declares temporal data (time_column=%r, horizon=%d); "
+                "splitter %r ignores observation order. Use one of %s instead."
+                % (
+                    self.task,
+                    temporal_spec.get("time_column"),
+                    int(temporal_spec.get("horizon", 1)),
+                    spec.get("type"),
+                    ", ".join(TEMPORAL_CV_SPLITTERS),
+                )
+            )
+        self.cv = splitter
         self.UpdateMetadata({CV_METADATA_KEY: spec})
         return spec
 
     def GetCVSpec(self):
         """Return the stored cross-validation spec, or ``None`` if never set."""
         return self.GetMetadata().get(CV_METADATA_KEY)
+
+    def GetTemporalSpec(self):
+        """Return the stored temporal spec as a dict, or ``None`` when absent."""
+        spec = self.GetMetadata().get(TEMPORAL_METADATA_KEY)
+        return spec if isinstance(spec, dict) else None
+
+    def SetTemporalSpec(self, spec, partitions=None):
+        """Declare (or replace) the task's temporal structure.
+
+        The spec is validated against every currently registered partition
+        unless ``partitions`` names a subset. A failing partition raises
+        :class:`SKSurrogate.temporal.TemporalValidationError` carrying that
+        partition's report, so nothing is stored on failure.
+
+        :param spec: a :class:`~SKSurrogate.temporal.TemporalSpec` or mapping.
+        :param partitions: optional iterable of partition names to validate;
+            defaults to every partition table present in the tracking database.
+        :return: ``(spec_dict, reports)`` where ``reports`` maps partition name
+            to the validation report.
+        """
+        temporal_spec = TemporalSpec.from_dict(spec)
+        metadata = self.GetMetadata()
+        target = metadata.get("target_name") or self.target
+        if target is not None and target in temporal_spec.temporal_columns:
+            raise ValueError(
+                "the target column %r cannot also be a temporal column (%s)"
+                % (target, ", ".join(temporal_spec.temporal_columns))
+            )
+        known = metadata.get("dataset_columns") or []
+        missing = [
+            column
+            for column in temporal_spec.temporal_columns
+            if known and column not in known
+        ]
+        if missing:
+            raise ValueError(
+                "temporal column(s) not present in the registered dataset: %s"
+                % ", ".join(missing)
+            )
+        selected = list(partitions) if partitions is not None else self.available_partitions()
+        if not selected:
+            raise ValueError(
+                "no registered partition to validate; register data before declaring a temporal spec"
+            )
+        reports = {}
+        for partition in selected:
+            frame = self.get_dataframe(partition=partition)
+            try:
+                reports[partition] = validate_temporal_frame(frame, temporal_spec)
+            except TemporalValidationError as exc:
+                exc.report["partition"] = partition
+                raise
+        self.UpdateMetadata(
+            {
+                TEMPORAL_METADATA_KEY: temporal_spec.to_dict(),
+                TEMPORAL_REPORT_METADATA_KEY: reports,
+            }
+        )
+        return temporal_spec.to_dict(), reports
+
+    def ClearTemporalSpec(self):
+        """Remove the task's temporal declaration and its validation reports."""
+        TaskMetadata.delete().where(
+            (TaskMetadata.task_id == self.task_id)
+            & (TaskMetadata.key.in_([TEMPORAL_METADATA_KEY, TEMPORAL_REPORT_METADATA_KEY]))
+        ).execute()
+        return None
+
+    def available_partitions(self):
+        """Partition names present in the tracking database, ``train``/``default`` first.
+
+        Only tables that actually hold registered rows qualify. The peewee
+        ``data`` model always exists as an empty one-column stub, so it is
+        reported as ``"default"`` only after an unpartitioned ``RegisterData``
+        call has written real columns and rows into it.
+        """
+        cursor = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'data%'"
+        )
+        names = [row[0] for row in cursor.fetchall()]
+        partitions = []
+        for name in names:
+            columns = [
+                row[1]
+                for row in self.conn.execute('PRAGMA table_info("%s")' % name).fetchall()
+            ]
+            if len(columns) <= 1:
+                continue
+            rows = self.conn.execute('SELECT COUNT(*) FROM "%s"' % name).fetchone()[0]
+            if not rows:
+                continue
+            if name == "data":
+                partitions.append("default")
+            elif name.startswith("data_"):
+                partitions.append(name[len("data_"):])
+        order = {"train": 0, "default": 1, "validation": 2, "test": 3}
+        return sorted(partitions, key=lambda item: (order.get(item, 9), item))
 
     def UpdateTask(self, data):
         """
@@ -1153,6 +1305,7 @@ class mltrack(object):
         partition=None,
         ingestion_timestamp=None,
         preprocess_kwargs=None,
+        temporal=None,
     ):
         """
         Registers a pandas DataFrame into the SQLite database.
@@ -1166,7 +1319,15 @@ class mltrack(object):
         :param preprocess_kwargs: optional keyword arguments forwarded to
             ``DataPreprocess`` (e.g. ``bin_threshold``, ``cat_threshold``,
             ``force_impute``) when encoding is enabled; defaults are unchanged
+        :param temporal: optional :class:`SKSurrogate.temporal.TemporalSpec` (or
+            mapping) declaring the frame's time column, optional series id,
+            horizon and expected frequency. The frame is validated *before* it is
+            written and the spec is persisted for later evaluation. The temporal
+            columns are excluded from ``self.X`` — time reaches a model through
+            generated features, not as a scaled epoch number.
         :return: None
+        :raises TemporalValidationError: when the frame violates ``temporal``
+            (unordered rows, duplicate timestamps, gaps, unparseable times).
         """
         # TBM
         res = Task.select().where(Task.task_id == self.task_id)[0]
@@ -1175,6 +1336,17 @@ class mltrack(object):
         res.save()
         self.target = target
         self._split_cache.clear()
+
+        temporal_spec = None
+        temporal_report = None
+        if temporal is not None:
+            temporal_spec = TemporalSpec.from_dict(temporal)
+            if target in temporal_spec.temporal_columns:
+                raise ValueError(
+                    "the target column %r cannot also be a temporal column (%s)"
+                    % (target, ", ".join(temporal_spec.temporal_columns))
+                )
+            temporal_report = validate_temporal_frame(source_df, temporal_spec)
         if self.encode:
             warnings.warn(
                 "mltrack encode=True fits preprocessing on the complete "
@@ -1206,20 +1378,27 @@ class mltrack(object):
             "target": target,
             "feature_count": int(len([column for column in source_df.columns if column != target])),
         }
-        self.UpdateMetadata(
-            {
-                "dataset_schema": dataset_schema,
-                "dataset_fingerprint": dataset_fingerprint,
-                "dataset_rows": int(len(source_df)),
-                "dataset_columns": list(source_df.columns),
-                "dataset_feature_count": int(len([column for column in source_df.columns if column != target])),
-                "dataset_source_uri": source_uri,
-                "dataset_partition": partition_key,
-                "dataset_ingestion_timestamp": timestamp,
-                "dataset_partition_history": partition_history,
-                "target_name": target,
-            }
-        )
+        if temporal_report is not None:
+            partition_history[partition_key]["temporal"] = temporal_report
+        metadata_update = {
+            "dataset_schema": dataset_schema,
+            "dataset_fingerprint": dataset_fingerprint,
+            "dataset_rows": int(len(source_df)),
+            "dataset_columns": list(source_df.columns),
+            "dataset_feature_count": int(len([column for column in source_df.columns if column != target])),
+            "dataset_source_uri": source_uri,
+            "dataset_partition": partition_key,
+            "dataset_ingestion_timestamp": timestamp,
+            "dataset_partition_history": partition_history,
+            "target_name": target,
+        }
+        if temporal_spec is not None:
+            reports = metadata.get(TEMPORAL_REPORT_METADATA_KEY) or {}
+            reports = dict(reports) if isinstance(reports, dict) else {}
+            reports[partition_key] = temporal_report
+            metadata_update[TEMPORAL_METADATA_KEY] = temporal_spec.to_dict()
+            metadata_update[TEMPORAL_REPORT_METADATA_KEY] = reports
+        self.UpdateMetadata(metadata_update)
         table_name = "data"
         partition_key = partition or "default"
         if partition_key and partition_key != "default":
@@ -1228,6 +1407,15 @@ class mltrack(object):
         if partition_key == "default":
             source_df.to_sql("data", self.conn, if_exists="replace", index=False)
         clmns.remove(target)
+        if temporal_spec is None:
+            stored_spec = self.GetTemporalSpec()
+            temporal_spec = TemporalSpec.from_dict(stored_spec) if stored_spec else None
+        if temporal_spec is not None:
+            # Opt-in by construction: a declared spec means the time/index
+            # columns describe *when*, not *what*, so they never enter X.
+            for column in temporal_spec.temporal_columns:
+                if column in clmns:
+                    clmns.remove(column)
         self.X = source_df[clmns].values
         self.y = source_df[target].values
 
@@ -1295,6 +1483,11 @@ class mltrack(object):
         if self.target not in clmns:
             raise ValueError("Target column '%s' is missing from the %s partition." % (self.target, table_name))
         clmns.remove(self.target)
+        stored_spec = self.GetTemporalSpec()
+        if stored_spec is not None:
+            for column in temporal_columns(stored_spec):
+                if column in clmns:
+                    clmns.remove(column)
         self.X = df[clmns].values
         self.y = df[self.target].values
         return self.X, self.y
