@@ -160,13 +160,36 @@ Open **Datasets**. For each CSV partition:
 5. Click **Commit dataset**. The API registers the partition and schema,
    calculates a dataset fingerprint, and stores the CSV under the task.
 
-Once registered, the target column is not locked. The **Registered metadata**
-card shows the current target with a **Change** control: re-point which column
-downstream analysis predicts (experiments, feature analysis, correlations, EDA,
-target statistics) without re-uploading the CSV. The stored partitions, schema
-and fingerprint are untouched — the change is metadata-only and reversible —
-and the Pearson/variance feature weights are reseeded against the new target.
-The new target must be an existing column and cannot currently be ignored.
+Once registered, the target column is not locked. The **Task definition** card
+shows the three axes of the task together:
+
+* **Target** — what you predict, with a **Change** control: re-point which column
+  downstream analysis predicts (experiments, feature analysis, correlations, EDA,
+  target statistics) without re-uploading the CSV. The stored partitions, schema
+  and fingerprint are untouched — the change is metadata-only and reversible —
+  and the Pearson/variance feature weights are reseeded against the new target.
+  The new target must be an existing column and cannot currently be ignored.
+  Re-pointing the target also re-derives the problem type (an override does not
+  survive a target change).
+* **Problem type** — ``regression`` or ``classification``. It is inferred from
+  the target (boolean, non-numeric, or an integer 0/1 column → classification;
+  other numeric columns → regression), stored with the task, and then read by
+  every screen instead of being re-guessed: Quick start defaults its preset from
+  it, the baseline route picks a matching estimator and refuses a mismatched one,
+  and delayed-label monitoring uses the matching metrics. **Change** overrides the
+  inference (the card then says “set by you”); **Reset to inferred** drops the
+  override. A temporal task is pinned to regression — a forecast is scored with
+  MAE/RMSE/MASE, never with accuracy.
+* **Time structure** — ``none`` for an i.i.d. task, or ``temporal`` once a time
+  column is declared in the **Temporal structure** card below (see
+  :doc:`forecasting`). Time structure is a separate axis, not a third problem
+  type.
+
+Before this declaration existed, the problem type was never stored: the Quick
+start preset defaulted to classification, and other screens inferred a family
+from whichever estimator happened to be fitted. A regression task's first
+experiment could therefore be a classification search. The declaration removes
+that ambiguity; tasks registered earlier fall back to the inferred value.
 
 Use the same target and compatible feature columns across partitions. For the
 tutorial, register the training file as ``train`` and the second file as
@@ -219,11 +242,15 @@ observations across folds.
 Data page: profile, diagnostics and transformations
 ---------------------------------------------------
 
-Open **Data Preprocessing** and choose the stored partition. The page is
-organised in six tabs, and the active tab is kept in the URL
-(``?tab=quality``), so a view survives a reload and can be linked. Only the
-active tab's cards are loaded, so the partition-drift comparison runs when that
-tab is opened rather than on every visit.
+Open **Data Preprocessing** and choose the stored partition. A task-context
+banner sits above the tabs and states the task's problem type and time
+structure: for a temporal task it explains that the stored partition is only the
+time axis and the label and that the model's inputs (lags, rolling windows,
+calendar fields) are *generated*, so the cards below describe the raw history
+rather than the design matrix. The page is organised in six tabs, and the active
+tab is kept in the URL (``?tab=quality``), so a view survives a reload and can
+be linked. Only the active tab's cards are loaded, so the partition-drift
+comparison runs when that tab is opened rather than on every visit.
 
 **Overview** — the partition picker, the per-column missing-data table (detected
 and implied types, missing counts and percentages, complete-row share, numeric

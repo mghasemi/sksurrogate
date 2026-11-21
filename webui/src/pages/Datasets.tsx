@@ -18,6 +18,8 @@ import {
   previewDataset,
   registerDataset,
   setDatasetCV,
+  setDatasetProblemType,
+  clearDatasetProblemType,
   setDatasetTarget,
   setDatasetTemporal,
   setIgnoredColumns,
@@ -237,6 +239,21 @@ export default function DatasetsPage() {
       setDataRevision((revision) => revision + 1);
       setEditingTarget(false);
     },
+  });
+
+  // Declared problem type: the one place classification-vs-regression is decided.
+  // Everything downstream (Quick start preset, baselines, monitoring) reads it.
+  const [editingProblemType, setEditingProblemType] = useState(false);
+  const setProblemTypeMut = useMutation({
+    mutationFn: (value: "regression" | "classification") => setDatasetProblemType(task, value),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["dataset-meta", task] });
+      setEditingProblemType(false);
+    },
+  });
+  const clearProblemTypeMut = useMutation({
+    mutationFn: () => clearDatasetProblemType(task),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["dataset-meta", task] }),
   });
 
   // Temporal declaration: also decides which splitters the CV card may offer
@@ -629,7 +646,10 @@ export default function DatasetsPage() {
 
       <TemporalCard task={task} revision={dataRevision} fallbackColumns={previewCols} />
 
-      <Card title="Registered metadata" sub={metaQ.data?.dataset_fingerprint ?? undefined}>
+      <Card
+        title="Task definition"
+        sub="The three axes of this task: what you predict, which kind of problem it is, and whether it has time structure."
+      >
         {metaQ.isLoading && task && <Loading />}
         {metaQ.isError && <ErrorNote error={metaQ.error} />}
         {metaQ.data === null && (
@@ -689,6 +709,84 @@ export default function DatasetsPage() {
                   {setTargetMut.data.previous_target ?? "—"}). Downstream analyses and features are re-pointed.
                 </dd>
               )}
+              <dt>Problem type</dt>
+              <dd>
+                <span className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                  {editingProblemType ? (
+                    <>
+                      <select
+                        aria-label="Problem type"
+                        defaultValue={
+                          metaQ.data.problem_type ?? metaQ.data.problem_type_inferred ?? "regression"
+                        }
+                        onChange={(e) =>
+                          setProblemTypeMut.mutate(e.target.value as "regression" | "classification")
+                        }
+                        disabled={setProblemTypeMut.isPending}
+                      >
+                        <option value="regression">regression — predict a number</option>
+                        <option value="classification">classification — predict a class</option>
+                      </select>
+                      <button className="btn" onClick={() => setEditingProblemType(false)}>
+                        Cancel
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <Badge tone={metaQ.data.problem_type === "classification" ? "warn" : "ok"}>
+                        {metaQ.data.problem_type ?? metaQ.data.problem_type_inferred ?? "unknown"}
+                      </Badge>
+                      <span className="muted">
+                        {metaQ.data.problem_type_source === "user" ? "set by you" : "inferred from the target"}
+                      </span>
+                      <button className="btn" onClick={() => setEditingProblemType(true)}>
+                        Change
+                      </button>
+                      {metaQ.data.problem_type_source === "user" && (
+                        <button
+                          className="btn"
+                          disabled={clearProblemTypeMut.isPending}
+                          onClick={() => clearProblemTypeMut.mutate()}
+                        >
+                          Reset to inferred
+                        </button>
+                      )}
+                    </>
+                  )}
+                </span>
+                {metaQ.data.problem_type_reason && (
+                  <div className="muted" style={{ marginTop: 4 }}>
+                    {metaQ.data.problem_type_reason}
+                  </div>
+                )}
+                {setProblemTypeMut.isError && (
+                  <div className="error-note" style={{ marginTop: 4 }}>
+                    {setProblemTypeMut.error instanceof Error
+                      ? setProblemTypeMut.error.message
+                      : String(setProblemTypeMut.error)}
+                  </div>
+                )}
+              </dd>
+              <dt>Time structure</dt>
+              <dd>
+                {metaQ.data.temporal?.declared ? (
+                  <span className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+                    <Badge tone="ok">temporal</Badge>
+                    <span className="muted">
+                      time column{" "}
+                      <code>{String((metaQ.data.temporal.spec as Record<string, unknown> | null)?.["time_column"] ?? "—")}</code>
+                      {", horizon "}
+                      {String((metaQ.data.temporal.spec as Record<string, unknown> | null)?.["horizon"] ?? 1)}
+                      {" — evaluation leads with the rolling-origin backtest"}
+                    </span>
+                  </span>
+                ) : (
+                  <span className="muted">
+                    none — rows are i.i.d. and cross-validation applies. Declare a time
+                    column in the Temporal structure card to forecast instead.
+                  </span>
+                )}
+              </dd>
               <dt>Fingerprint</dt>
               <dd className="mono">{metaQ.data.dataset_fingerprint ?? "—"}</dd>
               <dt>Feature count</dt>

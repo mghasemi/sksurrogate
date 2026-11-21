@@ -4,6 +4,40 @@ Changelog
 [Unreleased]
 ------------
 
+Declared problem type: one decision instead of five inferences
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Added:** a task now stores its **problem type** (``regression`` or
+  ``classification``) at registration, inferred conservatively from the target
+  (boolean, non-numeric, or an integer 0/1 column → classification; other numeric
+  columns → regression) and overridable. Metadata carries ``problem_type``,
+  ``problem_type_source`` (``inferred``/``user``), ``problem_type_reason`` and the
+  raw ``problem_type_inferred``. New API: ``PUT``/``DELETE
+  /api/datasets/{task}/problem-type``; the value is echoed by ``GET
+  /api/datasets/{task}``, the temporal payload and the preprocessing payload.
+* **Fixed:** Quick start defaulted to the *classification* preset regardless of the
+  task, so the first experiment on a regression dataset could be a classification
+  search. The preset now defaults to the declared problem type (server-side too, when
+  the request carries neither a config nor a preset), the Experiments page follows it,
+  and a mismatch between the declared type and the chosen preset is shown as a hint.
+* **Fixed:** ``POST /api/bundles/{task}/train-baseline`` always defaulted to
+  ``linear_regression``; it now picks ``logistic_regression`` for a classification
+  task and refuses an estimator that contradicts the declaration.
+* **Fixed:** delayed-label monitoring defaulted to ``task_type="classification"``; it
+  now follows the declared problem type, so a regression task is scored with MAE/RMSE
+  rather than accuracy.
+* **Added:** a temporal task is pinned to regression — the forecast feature builder
+  and backtest are regression-shaped. Declaring a temporal spec on a task whose stored
+  type is classification (or requesting ``problem_type="classification"`` alongside a
+  temporal spec) is refused with an explicit 400 instead of silently scoring labels as
+  forecasts.
+* **UI:** the Datasets metadata card is now **Task definition** — target, problem
+  type (with its source and reason, ``Change`` / ``Reset to inferred``) and time
+  structure in one place. The Data Preprocessing page opens with a task-context
+  banner stating the problem type and, for temporal tasks, that the stored partition
+  is only the time axis plus the label while the model's inputs are generated.
+  ``docs/forecasting.rst`` and ``docs/ui-manual.rst`` document the three axes.
+
 Numeric analyses and data-quality views on temporal tasks
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

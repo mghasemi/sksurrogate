@@ -255,6 +255,16 @@ export interface RegisterDatasetResponse {
 export interface DatasetMetadata {
   task_name: string;
   target_name: string | null;
+  /**
+   * Declared problem type. Null for a task registered before the declaration
+   * existed; `problem_type_inferred` still shows what the data suggests.
+   */
+  problem_type?: "regression" | "classification" | null;
+  problem_type_source?: "inferred" | "user" | null;
+  problem_type_reason?: string | null;
+  problem_type_inferred?: "regression" | "classification" | null;
+  /** Time structure is a separate axis: declared, with its spec, or not. */
+  temporal?: { declared: boolean; spec: Record<string, unknown> | null };
   dataset_fingerprint: string | null;
   dataset_columns: string[] | null;
   dataset_schema: Record<string, unknown> | null;
@@ -452,6 +462,10 @@ export interface PreprocessingOverview {
   task_name: string;
   partition: string;
   target: string;
+  /** Task axes: the page describes stored columns, but the model may see generated ones. */
+  problem_type?: "regression" | "classification" | null;
+  problem_type_source?: "inferred" | "user" | null;
+  temporal?: { declared: boolean; spec: Record<string, unknown> | null };
   rows: number;
   columns: string[];
   ignored_columns: string[];
@@ -1319,6 +1333,29 @@ export interface SetTargetResponse {
 /** Re-point which registered column downstream analysis predicts. */
 export const setDatasetTarget = (task: string, target: string) =>
   put<SetTargetResponse>(`/api/datasets/${encodeURIComponent(task)}/target`, { target });
+
+export interface ProblemTypeResponse {
+  task_name: string;
+  problem_type: "regression" | "classification";
+  problem_type_source: "inferred" | "user";
+  problem_type_reason: string;
+  problem_type_inferred?: "regression" | "classification";
+  temporal?: boolean;
+}
+
+/** Declare the task's problem type; every screen reads this instead of guessing. */
+export const setDatasetProblemType = (
+  task: string,
+  problem_type: "regression" | "classification",
+) =>
+  put<ProblemTypeResponse>(
+    `/api/datasets/${encodeURIComponent(task)}/problem-type`,
+    { problem_type },
+  );
+
+/** Drop a user override and return to the inferred problem type. */
+export const clearDatasetProblemType = (task: string) =>
+  del<ProblemTypeResponse>(`/api/datasets/${encodeURIComponent(task)}/problem-type`);
 
 /* ------------------------------------------------------------------ */
 /* Bundles                                                             */

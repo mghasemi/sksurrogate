@@ -1519,6 +1519,54 @@ function ClipCard({
   );
 }
 
+/**
+ * Task-context banner. This page profiles the *stored* partition; for a temporal
+ * task the stored frame is only the time axis and the label, and the model's
+ * inputs (lags, rollings, calendar fields) are generated from that history. Saying
+ * so once at the top stops the page reading as "there is nothing here".
+ */
+function TaskContextBanner({ data }: { data: PreprocessingOverview }) {
+  const temporal = data.temporal?.declared ?? false;
+  const problemType = data.problem_type ?? "unknown";
+  const spec = (data.temporal?.spec ?? {}) as Record<string, unknown>;
+  return (
+    <div className="task-context" style={{
+      border: "1px solid var(--border)",
+      borderRadius: 8,
+      padding: "10px 12px",
+      display: "grid",
+      gap: 6,
+      marginBottom: 4,
+    }}>
+      <div className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <strong>Task kind</strong>
+        <Badge tone={problemType === "classification" ? "warn" : "ok"}>{problemType}</Badge>
+        <span className="muted">
+          {data.problem_type_source === "user" ? "declared by you" : "inferred from the target"}
+          , target <code>{data.target}</code>
+        </span>
+        {temporal ? <Badge tone="info">temporal</Badge> : <Badge>tabular</Badge>}
+      </div>
+      {temporal ? (
+        <span className="muted">
+          Time structure: <code>{String(spec["time_column"] ?? "—")}</code>
+          {spec["series_id"] ? <> per <code>{String(spec["series_id"])}</code></> : null}
+          , horizon {String(spec["horizon"] ?? 1)}. The stored partition below is only the
+          time axis and the label — both are non-features. The model's inputs are
+          <strong> generated</strong> (lags, rolling windows, calendar fields), so the
+          cards on this page describe the raw history, not the design matrix. Preview the
+          generated design in the Encoded-rows card on the Datasets page.
+        </span>
+      ) : (
+        <span className="muted">
+          Rows are treated as independent observations; the cards below describe the
+          feature columns that reach the model (ignored columns excluded).
+        </span>
+      )}
+    </div>
+  );
+}
+
 export default function PreprocessingPage() {
   const { task } = useTask();
   const qc = useQueryClient();
@@ -1664,6 +1712,7 @@ export default function PreprocessingPage() {
 
       {data && (
         <>
+          <TaskContextBanner data={data} />
           <Tabs
             tabs={[
               { id: "overview", label: "Overview" },
@@ -1809,7 +1858,13 @@ export default function PreprocessingPage() {
                 )}
               </dl>
             ) : (
-              <p className="muted">No active feature column to profile (all features are ignored or the dataset has only the target).</p>
+              <p className="muted">
+                No stored feature column to profile: every column is either the target, a
+                temporal column (time/series id), or marked ignored.
+                {data.temporal?.declared
+                  ? " Model inputs for a temporal task are generated from the history — see the Encoded-rows card on the Datasets page."
+                  : " Register additional feature columns, or un-ignore the ones you dropped."}
+              </p>
             )}
             {data.missingness_patterns && data.missingness_patterns.patterns.length > 0 && (
               <>

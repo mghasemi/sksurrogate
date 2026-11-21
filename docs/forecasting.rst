@@ -22,7 +22,32 @@ before: no timestamp inference, no re-ordering, no splitter restrictions.
    **Horizon-aware prediction intervals** (split-conformal calibration on backtest
    residuals), and **bundled multi-step inference**: a format-v2 bundle carries the
    serving state of its design, so ``bundle.predict_forecast(history)`` produces a
-   full horizon-$h$ forecast from history alone. The forecast UI is a later phase.
+   full horizon-$h$ forecast from history alone. The web UI carries the temporal
+   panel, the backtest view, the forecast chart and the inference console (see
+   :ref:`forecasting-ui` below).
+
+Problem type and time structure are different axes
+---------------------------------------------------
+
+A task answers two independent questions:
+
+* **which learning problem** it is — ``regression`` or ``classification``
+  (``problem_type``, inferred from the target at registration and overridable on the
+  Datasets page);
+* **whether it has time structure** — a ``TemporalSpec`` or nothing.
+
+"Time series" is therefore *not* a third problem type. A forecasting task is a
+regression problem with a declared time axis, which is why the library pins it to
+regression: the feature builder casts the target to float and the backtest scores
+:math:`\text{MAE}`, :math:`\text{RMSE}` and :math:`\text{MASE}`, so a declared
+classification would be a label pretending to be a forecast. Declaring a temporal spec
+on a task whose stored ``problem_type`` is ``classification`` is refused with an
+explicit message; clearing the override (``DELETE /api/datasets/{task}/problem-type``)
+lets the inference run again.
+
+The declaration is read by the rest of the system instead of being re-guessed:
+Quick start defaults its preset from it, the baseline route chooses (and validates)
+a matching estimator, and delayed-label monitoring uses the matching metrics.
 
 Declaring a temporal spec
 -------------------------
@@ -612,6 +637,14 @@ Endpoint                                                  Purpose
                                                           ``POST /api/serving/{task}/forecast`` for a
                                                           pinned version; tabular bundles get 400.
 ========================================================  ============================================
+
+The declared problem type is read from ``GET /api/datasets/{task}``
+(``problem_type``/``problem_type_source``/``problem_type_reason``) and written with
+``PUT /api/datasets/{task}/problem-type`` (body ``{"problem_type": "regression"}``) or
+cleared with ``DELETE``. A ``PUT`` asking for ``classification`` on a task that declares
+a temporal spec answers 400 with the regression-shaped explanation.
+
+.. _forecasting-ui:
 
 In the web UI
 -------------

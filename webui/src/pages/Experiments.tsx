@@ -16,6 +16,7 @@ import {
   DEFAULT_EXPERIMENT_CONFIG,
   STACKING_COMPONENT,
   ApiError,
+  getDatasetMetadata,
   getDatasetTemporal,
   getProject,
   getPresets,
@@ -145,7 +146,7 @@ export default function ExperimentsPage() {
   });
 
   const [mode, setMode] = useState<"quick" | "advanced">("quick");
-  const [preset, setPreset] = useState<"classification" | "regression">("classification");
+  const [presetChoice, setPresetChoice] = useState<"classification" | "regression">("classification");
   const [quickScoring, setQuickScoring] = useState("");
   const [budget, setBudget] = useState(1);
   const [configJson, setConfigJson] = useState(defaultConfigJson);
@@ -266,6 +267,32 @@ export default function ExperimentsPage() {
   const availableBackends = backendOptionsQ.data?.backends ?? ["local"];
 
   const presetsQ = useQuery({ queryKey: ["experiment-presets"], queryFn: getPresets, staleTime: Infinity });
+  // The declared problem type is the default for Quick start: a regression task
+  // must not open on a classification search just because that was the hard-coded
+  // initial state. A user choice is preserved once made.
+  const metaQ = useQuery({
+    queryKey: ["dataset-meta-experiments", task],
+    queryFn: async () => {
+      try {
+        return await getDatasetMetadata(task);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
+      }
+    },
+    enabled: !!task,
+    retry: false,
+  });
+  const declaredPreset =
+    metaQ.data?.problem_type === "classification" || metaQ.data?.problem_type === "regression"
+      ? metaQ.data.problem_type
+      : null;
+  const [presetTouched, setPresetTouched] = useState(false);
+  // Derived, not state: until the user picks a type, the declared one wins. No
+  // effect, so there is no render cascade when the dataset query resolves.
+  const preset = presetTouched ? presetChoice : declaredPreset ?? presetChoice;
+  // quickScoring stays empty by default, so the form falls back to the preset's
+  // own default scoring — switching the preset therefore switches the scorer too.
   // Temporal declaration (P7.3): changes what "score" means for this task —
   // the search itself still evaluates one-step predictions.
   const temporalQ = useQuery({
@@ -500,12 +527,31 @@ export default function ExperimentsPage() {
           <div className="row top">
             <div className="field">
               <label>Problem type</label>
-              <select value={preset} onChange={(e) => setPreset(e.target.value as "classification" | "regression")}>
+              <select
+                value={preset}
+                onChange={(e) => {
+                  setPresetTouched(true);
+                  setPresetChoice(e.target.value as "classification" | "regression");
+                }}
+              >
                 {(presetsQ.data?.presets ?? []).map((p) => (
                   <option key={p.value} value={p.value}>{p.label}</option>
                 ))}
               </select>
               {presetInfo && <span className="hint">{presetInfo.description}</span>}
+              {declaredPreset && preset !== declaredPreset && (
+                <span className="hint warning">
+                  This task is declared <b>{declaredPreset}</b> on the Datasets page; you are
+                  running a <b>{preset}</b> search. That is allowed, but the reported score will
+                  not match the task's evaluation.
+                </span>
+              )}
+              {!declaredPreset && (
+                <span className="hint">
+                  No problem type declared for this task yet — set one on the Datasets page to
+                  make this the default.
+                </span>
+              )}
             </div>
             <div className="field">
               <label>Budget</label>
