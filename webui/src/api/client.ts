@@ -1234,6 +1234,13 @@ export interface TemporalSpecState {
   horizon?: number;
   order?: "increasing" | "decreasing";
   gap_tolerance?: number;
+  /** strptime format for ambiguous timestamp text (e.g. day-first input). */
+  time_format?: string | null;
+  /**
+   * ISO timestamp of each series' first row, for period labels ("1-Jan", "Q1")
+   * that carry no year. Requires `freq`; the column values are not parsed.
+   */
+  period_start?: string | null;
 }
 
 /** One series' summary inside a per-partition validation report. */

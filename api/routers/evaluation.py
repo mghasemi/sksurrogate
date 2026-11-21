@@ -33,6 +33,7 @@ from SKSurrogate import (
 
 from ..config import settings
 from ..columns import drop_ignored, read_ignored_columns
+from ..partitions import resolve_optional_partition, resolve_partition
 from ..safety import safe_segment
 from ..deps import (
     bad_request,
@@ -103,7 +104,7 @@ def evaluation_learning_curves(
     task_name: str,
     scoring: str = "accuracy",
     pinball_alpha: float | None = None,
-    train_partition: str = "train",
+    train_partition: str | None = None,
     n_points: int = 5,
     model_versions: str | None = None,
 ):
@@ -118,6 +119,7 @@ def evaluation_learning_curves(
         np.isfinite(pinball_alpha) and 0.0 < pinball_alpha < 1.0
     ):
         raise bad_request("pinball_alpha must be between 0 and 1")
+    train_partition = resolve_partition(task_name, train_partition)
     if scoring == "neg_mean_pinball_loss" and pinball_alpha is None:
         raise bad_request(
             "pinball_alpha is required when scoring is 'neg_mean_pinball_loss'"
@@ -180,8 +182,9 @@ class NestedCVRequest(BaseModel):
     alias: str | None = None
     inner_cv: int | dict = 2
     outer_cv: int | dict = 2
-    train_partition: str = "train"
-    validation_partition: str = "validation"
+    #: Omitted → the task's registered partition; an explicit name is used as-is.
+    train_partition: str | None = None
+    validation_partition: str | None = None
     scoring: str | None = None
     pinball_alpha: float | None = Field(default=None, gt=0.0, lt=1.0)
     repeats: int = Field(default=1, ge=1)
@@ -212,7 +215,8 @@ class BacktestRequest(BaseModel):
     #: replays the horizon by feeding each prediction back (plan phases P3/P6).
     strategy: Literal["direct", "recursive"] = "direct"
     scoring: str | None = None
-    train_partition: str = "train"
+    #: Omitted → the task's registered partition; an explicit name is used as-is.
+    train_partition: str | None = None
     features: dict[str, object] = Field(default_factory=dict)
     seasonality: int = Field(default=1, ge=1)
     baselines: list[str] | None = None
@@ -295,8 +299,10 @@ def run_nested_cv(task_name: str, body: NestedCVRequest):
                 bundle.model,
                 inner_cv=inner_cv,
                 outer_cv=outer_cv,
-                train_partition=body.train_partition,
-                validation_partition=body.validation_partition,
+                train_partition=resolve_partition(task_name, body.train_partition),
+                validation_partition=resolve_optional_partition(
+                    task_name, body.validation_partition
+                ),
                 scoring=scoring_fn,
                 repeats=body.repeats,
                 confidence_level=body.confidence_level,
@@ -321,10 +327,12 @@ def run_nested_cv(task_name: str, body: NestedCVRequest):
         evaluation_protocol = result.get("evaluation_protocol")
         if isinstance(evaluation_protocol, dict):
             evaluation_protocol["train_fingerprint"] = partition_history.get(
-                body.train_partition, {}
+                resolve_partition(task_name, body.train_partition), {}
             ).get("fingerprint")
             evaluation_protocol["validation_fingerprint"] = (
-                partition_history.get(body.validation_partition, {}).get("fingerprint")
+                partition_history.get(
+                    resolve_optional_partition(task_name, body.validation_partition), {}
+                ).get("fingerprint")
                 if evaluation_protocol.get("validation_used")
                 else None
             )
@@ -337,8 +345,10 @@ def run_nested_cv(task_name: str, body: NestedCVRequest):
                 "protocol": {
                     "inner_cv": body.inner_cv,
                     "outer_cv": body.outer_cv,
-                    "train_partition": body.train_partition,
-                    "validation_partition": body.validation_partition,
+                    "train_partition": resolve_partition(task_name, body.train_partition),
+                    "validation_partition": resolve_optional_partition(
+                        task_name, body.validation_partition
+                    ),
                     "scoring": body.scoring,
                     "pinball_alpha": body.pinball_alpha,
                     "repeats": body.repeats,
@@ -346,10 +356,12 @@ def run_nested_cv(task_name: str, body: NestedCVRequest):
                 },
                 "data": {
                     "train_fingerprint": partition_history.get(
-                        body.train_partition, {}
+                        resolve_partition(task_name, body.train_partition), {}
                     ).get("fingerprint"),
                     "validation_fingerprint": partition_history.get(
-                        body.validation_partition, {}
+                        resolve_optional_partition(
+                            task_name, body.validation_partition
+                        ), {}
                     ).get("fingerprint"),
                 },
                 "metrics": {
@@ -389,7 +401,16 @@ def run_nested_cv(task_name: str, body: NestedCVRequest):
         task_name,
         "nested-cv",
         lambda job_id: _task,
-        metadata_factory=lambda job_id: {"request": body.model_dump(mode="json")},
+        metadata_factory=lambda job_id: {
+            "request": {
+                **body.model_dump(mode="json"),
+                # Record what actually ran, not the unresolved request defaults.
+                "train_partition": resolve_partition(task_name, body.train_partition),
+                "validation_partition": resolve_optional_partition(
+                    task_name, body.validation_partition
+                ),
+            }
+        },
     )
     return {"job_id": job_id, "status": "queued"}
 
@@ -437,7 +458,7 @@ def run_backtest(task_name: str, body: BacktestRequest):
                 strategy=body.strategy,
                 scoring=scoring_fn,
                 scoring_label=body.scoring,
-                train_partition=body.train_partition,
+                train_partition=resolve_partition(task_name, body.train_partition),
                 exclude_columns=read_ignored_columns(task_name),
                 feature_kwargs=body.features or None,
                 seasonality=body.seasonality,
@@ -522,7 +543,12 @@ def run_backtest(task_name: str, body: BacktestRequest):
         task_name,
         "backtest",
         lambda job_id: _task,
-        metadata_factory=lambda job_id: {"request": body.model_dump(mode="json")},
+        metadata_factory=lambda job_id: {
+            "request": {
+                **body.model_dump(mode="json"),
+                "train_partition": resolve_partition(task_name, body.train_partition),
+            }
+        },
     )
     return {"job_id": job_id, "status": "queued"}
 

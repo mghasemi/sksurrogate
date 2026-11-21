@@ -155,6 +155,11 @@ class TemporalSpecRequest(BaseModel):
     horizon: int = Field(default=1, ge=1)
     order: Literal["increasing", "decreasing"] = "increasing"
     gap_tolerance: int = Field(default=0, ge=0)
+    #: strptime format for ambiguous timestamp text (e.g. day-first input).
+    time_format: str | None = None
+    #: ISO timestamp of each series' first row, for period labels ("1-Jan",
+    #: "Q1") that carry no year. Requires ``freq``; the column is not parsed.
+    period_start: str | None = None
 
 
 class SetTargetRequest(BaseModel):

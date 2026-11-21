@@ -204,7 +204,11 @@ shows the three axes of the task together:
 * **Time structure** — ``none`` for an i.i.d. task, or ``temporal`` once a time
   column is declared in the **Temporal structure** card below (see
   :doc:`forecasting`). Time structure is a separate axis, not a third problem
-  type.
+  type. The temporal card also takes **Time format** (a ``strptime`` pattern, for
+  day-first or otherwise ambiguous text) and **Start date** — the timestamp of the
+  first row — for period labels such as ``1-Jan`` that carry no year; the Start date
+  requires a Frequency, and the axis is then built from it instead of from the
+  labels.
 
 Before this declaration existed, the problem type was never stored: the Quick
 start preset defaulted to classification, and other screens inferred a family

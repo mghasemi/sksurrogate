@@ -16,6 +16,7 @@ from SKSurrogate import save_bundle
 from ..config import settings
 from ..safety import safe_segment
 from ..deps import bad_request, open_tracker, task_access
+from ..partitions import resolve_partition
 from ..problem_type import declared_problem_type
 from ..jobs import dask_available, job_manager
 from ..training import SURROGATE_FAMILIES, SURROGATE_SAMPLERS, fit_experiment_bundle, fit_pipeline_bundle, standard_scoring_options
@@ -58,7 +59,9 @@ class RunExperimentRequest(BaseModel):
         validation_alias=AliasChoices("max_generations", "max_generation"),
     )
     num_parents: int = 4
-    train_partition: str = "train"
+    #: Omitted → the task's registered partition ("train" when present, else the
+    #: only/first one).
+    train_partition: str | None = None
     scoring: str | None = None  # defaults to the preset's metric, else accuracy
     random_state: int | None = None
     owner: str | None = None
@@ -180,6 +183,8 @@ def submit_experiment(task_name, body, *, checkpoint_job_id=None, run_id=None):
                 ),
             )
 
+    train_partition = resolve_partition(task_name, body.train_partition)
+
     def make_job(job_id):
         def _run():
             bundle, evaluation_history, top_pipelines, pareto = fit_experiment_bundle(
@@ -189,7 +194,7 @@ def submit_experiment(task_name, body, *, checkpoint_job_id=None, run_id=None):
                 length=body.length,
                 max_generation=body.max_generations,
                 num_parents=body.num_parents,
-                train_partition=body.train_partition,
+                train_partition=train_partition,
                 scoring=_effective_scoring(body, preset),
                 random_state=body.random_state,
                 owner=body.owner,
@@ -297,6 +302,7 @@ def submit_optimize_pipeline(task_name, body, *, checkpoint_job_id=None, run_id=
         raise bad_request("seq must name at least one component")
     config = _dump_config(body.config)
     effective_run_id = run_id or body.run_id
+    train_partition = resolve_partition(task_name, body.train_partition)
 
     def make_job(job_id):
         def _run():
@@ -305,7 +311,7 @@ def submit_optimize_pipeline(task_name, body, *, checkpoint_job_id=None, run_id=
                 seq=body.seq,
                 config=config,
                 checkpoint_dir=settings.task_checkpoint_dir(task_name, checkpoint_job_id or job_id),
-                train_partition=body.train_partition,
+                train_partition=train_partition,
                 scoring=body.scoring,
                 random_state=body.random_state,
                 owner=body.owner,

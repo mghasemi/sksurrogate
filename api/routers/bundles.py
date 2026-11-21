@@ -28,6 +28,8 @@ from SKSurrogate import ModelBundle, export_mlflow, load_bundle, save_bundle
 from ..config import settings
 from ..safety import safe_segment
 from ..deps import bad_request, bundle_summary, finite_or_none, not_found, open_tracker, task_access
+from ..partitions import resolve_optional_partition, resolve_partition
+from ..partitions import resolve_optional_partition, resolve_partition
 from ..problem_type import declared_problem_type
 from ..training import BASELINE_ESTIMATORS, fit_baseline_bundle, get_registered_target, load_partition
 
@@ -38,8 +40,11 @@ class TrainBaselineRequest(BaseModel):
     #: Omitted → the task's declared problem type picks the estimator
     #: (logistic regression for classification, linear regression otherwise).
     estimator: str | None = None
-    train_partition: str = "train"
-    validation_partition: str | None = "validation"
+    #: Omitted → the task's registered partition ("train" when it exists, else the
+    #: only/first one). An explicit name is passed through unchanged.
+    train_partition: str | None = None
+    #: Omitted → "validation" when that partition exists, otherwise unused.
+    validation_partition: str | None = None
     owner: str | None = None
     run_id: str | None = None
     #: Temporal tasks only: the design horizon (defaults to the declared one),
@@ -84,8 +89,8 @@ def train_baseline(task_name: str, body: TrainBaselineRequest):
     bundle = fit_baseline_bundle(
         task_name,
         estimator=estimator,
-        train_partition=body.train_partition,
-        validation_partition=body.validation_partition,
+        train_partition=resolve_partition(task_name, body.train_partition),
+        validation_partition=resolve_optional_partition(task_name, body.validation_partition),
         owner=body.owner,
         run_id=body.run_id,
         horizon=body.horizon,
@@ -102,6 +107,7 @@ def train_baseline(task_name: str, body: TrainBaselineRequest):
         "task_name": task_name,
         "model_version": bundle.model_version,
         "estimator": estimator,
+        "train_partition": resolve_partition(task_name, body.train_partition),
         "metrics": bundle.metrics,
         "schema": bundle.schema,
         "bundle_path": str(bundle_path),

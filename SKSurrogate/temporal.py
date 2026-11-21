@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
@@ -78,6 +79,16 @@ class TemporalSpec:
     :param order: expected row order — ``"increasing"`` or ``"decreasing"``.
     :param gap_tolerance: how many missing periods per series are tolerated
         before validation fails (only meaningful when ``freq`` is declared).
+    :param time_format: optional ``strptime`` format for the time column, e.g.
+        ``"%Y-%m-%d"`` when ``pandas`` would guess a different convention.
+        Declaring the format keeps the interpretation explicit instead of guessed.
+    :param period_start: optional ISO timestamp of the **first row of each
+        series**, for data whose time column is a *period label* rather than a
+        parseable date (``1-Jan``, ``Q1``, ``period 1``). When set, ``freq`` is
+        required and the axis is built from the declared anchor plus the row
+        position within each series; the column values are kept as labels and are
+        not parsed. This is the explicit alternative to guessing a year that the
+        data does not contain.
     """
 
     time_column: str
@@ -86,6 +97,8 @@ class TemporalSpec:
     horizon: int = 1
     order: str = "increasing"
     gap_tolerance: int = 0
+    time_format: str | None = None
+    period_start: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.time_column, str) or not self.time_column.strip():
@@ -109,6 +122,44 @@ class TemporalSpec:
             raise ValueError("gap_tolerance must be a non-negative integer")
         if int(self.gap_tolerance) < 0:
             raise ValueError("gap_tolerance must be >= 0")
+        if self.time_format is not None:
+            if not isinstance(self.time_format, str) or not self.time_format.strip():
+                raise ValueError(
+                    "time_format must be a strptime format such as '%y-%b' or None"
+                )
+            # Round-trip a known date through the format: this validates the
+            # directive string itself without pretending to know the data.
+            sample = datetime(2001, 2, 3, 4, 5, 6).strftime(self.time_format)
+            try:
+                datetime.strptime(sample, self.time_format)
+            except ValueError as exc:
+                raise ValueError(
+                    "time_format %r is not a valid strptime format: %s"
+                    % (self.time_format, exc)
+                )
+        if self.period_start is not None:
+            if not isinstance(self.period_start, str) or not self.period_start.strip():
+                raise ValueError(
+                    "period_start must be an ISO timestamp such as '2001-01-01' or None"
+                )
+            if self.freq is None:
+                # Without a frequency the anchor says nothing about the spacing.
+                raise ValueError(
+                    "period_start requires freq: the anchor gives the first "
+                    "observation's timestamp, freq gives the step between them"
+                )
+            try:
+                anchor = pd.Timestamp(self.period_start)
+            except (ValueError, TypeError) as exc:
+                raise ValueError(
+                    "period_start %r is not a parseable timestamp: %s"
+                    % (self.period_start, exc)
+                )
+            if anchor.tzinfo is not None:
+                raise ValueError(
+                    "period_start must be timezone-naive; the temporal axis is "
+                    "UTC-based, so state the instant in UTC and drop the offset"
+                )
         if self.freq is not None:
             if not isinstance(self.freq, str) or not self.freq.strip():
                 raise ValueError("freq must be a pandas offset alias such as 'D' or None")
@@ -127,6 +178,8 @@ class TemporalSpec:
             "horizon": int(self.horizon),
             "order": self.order,
             "gap_tolerance": int(self.gap_tolerance),
+            "time_format": self.time_format,
+            "period_start": self.period_start,
         }
 
     @classmethod
@@ -148,6 +201,8 @@ class TemporalSpec:
             "horizon",
             "order",
             "gap_tolerance",
+            "time_format",
+            "period_start",
         }
         unknown = sorted(set(value) - allowed)
         if unknown:
@@ -159,6 +214,10 @@ class TemporalSpec:
             kwargs["series_id"] = None
         if kwargs.get("freq") == "":
             kwargs["freq"] = None
+        if kwargs.get("time_format") == "":
+            kwargs["time_format"] = None
+        if kwargs.get("period_start") == "":
+            kwargs["period_start"] = None
         return cls(**kwargs)
 
     @property
@@ -182,20 +241,26 @@ def temporal_columns(spec: Any) -> list[str]:
     return TemporalSpec.from_dict(spec).temporal_columns
 
 
-def infer_freq(values: Iterable[Any]) -> str | None:
+def infer_freq(values: Iterable[Any], time_format: str | None = None) -> str | None:
     """Infer a pandas frequency alias from a sequence of datetime-like values.
 
     Returns ``None`` when there are fewer than three distinct values, when the
     values cannot be parsed, or when pandas cannot identify a regular frequency.
     Duplicates are collapsed first, so registering a frame twice does not change
     the answer.
+
+    ``time_format`` mirrors :attr:`TemporalSpec.time_format`: passing it makes the
+    inference read the same values the same way validation does (``"%y-%b"`` turns
+    ``1-Jan`` into 2001-01, not year 1).
     """
     parsed_series = pd.Series(list(values))
     with warnings.catch_warnings():
         # Mixed/unparseable input is an expected "cannot infer" answer here, not
         # something the caller needs a pandas UserWarning about.
         warnings.simplefilter("ignore")
-        parsed = pd.to_datetime(parsed_series, errors="coerce").dropna()
+        parsed = pd.to_datetime(
+            parsed_series, format=time_format, errors="coerce"
+        ).dropna()
     if len(parsed) < 3:
         return None
     unique = pd.DatetimeIndex(parsed.unique()).sort_values()
@@ -220,8 +285,37 @@ def _time_axis(frame: pd.DataFrame, spec: TemporalSpec) -> dict[str, Any]:
 
     A numeric column is *not* coerced through ``to_datetime``: that would read
     ``0, 1, 2`` as 1970 timestamps and then report a 1-second frequency.
+
+    When ``spec.period_start`` is declared, neither branch runs: the axis is a
+    regular grid anchored at that timestamp and stepped by ``freq`` once per row
+    **within each series** (row order is the order). That is the honest option for
+    data whose time column is a period label — ``1-Jan``/``2-Jan``/``3-Jan`` is
+    *year 1, 2, 3 January*, and ``pandas`` would otherwise read year 1, which is
+    outside the nanosecond range and wrong.
     """
+    if spec.period_start is not None:
+        # ``freq`` is guaranteed by TemporalSpec.__post_init__.
+        grid = pd.date_range(
+            pd.Timestamp(spec.period_start),
+            periods=max(len(frame), 1),
+            freq=spec.freq,
+        )
+        if spec.series_id is None:
+            ranks = np.arange(len(frame))
+        else:
+            ranks = (
+                frame.groupby(spec.series_id, sort=False).cumcount().to_numpy()
+            )
+        values = grid.to_numpy(dtype="datetime64[ns]").astype("int64")[ranks]
+        return {"kind": "datetime", "values": values, "source": "period_start"}
+
     raw = frame[spec.time_column]
+    if spec.time_format is not None and pd.api.types.is_numeric_dtype(raw):
+        raise TemporalValidationError(
+            "time_format %r was declared but column %r is numeric; a numeric axis "
+            "is used as a step index — remove time_format, or store the column as "
+            "timestamp text." % (spec.time_format, spec.time_column)
+        )
     if pd.api.types.is_numeric_dtype(raw) and not pd.api.types.is_bool_dtype(raw):
         values = raw.to_numpy(dtype="float64")
         finite = np.isfinite(values)
@@ -231,15 +325,20 @@ def _time_axis(frame: pd.DataFrame, spec: TemporalSpec) -> dict[str, Any]:
                 "time column %r has %d non-finite value(s) (first row labels: %s)"
                 % (spec.time_column, int((~finite).sum()), bad)
             )
-        return {"kind": "numeric", "values": values}
+        return {"kind": "numeric", "values": values, "source": "column"}
 
-    parsed = pd.to_datetime(raw, errors="coerce")
+    parsed = pd.to_datetime(raw, format=spec.time_format, errors="coerce")
     missing = parsed.isna()
     if missing.any():
         bad = list(frame.index[missing][:MAX_REPORTED_ROWS])
+        hint = (
+            " against the declared time_format %r" % spec.time_format
+            if spec.time_format is not None
+            else ""
+        )
         raise TemporalValidationError(
-            "time column %r has %d missing or unparseable timestamp(s) "
-            "(first row labels: %s)" % (spec.time_column, int(missing.sum()), bad)
+            "time column %r has %d missing or unparseable timestamp(s)%s "
+            "(first row labels: %s)" % (spec.time_column, int(missing.sum()), hint, bad)
         )
     # ``to_datetime`` keeps the resolution it inferred (pandas >= 2 gives
     # datetime64[us] for dateutil-parsed strings), and it happily produces years
@@ -257,7 +356,7 @@ def _time_axis(frame: pd.DataFrame, spec: TemporalSpec) -> dict[str, Any]:
         raise TemporalValidationError(
             _datetime_range_message(spec.time_column, parsed, exc)
         )
-    return {"kind": "datetime", "values": values}
+    return {"kind": "datetime", "values": values, "source": "column"}
 
 
 def _datetime_range_message(
@@ -588,6 +687,7 @@ def validate_temporal_frame(frame: pd.DataFrame, spec: Any) -> dict[str, Any]:
     if errors:
         base.update(_summarize_series(series_reports, spec, axis["kind"]))
         base["time_kind"] = axis["kind"]
+        base["time_source"] = axis.get("source", "column")
         base["errors"] = errors
         base["warnings"] = warnings
         raise TemporalValidationError(errors[0], base)
@@ -596,6 +696,7 @@ def validate_temporal_frame(frame: pd.DataFrame, spec: Any) -> dict[str, Any]:
     report = dict(base)
     report["ok"] = True
     report["time_kind"] = axis["kind"]
+    report["time_source"] = axis.get("source", "column")
     report.update(summary)
     report["warnings"] = warnings
     report["errors"] = []
@@ -1041,7 +1142,13 @@ class ForecastFeatureBuilder(BaseEstimator, TransformerMixin):
                 frame, spec, lambda series, step=step: _safe_pct_change(series, horizon, step)
             )
         if options["calendar"] or options["fourier"] is not None:
-            time_values = pd.to_datetime(frame[spec.time_column])
+            # The axis, not the raw column: parsing the labels directly breaks
+            # period-label data ("1-Jan" -> year 1 -> OutOfBoundsDatetime) and
+            # ignores a declared time_format.
+            axis = _time_axis(frame, spec)
+            time_values = pd.Series(
+                pd.to_datetime(axis["values"]), index=frame.index
+            )
             if options["calendar"]:
                 features.update(
                     _calendar_features(time_values, options["calendar"])

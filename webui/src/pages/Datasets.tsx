@@ -1286,6 +1286,8 @@ function TemporalCard({
     horizon: 1,
     order: "increasing",
     gap_tolerance: 0,
+    time_format: null,
+    period_start: null,
   };
   const [draft, setDraft] = useState<TemporalSpecState>(EMPTY_DRAFT);
 
@@ -1302,6 +1304,8 @@ function TemporalCard({
             horizon: spec.horizon ?? 1,
             order: spec.order ?? "increasing",
             gap_tolerance: spec.gap_tolerance ?? 0,
+            time_format: spec.time_format ?? null,
+            period_start: spec.period_start ?? null,
           }
         : EMPTY_DRAFT,
     );
@@ -1341,6 +1345,8 @@ function TemporalCard({
       horizon: Math.max(1, Number(draft.horizon) || 1),
       order: draft.order ?? "increasing",
       gap_tolerance: Math.max(0, Number(draft.gap_tolerance) || 0),
+      time_format: (draft.time_format ?? "").trim() || null,
+      period_start: (draft.period_start ?? "").trim() || null,
     });
   };
 
@@ -1396,6 +1402,22 @@ function TemporalCard({
                 placeholder="e.g. D, h, 15min"
                 value={draft.freq ?? ""}
                 onChange={(e) => setDraft((d) => ({ ...d, freq: e.target.value }))}
+              />
+            </div>
+            <div className="field fixed" style={{ flex: "0 1 170px", minWidth: 130 }}>
+              <label>Time format (optional)</label>
+              <input
+                placeholder="e.g. %d/%m/%Y"
+                value={draft.time_format ?? ""}
+                onChange={(e) => setDraft((d) => ({ ...d, time_format: e.target.value }))}
+              />
+            </div>
+            <div className="field fixed" style={{ flex: "0 1 170px", minWidth: 130 }}>
+              <label>Start date (optional)</label>
+              <input
+                placeholder="e.g. 2001-01-01"
+                value={draft.period_start ?? ""}
+                onChange={(e) => setDraft((d) => ({ ...d, period_start: e.target.value }))}
               />
             </div>
             <div className="field fixed" style={{ flex: "0 1 120px", minWidth: 90 }}>

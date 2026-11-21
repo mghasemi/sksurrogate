@@ -2282,17 +2282,24 @@ class mltrack(object):
         y_train = train_frame[target].to_numpy()
         X_train_frame = train_frame.drop(columns=[target])
 
-        try:
-            validation_frame = self.get_dataframe(validation_partition)
-            if exclude_columns:
-                present = [column for column in exclude_columns if column in validation_frame.columns]
-                if present:
-                    validation_frame = validation_frame.drop(columns=present)
-            y_valid = validation_frame[target].to_numpy()
-            X_valid_frame = validation_frame.drop(columns=[target])
-        except ValueError:
-            X_valid_frame = None
-            y_valid = None
+        x_valid_frame = None
+        y_valid = None
+        if validation_partition is not None:
+            # ``None`` means "this task has no validation partition". Passing it to
+            # ``get_dataframe`` would read the unpartitioned ``data`` stub instead of
+            # failing, which then died later with a bare ``KeyError: <target>``.
+            try:
+                validation_frame = self.get_dataframe(validation_partition)
+                if exclude_columns:
+                    present = [column for column in exclude_columns if column in validation_frame.columns]
+                    if present:
+                        validation_frame = validation_frame.drop(columns=present)
+                y_valid = validation_frame[target].to_numpy()
+                x_valid_frame = validation_frame.drop(columns=[target])
+            except ValueError:
+                x_valid_frame = None
+                y_valid = None
+        X_valid_frame = x_valid_frame
 
         feature_dtypes = list(X_train_frame.dtypes)
         if X_valid_frame is not None:

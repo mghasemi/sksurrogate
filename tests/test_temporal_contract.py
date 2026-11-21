@@ -25,6 +25,7 @@ from sklearn.model_selection import TimeSeriesSplit
 
 from SKSurrogate import (
     TEMPORAL_CV_SPLITTERS,
+    ForecastFeatureBuilder,
     TemporalSpec,
     TemporalValidationError,
     cv_is_temporal_safe,
@@ -282,6 +283,115 @@ class TestTemporalValidation(unittest.TestCase):
         self.assertEqual(report["inferred_freq"], "D")
 
 
+    @staticmethod
+    def _year_month_frame():
+        """The shampoo-style shape: "1-Jan" .. "3-Dec" (year index, month)."""
+        rows = []
+        for year in range(1, 4):
+            for month in ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                          "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"):
+                rows.append("%d-%s" % (year, month))
+        return pd.DataFrame({"Month": rows, "target": np.arange(len(rows), dtype=float)})
+
+    def test_period_labels_are_refused_without_an_anchor(self):
+        # No year in the labels: pandas reads "1-Jan" as year 1, which is outside
+        # the nanosecond range. The error must say so instead of overflowing.
+        with self.assertRaises(TemporalValidationError) as ctx:
+            validate_temporal_frame(
+                self._year_month_frame(), TemporalSpec(time_column="Month", freq="MS")
+            )
+        # pandas 3 parses "1-Jan" to year 1 (outside the nanosecond range);
+        # pandas 2 coerces it to NaT. Either way it must be a validation error
+        # that names the column, never an OverflowError.
+        message = str(ctx.exception)
+        self.assertIn("'Month'", message)
+        self.assertTrue(
+            "nanosecond" in message or "unparseable" in message, message
+        )
+
+    def test_period_start_builds_the_axis_from_row_order(self):
+        frame = self._year_month_frame()
+        report = validate_temporal_frame(
+            frame,
+            TemporalSpec(
+                time_column="Month", freq="MS", horizon=3, period_start="2001-01-01"
+            ),
+        )
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["time_source"], "period_start")
+        self.assertEqual(report["inferred_freq"], "MS")
+        self.assertEqual(report["time_range"]["start"], "2001-01-01 00:00:00")
+        self.assertEqual(report["time_range"]["end"], "2003-12-01 00:00:00")
+
+    def test_period_start_requires_a_frequency(self):
+        with self.assertRaises(ValueError) as ctx:
+            TemporalSpec(time_column="Month", period_start="2001-01-01")
+        self.assertIn("requires freq", str(ctx.exception))
+
+    def test_period_start_rejects_a_bad_or_aware_timestamp(self):
+        with self.assertRaises(ValueError):
+            TemporalSpec(time_column="Month", freq="MS", period_start="not-a-date")
+        with self.assertRaises(ValueError) as ctx:
+            TemporalSpec(
+                time_column="Month", freq="MS", period_start="2001-01-01T00:00:00+02:00"
+            )
+        self.assertIn("timezone-naive", str(ctx.exception))
+
+    def test_period_start_applies_per_series(self):
+        frame = pd.DataFrame(
+            {
+                "time": ["p1", "p2", "p3", "p1", "p2", "p3"],
+                "series": ["A", "A", "A", "B", "B", "B"],
+                "target": np.arange(6, dtype=float),
+            }
+        )
+        report = validate_temporal_frame(
+            frame,
+            TemporalSpec(
+                time_column="time", series_id="series", freq="D",
+                period_start="2026-01-01",
+            ),
+        )
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["series_count"], 2)
+        # Each series starts at the anchor, not at a global row index.
+        self.assertEqual([entry["rows"] for entry in report["series"]], [3, 3])
+
+    def test_period_start_feeds_calendar_features(self):
+        frame = self._year_month_frame()
+        spec = TemporalSpec(
+            time_column="Month", freq="MS", horizon=1, period_start="2001-01-01"
+        )
+        builder = ForecastFeatureBuilder(
+            spec=spec, target="target", lags=[1], calendar=["month"]
+        ).fit(frame)
+        design = builder.build(frame)
+        self.assertIn("cal__month", design.X.columns)
+        months = design.X["cal__month"].dropna().astype(int).tolist()
+        self.assertEqual(months[:3], [2, 3, 4])  # first row has no lag-1 feature
+
+    def test_time_format_reads_ambiguous_text(self):
+        frame = pd.DataFrame(
+            {
+                "when": ["03/01/2026", "04/01/2026", "05/01/2026"],
+                "target": [1.0, 2.0, 3.0],
+            }
+        )
+        # day-first: with "%d/%m/%Y" these are 3, 4 and 5 January 2026. Pandas
+        # would guess month-first for "03/01/2026" and read March.
+        report = validate_temporal_frame(
+            frame,
+            TemporalSpec(time_column="when", freq="D", time_format="%d/%m/%Y"),
+        )
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["time_range"]["start"], "2026-01-03 00:00:00")
+
+    def test_bad_time_format_is_rejected(self):
+        with self.assertRaises(ValueError) as ctx:
+            TemporalSpec(time_column="when", time_format="%Q-%b")
+        self.assertIn("strptime", str(ctx.exception))
+
+
 class TestTrackerIntegration(unittest.TestCase):
     """``mltrack`` registration, persistence and splitter enforcement."""
 
@@ -519,6 +629,25 @@ class TestTemporalEndpoints(unittest.TestCase):
         detail = ctx.exception.detail["message"]
         self.assertIn("Month", detail)
         self.assertTrue("nanosecond" in detail or "unparseable" in detail, detail)
+
+    def test_put_accepts_period_start_for_period_labels(self):
+        # The reported dataset: Month = "1-Jan" ... "3-Dec" (year index, month).
+        rows = [
+            "%d-%s" % (year, month)
+            for year in range(1, 4)
+            for month in ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                          "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+        ]
+        frame = pd.DataFrame({"Month": rows, "target": np.arange(len(rows), dtype=float)})
+        self._register(frame=frame)
+        body = datasets_router.TemporalSpecRequest(
+            time_column="Month", freq="MS", horizon=3, period_start="2001-01-01"
+        )
+        payload = datasets_router.set_temporal(TASK, body)
+        report = payload["validation"]["train"]
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["time_source"], "period_start")
+        self.assertEqual(payload["spec"]["period_start"], "2001-01-01")
 
     def test_put_rejects_unknown_temporal_column(self):
         self._register()

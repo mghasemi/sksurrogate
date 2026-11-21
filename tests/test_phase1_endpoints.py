@@ -461,6 +461,9 @@ class TestPhase1Endpoints(unittest.TestCase):
                 "alias": None,
                 "inner_cv": 2,
                 "outer_cv": 2,
+                # The recorded request holds the *resolved* partitions: the model
+                # defaults are unset and the route resolves them against the task's
+                # registered data (api.partitions). This task registers both.
                 "train_partition": "train",
                 "validation_partition": "validation",
                 "scoring": None,

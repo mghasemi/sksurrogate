@@ -1,6 +1,9 @@
 Changelog
 =========
 
+[Unreleased]
+------------
+
 Temporal declaration no longer 500s on timestamps outside the nanosecond range
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -67,8 +70,35 @@ Dead code removed from the AML search path
 
 No behaviour change; the removal was verified against the AML, experiment and
 surrogate-diagnostic suites.
-[Unreleased]
-------------
+
+Period labels, ambiguous formats, and partition defaults
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Added:** ``TemporalSpec.period_start`` — the timestamp of each series' first row,
+  for a time column that is a *period label* (``1-Jan``/``2-Jan``/``3-Dec``, ``Q1``,
+  ``period 1``) rather than a date. It requires ``freq``; the axis is built from the
+  anchor stepped by ``freq`` per row within each series, so ``1-Jan`` no longer has
+  to be read as year 1 (which is outside the int64-nanosecond range and made such
+  datasets impossible to declare). The validation report records
+  ``time_source: "period_start"`` so nobody mistakes labels for validated
+  timestamps. The feature builder now takes its calendar/Fourier axis from the same
+  derivation, so ``cal__month`` works on such data.
+* **Added:** ``TemporalSpec.time_format`` — an explicit ``strptime`` format for text
+  that parses ambiguously (``03/01/2026`` as ``"%d/%m/%Y"``). A bad directive string
+  is refused when the spec is constructed, not at validation time.
+* **Fixed:** ``nested_cv_evaluation(validation_partition=None)`` read the
+  unpartitioned ``data`` stub instead of treating ``None`` as "no validation
+  partition", then died with a bare ``KeyError: <target>``. ``None`` now skips
+  validation scoring, which is what the control plane means when a task has
+  registered only a training partition.
+* **Fixed:** the request models for ``train-baseline``, ``nested-cv``, ``backtest``,
+  ``learning-curves`` and experiment submission defaulted ``train_partition`` to the
+  literal ``"train"``, so a task registered with a single ``main`` partition answered
+  ``404 No dataset partition 'train' stored`` for a request that never named one. An
+  omitted partition now resolves to ``train`` when it exists, otherwise to the task's
+  only/first registered partition (``api.partitions``); an explicit name is passed
+  through, and a wrong explicit name still 404s. The resolved name is echoed in the
+  response.
 
 "Time series" is not a learning-problem option — and the card now says so
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -24,6 +24,7 @@ from SKSurrogate import DataPreprocess, ModelRegistry, SynthData
 
 from ..config import settings
 from ..columns import coerce_declared_datetimes, drop_ignored, read_ignored_columns
+from ..partitions import available_partitions, resolve_partition
 from ..safety import safe_segment
 from ..deps import bad_request, not_found, open_tracker, task_access
 
@@ -89,36 +90,18 @@ def _deduced_synth_types(frame):
 
 
 def _available_partitions(task_name):
-    """Registered partition names for a task (empty when the task is unknown).
-
-    Guarded on the tracking DB's existence: ``open_tracker`` would create an empty
-    task database as a side effect, which then masks the "no dataset registered"
-    answer behind a partition-not-found one.
-    """
-    if not settings.mltrace_db_path(task_name).exists():
-        return []
-    try:
-        with open_tracker(task_name) as tracker:
-            return sorted(tracker.dataset_splits() or {})
-    except Exception:  # pragma: no cover - a missing task has no partitions
-        return []
+    """Registered partition names for a task (empty when the task is unknown)."""
+    return available_partitions(task_name)
 
 
 def _resolve_partition(task_name, partition):
     """Pick the partition to sample when the caller did not name one.
 
-    The old default was the literal ``"train"``, which answered ``404 No dataset
-    partition 'train' stored`` for a task whose only partition is named something
-    else (e.g. a task registered directly under its own name). Prefer ``train``
-    when it exists, otherwise the single/first registered partition — a caller who
-    omitted the field is asking for "the data", not for a specific name.
+    Shared with the other partition-defaulting routes: an explicit name wins, an
+    omitted one resolves to ``train`` when it exists, else the first registered
+    partition (see :mod:`api.partitions`).
     """
-    if partition:
-        return partition
-    available = _available_partitions(task_name)
-    if not available:
-        return "train"  # let the loader produce its usual not-found error
-    return "train" if "train" in available else available[0]
+    return resolve_partition(task_name, partition)
 
 
 def _load_partition_frame(task_name, partition):

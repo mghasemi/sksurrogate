@@ -54,11 +54,30 @@ Declaring a temporal spec
 
 The time column must be either a **numeric step index** (used as-is — no epoch
 coercion, so ``0, 1, 2`` stays a step axis) or **datetimes that fit the int64
-nanosecond range** (1677-09-21 .. 2262-04-11). Values that carry no year — a
-``Month`` column of ``1-Jan``/``1-Feb``/... — are refused rather than rescaled: pandas
-parses them to year 1, which is outside that range and would make every lag window
-meaningless. Supply full dates (``2026-01-01``) or a numeric index instead.
-Timezone-aware timestamps are accepted and normalised to UTC.
+nanosecond range** (1677-09-21 .. 2262-04-11). Timezone-aware timestamps are accepted
+and normalised to UTC.
+
+Two declarations exist for labels that ``pandas`` cannot read the way you mean:
+
+* **``time_format``** — an explicit ``strptime`` format, for text that parses but
+  ambiguously (``03/01/2026`` is day-first as ``"%d/%m/%Y"``, month-first otherwise).
+* **``period_start``** — the timestamp of each series' **first row**, for a column
+  that is a *period label* rather than a date: ``1-Jan``/``2-Jan``/``3-Dec`` (year
+  index, month), ``Q1``, ``period 1``. It requires ``freq``; the axis is then the
+  anchor stepped by ``freq`` once per row within each series, and the column values
+  are kept as labels and not parsed. This is the explicit alternative to guessing a
+  year the data does not contain — ``pandas`` reads ``1-Jan`` as *day 1 of January,
+  year 1*, which lies outside the nanosecond range (see below).
+
+.. code-block:: python
+
+    # 36 monthly observations labelled "1-Jan" .. "3-Dec"
+    spec = TemporalSpec(
+        time_column="Month",
+        freq="MS",
+        horizon=4,
+        period_start="2001-01-01",   # axis becomes 2001-01 .. 2003-12
+    )
 
 .. code-block:: python
 
@@ -71,6 +90,8 @@ Timezone-aware timestamps are accepted and normalised to UTC.
         horizon=7,                # forecast horizon in steps, >= 1
         order="increasing",       # or "decreasing"
         gap_tolerance=0,          # missing periods tolerated when freq is declared
+        time_format=None,         # optional strptime format for ambiguous text
+        period_start=None,        # optional anchor for period labels (needs freq)
     )
 
     tracker = mltrack("weekly-sales", db_name="tracking.db")
