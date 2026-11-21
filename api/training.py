@@ -1707,9 +1707,13 @@ def fit_ensemble_bundle(
         if temporal is not None:
             # An integer fold count means a shuffled KFold in scikit-learn: on
             # time-ordered design rows that trains on the future and scores the past.
-            from SKSurrogate.temporal import RollingOriginSplit
+            # ``TimeSeriesSplit`` is the sanctioned expanding-window walk-forward
+            # (``TEMPORAL_CV_SPLITTERS``): its test blocks tile the tail, so the
+            # comparison scores a meaningful share of the design instead of the last
+            # few rows a one-row-per-origin geometry would leave.
+            from sklearn.model_selection import TimeSeriesSplit
 
-            cv = RollingOriginSplit(n_splits=DEFAULT_ENSEMBLE_FOLDS, horizon=1)
+            cv = TimeSeriesSplit(n_splits=DEFAULT_ENSEMBLE_FOLDS)
             if cv_spec is None:
                 from SKSurrogate.mltrace import cv_to_spec
 
@@ -1813,10 +1817,10 @@ def fit_ensemble_bundle(
         if temporal is not None:
             # Same rule as the scoring folds: the honest estimate must not shuffle
             # time-ordered design rows, so both nestings walk forward.
-            from SKSurrogate.temporal import RollingOriginSplit
+            from sklearn.model_selection import TimeSeriesSplit
 
-            outer_cv = RollingOriginSplit(n_splits=int(outer_cv), horizon=1)
-            inner_cv = RollingOriginSplit(n_splits=int(inner_cv), horizon=1)
+            outer_cv = TimeSeriesSplit(n_splits=int(outer_cv))
+            inner_cv = TimeSeriesSplit(n_splits=int(inner_cv))
         try:
             nested_record = nested_ensemble_cv(
                 method,

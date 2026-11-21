@@ -32,12 +32,23 @@ Partition defaults, temporal experiments and the Advanced scorer
   feature column (time/series excluded, target is the label), so the aggregator's
   member reached scikit-learn's ``check_X_y`` with an ``(n, 0)`` matrix. Members are
   now refit on the generated one-step forecast design through their bare
-  estimators, scored under an order-respecting ``RollingOriginSplit`` (the stored
-  splitter when one exists, never a shuffled integer fold count), and the combined
+  estimators, scored under an order-respecting splitter (the task's stored one,
+  else ``TimeSeriesSplit``; never a shuffled integer fold count), and the combined
   bundle is composed as ``Pipeline(ForecastFeatureBuilder, ensemble)`` with the
   serving geometry — so it forecasts recursively through the normal inference path.
   The ensemble record carries ``feature_source: temporal_design``, the builder/spec
   and a caveat that ``cv_score`` is a one-step design score.
+* **Fixed:** combining temporal bundles with ``weight_optimization`` failed with
+  ``ValueError: cross_val_predict only works for partitions``. The weight search
+  computes out-of-fold member output with ``cross_val_predict``, which refuses a
+  walk-forward splitter because its test blocks leave the initial training window
+  (and any gap) uncovered. ``SKSurrogate.ensembling.out_of_fold_outputs`` now
+  replays such folds fold by fold — clone, fit on the fold's training rows, predict
+  its test rows — and drops the never-predictable rows from every member through
+  one shared mask, so the weights are still fitted on identical, never-trained-on
+  rows. The fitted vector reports ``rows_scored``/``rows_unscored`` beside the
+  weights; on a 90-row temporal fixture five walk-forward folds score 70 design
+  rows and leave the 17-row initial window unscored.
 * **Fixed:** the Experiments “Advanced” tab sent the regression search space with
   a hard-coded ``accuracy`` scorer for a regression-declared task, and AML then
   rejected every candidate with ``ValueError: continuous is not supported``. The

@@ -14,8 +14,8 @@ Contract under test:
 * the members enter it through their *bare* estimators, not their
   ``Pipeline(ForecastFeatureBuilder, …)`` wrapper, so a builder never sees a
   design matrix;
-* the scoring folds are order-respecting (a ``RollingOriginSplit``, never a
-  shuffled ``KFold`` over time-ordered rows);
+* the scoring folds are order-respecting (an expanding walk-forward
+  ``TimeSeriesSplit``, never a shuffled ``KFold`` over time-ordered rows);
 * the result is still an ordinary forecast bundle: ``Pipeline(builder, model)``
   plus the serving geometry, so ``POST /api/inference/{task}/forecast`` answers.
 """
@@ -34,7 +34,6 @@ if importlib.util.find_spec("httpx") is None:
 from fastapi.testclient import TestClient  # noqa: E402
 
 from SKSurrogate import ForecastFeatureBuilder, load_bundle  # noqa: E402
-from SKSurrogate.temporal import RollingOriginSplit  # noqa: E402
 
 from api.config import settings  # noqa: E402
 from api.main import app  # noqa: E402
@@ -118,7 +117,7 @@ def test_a_temporal_ensemble_is_fitted_on_the_forecast_design_and_serves(client)
     assert isinstance(steps[0], ForecastFeatureBuilder)
     assert bundle.temporal["strategy"] == "recursive"
     assert bundle.metadata["ensemble"]["feature_source"] == "temporal_design"
-    assert bundle.metadata["ensemble"]["cv"]["type"] == "RollingOriginSplit"
+    assert bundle.metadata["ensemble"]["cv"]["type"] == "TimeSeriesSplit"
     # The schema describes the raw history frame the pipeline is fed, not the design.
     assert set(bundle.schema) == {"time", "y"}
     assert any("rolling-origin" in caveat for caveat in bundle.metadata["ensemble"]["caveats"])
@@ -138,13 +137,47 @@ def test_a_temporal_ensemble_is_fitted_on_the_forecast_design_and_serves(client)
     assert all(np.isfinite(payload["predictions"]))
 
 
+def test_weight_optimization_walks_forward_instead_of_partitioning(client):
+    """A weight search on a temporal task must not use a shuffled partition splitter.
+
+    ``cross_val_predict`` refuses the walk-forward splitter outright
+    (``ValueError: cross_val_predict only works for partitions``). The outputs are
+    replayed fold by fold, and the initial training rows no fold can predict are
+    reported as ``rows_unscored`` instead of being scored with a placeholder.
+    """
+    _register(client, _frame())
+    first = _baseline(client, "linear_regression")
+    second = _baseline(client, "random_forest_regressor")
+    submitted = client.post(
+        "/api/ensembles/%s/fit" % TASK,
+        json={
+            "members": [first["model_version"], second["model_version"]],
+            "method": "voting",
+            "params": {},
+            "weight_optimization": {"strategy": "least_squares"},
+            "random_state": 0,
+        },
+    )
+    assert submitted.status_code == 200, submitted.text
+    record = _wait(client, submitted.json()["job_id"])
+    assert record["status"] == "completed", record.get("error")
+    weights = record["result"]["weight_optimization"]
+    assert len(weights["weights"]) == 2
+    assert abs(sum(weights["weights"]) - 1.0) < 1e-6
+    assert weights["rows_unscored"] >= 1
+    assert weights["rows_scored"] > weights["rows_unscored"]
+
+
 def test_the_temporal_default_splitter_walks_forward():
     """The fallback splitter must not be an integer fold count (a shuffled KFold)."""
-    from api.training import DEFAULT_ENSEMBLE_FOLDS
+    from sklearn.model_selection import TimeSeriesSplit
 
-    cv = RollingOriginSplit(n_splits=DEFAULT_ENSEMBLE_FOLDS, horizon=1)
-    X = np.zeros((40, 3))
-    folds = list(cv.split(X))
+    from api.training import DEFAULT_ENSEMBLE_FOLDS
+    from SKSurrogate.mltrace import cv_is_temporal_safe
+
+    cv = TimeSeriesSplit(n_splits=DEFAULT_ENSEMBLE_FOLDS)
+    assert cv_is_temporal_safe(cv)
+    folds = list(cv.split(np.zeros((40, 3))))
     assert len(folds) == DEFAULT_ENSEMBLE_FOLDS
     for train_index, test_index in folds:
         assert train_index.max() < test_index.min()

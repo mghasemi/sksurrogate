@@ -380,10 +380,15 @@ Three consequences are recorded with the model:
   history; the builder is removed before combining, because a builder handed a
   design matrix fails with ``missing required column(s): <time>``.
 * The scoring folds are order-respecting. With no stored splitter the fallback is
-  :class:`~SKSurrogate.temporal.RollingOriginSplit`, never an integer fold count —
+  :class:`sklearn.model_selection.TimeSeriesSplit`, never an integer fold count —
   an integer means a shuffled ``KFold`` in scikit-learn, which would train on the
   future and score the past. The same rule is applied to the ``honest_cv``
-  nestings.
+  nestings. Because a walk-forward splitter's test blocks do not partition the
+  rows (the initial training window is never predicted), the out-of-fold member
+  output a weight search needs is replayed fold by fold instead of through
+  ``cross_val_predict``, which refuses such a splitter with
+  ``only works for partitions``. The rows no fold could predict are reported as
+  ``rows_unscored`` next to the weights, not scored with a placeholder.
 * The result is still an ordinary forecast bundle:
   ``Pipeline(ForecastFeatureBuilder, ensemble)`` plus the serving geometry
   (``strategy: recursive``), its schema describing the raw history columns. It

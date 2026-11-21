@@ -1035,14 +1035,89 @@ class _WeightedBlend(BaseEstimator):
         return blended
 
 
-def out_of_fold_outputs(members, X, y, cv, n_jobs):
+def _take_rows(data, index):
+    """Positional rows of ``X``/``y`` without assuming numpy or pandas."""
+    if hasattr(data, "iloc"):
+        return data.iloc[index]
+    return data[index]
+
+
+def _folds_partition(folds, n_samples):
+    """True when the folds' test sets cover every sample exactly once."""
+    covered = np.zeros(int(n_samples), dtype=int)
+    for _, test_index in folds:
+        covered[np.asarray(test_index, dtype=int)] += 1
+    return bool(covered.size and (covered == 1).all())
+
+
+def _walk_forward_outputs(members, X, y, folds, mask):
+    """Out-of-fold member outputs replayed fold by fold for a non-partition splitter.
+
+    ``cross_val_predict`` refuses a splitter whose test sets do not partition the
+    samples (``only works for partitions``): a rolling-origin splitter leaves the
+    initial training window uncovered and its origins may hold gaps. Fitting each
+    fold here reproduces exactly what ``cross_val_predict`` does for a partition —
+    clone, fit on the fold's training rows, predict its test rows — so every value
+    still comes from a member that never saw that row.
+    """
+    from sklearn.base import clone
+
+    y_array = np.asarray(y)
+    classes = np.unique(y_array)
+    outputs = []
+    for _, estimator in members:
+        family = problem_family_of(estimator)
+        if family == CLASSIFICATION:
+            values = np.full((len(y_array), len(classes)), np.nan, dtype=float)
+        else:
+            values = np.full(len(y_array), np.nan, dtype=float)
+        for train_index, test_index in folds:
+            train_index = np.asarray(train_index, dtype=int)
+            test_index = np.asarray(test_index, dtype=int)
+            fitted = clone(estimator).fit(_take_rows(X, train_index), y_array[train_index])
+            if family == CLASSIFICATION:
+                probability = np.asarray(
+                    fitted.predict_proba(_take_rows(X, test_index)), dtype=float
+                )
+                positions = np.searchsorted(classes, np.asarray(fitted.classes_))
+                values[np.ix_(test_index, positions)] = probability
+            else:
+                values[test_index] = np.asarray(
+                    fitted.predict(_take_rows(X, test_index)), dtype=float
+                )
+        outputs.append(values[mask])
+    return outputs
+
+
+def out_of_fold_outputs(members, X, y, cv, n_jobs, *, return_mask=False):
     """Out-of-fold member outputs: probability matrices (classification) or predictions.
 
     One pass per member, on the same folds, so every weight the optimizer considers is
     judged on rows no member was trained on. This is the only place a weight search is
     allowed to look.
+
+    A splitter whose folds are not a partition of the rows — a walk-forward
+    ``RollingOriginSplit``, which leaves the initial training window and any gap
+    uncovered — is refused by ``cross_val_predict`` with
+    ``ValueError: cross_val_predict only works for partitions``. Those folds are
+    replayed fold by fold instead, and the uncovered rows are dropped from every
+    member through the same mask, so the members are still compared on identical,
+    never-trained-on rows. With ``return_mask=True`` the mask is returned too, so
+    the caller can align ``y`` (``None`` means every row was used).
     """
     from sklearn.model_selection import cross_val_predict
+
+    folds = None
+    if not isinstance(cv, (int, np.integer)) and hasattr(cv, "split"):
+        candidate = list(cv.split(X, y))
+        if candidate and not _folds_partition(candidate, len(np.asarray(y))):
+            folds = candidate
+    if folds is not None:
+        mask = np.zeros(len(np.asarray(y)), dtype=bool)
+        for _, test_index in folds:
+            mask[np.asarray(test_index, dtype=int)] = True
+        outputs = _walk_forward_outputs(members, X, y, folds, mask)
+        return (outputs, mask) if return_mask else outputs
 
     outputs = []
     for _, estimator in members:
@@ -1056,7 +1131,7 @@ def out_of_fold_outputs(members, X, y, cv, n_jobs):
             outputs.append(
                 np.asarray(cross_val_predict(estimator, X, y, cv=cv, method="predict", n_jobs=n_jobs))
             )
-    return outputs
+    return (outputs, None) if return_mask else outputs
 
 
 def _simplex_least_squares(outputs, y, family, classes):
@@ -1179,7 +1254,15 @@ def optimize_weights(
     if len(members) < 1:
         raise EnsembleError("At least one member is required to optimize weights.")
     family = resolve_family(members)
-    outputs = out_of_fold_outputs(members, X, y, cv, n_jobs)
+    outputs, mask = out_of_fold_outputs(members, X, y, cv, n_jobs, return_mask=True)
+    if mask is not None:
+        # A walk-forward splitter cannot predict its own initial training window.
+        # Dropping those rows from the target too keeps the weights fitted on rows
+        # the members actually scored out of fold, never on a placeholder.
+        y = np.asarray(y)[mask]
+        unscored_rows = int(mask.size - int(mask.sum()))
+    else:
+        unscored_rows = 0
     classes = np.unique(np.asarray(y)) if family == CLASSIFICATION else None
 
     if strategy == "least_squares":
@@ -1221,6 +1304,10 @@ def optimize_weights(
         "objective_name": objective_name,
         "folds": cv if isinstance(cv, int) else getattr(cv, "get_n_splits", lambda: None)(),
         "budget": budget,
+        "rows_scored": int(len(np.asarray(y))),
+        # Rows no fold could predict (a walk-forward splitter's initial training
+        # window): named rather than silently folded into a smaller sample.
+        "rows_unscored": unscored_rows,
         "dropped": [
             name for (name, _), weight in zip(members, weights) if weight <= 1e-12
         ],

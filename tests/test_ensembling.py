@@ -805,6 +805,40 @@ def test_out_of_fold_outputs_are_not_in_sample():
     assert oof_accuracy < in_sample
 
 
+def test_out_of_fold_outputs_replay_a_walk_forward_splitter():
+    """A rolling-origin splitter is not a partition, and ``cross_val_predict`` refuses it.
+
+    The outputs must be built fold by fold instead, and the rows no fold can predict
+    (the initial training window) must be reported through the mask rather than
+    scored with a placeholder.
+    """
+    from SKSurrogate.temporal import RollingOriginSplit
+
+    frame = _weighting_frame()
+    features = frame[COLUMNS]
+    cv = RollingOriginSplit(n_splits=4, horizon=1)
+    folds = list(cv.split(features, frame["y_reg"]))
+    member = _member(LinearRegression())
+
+    outputs, mask = out_of_fold_outputs(
+        [("lr", member)], features, frame["y_reg"], cv, None, return_mask=True
+    )
+    assert mask is not None
+    assert int(mask.sum()) == sum(len(test) for _, test in folds)
+    assert not mask[0] and mask[-1]  # the head is the initial training window
+    assert len(outputs[0]) == int(mask.sum())
+    assert np.isfinite(outputs[0]).all()
+    in_sample = clone(member).fit(features, frame["y_reg"]).predict(features)[mask]
+    assert not np.allclose(outputs[0], in_sample)
+
+    result = optimize_weights(
+        [("lr", member)], features, frame["y_reg"], cv=cv, strategy="least_squares"
+    )
+    assert result["rows_scored"] == int(mask.sum())
+    assert result["rows_unscored"] == int(mask.size - int(mask.sum()))
+    assert abs(sum(result["weights"]) - 1.0) < 1e-9
+
+
 def test_least_squares_weights_live_on_the_simplex_and_beat_equal_weights():
     frame = _weighting_frame()
     features = frame[COLUMNS]
