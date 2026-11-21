@@ -104,6 +104,15 @@ Partition defaults, temporal experiments and the Advanced scorer
   the negated search objective, which had put a positive RMSE, or a negative
   accuracy, into a field every other entry point fills higher-is-better; the search
   loss is kept in the evaluation protocol as ``search_loss``.
+* **Fixed:** **Optimize this structure** on a regression task failed with ``400: No
+  parameter configuration for this structure scored finitely: every candidate was
+  rejected``. ``OptimizePipelineRequest.scoring`` defaulted to ``accuracy``, so every
+  fold of a continuous target raised ("continuous is not supported") before any
+  structure could be compared; the button itself sent no scorer. The field now
+  defaults to ``None`` and resolves from the task's declared problem type (negative
+  RMSE for regression, accuracy for classification), the Experiments page sends its
+  current scorer, and the rejection message names the scorer plus the candidates'
+  first errors instead of leaving the cause implicit.
 * **Fixed:** the rolling-origin backtest of a temporal experiment bundle fitted
   the bundle's whole pipeline on its own design matrix and failed with
   ``ForecastFeatureBuilder is missing required column(s): Month, Sales …``. The

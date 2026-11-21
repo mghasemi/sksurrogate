@@ -7,6 +7,7 @@ Fitting logic is shared with the Bundles and Retraining routers via
 """
 
 from typing import Literal
+from types import SimpleNamespace
 
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import AliasChoices, BaseModel, Field, model_validator
@@ -329,7 +330,10 @@ class OptimizePipelineRequest(BaseModel):
     seq: list[str]  # ordered component names, e.g. ["sklearn.linear_model.LogisticRegression"]
     config: SearchSpace | None = None  # optional per-component search space
     train_partition: str | None = None
-    scoring: str = "accuracy"
+    #: Omitted → the task's declared problem type picks it (accuracy for a
+    #: classification task, negative RMSE for a regression one). A fixed default
+    #: here made every fold of a regression task fail to score.
+    scoring: str | None = None
     random_state: int | None = None
     owner: str | None = None
     run_id: str | None = None
@@ -354,6 +358,12 @@ def submit_optimize_pipeline(task_name, body, *, checkpoint_job_id=None, run_id=
     config = _dump_config(body.config)
     effective_run_id = run_id or body.run_id
     train_partition = resolve_partition(task_name, body.train_partition)
+    # ``accuracy`` on a regression target makes every fold raise, and the caller
+    # then only sees "every candidate was rejected". Resolve the scorer from the
+    # task's declared problem type when the request omits it.
+    scoring = body.scoring or _effective_scoring(
+        SimpleNamespace(scoring=None, preset=_declared_preset(task_name)), None
+    )
 
     def make_job(job_id):
         def _run():
@@ -363,7 +373,7 @@ def submit_optimize_pipeline(task_name, body, *, checkpoint_job_id=None, run_id=
                 config=config,
                 checkpoint_dir=settings.task_checkpoint_dir(task_name, checkpoint_job_id or job_id),
                 train_partition=train_partition,
-                scoring=body.scoring,
+                scoring=scoring,
                 random_state=body.random_state,
                 owner=body.owner,
                 run_id=effective_run_id or job_id,

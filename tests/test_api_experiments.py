@@ -448,3 +448,35 @@ def test_scoring_display_covers_metrics_outside_the_curated_list():
         "higher_is_better": False,
     }
     assert scoring_display(None)["label"] == "Score"
+
+
+def test_optimize_pipeline_without_a_scorer_uses_the_task_family(client):
+    """Omitting ``scoring`` must not fall back to a classification default.
+
+    The Optimize this structure button sends only the structure, and the request
+    model's historical default was ``accuracy``; on a regression target every fold
+    raised ("continuous is not supported") and the job answered only "every
+    candidate was rejected".
+    """
+    _register_regression(client, "reg-opt")
+    response = client.post(
+        "/api/experiments/reg-opt/optimize-pipeline",
+        json={"seq": ["sklearn.tree.DecisionTreeRegressor"]},
+    )
+    assert response.status_code == 200, response.text
+    record = _wait(client, response.json()["job_id"])
+    assert record["status"] == "completed", record.get("error")
+    assert record["result"]["train_score"] is not None
+
+
+def test_optimize_pipeline_names_the_scorer_when_nothing_can_be_scored(client):
+    _register_regression(client, "reg-bad-scorer")
+    response = client.post(
+        "/api/experiments/reg-bad-scorer/optimize-pipeline",
+        json={"seq": ["sklearn.tree.DecisionTreeRegressor"], "scoring": "accuracy"},
+    )
+    assert response.status_code == 200, response.text
+    record = _wait(client, response.json()["job_id"])
+    assert record["status"] == "failed"
+    assert "scoring 'accuracy'" in record["error"]
+    assert "problem type" in record["error"]

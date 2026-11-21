@@ -413,7 +413,14 @@ export default function ExperimentsPage() {
 
   const optimizeMut = useMutation({
     mutationFn: async ({ seq }: { seq: string[] }) => ({
-      ...(await optimizePipeline(task, { seq, label: experimentLabel.trim() || null })),
+      ...(await optimizePipeline(task, {
+        seq,
+        // The page's scorer follows the task's problem type; omitting it left the
+        // server on its historical "accuracy" default, which no regression fold
+        // can score.
+        scoring: advancedScoring,
+        label: experimentLabel.trim() || null,
+      })),
       taskName: task,
     }),
     onSuccess: (res, vars) => {

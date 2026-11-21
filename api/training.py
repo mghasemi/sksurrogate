@@ -1579,9 +1579,18 @@ def fit_pipeline_bundle(
     # training entry point, and keep the search loss for the audit record.
     search_loss = finite_or_none(float(score))
     if search_loss is None:
+        # Name the scorer and the candidates' own errors: the common cause is a
+        # scorer that cannot score this family (``accuracy`` on a continuous
+        # target), which otherwise reads as an unexplained "every candidate was
+        # rejected".
+        detail = "; ".join(
+            dict.fromkeys(str(error) for error in (aml.last_candidate_errors_ or []))
+        )
         raise bad_request(
-            "No parameter configuration for this structure scored finitely: every "
-            "candidate was rejected."
+            "No parameter configuration for this structure scored finitely with "
+            "scoring %r: every candidate was rejected.%s Pick a metric that matches "
+            "the task's problem type."
+            % (scoring, (" First errors: " + detail[:400]) if detail else "")
         )
     fitted_pipeline: Any = pipeline
     train_score = finite_or_none(float(fitted_pipeline.score(X, y)))

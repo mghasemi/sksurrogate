@@ -594,7 +594,10 @@ in scikit-learn's higher-is-better form — an error metric such as
 ``neg_root_mean_squared_error`` is kept as ``-RMSE`` — so the page converts them
 back and prints the error itself, and the *largest* stored value is the smallest
 error. Use **Optimize this structure** to tune one of the returned component
-sequences. A completed search creates a bundle that appears in **Model Bundles**.
+sequences; the run uses the page's outgoing scorer (the task's problem type decides
+it when none is picked), so a regression structure is scored by negative RMSE
+rather than by a classification metric no fold can compute. A completed search
+creates a bundle that appears in **Model Bundles**.
 Use **Jobs** to inspect job status and details; failed experiment jobs may offer a
 resume action when a checkpoint allows it.
 
