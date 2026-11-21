@@ -622,9 +622,11 @@ surrogate is fitted.
 * **Subset scope.** ``features`` selects at most 24 columns. A strict subset
   explains the *hybrid* row (listed features at their observed values, the rest
   at baseline) and reports ``explanation_scope = "subset_hybrid"``; it is never
-  presented as a decomposition of the full prediction. If more orders are
-  requested than distinct permutations exist, the request is rejected with the
-  exact bound.
+  presented as a decomposition of the full prediction. ``orders`` asks how many
+  distinct orders to sample; a subset of :math:`k` features has only :math:`k!`
+  of them, so a larger request is clamped to that count (the response reports
+  ``orders.requested``, ``orders.available`` and ``orders.count``) instead of
+  repeating identical decompositions or refusing the request.
 * **Scalar response.** Identical to ALE: regression uses ``predict``; binary
   classification uses the labelled positive-class probability (or decision
   value) and multiclass bundles are rejected. Contributions on different

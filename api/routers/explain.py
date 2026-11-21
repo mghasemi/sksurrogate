@@ -681,12 +681,18 @@ def explain_row(task_name: str, model_version: str, body: RowExplainRequest):
     row_prediction = float(np.ravel(response(np.asarray(row_values)[None, :]))[0])
     hybrid_prediction = float(np.ravel(response(hybrid[None, :]))[0])
 
-    try:
-        local_orders = distinct_permutations(
-            np.random.RandomState(body.random_state), len(selected), body.orders
-        )
-    except ValueError as exc:
-        raise bad_request(str(exc))
+    # ``orders`` means "how many orders to sample". A subset of k features has
+    # only k! distinct orders, so asking for more would merely repeat identical
+    # decompositions: sample what exists and report the requested count instead of
+    # refusing a request whose intent is satisfiable (a one-feature temporal design
+    # offers exactly one order, and the UI's default asks for five).
+    available_orders = 1
+    for value in range(2, len(selected) + 1):
+        available_orders *= value
+    effective_orders = min(body.orders, available_orders)
+    local_orders = distinct_permutations(
+        np.random.RandomState(body.random_state), len(selected), effective_orders
+    )
     column_orders = [
         np.asarray([positions[index] for index in order], dtype=int) for order in local_orders
     ]
@@ -744,10 +750,18 @@ def explain_row(task_name: str, model_version: str, body: RowExplainRequest):
         },
         "orders": {
             "count": len(column_orders),
+            "requested": body.orders,
+            "available": available_orders,
             "distinct": True,
             "note": (
                 "Each order yields an exact telescoping decomposition; the per-feature "
                 "sample SD across orders is disclosed order-dependence, not a confidence interval."
+                + (
+                    " Fewer orders ran: %d selected feature(s) have only %d distinct order(s)."
+                    % (len(selected), available_orders)
+                    if available_orders < body.orders
+                    else ""
+                )
             ),
         },
         "contributions": contributions,

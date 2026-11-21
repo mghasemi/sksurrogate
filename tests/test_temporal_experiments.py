@@ -197,9 +197,18 @@ def test_explanations_run_on_the_generated_design(client):
     assert ale.status_code == 200, ale.text
     assert ale.json()["feature_source"] == "temporal_design"
 
-    row = client.post(f"/api/evaluation/tem-explain/{version}/explain/row", json={"row_index": 0})
+    row = client.post(
+        f"/api/evaluation/tem-explain/{version}/explain/row",
+        json={"row_index": 0, "orders": 5},
+    )
     assert row.status_code == 200, row.text
-    assert row.json()["feature_source"] == "temporal_design"
+    row_payload = row.json()
+    assert row_payload["feature_source"] == "temporal_design"
+    # The one-feature design has exactly one distinct order; asking for five is
+    # clamped and reported, not refused.
+    assert row_payload["orders"]["count"] == 1
+    assert row_payload["orders"]["requested"] == 5
+    assert row_payload["orders"]["available"] == 1
 
 
 def test_pipeline_optimization_points_a_temporal_task_at_the_design_search(client):

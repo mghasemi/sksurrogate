@@ -541,9 +541,15 @@ def test_row_explanation_rejects_out_of_contract_requests(client, linear_bundle)
     assert unknown.status_code == 400
     assert "Unknown feature" in unknown.json()["detail"]
 
-    too_many_orders = client.post(base, json={"features": ["a", "b"], "orders": 3})
-    assert too_many_orders.status_code == 400
-    assert "at most 2 distinct orders" in too_many_orders.json()["detail"]
+    # Requesting more orders than the chosen subset has distinct permutations is
+    # clamped, not refused: duplicates would be identical decompositions.
+    clamped_orders = client.post(base, json={"features": ["a", "b"], "orders": 3})
+    assert clamped_orders.status_code == 200
+    orders = clamped_orders.json()["orders"]
+    assert orders["count"] == 2
+    assert orders["requested"] == 3
+    assert orders["available"] == 2
+    assert "Fewer orders ran" in orders["note"]
 
     missing_baseline_row = client.post(base, json={"baseline": "row"})
     assert missing_baseline_row.status_code == 400
