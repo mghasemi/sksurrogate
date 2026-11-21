@@ -4,6 +4,18 @@ Changelog
 [Unreleased]
 ------------
 
+"Time series" is not a learning-problem option — and the card now says so
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Clarified:** the **Task definition** card labels the field **Learning problem**
+  (it previously read “Problem type”, which invited the reading that time series
+  should be a third option). The card now states the rule at the point of
+  confusion: time structure is a separate axis; a temporal task shows its
+  ``regression`` badge with a ``temporal`` chip and a note that it is scored by a
+  rolling-origin backtest with MAE/RMSE/MASE; a tabular task explains that there is
+  no “time series” choice and offers a **Declare time structure** button that jumps
+  to the temporal card. No behaviour change.
+
 Synthetic sampling no longer assumes a partition called ``train``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

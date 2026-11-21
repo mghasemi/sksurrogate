@@ -644,11 +644,13 @@ export default function DatasetsPage() {
         )}
       </Card>
 
-      <TemporalCard task={task} revision={dataRevision} fallbackColumns={previewCols} />
+      <div id="temporal-structure">
+        <TemporalCard task={task} revision={dataRevision} fallbackColumns={previewCols} />
+      </div>
 
       <Card
         title="Task definition"
-        sub="The three axes of this task: what you predict, which kind of problem it is, and whether it has time structure."
+        sub="What you predict (target), how it is scored (learning problem), and whether rows are independent (time structure)."
       >
         {metaQ.isLoading && task && <Loading />}
         {metaQ.isError && <ErrorNote error={metaQ.error} />}
@@ -709,7 +711,7 @@ export default function DatasetsPage() {
                   {setTargetMut.data.previous_target ?? "—"}). Downstream analyses and features are re-pointed.
                 </dd>
               )}
-              <dt>Problem type</dt>
+              <dt>Learning problem</dt>
               <dd>
                 <span className="row" style={{ gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                   {editingProblemType ? (
@@ -726,6 +728,11 @@ export default function DatasetsPage() {
                       >
                         <option value="regression">regression — predict a number</option>
                         <option value="classification">classification — predict a class</option>
+                        {metaQ.data.temporal?.declared && (
+                          <option value="" disabled>
+                            (a temporal task stays regression)
+                          </option>
+                        )}
                       </select>
                       <button className="btn" onClick={() => setEditingProblemType(false)}>
                         Cancel
@@ -739,6 +746,9 @@ export default function DatasetsPage() {
                       <span className="muted">
                         {metaQ.data.problem_type_source === "user" ? "set by you" : "inferred from the target"}
                       </span>
+                      {metaQ.data.temporal?.declared && (
+                        <Badge tone="info">temporal</Badge>
+                      )}
                       <button className="btn" onClick={() => setEditingProblemType(true)}>
                         Change
                       </button>
@@ -757,6 +767,30 @@ export default function DatasetsPage() {
                 {metaQ.data.problem_type_reason && (
                   <div className="muted" style={{ marginTop: 4 }}>
                     {metaQ.data.problem_type_reason}
+                  </div>
+                )}
+                {metaQ.data.temporal?.declared ? (
+                  <div className="muted" style={{ marginTop: 4 }}>
+                    A forecasting task is a <b>regression</b> problem on a time axis: it is
+                    scored with MAE/RMSE/MASE over a rolling-origin backtest, never with
+                    accuracy. Time structure is configured below.
+                  </div>
+                ) : (
+                  <div className="muted" style={{ marginTop: 4 }}>
+                    There is no “time series” choice here: time structure is a{" "}
+                    <b>separate axis</b>, not a third learning problem. Declare a time
+                    column to forecast{" "}
+                    <button
+                      className="btn"
+                      style={{ padding: "0 6px", fontSize: "0.85em" }}
+                      onClick={() => {
+                        const card = document.getElementById("temporal-structure");
+                        card?.scrollIntoView({ behavior: "smooth", block: "start" });
+                        card?.querySelector("select")?.focus();
+                      }}
+                    >
+                      Declare time structure
+                    </button>
                   </div>
                 )}
                 {setProblemTypeMut.isError && (

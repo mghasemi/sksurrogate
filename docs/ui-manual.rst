@@ -171,7 +171,7 @@ shows the three axes of the task together:
   The new target must be an existing column and cannot currently be ignored.
   Re-pointing the target also re-derives the problem type (an override does not
   survive a target change).
-* **Problem type** — ``regression`` or ``classification``. It is inferred from
+* **Learning problem** — ``regression`` or ``classification``. It is inferred from
   the target (boolean, non-numeric, or an integer 0/1 column → classification;
   other numeric columns → regression), stored with the task, and then read by
   every screen instead of being re-guessed: Quick start defaults its preset from
@@ -180,6 +180,14 @@ shows the three axes of the task together:
   inference (the card then says “set by you”); **Reset to inferred** drops the
   override. A temporal task is pinned to regression — a forecast is scored with
   MAE/RMSE/MASE, never with accuracy.
+
+  **There is deliberately no “time series” option here.** Time structure is a
+  second axis, not a third learning problem: a forecasting task is a regression
+  problem whose rows are *not* independent. The card therefore shows the two
+  together — for a temporal task, the badge reads ``regression`` with a
+  ``temporal`` chip, and the note states that it is scored by a rolling-origin
+  backtest; for a tabular task it says time structure is a separate axis and
+  offers **Declare time structure**, which jumps to the temporal card.
 * **Time structure** — ``none`` for an i.i.d. task, or ``temporal`` once a time
   column is declared in the **Temporal structure** card below (see
   :doc:`forecasting`). Time structure is a separate axis, not a third problem
