@@ -92,8 +92,18 @@ Partition defaults, temporal experiments and the Advanced scorer
   candidate died with ``ValueError: at least one array or dtype is required``.
 * **Fixed:** a partition with no feature columns left (target plus ignored
   columns only) now answers an actionable **400** naming the columns instead of
-  the same opaque sklearn message, and pipeline optimization points a temporal
-  task at the Experiments/baseline paths.
+  the same opaque sklearn message.
+* **Fixed:** **Optimize this structure** on a temporal task failed with ``400: Task
+  'TS01' is temporal: pipeline optimization searches the partition's own feature
+  columns`` — the very button the experiment result offers. ``fit_pipeline_bundle``
+  now builds the same generated one-step forecast design the experiment search uses,
+  optimizes the structure there and composes the bundle as
+  ``Pipeline(ForecastFeatureBuilder, …)`` with the recursive serving geometry, so
+  the result forecasts through ``/api/inference`` like any temporal bundle. It also
+  reports ``train_score`` as the estimator's own score (R² / accuracy) instead of
+  the negated search objective, which had put a positive RMSE, or a negative
+  accuracy, into a field every other entry point fills higher-is-better; the search
+  loss is kept in the evaluation protocol as ``search_loss``.
 * **Fixed:** the rolling-origin backtest of a temporal experiment bundle fitted
   the bundle's whole pipeline on its own design matrix and failed with
   ``ForecastFeatureBuilder is missing required column(s): Month, Sales …``. The

@@ -742,9 +742,12 @@ search builds its design from the declared spec (``ForecastFeatureBuilder``, the
 declared horizon as the minimum lag, one-step labels) and keeps the task's stored
 ``TimeSeriesSplit``; the resulting bundle carries the builder and the serving geometry,
 so it forecasts **recursively** through the same inference/serving path as a
-forecasting baseline. Pipeline optimization (``/optimize-pipeline``) searches the
-partition's own columns, so on a temporal task it answers an actionable 400 pointing at
-this page or a baseline instead.
+forecasting baseline. Pipeline optimization (``/optimize-pipeline``, the experiment
+result's **Optimize this structure** button) runs on the same generated design and
+composes the bundle with the builder in front, so the tuned structure forecasts
+recursively like any other temporal bundle; ``train_score`` is the estimator's own
+score on that design (R² for regression), while the search loss stays in the
+reproducibility record.
 
 **Inference → Forecast console.** Paste one series of history as CSV (header plus
 rows, one series per request), optionally tick "use the pinned serving model", and read

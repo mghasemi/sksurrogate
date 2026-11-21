@@ -258,7 +258,14 @@ def test_nested_cv_refuses_a_shuffled_splitter_on_a_temporal_task(client):
     assert "order-respecting" in response.json()["detail"]
 
 
-def test_pipeline_optimization_points_a_temporal_task_at_the_design_search(client):
+def test_pipeline_optimization_runs_on_the_design_and_serves_recursively(client):
+    """Optimize-this-structure on a temporal task builds a forecast bundle.
+
+    The route used to answer a 400 ("is temporal ... use the Experiments page"),
+    which made the experiment result's own **Optimize this structure** button
+    unusable on the task that produced it. It now optimizes the same generated
+    one-step design and composes the bundle with the feature builder in front.
+    """
     _register(client, "tem-pipe")
     _declare_temporal(client, "tem-pipe")
     response = client.post(
@@ -267,6 +274,30 @@ def test_pipeline_optimization_points_a_temporal_task_at_the_design_search(clien
     )
     assert response.status_code == 200, response.text
     record = _wait(client, response.json()["job_id"])
-    assert record["status"] == "failed"
-    assert "is temporal" in record["error"]
-    assert "Experiments page" in record["error"]
+    assert record["status"] == "completed", record.get("error")
+    result = record["result"]
+    assert result["model_version"]
+    # train_score is the estimator's own score (higher is better), not the search loss.
+    assert result["train_score"] is not None and result["train_score"] <= 1.0 + 1e-9
+
+    from SKSurrogate import load_bundle
+
+    bundle = load_bundle(
+        settings.task_bundles_dir("tem-pipe") / (result["model_version"] + ".bundle")
+    )
+    assert [name for name, _ in bundle.model.steps] == ["features", "model"]
+    assert (bundle.temporal or {}).get("strategy") == "recursive"
+    # It forecasts through the normal serving path.
+    forecast = client.post(
+        "/api/inference/tem-pipe/forecast",
+        json={
+            "model_version": result["model_version"],
+            "history": _series().tail(12).to_dict(orient="records"),
+            "horizon": 2,
+        },
+    )
+    assert forecast.status_code == 200, forecast.text
+    payload = forecast.json()
+    assert len(payload["times"]) == 2
+    assert len(payload["predictions"]) == 2
+    assert payload["strategy"] == "recursive"
