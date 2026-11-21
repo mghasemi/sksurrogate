@@ -36,6 +36,7 @@ from ..columns import drop_ignored, read_ignored_columns
 from ..config import settings
 from ..safety import safe_segment
 from ..deps import append_drift_alerts, bad_request, load_monitor_records, not_found, open_tracker, task_access
+from ..problem_type import declared_problem_type
 
 router = APIRouter(prefix="/api/monitoring", tags=["monitoring"], dependencies=[Depends(task_access)])
 
@@ -373,7 +374,9 @@ class DelayedLabelRequest(BaseModel):
     predictions: list
     labels: list
     model_version: str | None = None
-    task_type: str = "classification"
+    #: ``classification`` or ``regression``. Omitted → the task's declared problem
+    #: type (falling back to classification for untyped legacy tasks).
+    task_type: str | None = None
     #: Forecast step of each row (default all 1); enables per-horizon scoring.
     horizons: list[int] | None = None
     #: Score only labels for horizons <= maturity (plan P8.1). Needs ``horizons``.
@@ -382,13 +385,27 @@ class DelayedLabelRequest(BaseModel):
 
 @router.post("/{task_name}/delayed-label-performance")
 def check_delayed_label_performance(task_name: str, body: DelayedLabelRequest):
-    """Score recorded predictions once ground-truth labels become available."""
+    """Score recorded predictions once ground-truth labels become available.
+
+    The metric family follows the task's declared problem type when the caller
+    does not state one, so a regression task is not scored with accuracy by default.
+    """
+    task_type = body.task_type
+    if task_type is None:
+        task_type = "classification"
+        try:
+            with open_tracker(task_name) as tracker:
+                declared = declared_problem_type(tracker.GetMetadata())
+            if declared:
+                task_type = declared
+        except Exception:  # pragma: no cover - a missing task keeps the default
+            pass
     try:
         return delayed_label_performance(
             body.predictions,
             body.labels,
             model_version=body.model_version,
-            task_type=body.task_type,
+            task_type=task_type,
             horizons=body.horizons,
             maturity=body.maturity,
         )

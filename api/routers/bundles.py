@@ -20,6 +20,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sklearn.base import is_classifier
 from starlette.responses import FileResponse, Response
 
 from SKSurrogate import ModelBundle, export_mlflow, load_bundle, save_bundle
@@ -27,13 +28,16 @@ from SKSurrogate import ModelBundle, export_mlflow, load_bundle, save_bundle
 from ..config import settings
 from ..safety import safe_segment
 from ..deps import bad_request, bundle_summary, finite_or_none, not_found, open_tracker, task_access
-from ..training import fit_baseline_bundle, get_registered_target, load_partition
+from ..problem_type import declared_problem_type
+from ..training import BASELINE_ESTIMATORS, fit_baseline_bundle, get_registered_target, load_partition
 
 router = APIRouter(prefix="/api/bundles", tags=["bundles"], dependencies=[Depends(task_access)])
 
 
 class TrainBaselineRequest(BaseModel):
-    estimator: str = "linear_regression"
+    #: Omitted → the task's declared problem type picks the estimator
+    #: (logistic regression for classification, linear regression otherwise).
+    estimator: str | None = None
     train_partition: str = "train"
     validation_partition: str | None = "validation"
     owner: str | None = None
@@ -60,9 +64,26 @@ def train_baseline(task_name: str, body: TrainBaselineRequest):
     """
     if body.strategy not in ("direct", "recursive"):
         raise bad_request("strategy must be 'direct' or 'recursive'")
+    with open_tracker(task_name) as tracker:
+        declared = declared_problem_type(tracker.GetMetadata())
+    estimator = body.estimator
+    if estimator is None:
+        estimator = "logistic_regression" if declared == "classification" else "linear_regression"
+    elif declared:
+        # The declared type is the source of truth: a regression baseline on a
+        # classification task (or the reverse) would score a meaningless number.
+        estimator_cls = BASELINE_ESTIMATORS.get(estimator)
+        if estimator_cls is not None and bool(is_classifier(estimator_cls())) != (
+            declared == "classification"
+        ):
+            raise bad_request(
+                "estimator %r does not match the task's declared problem type %r; "
+                "choose a %s estimator or change the declaration on the Datasets page"
+                % (estimator, declared, declared)
+            )
     bundle = fit_baseline_bundle(
         task_name,
-        estimator=body.estimator,
+        estimator=estimator,
         train_partition=body.train_partition,
         validation_partition=body.validation_partition,
         owner=body.owner,
@@ -80,7 +101,7 @@ def train_baseline(task_name: str, body: TrainBaselineRequest):
     return {
         "task_name": task_name,
         "model_version": bundle.model_version,
-        "estimator": body.estimator,
+        "estimator": estimator,
         "metrics": bundle.metrics,
         "schema": bundle.schema,
         "bundle_path": str(bundle_path),

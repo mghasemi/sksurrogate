@@ -15,7 +15,8 @@ from SKSurrogate import save_bundle
 
 from ..config import settings
 from ..safety import safe_segment
-from ..deps import bad_request, task_access
+from ..deps import bad_request, open_tracker, task_access
+from ..problem_type import declared_problem_type
 from ..jobs import dask_available, job_manager
 from ..training import SURROGATE_FAMILIES, SURROGATE_SAMPLERS, fit_experiment_bundle, fit_pipeline_bundle, standard_scoring_options
 
@@ -73,8 +74,9 @@ class RunExperimentRequest(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def reject_conflicting_generation_names(cls, values):
-        if isinstance(values, dict) and values.get("config") is None and not values.get("preset"):
-            raise ValueError("Provide a search-space config or a preset.")
+        # Neither a config nor a preset is allowed: the preset then defaults to the
+        # task's declared problem type (regression stays regression), which is the
+        # whole point of storing that declaration.
         if isinstance(values, dict) and values.get("config") and values.get("preset"):
             raise ValueError("Provide either a config or a preset, not both.")
         if (
@@ -123,11 +125,24 @@ def scoring_options():
     return {"groups": standard_scoring_options(), "default": "accuracy", "backends": backends}
 
 
-def _effective_scoring(body):
+def _effective_scoring(body, preset=None):
     if body.scoring:
         return body.scoring
-    defaults = {preset["value"]: preset["default_scoring"] for preset in PRESETS}
-    return defaults.get(body.preset, "accuracy")
+    defaults = {preset_entry["value"]: preset_entry["default_scoring"] for preset_entry in PRESETS}
+    return defaults.get(preset if preset is not None else body.preset, "accuracy")
+
+
+def _declared_preset(task_name):
+    """The task's declared problem type as a Quick-start preset, or ``None``.
+
+    A task registered before the declaration existed has no stored type; the
+    caller keeps the historical default in that case.
+    """
+    try:
+        with open_tracker(task_name) as tracker:
+            return declared_problem_type(tracker.GetMetadata())
+    except Exception:  # pragma: no cover - a missing task keeps the default
+        return None
 
 
 def submit_experiment(task_name, body, *, checkpoint_job_id=None, run_id=None):
@@ -148,6 +163,22 @@ def submit_experiment(task_name, body, *, checkpoint_job_id=None, run_id=None):
             % (body.surrogate_sampling, ", ".join(SURROGATE_SAMPLERS))
         )
     config = _dump_config(body.config) if body.config else None
+    # Quick start without an explicit preset follows the task's declared problem
+    # type, so a regression task no longer silently runs a classification search.
+    # An explicitly supplied config — even ``{}`` — is the caller's choice and is
+    # never replaced by a preset.
+    preset = body.preset
+    if body.config is None and preset is None:
+        preset = _declared_preset(task_name)
+        if preset is None:
+            # A request-shape problem: keep the historical 422 contract.
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Provide a search-space config or a preset (this task has no "
+                    "declared problem type to default from)."
+                ),
+            )
 
     def make_job(job_id):
         def _run():
@@ -159,7 +190,7 @@ def submit_experiment(task_name, body, *, checkpoint_job_id=None, run_id=None):
                 max_generation=body.max_generations,
                 num_parents=body.num_parents,
                 train_partition=body.train_partition,
-                scoring=_effective_scoring(body),
+                scoring=_effective_scoring(body, preset),
                 random_state=body.random_state,
                 owner=body.owner,
                 run_id=run_id or body.run_id or job_id,
@@ -168,7 +199,7 @@ def submit_experiment(task_name, body, *, checkpoint_job_id=None, run_id=None):
                 surrogate_sampling=body.surrogate_sampling,
                 surrogate_min_random_evals=body.surrogate_min_random_evals,
                 forbidden=body.forbidden,
-                preset=body.preset,
+                preset=preset,
                 strategy=body.strategy,
                 resume=checkpoint_job_id is not None,
                 label=body.label,

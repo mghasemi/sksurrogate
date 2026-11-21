@@ -46,6 +46,16 @@ from ..eda import (
     stability,
 )
 from ..features import NumericFeatureError, features_from_json, numeric_train_xy
+from ..problem_type import (
+    PROBLEM_TYPES,
+    PROBLEM_TYPE_INFERRED_KEY,
+    PROBLEM_TYPE_KEY,
+    PROBLEM_TYPE_REASON_KEY,
+    PROBLEM_TYPE_SOURCE_KEY,
+    declared_problem_type,
+    ensure_temporal_is_regression,
+    problem_type_metadata,
+)
 from ..jobs import job_manager
 from ..preflight import submit_preflight
 from ..preprocessing import (
@@ -146,6 +156,16 @@ class SetTargetRequest(BaseModel):
     """Re-point the registered dataset's prediction target column."""
 
     target: str
+
+
+class ProblemTypeRequest(BaseModel):
+    """Declare (override) the task's problem type.
+
+    ``classification`` is refused for a task that declares a temporal spec: a
+    forecasting task is regression-shaped (numeric target, MAE/RMSE/MASE scoring).
+    """
+
+    problem_type: Literal["regression", "classification"]
 
 
 class DatasetProfileRequest(BaseModel):
@@ -282,6 +302,11 @@ def _temporal_payload(tracker, metadata):
         "cv": cv_spec,
         "temporal_splitters": list(TEMPORAL_CV_SPLITTERS),
         "cv_temporal_safe": cv_is_temporal_safe(cv_spec) if spec else None,
+        # Time structure is one of three task axes; the declared problem type is
+        # another, surfaced here so the Datasets card can state both together.
+        "problem_type": declared_problem_type(metadata),
+        "problem_type_source": metadata.get(PROBLEM_TYPE_SOURCE_KEY),
+        "problem_type_reason": metadata.get(PROBLEM_TYPE_REASON_KEY),
     }
 
 
@@ -321,11 +346,35 @@ def set_temporal(task_name: str, body: TemporalSpecRequest):
                     "temporal column(s) not present in the registered dataset: %s"
                     % ", ".join(unknown)
                 )
+            # Time structure is orthogonal to the learning problem, but a
+            # forecasting task is regression-shaped: refuse an explicit
+            # classification declaration instead of scoring labels as forecasts.
+            if declared_problem_type(metadata) == "classification":
+                raise bad_request(
+                    "this task declares problem_type='classification'; a temporal task "
+                    "is regression-shaped (numeric target, MAE/RMSE/MASE scoring). Set "
+                    "the problem type to regression first — or clear the override."
+                )
             tracker.SetTemporalSpec(spec)
             ignored, added = _temporal_ignored_columns(metadata, spec)
-            tracker.UpdateMetadata(
-                {"ignored_columns": ignored, "temporal_ignored_columns": added}
-            )
+            update = {"ignored_columns": ignored, "temporal_ignored_columns": added}
+            # Pin the stored problem type to regression, with the reason saying
+            # why, so later screens do not infer classification from a 0/1 label.
+            target = metadata.get("target_name")
+            try:
+                splits = tracker.dataset_splits() or {}
+                partition_key = next(iter(splits), None)
+                if target is not None and partition_key is not None:
+                    update.update(
+                        problem_type_metadata(
+                            tracker.get_dataframe(partition=partition_key),
+                            target,
+                            temporal=True,
+                        )
+                    )
+            except ValueError:  # pragma: no cover - partition may be unavailable
+                pass
+            tracker.UpdateMetadata(update)
             metadata = tracker.GetMetadata()
             payload = _temporal_payload(tracker, metadata)
     except TemporalValidationError as exc:
@@ -423,6 +472,20 @@ def set_dataset_target(task_name: str, body: SetTargetRequest):
             )
         current = metadata.get("target_name")
         tracker.SetTarget(body.target)
+        # Re-targeting invalidates a user override: re-derive the problem type
+        # from the new target, pinned to regression when the task is temporal.
+        type_block: dict = {}
+        try:
+            part = metadata.get("dataset_partition")
+            part = None if part in (None, "default") else part
+            type_block = problem_type_metadata(
+                tracker.get_dataframe(partition=part),
+                body.target,
+                temporal=tracker.GetTemporalSpec() is not None,
+            )
+            tracker.UpdateMetadata(type_block)
+        except Exception:  # pragma: no cover - auxiliary; never fail a re-target
+            type_block = {}
         # The stored Pearson/variance weightings were computed against the old
         # target; reseed them so the "Consensus top features" card does not keep
         # correlating features with the previous target. Best-effort like
@@ -468,10 +531,81 @@ def set_dataset_target(task_name: str, body: SetTargetRequest):
         "task_name": task_name,
         "target": body.target,
         "previous_target": current,
+        "problem_type": type_block.get(PROBLEM_TYPE_KEY),
+        "problem_type_source": type_block.get(PROBLEM_TYPE_SOURCE_KEY),
+        "problem_type_reason": type_block.get(PROBLEM_TYPE_REASON_KEY),
         "dataset_feature_count": len(effective),
         "effective_features": effective,
         "effective_feature_count": len(effective),
         "weights_stored": weights_stored,
+    }
+
+
+@router.put("/{task_name}/problem-type")
+def set_problem_type(task_name: str, body: ProblemTypeRequest):
+    """Declare (override) the task's problem type.
+
+    This is the single source of truth every screen reads: Experiments defaults
+    its Quick-start preset from it, the baseline route picks a matching estimator,
+    and monitoring uses it for delayed-label reports. ``classification`` is refused
+    for a temporal task — forecasting is scored with regression metrics.
+    """
+    if not settings.mltrace_db_path(task_name).exists():
+        raise not_found("No dataset registered for task %r" % task_name)
+    with open_tracker(task_name) as tracker:
+        metadata = tracker.GetMetadata()
+        target = metadata.get("target_name")
+        if target is None:
+            raise not_found("No dataset registered for task %r" % task_name)
+        temporal = tracker.GetTemporalSpec() is not None
+        if temporal:
+            try:
+                ensure_temporal_is_regression(body.problem_type)
+            except ValueError as exc:
+                raise bad_request(str(exc))
+        part = metadata.get("dataset_partition")
+        part = None if part in (None, "default") else part
+        try:
+            frame = tracker.get_dataframe(partition=part)
+        except ValueError as exc:  # pragma: no cover - defensive
+            raise bad_request("no stored partition to derive the problem type from: %s" % exc)
+        block = problem_type_metadata(
+            frame, target, override=body.problem_type, temporal=temporal
+        )
+        tracker.UpdateMetadata(block)
+    return {
+        "task_name": task_name,
+        "target_name": target,
+        "temporal": temporal,
+        "problem_type": block[PROBLEM_TYPE_KEY],
+        "problem_type_source": block[PROBLEM_TYPE_SOURCE_KEY],
+        "problem_type_reason": block[PROBLEM_TYPE_REASON_KEY],
+        "problem_type_inferred": block[PROBLEM_TYPE_INFERRED_KEY],
+    }
+
+
+@router.delete("/{task_name}/problem-type")
+def clear_problem_type(task_name: str):
+    """Drop a user override and return to the inferred problem type."""
+    if not settings.mltrace_db_path(task_name).exists():
+        raise not_found("No dataset registered for task %r" % task_name)
+    with open_tracker(task_name) as tracker:
+        metadata = tracker.GetMetadata()
+        target = metadata.get("target_name")
+        if target is None:
+            raise not_found("No dataset registered for task %r" % task_name)
+        temporal = tracker.GetTemporalSpec() is not None
+        part = metadata.get("dataset_partition")
+        part = None if part in (None, "default") else part
+        block = problem_type_metadata(
+            tracker.get_dataframe(partition=part), target, temporal=temporal
+        )
+        tracker.UpdateMetadata(block)
+    return {
+        "task_name": task_name,
+        "problem_type": block[PROBLEM_TYPE_KEY],
+        "problem_type_source": block[PROBLEM_TYPE_SOURCE_KEY],
+        "problem_type_reason": block[PROBLEM_TYPE_REASON_KEY],
     }
 
 
@@ -510,7 +644,8 @@ async def register_dataset(task_name: str, target: str = Form(...), partition: s
                             type_overrides: Annotated[str | None, Form()] = None,
                             binarize_label: Annotated[bool, Form()] = False,
                             ignored_columns: Annotated[str | None, Form()] = None,
-                            temporal: Annotated[str | None, Form()] = None):
+                            temporal: Annotated[str | None, Form()] = None,
+                            problem_type: Annotated[str | None, Form()] = None):
     """Upload a CSV, deduce its schema, and register it for a task/partition.
 
     ``type_overrides`` (JSON object of column -> type) is applied via
@@ -585,6 +720,22 @@ async def register_dataset(task_name: str, target: str = Form(...), partition: s
                 % ", ".join(temporal_spec.temporal_columns)
             )
         ignored = list(dict.fromkeys(ignored + temporal_spec.temporal_columns))
+    # The problem type is declared once, here, and stored — screens must not
+    # re-infer it from whichever estimator happens to be fitted later.
+    try:
+        if temporal_spec is not None:
+            # A forecasting task is regression-shaped; only an explicit
+            # classification request is refused (inference is re-pinned below).
+            ensure_temporal_is_regression(problem_type)
+        type_block = problem_type_metadata(
+            frame,
+            target,
+            override=problem_type,
+            temporal=temporal_spec is not None,
+            label_encoded=binarize_label is True,
+        )
+    except ValueError as exc:
+        raise bad_request(str(exc))
     dataset_dir = settings.task_dataset_dir(task_name)
     dataset_dir.mkdir(parents=True, exist_ok=True)
     csv_path = dataset_dir / (safe_segment(partition, "partition") + ".csv")
@@ -612,6 +763,7 @@ async def register_dataset(task_name: str, target: str = Form(...), partition: s
                 "temporal_ignored_columns": (
                     temporal_spec.temporal_columns if temporal_spec is not None else []
                 ),
+                **type_block,
             }
         )
         metadata = tracker.GetMetadata()
@@ -680,6 +832,12 @@ async def register_dataset(task_name: str, target: str = Form(...), partition: s
         "sensitive_scan": sensitive_feature_report(frame),
         # Which weighting columns this registration seeded (numeric features only).
         "weights_stored": weights_stored,
+        # The declared problem type: one place, so later screens read it instead
+        # of inferring a family from whichever estimator got fitted.
+        "problem_type": type_block[PROBLEM_TYPE_KEY],
+        "problem_type_source": type_block[PROBLEM_TYPE_SOURCE_KEY],
+        "problem_type_reason": type_block[PROBLEM_TYPE_REASON_KEY],
+        "problem_type_inferred": type_block[PROBLEM_TYPE_INFERRED_KEY],
         "temporal": {
             "spec": temporal_spec.to_dict() if temporal_spec is not None else None,
             "validation": temporal_report,
@@ -747,6 +905,16 @@ def get_dataset_metadata(task_name: str):
     return {
         "task_name": task_name,
         "target_name": metadata.get("target_name"),
+        # Declared problem type (regression/classification) plus its provenance.
+        # Legacy tasks have none; the Datasets page then shows the inference.
+        "problem_type": declared_problem_type(metadata),
+        "problem_type_source": metadata.get(PROBLEM_TYPE_SOURCE_KEY),
+        "problem_type_reason": metadata.get(PROBLEM_TYPE_REASON_KEY),
+        "problem_type_inferred": metadata.get(PROBLEM_TYPE_INFERRED_KEY),
+        "temporal": {
+            "declared": metadata.get("temporal_spec") is not None,
+            "spec": metadata.get("temporal_spec"),
+        },
         "dataset_fingerprint": metadata.get("dataset_fingerprint"),
         "dataset_columns": metadata.get("dataset_columns"),
         "dataset_schema": metadata.get("dataset_schema"),
@@ -883,6 +1051,15 @@ def _preprocessing_payload(
         "columns": list(frame.columns),
         "ignored_columns": ignored,
         "deduced_types": deduced,
+        # Task axes, so the page can say *what kind of task this is* instead of
+        # only describing stored columns. For a temporal task the stored frame is
+        # time + label and the model's inputs are generated, not measured.
+        "problem_type": declared_problem_type(metadata),
+        "problem_type_source": metadata.get(PROBLEM_TYPE_SOURCE_KEY),
+        "temporal": {
+            "declared": metadata.get("temporal_spec") is not None,
+            "spec": metadata.get("temporal_spec"),
+        },
         "missing": overview,
         "quality": (profile or {}).get("data_quality"),
         "missingness_patterns": (profile or {}).get("missingness_patterns"),
