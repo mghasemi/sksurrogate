@@ -336,9 +336,17 @@ def _time_axis(frame: pd.DataFrame, spec: TemporalSpec) -> dict[str, Any]:
             if spec.time_format is not None
             else ""
         )
+        remedy = (
+            " If the column holds period labels rather than dates (e.g. '1-Jan' for "
+            "year 1, January), declare period_start together with freq so the axis "
+            "comes from each series' first row."
+            if spec.period_start is None
+            else ""
+        )
         raise TemporalValidationError(
             "time column %r has %d missing or unparseable timestamp(s)%s "
-            "(first row labels: %s)" % (spec.time_column, int(missing.sum()), hint, bad)
+            "(first row labels: %s).%s"
+            % (spec.time_column, int(missing.sum()), hint, bad, remedy)
         )
     # ``to_datetime`` keeps the resolution it inferred (pandas >= 2 gives
     # datetime64[us] for dateutil-parsed strings), and it happily produces years
@@ -381,9 +389,12 @@ def _datetime_range_message(
         span = "the parsed timestamps do not fit"
     return (
         "time column %r cannot be represented as nanoseconds: %s, outside pandas' "
-        "range 1677-09-21 .. 2262-04-11. Values without a year (e.g. '1-Jan') parse "
-        "to year 1 — supply full dates such as '2026-01-01', or a numeric step "
-        "index, instead. (%s: %s)" % (column, span, type(exc).__name__, exc)
+        "range 1677-09-21 .. 2262-04-11. Values without a year (e.g. '1-Jan', which "
+        "is *year 1, January*) parse to year 1. If the column is a period label, "
+        "declare the anchor instead of a format: period_start='2001-01-01' together "
+        "with freq='MS' builds the axis from each series' first row and leaves the "
+        "labels unparsed. Otherwise supply full dates such as '2026-01-01', or a "
+        "numeric step index. (%s: %s)" % (column, span, type(exc).__name__, exc)
     )
 
 

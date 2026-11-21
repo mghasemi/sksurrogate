@@ -74,6 +74,11 @@ surrogate-diagnostic suites.
 Period labels, ambiguous formats, and partition defaults
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+* **Fixed:** the error raised for timestamp values that parse outside the
+  nanosecond range did not mention ``period_start`` — the option that actually fixes
+  period labels — so the message told the caller to rewrite data that the library can
+  read fine once anchored. Both the overflow and the unparseable-value branches now
+  name the anchor (``period_start`` + ``freq``) first.
 * **Added:** ``TemporalSpec.period_start`` — the timestamp of each series' first row,
   for a time column that is a *period label* (``1-Jan``/``2-Jan``/``3-Dec``, ``Q1``,
   ``period 1``) rather than a date. It requires ``freq``; the axis is built from the

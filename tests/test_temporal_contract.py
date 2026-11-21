@@ -308,6 +308,8 @@ class TestTemporalValidation(unittest.TestCase):
         self.assertTrue(
             "nanosecond" in message or "unparseable" in message, message
         )
+        # The advice has to name the mechanism that actually works on this data.
+        self.assertIn("period_start", message)
 
     def test_period_start_builds_the_axis_from_row_order(self):
         frame = self._year_month_frame()
