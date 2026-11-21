@@ -157,6 +157,19 @@ Open **Datasets**. For each CSV partition:
    restored later) but is dropped from every downstream experiment and analysis.
    The target column cannot be ignored. If appropriate, enable
    **Binarize / ordinal-encode target labels** to encode target categories.
+
+   A date column read from a CSV is **text**. Unless you type it as
+   ``datetime64`` (or ignore it), a tabular model treats it as a category and
+   one-hot encodes it — one column per distinct timestamp, which is noise. Typing
+   it ``datetime64`` stores the declaration with the dataset (the CSV itself cannot
+   carry a dtype) and the column is cast back to a datetime dtype whenever the
+   partition is loaded; the model then receives **seconds since the first training
+   observation**, not raw seconds since 1970. The centring matters: an uncentred
+   epoch-seconds feature makes ``[1, x]`` ill-conditioned (condition number around
+   :math:`10^{11}`), inflates coefficient variance, and leaves L2 penalties applied
+   to a :math:`10^{-6}`-scale slope effectively inert. For a forecasting task the time column
+   is handled by the temporal contract instead (it becomes an axis and the inputs
+   are generated lag/rolling/calendar features).
 5. Click **Commit dataset**. The API registers the partition and schema,
    calculates a dataset fingerprint, and stores the CSV under the task.
 

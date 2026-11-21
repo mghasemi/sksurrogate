@@ -34,7 +34,12 @@ from SKSurrogate import (
 )
 
 from ..config import settings
-from ..columns import drop_ignored, normalize_ignored_columns, read_ignored_columns
+from ..columns import (
+    coerce_declared_datetimes,
+    drop_ignored,
+    normalize_ignored_columns,
+    read_ignored_columns,
+)
 from ..eda import (
     effect_sizes,
     formal_tests,
@@ -702,6 +707,19 @@ async def register_dataset(task_name: str, target: str = Form(...), partition: s
     frame, pivot_types = apply_type_overrides(
         frame, preview, target, overrides=overrides or None, binarize_label=binarize_label is True
     )
+    # A datetime64 declaration must be real: the value is stored as text either
+    # way (CSV has no dtype), but at load time the column is cast back, so a column
+    # whose values do not parse would silently fall back to being a category.
+    try:
+        coerce_declared_datetimes(
+            frame,
+            declared=[
+                column for column, typ in pivot_types.items() if typ == "datetime64"
+            ],
+            strict=True,
+        )
+    except ValueError as exc:
+        raise bad_request(str(exc))
     ignored = []
     if isinstance(ignored_columns, str) and ignored_columns:
         try:
@@ -980,6 +998,7 @@ def _preprocessing_payload(
     frame = pd.read_csv(csv_path)
     with open_tracker(task_name) as tracker:
         metadata = tracker.GetMetadata()
+    frame = coerce_declared_datetimes(frame, task_name=task_name)
     target = metadata.get("target_name")
     ignored = metadata.get("ignored_columns") or []
     deduced = metadata.get("dataset_deduced_types") or {}
@@ -1470,7 +1489,8 @@ def _dataset_partition_frame(task_name, partition):
     csv_path = settings.task_dataset_dir(task_name) / (safe_segment(partition, "partition") + ".csv")
     if not csv_path.exists():
         raise not_found("No dataset partition %r stored for task %r" % (partition, task_name))
-    return csv_path, pd.read_csv(csv_path)
+    frame = coerce_declared_datetimes(pd.read_csv(csv_path), task_name=task_name)
+    return csv_path, frame
 
 
 def _derived_output(task_name, partition, requested, default_suffix):

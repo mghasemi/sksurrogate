@@ -1358,7 +1358,10 @@ class AML(BaseEstimator):
             if isinstance(X, pd.DataFrame):
                 from .DataProcess import FoldLocalDataPreprocessor
 
-                steps.append(("preprocess", FoldLocalDataPreprocessor()))
+                # scale_numeric=True matches the baseline path: scale-sensitive
+                # candidates (ridge/SVR/kernel) otherwise receive raw magnitudes.
+                # Trees are invariant to it, so presets are unaffected.
+                steps.append(("preprocess", FoldLocalDataPreprocessor(scale_numeric=True)))
         elif self.cat_cols is not None:
             from category_encoders.one_hot import OneHotEncoder
 

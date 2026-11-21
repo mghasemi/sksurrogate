@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from SKSurrogate import CorrelationThreshold, SensAprx, temporal_columns
 
 from ..config import settings
-from ..columns import drop_ignored, read_ignored_columns
+from ..columns import coerce_declared_datetimes, drop_ignored, read_ignored_columns
 from ..features import (
     NumericFeatureError,
     features_from_json,
@@ -80,7 +80,7 @@ def _load_train_xy(task_name, train_partition, features=None):
     csv_path = settings.task_dataset_dir(task_name) / (safe_segment(train_partition, "partition") + ".csv")
     if not csv_path.exists():
         raise not_found("No dataset partition %r stored for task %r" % (train_partition, task_name))
-    frame = pd.read_csv(csv_path)
+    frame = coerce_declared_datetimes(pd.read_csv(csv_path), task_name=task_name)
     spec = metadata.get("temporal_spec")
     try:
         if spec:

@@ -23,7 +23,7 @@ from starlette.responses import FileResponse
 from SKSurrogate import DataPreprocess, ModelRegistry, SynthData
 
 from ..config import settings
-from ..columns import drop_ignored, read_ignored_columns
+from ..columns import coerce_declared_datetimes, drop_ignored, read_ignored_columns
 from ..safety import safe_segment
 from ..deps import bad_request, not_found, open_tracker, task_access
 
@@ -137,7 +137,8 @@ def _load_partition_frame(task_name, partition):
             pass
     csv_path = settings.task_dataset_dir(task_name) / (safe_segment(partition, "partition") + ".csv")
     if csv_path.exists():
-        return drop_ignored(pd.read_csv(csv_path), ignored)
+        frame = coerce_declared_datetimes(pd.read_csv(csv_path), task_name=task_name)
+        return drop_ignored(frame, ignored)
     available = _available_partitions(task_name)
     hint = (
         "; available partitions: %s" % ", ".join(available)

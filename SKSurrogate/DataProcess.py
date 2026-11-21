@@ -32,8 +32,22 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 
 
 class DateTime2Num(TransformerMixin, BaseEstimator):
-    """
-    Converts a date range data to numeric (float) between `lower` and `upper`.
+    """Map a date range onto ``[lower, upper]`` (linear rescale).
+
+    Accepts either datetime values or numeric seconds, because
+    :meth:`DataPreprocess.encode` converts columns to epoch seconds before this
+    step. The rescale is fit on ``min``/``max``, so:
+
+    * a constant column maps to ``lower`` instead of dividing by a zero span
+      (it used to emit ``inf``/``nan``);
+    * the divisor uses the column's own unit (``unit`` for datetimes, seconds for
+      numeric input) rather than always comparing against a ``timedelta64`` — the
+      old code raised ``numpy``'s ``UFuncTypeError`` on numpy >= 2 for numeric
+      input, which is exactly what ``encode()`` feeds it.
+
+    Prefer :class:`DatetimeCentering` for model features: a min/max rescale depends
+    on the observed extremes, so it shifts whenever the data is refitted, and a
+    single outlier compresses every other value.
 
     :param cols: default: `None`; column names for transformation.
     :param unit: default: 'day`; the time unit.
@@ -41,49 +55,51 @@ class DateTime2Num(TransformerMixin, BaseEstimator):
     :param upper: default: `2.0`; the upper bound of the transformation range.
     """
 
+    _UNITS = {
+        "second": numpy.timedelta64(1, "s"),
+        "minute": numpy.timedelta64(1, "m"),
+        "hour": numpy.timedelta64(1, "h"),
+        "day": numpy.timedelta64(1, "D"),
+    }
+
     def __init__(self, cols=None, unit='day', lower=0., upper=2.):
-        if unit not in ['day', 'hour', 'minute', 'second']:
+        if unit not in self._UNITS:
             raise ValueError("`unit` must be either 'day', 'hour', 'minute', or 'second'.")
         self.cols = cols
         self.unit = unit
         self.lower = lower
         self.upper = upper
         self.coefs = dict()
-        self.scale = 1.
-        self.scale = numpy.timedelta64(1, 's')
-        if self.unit == 'minute':
-            self.scale = 60.
-            self.scale = numpy.timedelta64(1, 'm')
-        elif self.unit == 'hour':
-            self.scale = 60 * 60.
-            self.scale = numpy.timedelta64(1, 'h')
-        elif self.unit == 'day':
-            self.scale = 60 * 60 * 24.
-            self.scale = numpy.timedelta64(1, 'D')
 
     def fit(self, X):
-        """
-        Fits and calculates the transformation parameters for date range transformation.
+        """Fits and calculates the transformation parameters for date range transformation.
 
         :param X: Input data
         :return: `self`
         """
         if self.cols is None:
             return self
-        n_length = self.upper - self.lower
         for clmn in self.cols:
-            t_vec = X[clmn].dropna().values
-            min_date, max_date = t_vec.min(), t_vec.max()
-            # t_length = (max_date - min_date).seconds / self.scale
-            t_length = (max_date - min_date) / self.scale
-            trans_coef = n_length / t_length
-            intercept = self.lower
-            self.coefs[clmn] = (trans_coef, intercept, min_date)
+            values = X[clmn].dropna()
+            if not len(values):
+                self.coefs[clmn] = {"kind": "empty", "anchor": 0.0, "coef": 0.0}
+                continue
+            if pandas.api.types.is_datetime64_any_dtype(values):
+                anchor = values.min()
+                span = (values.max() - anchor) / self._UNITS[self.unit]
+                kind = "datetime"
+            else:
+                numeric = pandas.to_numeric(values, errors="coerce").dropna()
+                anchor = float(numeric.min()) if len(numeric) else 0.0
+                span = float(numeric.max()) - anchor if len(numeric) else 0.0
+                kind = "numeric"
+            # A zero span (constant column) maps everything to `lower`.
+            coef = 0.0 if not numpy.isfinite(span) or span == 0 else (self.upper - self.lower) / span
+            self.coefs[clmn] = {"kind": kind, "anchor": anchor, "coef": float(coef)}
         return self
 
     def transform(self, X):
-        """
-        Apply the calculated parameters to transform the datetime columns.
+        """Apply the calculated parameters to transform the datetime columns.
 
         :param X: the input data
         :return: transformed data
@@ -92,15 +108,21 @@ class DateTime2Num(TransformerMixin, BaseEstimator):
             return X
         TX = X
         for clmn in self.cols:
-            vect = numpy.array(
-                [self.coefs[clmn][1] + self.coefs[clmn][0] * (_ - self.coefs[clmn][2]) / self.scale for _ in
-                 TX[clmn].values])
-            TX[clmn] = vect
+            params = self.coefs[clmn]
+            if params["kind"] == "empty":
+                TX[clmn] = numpy.nan
+                continue
+            if params["kind"] == "datetime":
+                values = pandas.to_datetime(TX[clmn], errors="coerce")
+                offset = (values - params["anchor"]) / self._UNITS[self.unit]
+                TX[clmn] = self.lower + params["coef"] * offset.astype(float)
+            else:
+                values = pandas.to_numeric(TX[clmn], errors="coerce").astype(float)
+                TX[clmn] = self.lower + params["coef"] * (values - params["anchor"])
         return TX
 
     def fit_transform(self, X, y=None, **fit_params):
-        """
-        Fits and transforms the input data.
+        """Fits and transforms the input data.
 
         :param X: input data;
         :param y: target field; not required, but included to comply with scikit-learn's signature
@@ -112,6 +134,14 @@ class DateTime2Num(TransformerMixin, BaseEstimator):
 
 
 def _datetime_frame_to_epoch_seconds(X):
+    """Seconds since 1970-01-01 UTC for every column of ``X``.
+
+    Kept as a module-level function because fitted pipelines pickle a reference to
+    it; changing its behaviour would silently alter every existing bundle. New
+    pipelines use :class:`DatetimeCentering`, which subtracts a fitted anchor first
+    (raw epoch seconds make an intercept-plus-slope design ill-conditioned:
+    ``cond ~ 1e11`` versus ``~1`` when centred).
+    """
     transformed = pandas.DataFrame(index=X.index)
     for column in X.columns:
         values = pandas.to_datetime(X[column], errors="coerce")
@@ -119,6 +149,76 @@ def _datetime_frame_to_epoch_seconds(X):
         seconds[values.isna()] = numpy.nan
         transformed[column] = seconds
     return transformed
+
+
+class DatetimeCentering(TransformerMixin, BaseEstimator):
+    """Convert datetime columns to **seconds relative to a fitted per-column anchor**.
+
+    Why not raw epoch seconds: a feature centred a billion seconds from the origin
+    makes ``[1, x]`` ill-conditioned (``cond ~ 1e11``), inflates coefficient
+    variance, and silently neutralises L2 penalties — a Ridge ``alpha`` applied to a
+    ``1e-6``-scale slope barely regularises. Subtracting the anchor leaves the
+    offset out of the design: the served feature is "seconds since the first
+    training observation", which is what a trend term should mean.
+
+    Why not the legacy ``[0, 2]`` rescale: min/max scaling is outlier-sensitive,
+    changes with every refit (so folds and serving disagree), divides by zero for a
+    constant column, and discards the unit.
+
+    The subtraction is done in the column's own resolution, never through an int64
+    nanosecond cast, so dates outside 1677..2262 (or a dateutil year-1 parse) yield
+    a large but finite number instead of an ``OverflowError``. Unparseable values
+    become ``NaN`` (imputed downstream), never ``inf``.
+    """
+
+    def __init__(self, columns=None):
+        self.columns = columns
+
+    @staticmethod
+    def _parse(series):
+        values = pandas.to_datetime(series, errors="coerce")
+        tz = getattr(values.dtype, "tz", None)
+        if tz is not None:
+            # The anchor and the feature are both UTC; naive-local would make the
+            # offset depend on the machine's timezone.
+            values = values.dt.tz_convert("UTC").dt.tz_localize(None)
+        return values
+
+    def fit(self, X, y=None):
+        if not isinstance(X, pandas.DataFrame):
+            raise TypeError("DatetimeCentering requires a pandas DataFrame")
+        columns = list(self.columns) if self.columns is not None else list(X.columns)
+        self.columns_ = columns
+        self.anchors_ = {}
+        for column in columns:
+            values = self._parse(X[column])
+            self.anchors_[column] = None if values.isna().all() else values.min()
+        self.n_features_in_ = len(columns)
+        return self
+
+    def transform(self, X):
+        if not hasattr(self, "anchors_"):
+            raise RuntimeError("DatetimeCentering has not been fitted")
+        if not isinstance(X, pandas.DataFrame):
+            raise TypeError("DatetimeCentering requires a pandas DataFrame")
+        missing = [column for column in self.columns_ if column not in X.columns]
+        if missing:
+            raise ValueError("DatetimeCentering is missing column(s): %r" % missing)
+        transformed = pandas.DataFrame(index=X.index)
+        for column in self.columns_:
+            values = self._parse(X[column])
+            anchor = self.anchors_[column]
+            if anchor is None:
+                transformed[column] = numpy.nan
+                continue
+            # Timedelta division keeps the column's resolution and cannot overflow.
+            transformed[column] = (values - anchor) / numpy.timedelta64(1, "s")
+        return transformed.astype(float)
+
+    def get_feature_names_out(self, input_features=None):
+        return numpy.asarray(
+            list(self.columns_) if self.columns_ is not None else input_features, dtype=object
+        )
 
 
 def _flatten_text_column(X):
@@ -146,7 +246,8 @@ class FoldLocalDataPreprocessor(TransformerMixin, BaseEstimator):
     validation fold learns its own imputations, category vocabulary, and text
     vocabulary. Numeric columns receive median imputation, booleans and
     non-text object/category columns receive imputation and one-hot encoding,
-    datetimes are converted to epoch seconds and imputed. Explicitly declared
+    datetimes are converted to seconds relative to a fitted anchor, imputed, and
+    scaled when ``scale_numeric`` is set. Explicitly declared
     text columns (``astype("string")`` / ``pandas.StringDtype()``) receive
     per-column TF-IDF features; on pandas >= 3, plain string columns are
     inferred as a first-class string dtype and fall back to one-hot encoding
@@ -238,13 +339,10 @@ class FoldLocalDataPreprocessor(TransformerMixin, BaseEstimator):
             )
         if datetime_columns:
             datetime_steps = [
-                (
-                    "epoch_seconds",
-                    FunctionTransformer(
-                        _datetime_frame_to_epoch_seconds,
-                        feature_names_out="one-to-one",
-                    ),
-                ),
+                # Centred seconds, not raw epoch seconds: the offset carries no
+                # information and makes the design ill-conditioned (see
+                # DatetimeCentering).
+                ("centering", DatetimeCentering()),
                 ("imputer", SimpleImputer(strategy="median", keep_empty_features=True)),
             ]
             if self.scale_numeric:

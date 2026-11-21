@@ -16,6 +16,7 @@ import pandas as pd
 
 from SKSurrogate import SchemaValidationError, predict_batch, predict_batch_forecast
 
+from .columns import coerce_declared_datetimes
 from .config import settings
 from .deps import append_monitor_record, bad_request, not_found
 from .safety import safe_segment
@@ -37,7 +38,7 @@ def resolve_input_frame(task_name, *, bundle, rows=None, partition=None):
         csv_path = settings.task_dataset_dir(task_name) / (safe_segment(partition, "partition") + ".csv")
         if not csv_path.exists():
             raise not_found("No dataset partition %r stored for task %r" % (partition, task_name))
-        frame = pd.read_csv(csv_path)
+        frame = coerce_declared_datetimes(pd.read_csv(csv_path), task_name=task_name)
         if not bundle.schema:
             return frame, []
         ignored = [column for column in frame.columns if column not in bundle.schema]

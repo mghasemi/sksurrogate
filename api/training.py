@@ -35,7 +35,7 @@ from SKSurrogate import (
 from SKSurrogate.DataProcess import FoldLocalDataPreprocessor, frame_tolerant
 
 from . import compute, control, logs
-from .columns import drop_ignored, read_ignored_columns
+from .columns import coerce_declared_datetimes, drop_ignored, read_ignored_columns
 from .config import settings
 from .safety import safe_segment
 from .deps import bad_request, finite_or_none, not_found, open_tracker, resolve_bundle
@@ -366,7 +366,12 @@ def load_partition(task_name, partition):
     csv_path = settings.task_dataset_dir(task_name) / (safe_segment(partition, "partition") + ".csv")
     if not csv_path.exists():
         raise not_found("No dataset partition %r stored for task %r" % (partition, task_name))
-    return drop_ignored(pd.read_csv(csv_path), read_ignored_columns(task_name))
+    frame = pd.read_csv(csv_path)
+    # A datetime dtype does not survive CSV storage: restore the columns the
+    # dataset declares as datetime64 (deduced or overridden) before anything
+    # inspects dtypes, otherwise they are one-hot encoded as categories.
+    frame = coerce_declared_datetimes(frame, task_name=task_name)
+    return drop_ignored(frame, read_ignored_columns(task_name))
 
 
 def get_registered_target(task_name):

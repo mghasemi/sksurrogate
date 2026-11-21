@@ -25,6 +25,35 @@ Temporal declaration no longer 500s on timestamps outside the nanosecond range
 * **Fixed:** a **target column with no observed values** was accepted at
   registration, leaving a task nothing can be modelled on; it now answers 400.
 
+Datetime columns: the declared type is real, and the feature is centred
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Fixed:** a column typed ``datetime64`` was only *labelled* datetime — the stored
+  CSV has no dtype, `load_partition` returned ``object``, and
+  ``FoldLocalDataPreprocessor`` fell through to one-hot encoding (one column per
+  distinct timestamp). The declaration is now stored with the dataset
+  (``dataset_deduced_types``) and the column is re-cast on load in every consumer
+  (training/baselines, preprocessing profiles and the encoding preview, sensitivity,
+  synthetic data, inference). A datetime64 override whose values do not parse is
+  refused at registration with the offending values.
+* **Changed:** datetime features are converted to **seconds relative to a fitted
+  anchor** (``DatetimeCentering``) instead of raw seconds since 1970. Raw epoch
+  seconds made an intercept-plus-slope design ill-conditioned
+  ($\operatorname{cond}\approx 6\times10^{11}$ versus $\approx 1$ centred), which
+  inflates coefficient variance and neutralises L2 penalties. The anchor is a
+  per-column ``min`` recorded in the fitted transformer (so it travels in the
+  bundle); subtraction happens in the column's own resolution, so year-1/year-1000
+  timestamps give a large finite value instead of an ``OverflowError``.
+* **Changed:** the AML search path now uses
+  ``FoldLocalDataPreprocessor(scale_numeric=True)`` like the baseline path, so
+  scale-sensitive candidates (ridge/SVR/kernel) no longer receive raw magnitudes.
+  Tree presets are invariant to it.
+* **Fixed:** ``DataPreprocess.encode()`` (and ``mltrack(encode=True)``) raised
+  ``UFuncTypeError`` for every datetime column on numpy >= 2 — ``DateTime2Num``
+  divided float seconds by a ``timedelta64``. ``DateTime2Num`` now accepts datetimes
+  *or* numeric seconds, uses the column's unit, and maps a constant column to the
+  lower bound instead of dividing by a zero span.
+
 [Unreleased]
 ------------
 
