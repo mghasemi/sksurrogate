@@ -243,6 +243,39 @@ tabular task's pages are unchanged.
 * **Tests** — ``tests/test_temporal_contract.py`` (+1: temporal splitters and their parameter
   defs are exposed) and ``tests/test_backtest.py`` (+1: the route unwraps a temporal bundle).
 
+Monitoring windows, benchmark DGPs and release hygiene (time-series phase 8)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Windowed drift** — ``drift_report`` gains ``reference_window`` / ``current_window``:
+  each frame is trimmed to its trailing window (ordered by ``time_column`` when given) and
+  ``drift_report(None, history, ...)`` compares the last :math:`m` observations against the
+  :math:`n` before them. The report records ``windows`` (mode and sizes) and the row counts
+  are post-trim; the ordering column is excluded from the statistics because a timeline
+  marker necessarily differs between adjacent windows. ``POST /api/monitoring/{task}/drift``
+  accepts the three fields and treats a missing ``reference_partition`` as the single-frame
+  form; impossible windows are 400s with the count that failed.
+* **Label maturity** — ``delayed_label_performance`` accepts per-row ``horizons`` (scoring
+  per step in ``by_horizon``) and a ``maturity`` cap: rows whose horizon exceeds the cap are
+  counted in ``pending_rows`` instead of being scored. ``maturity`` without ``horizons`` is
+  refused, because the step of each row is the quantity under check. Wired through
+  ``POST /api/monitoring/{task}/delayed-label-performance``.
+* **Forecast DGPs** — ``benchmarks/forecast_dgps.py`` adds five seeded processes (random
+  walk with drift, weekly and daily seasonality, a five-series panel, and a driftless walk
+  whose role is the *must-lose* check: naive is Bayes-optimal there) and writes a versioned
+  ``forecast_dgp_validation.json`` with the full MAE ranking per DGP. Measured defaults: 40
+  rolling origins (four origins leave naive MASE at ~2.2 from sampling noise alone), naive
+  wins on ``easy_naive`` with MASE 1.25, and — honestly recorded rather than tuned away —
+  naive also beats a levels-regression on the drifted walk at horizon 1.
+* **Docs** — ``docs/forecasting.rst`` gains "Monitoring a forecast", an opt-in-vs-default
+  table and a benchmark section; the MASE/sMAPE/Winkler docstrings now carry their
+  formulas.
+* **Packaging** — a ``forecasting`` extra exists in ``setup.py`` and is deliberately empty:
+  the feature needs only the core numpy/pandas/scikit-learn dependencies, so the extra
+  documents the supported install and reserves a home for a future adapter. ``import
+  SKSurrogate`` is identical with and without it.
+* **Tests** — ``tests/test_temporal_monitoring.py`` (10) and
+  ``tests/test_forecast_dgps.py`` (6).
+
 Pipeline-space benchmark track (C-space)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

@@ -591,6 +591,87 @@ history missing the series column, or too short for the design's required tail, 
 reported with the column or row count to fix, never padded silently. The result
 downloads as ``time,prediction,lower,upper`` CSV.
 
+Monitoring a forecast
+---------------------
+
+Two monitoring questions change shape once forecasts are multi-step, and both are
+answered without guessing:
+
+**Windowed drift.** ``drift_report`` can compare *trailing windows* instead of whole
+frames. ``drift_report(ref, cur, reference_window=n, current_window=m)`` trims each frame
+to its last window (sorted by ``time_column`` when given, positional otherwise). The
+single-frame form — ``drift_report(None, history, reference_window=n, current_window=m)``
+— compares the last :math:`m` observations against the :math:`n` immediately preceding
+them, which is the "recent behaviour versus recent past" test a recalibration decision
+actually needs. The report records ``windows`` (mode and sizes) and its row counts are
+post-trim; the ``time_column`` used for ordering is excluded from the drift statistics,
+because a timeline marker necessarily differs between adjacent windows and would drown
+the per-feature signal. Over HTTP: ``POST /api/monitoring/{task}/drift`` with
+``reference_window``/``current_window`` (a missing ``reference_partition`` selects the
+single-frame form).
+
+**Label maturity.** A horizon-:math:`h` label only becomes valid after :math:`h` steps,
+so scoring it earlier measures nothing. ``delayed_label_performance`` accepts the
+per-row ``horizons`` and a ``maturity`` cap: rows whose horizon exceeds the cap are
+counted as ``pending_rows`` rather than scored, and ``by_horizon`` reports each step
+separately so a horizon-1 score is never averaged with a horizon-12 score. Supplying
+``maturity`` without ``horizons`` is refused — the step of each row is exactly the
+quantity being checked. Over HTTP: ``POST /api/monitoring/{task}/delayed-label-performance``
+with ``horizons`` and ``maturity``.
+
+What is opt-in, what is default
+-------------------------------
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 25 45
+
+   * - Behaviour
+     - Tabular task (default)
+     - Temporal task (opt-in declaration)
+   * - Modules imported at ``import``
+     - unchanged
+     - ``temporal``, ``forecast_metrics``, ``forecast_intervals`` — pure
+       numpy/pandas/scikit-learn, no extra dependency
+   * - Feature matrix
+     - every column
+     - time/series columns excluded
+   * - Cross-validation splitters
+     - any standard splitter
+     - order-respecting only (``SetCV`` rejects the rest)
+   * - ``backtest`` / ``nested_cv``
+     - unchanged
+     - available; the backtest walks origins
+   * - ``predict`` / ``predict_batch``
+     - unchanged
+     - unchanged for v1 bundles; dispatch to ``predict_forecast`` for v2
+   * - Bundle format
+     - v1 records
+     - v2 records with a ``temporal`` block (v1 loads unchanged)
+   * - Intervals
+     - unaffected
+     - only when a calibration exists; an uncalibrated bundle refuses
+   * - UI surfaces
+     - unchanged
+     - four extra cards (Datasets, Evaluation, Experiments, Inference)
+
+Benchmarks
+----------
+
+``benchmarks/forecast_dgps.py`` scores a lag-linear model against ``naive``,
+``seasonal_naive``, ``drift`` and ``mean`` on five seeded processes — random walk with
+drift, weekly seasonality, daily seasonality, a five-series panel, and a driftless
+random walk — and writes a versioned JSON report::
+
+    python -m benchmarks.forecast_dgps --out benchmarks/results/forecast-dgps/<UTC stamp>
+
+``easy_naive`` is a *must-lose* check: on a driftless random walk the naive forecast is
+Bayes-optimal, so a model that beats it is fitting noise. The suite reports the full MAE
+ranking instead of assuming the model wins — measured at horizon 1 with 40 origins, naive
+beats a levels-regression even on the drifted walk, which is the honest calibration
+lesson (regression on levels under-shoots the trend; differencing or a drift-aware
+baseline is what wins there).
+
 Non-goals
 ---------
 

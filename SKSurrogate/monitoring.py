@@ -705,6 +705,29 @@ def dataset_profile(
     }
 
 
+def _tail(frame, window, time_column):
+    """Return the last ``window`` observations of ``frame``.
+
+    With ``time_column`` the frame is sorted by it first (stable, so ties keep
+    their stored order); without one the frame's own order is trusted and the
+    slice is positional. Monitoring frames are usually already ordered, and
+    silently sorting on an arbitrary column would compare two different
+    timelines.
+    """
+    if time_column is not None:
+        if time_column not in frame.columns:
+            raise ValueError("time_column %r not found in the frame" % (time_column,))
+        frame = frame.sort_values(time_column, kind="stable")
+    if window <= 0:
+        raise ValueError("window must be at least 1")
+    if len(frame) < window:
+        raise ValueError(
+            "window of %d observations requested but the frame has only %d rows"
+            % (window, len(frame))
+        )
+    return frame.iloc[-window:]
+
+
 def drift_report(
     reference,
     current,
@@ -717,13 +740,71 @@ def drift_report(
     missingness_threshold=0.1,
     range_threshold=0.1,
     bins=10,
+    reference_window=None,
+    current_window=None,
+    time_column=None,
 ):
     """Compare reference and current tabular data and return a JSON-safe report.
 
     Schema and data-quality changes are reported independently from statistical drift.
     Numeric drift uses population stability index (PSI); categorical drift uses total
     variation distance. Threshold crossings are listed in ``alerts``.
+
+    Time-window mode compares *the last n observations* of each timeline instead of
+    "whatever two frames happen to be stored":
+
+    * ``drift_report(ref_frame, cur_frame, reference_window=n, current_window=m)`` —
+      each frame is trimmed to its own trailing window (sorted by ``time_column``
+      when given, positional otherwise).
+    * ``drift_report(None, history, reference_window=n, current_window=m)`` — the
+      single-frame form: the current window is the last ``m`` rows of ``history``
+      and the reference window is the ``n`` rows immediately **before** it, i.e.
+      "the last n versus the previous n observations" in time order.
+
+    The report records ``windows`` (the sizes and which mode ran) and its row
+    counts are post-trim, so a caller can tell a windowed comparison from a
+    whole-frame one.
     """
+    if reference_window is None and current_window is None and reference is not None:
+        windowed = False
+    else:
+        windowed = True
+    window_spec = {"mode": None, "reference": reference_window, "current": current_window}
+    if windowed:
+        if current_window is None:
+            raise ValueError("window mode needs current_window")
+        if reference is None:
+            if reference_window is None:
+                raise ValueError(
+                    "single-frame window mode needs reference_window as well"
+                )
+            history = current
+            if not isinstance(history, pd.DataFrame):
+                raise TypeError("reference and current must be pandas DataFrames")
+            ordered = history.sort_values(time_column, kind="stable") if time_column else history
+            need = int(reference_window) + int(current_window)
+            if len(ordered) < need:
+                raise ValueError(
+                    "single-frame window mode needs %d rows (%d reference + %d current) but the frame has %d"
+                    % (need, reference_window, current_window, len(ordered))
+                )
+            current = ordered.iloc[-int(current_window):]
+            reference = ordered.iloc[-(need):-int(current_window)]
+            window_spec["mode"] = "single_frame_previous_tail"
+        else:
+            if reference_window is not None:
+                reference = _tail(reference, int(reference_window), time_column)
+            current = _tail(current, int(current_window), time_column)
+            window_spec["mode"] = "two_frames_tail"
+    if windowed and time_column is not None:
+        # A timeline marker is not a feature: its values necessarily differ
+        # between adjacent windows, and reporting PSI on it would drown the
+        # per-feature drift the caller asked for. It stays in the frames only
+        # long enough to order the windows.
+        assert reference is not None  # window mode always resolves a reference
+        window_spec["time_column"] = time_column
+        reference = reference.drop(columns=[time_column], errors="ignore")
+        current = current.drop(columns=[time_column], errors="ignore")
     if not isinstance(reference, pd.DataFrame) or not isinstance(current, pd.DataFrame):
         raise TypeError("reference and current must be pandas DataFrames")
     if bins < 2:
@@ -812,6 +893,7 @@ def drift_report(
         "model_version": model_version,
         "reference_dataset_fingerprint": reference_dataset_fingerprint,
         "current_dataset_fingerprint": current_dataset_fingerprint,
+        "windows": window_spec,
         "schema_changes": schema_changes,
         "data_quality": quality,
         "drift": drift,
@@ -854,24 +936,99 @@ def prediction_distribution_report(
     return report
 
 
-def delayed_label_performance(predictions, labels, *, model_version=None, task_type="classification"):
-    """Compute performance after delayed labels arrive for recorded predictions."""
+def delayed_label_performance(
+    predictions,
+    labels,
+    *,
+    model_version=None,
+    task_type="classification",
+    horizons=None,
+    maturity=None,
+):
+    """Compute performance after delayed labels arrive for recorded predictions.
+
+    Labels for a horizon-:math:`h` forecast only become valid once :math:`h` steps
+    have elapsed; scoring an unmatured label against a stale prediction measures
+    nothing. Two optional inputs make that explicit:
+
+    * ``horizons`` — the forecast step each row was made for (default: all 1).
+      With it, the report gains ``by_horizon`` (metrics per step) so a
+      horizon-1 score is never averaged with a horizon-12 score.
+    * ``maturity`` — score only rows whose horizon is at most this many steps
+      (the labels that have arrived by the current step). Unmatured rows are
+      counted as ``pending_rows`` instead of being silently dropped.
+
+    Without ``maturity`` every row is scored, exactly as before. Supplying
+    ``maturity`` without ``horizons`` is refused: guessing every row's step
+    would fabricate the very quantity this guard exists to check.
+    """
     predictions = np.asarray(predictions)
     labels = np.asarray(labels)
     if len(predictions) != len(labels):
         raise ValueError("predictions and labels must contain the same number of rows")
     if not len(labels):
         raise ValueError("predictions and labels cannot be empty")
-    if task_type == "classification":
-        metrics = {"accuracy": float(accuracy_score(labels, predictions))}
-    elif task_type == "regression":
-        metrics = {
-            "mae": float(mean_absolute_error(labels, predictions)),
-            "mse": float(mean_squared_error(labels, predictions)),
-        }
+
+    if horizons is not None:
+        horizons = np.asarray(horizons, dtype=int)
+        if len(horizons) != len(labels):
+            raise ValueError("horizons must contain one entry per row")
+        if np.any(horizons < 1):
+            raise ValueError("horizons must be >= 1")
+    if maturity is not None:
+        if horizons is None:
+            raise ValueError(
+                "maturity needs horizons: the forecast step of each row decides "
+                "whether its label has matured"
+            )
+        if int(maturity) < 1:
+            raise ValueError("maturity must be at least 1")
+
+    if maturity is not None:
+        # Enforced above: maturity without horizons is refused.
+        assert horizons is not None
+        keep = horizons <= int(maturity)
+        pending = int(np.sum(~keep))
     else:
+        keep = np.ones(len(labels), dtype=bool)
+        pending = 0
+    if not np.any(keep):
+        raise ValueError(
+            "no labels have matured yet (maturity=%r, min horizon=%r)"
+            % (maturity, int(horizons.min()) if horizons is not None else 1)
+        )
+
+    def _metrics(y_true, y_pred):
+        if task_type == "classification":
+            return {"accuracy": float(accuracy_score(y_true, y_pred))}
+        if task_type == "regression":
+            return {
+                "mae": float(mean_absolute_error(y_true, y_pred)),
+                "mse": float(mean_squared_error(y_true, y_pred)),
+            }
         raise ValueError("task_type must be 'classification' or 'regression'")
-    return {"model_version": model_version, "rows": int(len(labels)), "metrics": metrics}
+
+    scored_predictions = predictions[keep]
+    scored_labels = labels[keep]
+    report = {
+        "model_version": model_version,
+        "rows": int(len(scored_labels)),
+        "metrics": _metrics(scored_labels, scored_predictions),
+    }
+    if horizons is not None:
+        report["horizons"] = sorted(int(value) for value in np.unique(horizons[keep]))
+        report["by_horizon"] = {
+            str(int(step)): {
+                "rows": int(np.sum(horizons[keep] == step)),
+                **_metrics(scored_labels[horizons[keep] == step], scored_predictions[horizons[keep] == step]),
+            }
+            for step in np.unique(horizons[keep])
+        }
+    if maturity is not None:
+        report["maturity"] = int(maturity)
+    if pending:
+        report["pending_rows"] = pending
+    return report
 
 
 def _grouped_inputs(y_true, y_pred, groups):

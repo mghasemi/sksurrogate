@@ -84,6 +84,14 @@ setup(
         # Wall-clock AutoML arm (benchmarks/automl_arm.py). Separate extra: these
         # are large and irrelevant to the tuner itself.
         "automl": ["autogluon.tabular", "flaml[automl]"],
+        # Time-series/forecasting support (SKSurrogate.temporal, forecast_metrics,
+        # forecast_intervals) needs no package beyond the core requirements —
+        # numpy/pandas/scikit-learn already are dependencies. The extra exists so
+        # `pip install ".[forecasting]"` is a valid, documented install and so a
+        # future optional adapter (e.g. a statsmodels/exogenous bridge) has a
+        # home without changing what the base install pulls in. `import sksurrogate`
+        # works identically with and without it.
+        "forecasting": [],
     },
     python_requires=">=3.10",
     classifiers=[

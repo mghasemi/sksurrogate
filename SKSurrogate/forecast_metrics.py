@@ -65,11 +65,16 @@ def bias(y_true, y_pred) -> float:
 
 
 def smape(y_true, y_pred, *, as_percent: bool = True) -> float:
-    """Symmetric mean absolute percentage error, zero-safe.
+    r"""Symmetric mean absolute percentage error, zero-safe.
+
+    .. math::
+
+        \mathrm{sMAPE} = \frac{100}{n} \sum_t
+        \frac{2\lvert y_t-\hat y_t\rvert}{\lvert y_t\rvert+\lvert\hat y_t\rvert}
 
     Terms where both the forecast and the actual are zero contribute 0 rather
     than dividing by zero, so a series with genuine zeros does not produce
-    ``inf`` or ``NaN``.
+    ``inf`` or ``NaN``. Bounded by 100 % per term, unlike MAPE.
     """
     actual, predicted = _arrays(y_true, y_pred)
     denominator = np.abs(actual) + np.abs(predicted)
@@ -106,11 +111,17 @@ def mase_denominator(y_insample, seasonality: int = 1) -> float:
 
 
 def mase(y_true, y_pred, y_insample, seasonality: int = 1) -> float:
-    """Mean absolute scaled error against an in-sample scale.
+    r"""Mean absolute scaled error against an in-sample scale.
 
-    ``y_insample`` must be the training history that precedes the forecast (in
-    time order). A seasonal-naive forecast scored against its own history gives
-    exactly 1.0.
+    .. math::
+
+        \mathrm{MASE} = \frac{\frac1n\sum_t \lvert y_t-\hat y_t\rvert}
+        {\frac1{T-m}\sum_{s} \lvert y_s - y_{s-m}\rvert}
+
+    with :math:`m` = ``seasonality``. ``y_insample`` must be the training
+    history that precedes the forecast (in time order). A seasonal-naive
+    forecast scored against its own history gives exactly 1.0: :math:`1` is
+    parity with the seasonal-naive scale, above it is worse.
     """
     scale = mase_denominator(y_insample, seasonality)
     actual, predicted = _arrays(y_true, y_pred)
@@ -140,10 +151,17 @@ def pinball_loss(y_true, y_pred, quantile: float) -> float:
 
 
 def winkler_score(y_true, lower, upper, alpha: float = 0.1) -> float:
-    """Mean interval (Winkler) score for central intervals at level ``1 - alpha``.
+    r"""Mean interval (Winkler) score for central intervals at level ``1 - alpha``.
 
-    Smaller is better: the width plus twice the penalty for each observation that
-    falls outside the interval. A perfect, narrow interval scores near zero.
+    .. math::
+
+        W = \frac1n\sum_t \Big[(u_t-l_t)
+        + \frac{2}{\alpha}(l_t-y_t)\mathbf 1\{y_t<l_t\}
+        + \frac{2}{\alpha}(y_t-u_t)\mathbf 1\{y_t>u_t\}\Big]
+
+    Smaller is better: the width plus twice the penalty per :math:`\\alpha`
+    for each observation outside the interval. A perfect, narrow interval
+    scores near zero.
     """
     alpha = float(alpha)
     if not 0.0 < alpha < 1.0:

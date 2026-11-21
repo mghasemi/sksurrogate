@@ -92,13 +92,25 @@ def monitoring_alerts(task: str | None = None, limit: int = Query(default=20, ge
 
 
 class DriftRequest(BaseModel):
-    reference_partition: str
+    """Drift comparison request.
+
+    ``reference_partition`` is optional: with ``reference_window`` and
+    ``current_window`` set and no reference partition, the comparison runs on
+    one partition's own timeline — the current window is its last
+    ``current_window`` rows and the reference window is the ``reference_window``
+    rows immediately before them (plan P8.1).
+    """
+
+    reference_partition: str | None = None
     current_partition: str
     model_version: str | None = None
     psi_threshold: float = 0.2
     categorical_threshold: float = 0.2
     missingness_threshold: float = 0.1
     range_threshold: float = 0.1
+    reference_window: int | None = Field(default=None, ge=1)
+    current_window: int | None = Field(default=None, ge=1)
+    time_column: str | None = None
 
 
 def _load_partition(task_name, partition):
@@ -302,18 +314,34 @@ def scan_sensitive(task_name: str, body: SensitiveScanRequest):
 
 @router.post("/{task_name}/drift")
 def check_drift(task_name: str, body: DriftRequest):
-    """Compare two stored dataset partitions for schema/statistical drift."""
-    reference = _load_partition(task_name, body.reference_partition)
-    current = _load_partition(task_name, body.current_partition)
-    report = drift_report(
-        reference,
-        current,
-        model_version=body.model_version,
-        psi_threshold=body.psi_threshold,
-        categorical_threshold=body.categorical_threshold,
-        missingness_threshold=body.missingness_threshold,
-        range_threshold=body.range_threshold,
+    """Compare two stored dataset partitions for schema/statistical drift.
+
+    Pass ``reference_window``/``current_window`` to compare trailing windows
+    instead of whole partitions; with no ``reference_partition`` the comparison
+    runs on the current partition's own timeline (the last n rows against the n
+    rows before them), sorted by ``time_column`` when one is given.
+    """
+    reference = (
+        _load_partition(task_name, body.reference_partition)
+        if body.reference_partition
+        else None
     )
+    current = _load_partition(task_name, body.current_partition)
+    try:
+        report = drift_report(
+            reference,
+            current,
+            model_version=body.model_version,
+            psi_threshold=body.psi_threshold,
+            categorical_threshold=body.categorical_threshold,
+            missingness_threshold=body.missingness_threshold,
+            range_threshold=body.range_threshold,
+            reference_window=body.reference_window,
+            current_window=body.current_window,
+            time_column=body.time_column,
+        )
+    except ValueError as exc:
+        raise bad_request(str(exc))
     append_drift_alerts(
         task_name,
         body.model_version,
@@ -346,14 +374,26 @@ class DelayedLabelRequest(BaseModel):
     labels: list
     model_version: str | None = None
     task_type: str = "classification"
+    #: Forecast step of each row (default all 1); enables per-horizon scoring.
+    horizons: list[int] | None = None
+    #: Score only labels for horizons <= maturity (plan P8.1). Needs ``horizons``.
+    maturity: int | None = Field(default=None, ge=1)
 
 
 @router.post("/{task_name}/delayed-label-performance")
 def check_delayed_label_performance(task_name: str, body: DelayedLabelRequest):
     """Score recorded predictions once ground-truth labels become available."""
-    return delayed_label_performance(
-        body.predictions, body.labels, model_version=body.model_version, task_type=body.task_type
-    )
+    try:
+        return delayed_label_performance(
+            body.predictions,
+            body.labels,
+            model_version=body.model_version,
+            task_type=body.task_type,
+            horizons=body.horizons,
+            maturity=body.maturity,
+        )
+    except ValueError as exc:
+        raise bad_request(str(exc))
 
 
 @router.get("/{task_name}/{model_version}/summary")

@@ -64,6 +64,17 @@ and MSE instead of classification accuracy. Prediction drift supports numeric an
 categorical prediction values and uses the same thresholded alert format as feature
 drift.
 
+Two time-aware options keep these reports honest when the data is a sequence rather
+than a table (see :doc:`forecasting` for the full contract):
+
+* ``drift_report(..., reference_window=n, current_window=m)`` compares trailing
+  windows instead of whole frames; ``drift_report(None, history, ...)`` compares the
+  last :math:`m` observations against the :math:`n` preceding them, and the ordering
+  column is excluded from the statistics.
+* ``delayed_label_performance(..., horizons=..., maturity=k)`` scores only labels
+  whose forecast horizon has elapsed and reports ``by_horizon``, counting unmatured
+  rows as ``pending_rows`` instead of scoring a label that does not exist yet.
+
 Governance and fairness checks
 ==============================
 
