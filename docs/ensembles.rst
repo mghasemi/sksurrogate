@@ -300,6 +300,13 @@ The member weights are fitted on the members' **out-of-fold** output, computed o
   time on the scoring metric. The result is integer weights, so a member that never improves
   the score stays at zero — visible in the weight column, and named in ``dropped``.
 
+Both metric-driven strategies score each candidate vector through an adapter that holds the
+members' stored out-of-fold output. For regression each member contributes a 1-D prediction
+vector, so the adapter applies the weights along the **member** axis and returns one value per
+row; a classifier's probability matrix is blended entry-wise instead. A bare callable is
+refused (``EnsembleError``, the same rule as the surrogate search): the search keeps the
+largest value, so pass a scorer name or ``make_scorer(..., greater_is_better=...)``.
+
 Weights apply wherever members are merged by a weighted vote or average: voting, averaging,
 bagging and boosting. Stacking is refused, because its meta-learner already learns the
 combination and a weight vector would be silently ignored. An explicit ``weights`` parameter

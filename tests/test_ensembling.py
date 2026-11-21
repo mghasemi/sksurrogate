@@ -906,6 +906,62 @@ def test_weights_are_optimized_for_regression_too():
     assert result["objective"] < 1.0  # an MSE well below the target's own variance
 
 
+def test_a_scorer_weight_search_shapes_regression_outputs_per_row():
+    """The blend adapter must apply member weights along the member axis.
+
+    Regression outputs are one 1-D prediction vector per member, so the stacked
+    array is (members, rows); applying the weights without transposing raised
+    ``matmul: Input operand 1 has a mismatch in its core dimension 0`` as soon as
+    members != rows — which every real ensemble satisfies.
+    """
+    from SKSurrogate.ensembling import _WeightedBlend
+
+    rows = np.arange(7, dtype=float)
+    outputs = [rows, 2.0 * rows]
+    blend = _WeightedBlend(outputs, np.array([0.25, 0.75]), None, "Regression")
+    blended = np.asarray(blend.predict())
+    assert blended.shape == rows.shape
+    assert np.allclose(blended, 0.25 * rows + 0.75 * 2.0 * rows)
+
+
+def test_scorer_weight_strategies_optimize_regression_weights():
+    """greedy/dirichlet score candidate blends of regression members, not just classifiers."""
+    frame = _weighting_frame()
+    features = frame[COLUMNS]
+    for strategy, extra in (("dirichlet", {"samples": 20}), ("greedy", {"rounds": 4})):
+        result = optimize_weights(
+            _reg_members(),
+            features,
+            frame["y_reg"],
+            cv=4,
+            strategy=strategy,
+            scoring="neg_root_mean_squared_error",
+            **extra,
+        )
+        assert result["strategy"] == strategy
+        assert abs(float(np.asarray(result["weights"]).sum()) - 1.0) < 1e-6
+        assert result["objective"] is not None and np.isfinite(result["objective"])
+
+
+def test_a_directionless_callable_is_refused_by_the_weight_search():
+    """The weight search maximizes, so a bare lower-is-better callable would be inverted."""
+
+    def mae(estimator, X, y):
+        return float(np.mean(np.abs(np.asarray(y) - estimator.predict(X))))
+
+    frame = _weighting_frame()
+    with pytest.raises(EnsembleError, match="make_scorer"):
+        optimize_weights(
+            _reg_members(),
+            frame[COLUMNS],
+            frame["y_reg"],
+            cv=4,
+            strategy="greedy",
+            scoring=mae,
+            rounds=2,
+        )
+
+
 def test_optimized_weights_reach_the_bagging_and_boosting_aggregation():
     """Weights apply wherever the merge is a weighted vote, not only to voting/averaging."""
     frame = _weighting_frame()

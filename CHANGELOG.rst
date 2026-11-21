@@ -137,6 +137,15 @@ Partition defaults, temporal experiments and the Advanced scorer
   objects are unchanged. The sign contract and the ``best_estimator_score``
   (loss) vs ``best_score_``/``mean_test_score`` (scorer units) split are now
   documented in ``docs/surrogate.rst``.
+* **Fixed:** a **regression** ensemble with ``weight_optimization.strategy`` ``greedy`` or
+  ``dirichlet`` crashed with ``ValueError: matmul: Input operand 1 has a mismatch in its
+  core dimension 0``. The blend adapter applied member weights to the stacked out-of-fold
+  output without transposing it, so it needed ``members == rows``; the least-squares path
+  already used ``.T``. Every candidate vector now shapes as one value per row, and the
+  metric-driven search works for regression (live: TS01 greedy, weights ``[0.5, 0.5]``).
+  A directionless callable passed as ``scoring`` is now refused with ``EnsembleError``
+  (the weight search maximizes), via a shared ``SKSurrogate/scoring.py`` helper used by
+  both the surrogate search and ``optimize_weights``.
 
 Experiments search space follows the task's problem type
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

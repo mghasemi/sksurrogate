@@ -100,6 +100,7 @@ from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.utils.validation import has_fit_parameter
 
 from .DataProcess import frame_tolerant
+from .scoring import check_scoring_direction
 
 CLASSIFICATION = "Classification"
 REGRESSION = "Regression"
@@ -1018,7 +1019,11 @@ class _WeightedBlend(BaseEstimator):
         weights = weights / total
         if self.family == CLASSIFICATION:
             return sum(weight * output for weight, output in zip(weights, self.outputs))
-        return np.asarray(self.outputs) @ weights
+        # ``outputs`` is one 1-D prediction vector per member, so the stacked array is
+        # (members, rows): transpose before applying the per-member weights. Without
+        # this, a scorer-based search (greedy/dirichlet) failed with "matmul: ...
+        # (size <members> is different from <rows>)" as soon as members != rows.
+        return np.asarray(self.outputs).T @ weights
 
     def predict_proba(self, X=None):
         return self._blend()
@@ -1276,8 +1281,14 @@ def optimize_weights(
             raise EnsembleError(
                 "Strategy %r maximizes the task's scorer, so a scoring metric is required." % strategy
             )
+        # The weight search keeps the largest value, so a directionless callable
+        # would be maximized as-is; strings and scorer objects are higher-is-better.
         try:
-            scorer = get_scorer(scoring)
+            scorer = check_scoring_direction(scoring)
+        except TypeError as exc:
+            raise EnsembleError(str(exc)) from exc
+        try:
+            scorer = get_scorer(scorer)
         except ValueError as exc:
             raise EnsembleError(str(exc)) from exc
         if strategy == "dirichlet":
