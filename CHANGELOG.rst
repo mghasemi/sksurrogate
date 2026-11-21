@@ -118,6 +118,11 @@ Partition defaults, temporal experiments and the Advanced scorer
   aliases**, and carries an **Assign alias…** button that opens that page; the
   manual states that only registered versions can carry an alias (unregistered
   ones are greyed out as "— register first").
+* **Changed:** the **Bundle metrics** table now says which producer records each
+  metric, and every blank cell carries a tooltip naming the reason, so a missing
+  ``cv_score``/``mae`` reads as "training never measured this" rather than a broken
+  run. Tabular baselines also record a ``train_score`` now (they used to record
+  nothing without a validation partition, leaving the row empty).
 * **Fixed:** the rolling-origin backtest of a temporal experiment bundle fitted
   the bundle's whole pipeline on its own design matrix and failed with
   ``ForecastFeatureBuilder is missing required column(s): Month, Sales …``. The

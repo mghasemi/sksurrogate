@@ -696,6 +696,36 @@ overview compares the bundles side by side; metric tabs compute learning
 curves across training sizes using the task's saved splitter. Classification
 bundles also provide ROC, calibration, cumulative-gain, and lift diagnostics.
 
+The **Bundle metrics** table only shows what each producer wrote into the
+bundle's own ``metrics`` field, so a blank cell is a producer decision rather
+than a failed computation:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Metric
+     - Recorded by
+     - Meaning
+   * - ``train_score``
+     - experiments, pipeline optimization, ensembles, tabular baselines
+     - refit training score in the estimator's own units (accuracy, R²)
+   * - ``score``
+     - tabular baselines trained with a validation partition
+     - estimator score on that partition
+   * - ``cv_score``, ``cv_score_std``
+     - ensembles
+     - out-of-fold CV score of the combination and its fold spread
+   * - ``mae``, ``rmse``, ``mase``, ``smape``
+     - forecasting baselines
+     - pooled rolling-origin backtest over the declared horizon
+
+Any other bundle can be measured on demand: **Nested CV** reports the honest
+outer score (mean and interval) for the model, and the **Rolling-origin
+backtest** reports MAE/RMSE/bias/sMAPE/MASE per model and per horizon together
+with the naive baselines on identical origins. Both write their result onto the
+bundle's ``evaluations`` record (and the job result), not into this table, so the
+bundles' stored metrics stay a record of what training measured.
+
 Bundles that have a named alias (set with **Model aliases** on the Registry &
 Deployment page) are shown by those names in the Bundle metrics table and used
 as the series labels of the Metric comparison charts; the bundle selectors in

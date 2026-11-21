@@ -41,6 +41,24 @@ const CHART_COLORS = ["#4f8cff", "#7c5cff", "#34d399", "#fbbf24", "#f87171", "#6
 /** Tab id of the side-by-side metric comparison bar chart (every other tab is a learning curve). */
 const OVERVIEW_TAB = "overview";
 
+/**
+ * Which producer writes each metric into ``bundle.metrics``. The Bundle metrics
+ * table shows a column for every metric any bundle carries, so a blank cell is a
+ * producer decision (this run never measured it), not a failed computation.
+ * Values computed on demand — a rolling-origin backtest's MAE/RMSE/MASE/sMAPE, a
+ * nested-CV outer score — live on the bundle's ``evaluations`` record instead.
+ */
+const METRIC_ORIGIN: Record<string, string> = {
+  train_score: "refit training score in the estimator's own units (accuracy / R²) — experiments, pipeline optimization and ensembles",
+  score: "score on the validation partition — tabular baselines trained with one",
+  cv_score: "out-of-fold cross-validated score — ensembles only",
+  cv_score_std: "standard deviation of that ensemble CV score across folds",
+  mae: "pooled rolling-origin backtest — forecasting baselines",
+  rmse: "pooled rolling-origin backtest — forecasting baselines",
+  mase: "pooled rolling-origin backtest, seasonal-naive scale — forecasting baselines",
+  smape: "pooled rolling-origin backtest — forecasting baselines",
+};
+
 /** Drop null/NaN points so Recharts lines stay continuous. */
 function finitePoints(xs: Array<number | null>, ys: Array<number | null>): Array<{ x: number; y: number }> {
   const rows: Array<{ x: number; y: number }> = [];
@@ -1091,7 +1109,10 @@ export default function EvaluationPage() {
             )}
           </Card>
 
-          <Card title="Bundle metrics">
+          <Card
+            title="Bundle metrics"
+            sub="Only the metrics a bundle's producer recorded. Experiments and pipeline optimization store train_score; ensembles add cv_score / cv_score_std; forecasting baselines add mae / rmse / mase / sMAPE from their walk-forward backtest. Compute the rest for any bundle with Nested CV or a Rolling-origin backtest below — those results are stored on the bundle's evaluation record."
+          >
             <Table<BundleSummary>
               columns={["Model version", "Alias", ...metricNames, "Created"]}
               rows={bundles}
@@ -1104,9 +1125,15 @@ export default function EvaluationPage() {
                     return aliases && aliases.length > 0 ? aliases.join(", ") : <span className="muted">—</span>;
                   })()}
                 </td>,
-                ...metricNames.map((m) => (
-                  <td key={m}>{fmtNum(b.metrics[m])}</td>
-                )),
+                ...metricNames.map((m) => {
+                  const value = b.metrics[m];
+                  const recorded = typeof value === "number";
+                  return (
+                    <td key={m} title={recorded ? METRIC_ORIGIN[m] ?? undefined : `${m} was not recorded by this bundle's producer (${METRIC_ORIGIN[m] ?? "see the note above"}).`}>
+                      {fmtNum(value)}
+                    </td>
+                  );
+                }),
                 <td key="c" className="mono">{b.created_at}</td>,
               ]}
             />

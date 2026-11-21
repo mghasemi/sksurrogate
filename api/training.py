@@ -868,6 +868,10 @@ def fit_baseline_bundle(
     model.fit(train_X, train_y)
 
     metrics = {}
+    # Every other training path records a refit ``train_score`` in the estimator's
+    # own units; a tabular baseline without a validation partition used to record
+    # nothing, so the Bundle metrics table showed it as an empty row.
+    metrics["train_score"] = float(model.score(train_X, train_y))
     if validation_partition:
         validation_csv = settings.task_dataset_dir(task_name) / (safe_segment(validation_partition, "partition") + ".csv")
         if validation_csv.exists():
