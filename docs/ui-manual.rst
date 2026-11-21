@@ -588,11 +588,15 @@ A job that is only marked running because the API process died is shown as
 ``interrupted`` and offers **Resume** when a checkpoint survived.
 
 When the job completes, inspect the score history, top pipelines, and
-score-versus-duration Pareto frontier. Use **Optimize this structure** to tune
-one of the returned component sequences. A completed search creates a bundle
-that appears in **Model Bundles**. Use **Jobs** to inspect job status and
-details; failed experiment jobs may offer a resume action when a checkpoint
-allows it.
+score-versus-duration Pareto frontier. The **Score** column is labelled with the
+metric and its direction, e.g. *Score · RMSE (lower is better)*. Scores are stored
+in scikit-learn's higher-is-better form — an error metric such as
+``neg_root_mean_squared_error`` is kept as ``-RMSE`` — so the page converts them
+back and prints the error itself, and the *largest* stored value is the smallest
+error. Use **Optimize this structure** to tune one of the returned component
+sequences. A completed search creates a bundle that appears in **Model Bundles**.
+Use **Jobs** to inspect job status and details; failed experiment jobs may offer a
+resume action when a checkpoint allows it.
 
 Give a run a name in **Experiment name (optional)** before starting it. The
 name replaces the machine job id in the run banner, the job tracker, the Jobs

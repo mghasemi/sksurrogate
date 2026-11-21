@@ -204,6 +204,40 @@ _LEARNING_CURVE_METRICS = {
 }
 
 
+_SCORING_CATALOGUE = {
+    entry["value"]: entry
+    for family in _LEARNING_CURVE_METRICS.values()
+    for entry in family
+}
+
+
+def scoring_display(scoring):
+    """How to read a stored search score: metric label, direction, and sign convention.
+
+    ``SurrogateRandomCV`` searches in scikit-learn's higher-is-better units, so a
+    ``neg_*`` metric is stored with its sign flipped: a trial's ``-105.2`` is an RMSE
+    of **105.2**, and the best candidate is the *largest* stored value. The search is
+    therefore minimizing the real error, but a raw table of negative numbers reads as
+    if the search preferred the largest error. The job result carries this block so
+    the UI can print the metric in its natural units and say which direction wins.
+    """
+    entry = _SCORING_CATALOGUE.get(scoring or "")
+    if entry is not None:
+        negated = bool(entry.get("negate"))
+        label = entry["label"]
+    else:
+        name = str(scoring or "")
+        negated = name.startswith("neg_")
+        label = name[4:] if negated else name
+        label = label.replace("_", " ").strip() or "Score"
+    return {
+        "scoring": scoring,
+        "label": label,
+        "negated": negated,
+        "higher_is_better": not negated,
+    }
+
+
 def problem_family(estimator):
     """Classify a fitted estimator as ``"Classification"`` / ``"Regression"`` (else ``None``)."""
     from sklearn.base import is_classifier, is_regressor

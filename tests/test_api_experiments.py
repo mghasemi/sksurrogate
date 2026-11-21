@@ -396,3 +396,55 @@ def test_design_endpoints(client):
     assert nxt.status_code == 200, nxt.text
     bad = client.post("/api/design/latin-hypercube", json={"variables": [{"name": "x", "low": 2, "high": 1}]})
     assert bad.status_code == 400
+
+
+def test_a_regression_search_reports_its_error_in_natural_units(client):
+    """Stored scores are scikit-learn units (-RMSE); the payload says so, once.
+
+    The search minimizes the real error: a trial's loss is +RMSE, and because the
+    stored score is the higher-is-better form the table shows -RMSE and the best
+    candidate is the *largest* (least negative) value. Without this block a reader
+    sees a column of negative numbers and concludes the search preferred the biggest
+    error.
+    """
+    _register_regression(client, "reg-signs")
+    body = {
+        "preset": "regression",
+        "strategy": "exhaustive",
+        "length": 1,
+        "scoring": "neg_root_mean_squared_error",
+        "random_state": 0,
+    }
+    record = _wait(client, client.post("/api/experiments/reg-signs/run", json=body).json()["job_id"])
+    assert record["status"] == "completed", record
+    result = record["result"]
+    assert result["scoring"] == "neg_root_mean_squared_error"
+    assert result["score_metric"] == {
+        "scoring": "neg_root_mean_squared_error",
+        "label": "RMSE",
+        "negated": True,
+        "higher_is_better": False,
+    }
+    scores = [row["score"] for row in result["top_pipelines"] if row["score"] is not None]
+    assert scores and all(score <= 0.0 for score in scores)
+    # Highest stored value first == smallest RMSE first.
+    assert scores == sorted(scores, reverse=True)
+    assert [-score for score in scores] == sorted(-score for score in scores)
+
+
+def test_scoring_display_covers_metrics_outside_the_curated_list():
+    from api.training import scoring_display
+
+    assert scoring_display("accuracy")["label"] == "Accuracy"
+    assert scoring_display("accuracy")["negated"] is False
+    assert scoring_display("r2")["label"] == "R²"
+    assert scoring_display("r2")["higher_is_better"] is True
+    # A neg_* metric absent from the curated list still drops the prefix.
+    fallback = scoring_display("neg_mean_squared_log_error")
+    assert fallback == {
+        "scoring": "neg_mean_squared_log_error",
+        "label": "mean squared log error",
+        "negated": True,
+        "higher_is_better": False,
+    }
+    assert scoring_display(None)["label"] == "Score"

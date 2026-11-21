@@ -462,9 +462,22 @@ export default function ExperimentsPage() {
     setConfigError(null);
   };
 
+  const scoreMetric = result?.score_metric ?? null;
+  /** Stored scores follow scikit-learn's higher-is-better convention (-RMSE); print RMSE. */
+  const toNatural = (value: number | null | undefined) =>
+    value == null ? value : scoreMetric?.negated ? -value : value;
+  const metricLabel = scoreMetric?.label ?? "Score";
+  const direction = (scoreMetric?.higher_is_better ?? true) ? "higher" : "lower";
+  const scoreHeader = scoreMetric ? `Score · ${metricLabel} (${direction} is better)` : "Score";
+  const paretoPoints = (result?.pareto ?? []).map((row) => ({ ...row, score: toNatural(row.score) }));
+
   const historyPoints = (result?.evaluation_history ?? [])
     .filter((row) => typeof row.duration === "number" && typeof row.score === "number")
-    .map((row) => ({ pipeline: row.pipeline, score: row.score as number, duration: row.duration as number }));
+    .map((row) => ({
+      pipeline: row.pipeline,
+      score: toNatural(row.score) as number,
+      duration: row.duration as number,
+    }));
 
   return (
     <div className="stack">
@@ -813,14 +826,14 @@ export default function ExperimentsPage() {
         <>
           <Card title="Top pipelines" sub="Best stored pipeline structures from this search — optimize any one of them in place.">
             <Table
-              columns={["Pipeline", "Score", ""]}
+              columns={["Pipeline", scoreHeader, ""]}
               rows={result.top_pipelines ?? []}
               keyOf={(row, i) => `${i}-${row.pipeline.join(",")}`}
               render={(row) => [
                 <td key="p" className="mono">
                   {row.pipeline.map(shortName).join(" → ")}
                 </td>,
-                <td key="s">{fmtNum(row.score)}</td>,
+                <td key="s">{fmtNum(toNatural(row.score))}</td>,
                 <td key="a">
                   <button
                     className="btn"
@@ -855,7 +868,7 @@ export default function ExperimentsPage() {
           {historyPoints.length > 0 && (
             <Card
               title="Pareto frontier"
-              sub="Score vs. per-candidate duration; highlighted points are non-dominated (best score for their cost)."
+              sub={`${metricLabel} vs. per-candidate duration (${direction} is better); highlighted points are non-dominated (best ${metricLabel} for their cost).`}
             >
               <div style={{ height: 280 }}>
                 <ResponsiveContainer width="100%" height="100%">
@@ -868,19 +881,19 @@ export default function ExperimentsPage() {
                       domain={["auto", "auto"]}
                       tickFormatter={(v: number) => Number(v).toFixed(1)}
                     />
-                    <YAxis type="number" dataKey="score" name="Score" domain={["auto", "auto"]} width={64} />
+                    <YAxis type="number" dataKey="score" name={metricLabel} domain={["auto", "auto"]} width={64} />
                     <Tooltip cursor={{ strokeDasharray: "3 3" }} formatter={(value) => Number(value).toFixed(4)} />
                     <Scatter name="Candidates" data={historyPoints} fill="#9ca3af" opacity={0.55} />
-                    {(result.pareto ?? []).length > 0 && (
-                      <Scatter name="Frontier" data={result.pareto ?? []} fill="#4f8cff" />
+                    {paretoPoints.length > 0 && (
+                      <Scatter name="Frontier" data={paretoPoints} fill="#4f8cff" />
                     )}
                   </ScatterChart>
                 </ResponsiveContainer>
               </div>
-              {(result.pareto ?? []).length > 0 && (
+              {paretoPoints.length > 0 && (
                 <Table
-                  columns={["Pipeline", "Score", "Duration (s)"]}
-                  rows={result.pareto ?? []}
+                  columns={["Pipeline", scoreHeader, "Duration (s)"]}
+                  rows={paretoPoints}
                   keyOf={(row, i) => `${i}-${row.pipeline.join(",")}`}
                   render={(row) => [
                     <td key="p" className="mono">

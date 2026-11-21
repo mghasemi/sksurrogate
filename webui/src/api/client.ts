@@ -2547,6 +2547,16 @@ export interface ParetoPoint {
   duration: number | null;
 }
 
+export interface ScoreMetric {
+  /** Scorer name the search optimized, e.g. `neg_root_mean_squared_error`. */
+  scoring: string | null;
+  /** Human label in natural units, e.g. `RMSE`. */
+  label: string;
+  /** True when the stored score is the negated (scikit-learn) form: `-RMSE`. */
+  negated: boolean;
+  higher_is_better: boolean;
+}
+
 export interface ExperimentResult {
   model_version: string;
   bundle_path: string;
@@ -2555,6 +2565,9 @@ export interface ExperimentResult {
   top_pipelines: ExperimentTopPipeline[];
   /** Null when the search produced no candidates with both a score and a duration. */
   pareto: ParetoPoint[] | null;
+  /** How to read the scores above; absent on results recorded before this block existed. */
+  scoring?: string | null;
+  score_metric?: ScoreMetric | null;
 }
 
 export const runExperiment = (task: string, body: RunExperimentRequest) =>

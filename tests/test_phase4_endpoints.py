@@ -207,6 +207,16 @@ class TestPhase4Endpoints(unittest.TestCase):
         self.assertGreaterEqual(result["top_pipelines"][0]["score"], 0.0)
         self.assertLessEqual(result["top_pipelines"][0]["score"], 1.0)
         self.assertIn("pareto", result)
+        # Classification keeps its natural sign: accuracy is already higher-is-better.
+        self.assertEqual(
+            result["score_metric"],
+            {
+                "scoring": "accuracy",
+                "label": "Accuracy",
+                "negated": False,
+                "higher_is_better": True,
+            },
+        )
         # Every evaluated candidate is complete, so the frontier must be non-empty.
         self.assertTrue(result["pareto"])
         for point in result["pareto"]:

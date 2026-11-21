@@ -20,7 +20,14 @@ from ..deps import bad_request, open_tracker, task_access
 from ..partitions import resolve_partition
 from ..problem_type import declared_problem_type
 from ..jobs import dask_available, job_manager
-from ..training import SURROGATE_FAMILIES, SURROGATE_SAMPLERS, fit_experiment_bundle, fit_pipeline_bundle, standard_scoring_options
+from ..training import (
+    SURROGATE_FAMILIES,
+    SURROGATE_SAMPLERS,
+    fit_experiment_bundle,
+    fit_pipeline_bundle,
+    scoring_display,
+    standard_scoring_options,
+)
 
 router = APIRouter(prefix="/api/experiments", tags=["experiments"], dependencies=[Depends(task_access)])
 
@@ -225,6 +232,7 @@ def submit_experiment(task_name, body, *, checkpoint_job_id=None, run_id=None):
 
     def make_job(job_id):
         def _run():
+            scoring = _effective_scoring(body, preset)
             bundle, evaluation_history, top_pipelines, pareto = fit_experiment_bundle(
                 task_name,
                 config=config,
@@ -233,7 +241,7 @@ def submit_experiment(task_name, body, *, checkpoint_job_id=None, run_id=None):
                 max_generation=body.max_generations,
                 num_parents=body.num_parents,
                 train_partition=train_partition,
-                scoring=_effective_scoring(body, preset),
+                scoring=scoring,
                 random_state=body.random_state,
                 owner=body.owner,
                 run_id=run_id or body.run_id or job_id,
@@ -257,6 +265,11 @@ def submit_experiment(task_name, body, *, checkpoint_job_id=None, run_id=None):
                 "evaluation_history": evaluation_history,
                 "top_pipelines": top_pipelines,
                 "pareto": pareto,
+                # Scores above follow scikit-learn's higher-is-better convention
+                # (-RMSE for an error metric); this block tells a reader which
+                # quantity that is and which direction wins.
+                "scoring": scoring,
+                "score_metric": scoring_display(scoring),
             }
 
         return _run
