@@ -23,7 +23,10 @@ from sklearn.base import clone
 from sklearn.linear_model import LinearRegression
 
 from SKSurrogate import (
+    ForecastFeatureBuilder,
+    ModelBundle,
     RollingOriginSplit,
+    TemporalServeState,
     TemporalSpec,
     build_cv,
     cv_param_defs,
@@ -31,6 +34,8 @@ from SKSurrogate import (
     make_supervised,
     mltrack,
     rolling_origin_indices,
+    save_bundle,
+    serve_forecast,
 )
 
 from api.config import settings
@@ -196,15 +201,15 @@ class TestBacktest(unittest.TestCase):
         finally:
             tracker.close()
 
-    def test_cost_limit_and_unsupported_strategy_are_refused(self):
+    def test_cost_limit_and_unknown_strategy_are_refused(self):
         tracker = self._tracker()
         try:
             with self.assertRaises(ValueError) as ctx:
                 tracker.backtest(LinearRegression(), n_splits=20, cost_limit=5)
             self.assertIn("cost_limit", str(ctx.exception))
             with self.assertRaises(ValueError) as ctx:
-                tracker.backtest(LinearRegression(), strategy="recursive")
-            self.assertIn("direct", str(ctx.exception))
+                tracker.backtest(LinearRegression(), strategy="two-step")
+            self.assertIn("recursive", str(ctx.exception))
         finally:
             tracker.close()
 
@@ -291,6 +296,135 @@ class TestBacktest(unittest.TestCase):
         self.assertIn("y__lag_7", richer_features)
         self.assertIn("y__roll_mean_5", richer_features)
         self.assertNotEqual(default["artifact_key"], richer["artifact_key"])
+
+
+class TestRecursiveBacktest(unittest.TestCase):
+    """``strategy="recursive"`` replays the horizon through the serving walk.
+
+    Plan P3 deferred recursive evaluation until P6 supplied the serving state;
+    both now share :func:`SKSurrogate.temporal.recursive_steps`, so an offline
+    fold and a served forecast for the same origin cannot disagree.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db = str(Path(self._tmp.name) / "recursive.db")
+        # Exact linear series: a one-step model on lag h reproduces it bit-exact,
+        # so any deviation is a bookkeeping error, not model noise.
+        t = np.arange(1, 81, dtype=float)
+        self.frame = pd.DataFrame({"time": t, "y": 2.0 * t})
+        self.spec = TemporalSpec(time_column="time", horizon=3)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _tracker(self):
+        tracker = mltrack(TASK, db_name=self.db)
+        tracker.RegisterData(
+            self.frame,
+            "y",
+            partition="train",
+            temporal={"time_column": "time", "horizon": 3},
+        )
+        return tracker
+
+    def test_one_origin_per_fold_with_every_step_recorded(self):
+        tracker = self._tracker()
+        try:
+            result = tracker.backtest(
+                LinearRegression(),
+                horizon=3,
+                n_splits=4,
+                strategy="recursive",
+                feature_kwargs={"lags": [3]},
+            )
+        finally:
+            tracker.close()
+
+        self.assertEqual(result["config"]["strategy"], "recursive")
+        self.assertEqual(sorted(result["per_horizon"]), ["1", "2", "3"])
+        self.assertEqual(len(result["origins"]), 12)  # 4 origins x 3 steps
+        self.assertEqual(len({record["origin_time"] for record in result["origins"]}), 4)
+        self.assertEqual(
+            [record["target_step"] for record in result["origins"][:3]], [1, 2, 3]
+        )
+        # Truth and prediction are paired with the right future timestamps.
+        for record in result["origins"]:
+            self.assertAlmostEqual(record["y_true"], record["y_pred"], places=9)
+            self.assertEqual(float(record["target_time"]) - float(record["origin_time"]),
+                             float(record["target_step"]))
+        self.assertLess(result["pooled"]["mae"], 1e-9)
+
+    def test_timings_and_refit_policy_are_recorded(self):
+        tracker = self._tracker()
+        try:
+            result = tracker.backtest(
+                LinearRegression(),
+                horizon=3,
+                n_splits=3,
+                refit="first",
+                strategy="recursive",
+                feature_kwargs={"lags": [3]},
+            )
+        finally:
+            tracker.close()
+
+        self.assertEqual(result["fits"], 1)
+        folds = result["folds"]
+        self.assertGreater(folds[0]["fit_time"], 0.0)
+        self.assertEqual(folds[1]["fit_time"], 0.0)
+        for fold in folds:
+            self.assertIn("predict_time", fold)
+            self.assertGreaterEqual(fold["predict_time"], 0.0)
+        for record in result["origins"]:
+            self.assertIn("fit_time", record)
+            self.assertIn("predict_time", record)
+
+    def test_served_forecast_matches_the_fold_prediction_for_the_same_origin(self):
+        tracker = self._tracker()
+        try:
+            result = tracker.backtest(
+                LinearRegression(),
+                horizon=3,
+                n_splits=1,
+                strategy="recursive",
+                feature_kwargs={"lags": [3]},
+            )
+            frame = tracker.get_dataframe("train")
+        finally:
+            tracker.close()
+
+        records = [record for record in result["origins"] if record["fold"] == 0]
+        self.assertEqual(len(records), 3)
+        origin_time = float(records[0]["origin_time"])
+
+        # Same training set the fold used: every origin strictly before the cutoff.
+        design = make_supervised(
+            frame, self.spec, "y", strategy="recursive", lags=[3]
+        )
+        train_mask = design.meta["origin_time"].to_numpy(dtype=float) < origin_time
+        model = LinearRegression().fit(design.X[train_mask], design.y[train_mask])
+        builder = ForecastFeatureBuilder(spec=self.spec, target="y", lags=[3])
+        builder.fit(frame)
+        from sklearn.pipeline import Pipeline
+
+        bundle = ModelBundle(
+            Pipeline([("features", builder), ("model", model)]),
+            task_name=TASK,
+            temporal=TemporalServeState.from_parts(
+                self.spec, "y", builder, strategy="recursive"
+            ).to_dict(),
+        )
+        history = frame[frame["time"] <= origin_time]
+        served = serve_forecast(bundle, history, horizon=3)
+        self.assertTrue(
+            np.allclose(
+                np.asarray(served.means, dtype=float),
+                [record["y_pred"] for record in records],
+                rtol=0.0,
+                atol=1e-9,
+            )
+        )
 
 
 class TestBacktestEndpoint(unittest.TestCase):

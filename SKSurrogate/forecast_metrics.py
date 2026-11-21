@@ -26,7 +26,11 @@ from typing import Any, Iterable, Mapping, Sequence
 import numpy as np
 
 #: Baselines every temporal backtest can produce.
-BASELINE_METHODS = ("naive", "seasonal_naive", "drift", "mean")
+#: Baseline forecasters every temporal backtest can score. ``mean`` and
+#: ``historical_mean_by_series`` are the same computation because a backtest
+#: always conditions on one series' own history; the second name exists because
+#: a caller coming from a pooled setting expects it stated explicitly.
+BASELINE_METHODS = ("naive", "seasonal_naive", "drift", "mean", "historical_mean_by_series")
 
 
 def _arrays(y_true, y_pred):
@@ -320,7 +324,10 @@ def baseline_prediction(history, method: str, horizon: int, seasonality: int = 1
     * ``naive`` — the last observation;
     * ``seasonal_naive`` — the observation ``seasonality`` steps back;
     * ``drift`` — last value plus the average change per step, times ``horizon``;
-    * ``mean`` — the arithmetic mean of the history.
+    * ``mean`` — the arithmetic mean of the history;
+    * ``historical_mean_by_series`` — the same mean, named explicitly: every
+      call is conditioned on one series' history, so there is no pooled
+      cross-series mean to distinguish (plan phase P4.2 vocabulary).
 
     :param history: ordered observations available *at the forecast origin*.
     """
@@ -347,7 +354,7 @@ def baseline_prediction(history, method: str, horizon: int, seasonality: int = 1
         # observation, which is what makes it the canonical seasonal baseline.
         steps_back = seasonality - ((horizon - 1) % seasonality)
         return float(values[-steps_back])
-    if method == "mean":
+    if method in ("mean", "historical_mean_by_series"):
         return float(np.mean(values))
     if method == "drift":
         if values.size < 2:

@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -1090,7 +1090,27 @@ class ForecastFeatureBuilder(BaseEstimator, TransformerMixin):
         )
         return target_values, meta
 
+    # -- serving (plan phase P6) ------------------------------------------
+
+    def serving_twin(self) -> "ForecastFeatureBuilder":
+        """A behaviorally identical twin that preserves row positions.
+
+        Serving and recursive walk-forward evaluation must select features by
+        position: dropping rows with an incomplete vector would silently shift
+        output row *i* away from frame row *i*. The twin keeps every fitted
+        attribute and turns ``dropna`` off; the original instance is untouched.
+        """
+        check_is_fitted(self, "feature_specs_")
+        params = dict(self.get_params())
+        params["dropna"] = False
+        twin = type(self)(**params)
+        for attr_name, attr_value in vars(self).items():
+            if attr_name.endswith("_"):
+                setattr(twin, attr_name, attr_value)
+        return twin
+
     # -- serialization (plan phase P6) ------------------------------------
+
     def to_dict(self) -> dict[str, Any]:
         """JSON-safe serialization of this builder's *configuration*.
 
@@ -1765,6 +1785,67 @@ def _extend_axis(time_values: pd.Series, count: int, freq: str | None = None) ->
     return [pd.Timestamp(int(last_value + (k + 1) * step)) if isinstance(last, pd.Timestamp) else last_value + (k + 1) * step for k in range(count)]
 
 
+def recursive_steps(
+    transform: Any,
+    predictor: Any,
+    working: pd.DataFrame,
+    target: str,
+    horizon: int,
+    *,
+    future_times: Sequence[Any],
+    build_row: Any,
+) -> np.ndarray:
+    """Forecast ``horizon`` steps one at a time, feeding each prediction back.
+
+    This is the single implementation of recursive multi-step forecasting: the
+    serving path (:func:`serve_forecast`) and the rolling-origin backtest
+    (``mltrack.backtest(strategy="recursive")``) both call it, so a served
+    forecast and its offline evaluation cannot drift apart.
+
+    :param transform: row-preserving feature function, ``frame -> DataFrame``.
+    :param predictor: fitted estimator taking a one-row feature frame.
+    :param working: history frame, already trimmed to the forecast origin.
+    :param target: column that receives each step's prediction.
+    :param horizon: number of steps to forecast.
+    :param future_times: one timestamp per step, used for the synthetic row and
+        for error messages.
+    :param build_row: ``(working, step_index, prediction) -> dict`` building the
+        synthetic row (time, series label, exogenous values).
+    :raises ValueError: on incomplete features, a non-finite prediction, or a
+        transform that does not preserve the row count.
+    """
+    values: list[float] = []
+    for step in range(int(horizon)):
+        features = transform(working)
+        if len(features) != len(working):
+            raise ValueError(
+                "a preprocessing step changed the row count; only row-preserving "
+                "steps can serve a temporal design"
+            )
+        x_row = features.iloc[-1]
+        missing_values = [name for name, value in x_row.items() if pd.isna(value)]
+        if missing_values:
+            raise ValueError(
+                "incomplete feature values at forecast step %d (%s): columns %s are "
+                "not backed by the history — supply future exogenous rows or a "
+                "longer history"
+                % (step + 1, future_times[step], ", ".join(missing_values))
+            )
+        prediction = float(np.asarray(predictor.predict(x_row.to_frame().T)).ravel()[0])
+        if not np.isfinite(prediction):
+            raise ValueError(
+                "the model produced a non-finite forecast value at step %d (%s); "
+                "check the history for gaps or an exogenous value it cannot "
+                "extrapolate" % (step + 1, future_times[step])
+            )
+        row = build_row(working, step, prediction)
+        working = pd.concat(
+            [working, pd.DataFrame([row], columns=working.columns)], ignore_index=True
+        )
+        values.append(prediction)
+    return np.asarray(values, dtype="float64")
+
+
 def _serving_steps(bundle: Any):
     """Locate the pipeline's fitted builder and build row-preserving serving steps.
 
@@ -1795,13 +1876,7 @@ def _serving_steps(bundle: Any):
     serving_steps = []
     for i, (name, estimator) in enumerate(steps):
         if i == index and isinstance(estimator, ForecastFeatureBuilder):
-            params = dict(estimator.get_params())
-            params["dropna"] = False
-            twin = type(estimator)(**params)
-            for attr_name in vars(estimator):  # carry the fit bookkeeping over
-                if attr_name.endswith("_"):
-                    setattr(twin, attr_name, getattr(estimator, attr_name))
-            serving_steps.append((name, twin))
+            serving_steps.append((name, estimator.serving_twin()))
         else:
             serving_steps.append((name, estimator))
     transformers = Pipeline(serving_steps[:-1]) if len(serving_steps) > 1 else None
@@ -1885,12 +1960,12 @@ def serve_forecast(
                 "future_exogenous is missing column(s): %s" % ", ".join(missing)
             )
 
-    means: np.ndarray
+    # ``recursive_steps`` is shared with ``mltrack.backtest(strategy="recursive")``,
+    # so a served forecast and its walk-forward evaluation cannot diverge.
     if state.strategy == "direct":
         n = len(frame)
         positions = np.arange(n - requested, n, dtype="int64")
-        working = frame
-        X_all = transformers.transform(working) if transformers is not None else pd.DataFrame(
+        X_all = transformers.transform(frame) if transformers is not None else pd.DataFrame(
             index=frame.index
         )
         if len(X_all) != n:
@@ -1899,55 +1974,13 @@ def serve_forecast(
                 "steps can serve a temporal bundle" % (n, len(X_all))
             )
         selected = X_all.iloc[positions]
-    else:
-        # Recursive serving with state feedback: extend the frame one synthetic
-        # step at a time, predicting each step *before* later steps' features are
-        # built — so target lags that reach past the real history read this call's
-        # earlier predictions instead of placeholders. If a feature is still NaN
-        # after that (history too short, missing exogenous), the check below fires.
-        working = frame.copy()
-        step_values: list[float] = []
-        for k in range(requested):
-            row = {column: np.nan for column in working.columns}
-            row[spec.time_column] = synthetic_times[k]
-            if spec.series_id is not None:
-                row[spec.series_id] = label
-            row[target] = np.nan  # placeholder, replaced by this step's prediction
-            if exog_frame is not None and len(exog_frame):
-                match = _exogenous_row(exog_frame, spec.time_column, synthetic_times[k])
-                for column in state.exogenous_columns:
-                    value = match.get(column) if isinstance(match, Mapping) else np.nan
-                    row[column] = np.nan if value is None or (isinstance(value, float) and pd.isna(value)) else value
-            working = pd.concat([working, pd.DataFrame([row], columns=working.columns)], ignore_index=True)
-            features = transformers.transform(working) if transformers is not None else pd.DataFrame(index=range(len(working)))
-            if len(features) != len(working):
-                raise ValueError(
-                    "a preprocessing step changed the row count; only row-preserving steps "
-                    "can serve a temporal bundle"
-                )
-            x_row = features.iloc[-1]
-            missing_values = [name for name, value in x_row.items() if pd.isna(value)]
-            if missing_values:
-                raise ValueError(
-                    "incomplete feature values at forecast step %d (%s): columns %s are not "
-                    "backed by the history — supply future_exogenous rows or a longer history"
-                    % (k + 1, synthetic_times[k], ", ".join(missing_values))
-                )
-            y_hat = float(np.asarray(predictor.predict(x_row.to_frame().T)).ravel()[0])
-            if not np.isfinite(y_hat):
-                raise ValueError(
-                    "the model produced a non-finite forecast value at step %d (%s); check the "
-                    "history for gaps or an exogenous value it cannot extrapolate"
-                    % (k + 1, synthetic_times[k])
-                )
-            # Feed the prediction back so later steps' target lags can read it.
-            working.iloc[-1, working.columns.get_loc(target)] = y_hat
-            step_values.append(y_hat)
-
-    if state.strategy == "direct":
         bad = []
         for position in positions:
-            row_bad = [name for name, value in selected.iloc[position - positions[0]].items() if pd.isna(value)]
+            row_bad = [
+                name
+                for name, value in selected.iloc[position - positions[0]].items()
+                if pd.isna(value)
+            ]
             if row_bad:
                 bad.append((frame.loc[position, spec.time_column], row_bad))
         if bad:
@@ -1956,17 +1989,45 @@ def serve_forecast(
                 "incomplete feature values at forecast origin(s) — %s; the history has gaps "
                 "or ends too close to its last observation" % detail
             )
-
-    if state.strategy == "direct":
-        predictions = np.asarray(predictor.predict(selected)).ravel()
+        predictions = np.asarray(predictor.predict(selected), dtype="float64").ravel()
         if not np.all(np.isfinite(predictions)):
             raise ValueError(
                 "the model produced non-finite forecast values; check the history for gaps or an "
                 "exogenous value it cannot extrapolate"
             )
     else:
-        # Finiteness was checked per step inside the feedback loop.
-        predictions = np.asarray(step_values, dtype="float64")
+
+        def _build_row(working: pd.DataFrame, step: int, prediction: float) -> dict:
+            row = {column: np.nan for column in working.columns}
+            row[spec.time_column] = synthetic_times[step]
+            if spec.series_id is not None:
+                row[spec.series_id] = label
+            row[target] = prediction
+            if exog_frame is not None and len(exog_frame):
+                match = _exogenous_row(exog_frame, spec.time_column, synthetic_times[step])
+                for column in state.exogenous_columns:
+                    value = match.get(column) if isinstance(match, Mapping) else np.nan
+                    row[column] = (
+                        np.nan
+                        if value is None or (isinstance(value, float) and pd.isna(value))
+                        else value
+                    )
+            return row
+
+        def _transform(working: pd.DataFrame) -> pd.DataFrame:
+            if transformers is None:
+                return pd.DataFrame(index=working.index)
+            return transformers.transform(working)
+
+        predictions = recursive_steps(
+            _transform,
+            predictor,
+            frame.copy(),
+            target,
+            requested,
+            future_times=synthetic_times,
+            build_row=_build_row,
+        )
 
     lower = upper = None
     interval_note = None

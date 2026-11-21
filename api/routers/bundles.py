@@ -38,11 +38,28 @@ class TrainBaselineRequest(BaseModel):
     validation_partition: str | None = "validation"
     owner: str | None = None
     run_id: str | None = None
+    #: Temporal tasks only: the design horizon (defaults to the declared one),
+    #: the ``make_supervised`` feature configuration, the strategy, and the
+    #: seasonality used by the seasonal-naive baseline and the MASE scale.
+    horizon: int | None = None
+    features: dict | None = None
+    strategy: str = "direct"
+    seasonality: int = 1
+    n_splits: int = 5
 
 
 @router.post("/{task_name}/train-baseline")
 def train_baseline(task_name: str, body: TrainBaselineRequest):
-    """Fit a simple scikit-learn baseline pipeline and wrap it into a bundle."""
+    """Fit a simple scikit-learn baseline pipeline and wrap it into a bundle.
+
+    On a temporal task the route answers with a *forecasting* baseline bundle:
+    its model is a ``Pipeline`` starting with ``ForecastFeatureBuilder``, the
+    record carries the serving geometry and its ``baseline_scores`` (naive,
+    seasonal naive, drift, mean on identical origins), and the same bundle can be
+    served through ``POST /api/inference/{task}/forecast``.
+    """
+    if body.strategy not in ("direct", "recursive"):
+        raise bad_request("strategy must be 'direct' or 'recursive'")
     bundle = fit_baseline_bundle(
         task_name,
         estimator=body.estimator,
@@ -50,6 +67,11 @@ def train_baseline(task_name: str, body: TrainBaselineRequest):
         validation_partition=body.validation_partition,
         owner=body.owner,
         run_id=body.run_id,
+        horizon=body.horizon,
+        features=body.features,
+        strategy=body.strategy,
+        seasonality=body.seasonality,
+        n_splits=body.n_splits,
     )
     bundles_dir = settings.task_bundles_dir(task_name)
     bundles_dir.mkdir(parents=True, exist_ok=True)
@@ -62,6 +84,8 @@ def train_baseline(task_name: str, body: TrainBaselineRequest):
         "metrics": bundle.metrics,
         "schema": bundle.schema,
         "bundle_path": str(bundle_path),
+        "temporal": bundle.temporal,
+        "baseline_scores": (bundle.metadata or {}).get("baseline_scores") or {},
     }
 
 

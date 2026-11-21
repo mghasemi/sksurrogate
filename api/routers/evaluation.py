@@ -16,6 +16,7 @@ Endpoints:
 """
 
 from datetime import datetime, timezone
+from typing import Literal
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query, Depends
@@ -207,6 +208,9 @@ class BacktestRequest(BaseModel):
     min_train: int | None = Field(default=None, ge=1)
     expanding: bool = True
     refit: str = "every_fold"
+    #: ``direct`` labels ``y_{t+horizon}``; ``recursive`` labels ``y_{t+1}`` and
+    #: replays the horizon by feeding each prediction back (plan phases P3/P6).
+    strategy: Literal["direct", "recursive"] = "direct"
     scoring: str | None = None
     train_partition: str = "train"
     features: dict[str, object] = Field(default_factory=dict)
@@ -430,6 +434,7 @@ def run_backtest(task_name: str, body: BacktestRequest):
                 min_train=body.min_train,
                 expanding=body.expanding,
                 refit=body.refit,
+                strategy=body.strategy,
                 scoring=scoring_fn,
                 scoring_label=body.scoring,
                 train_partition=body.train_partition,
@@ -464,6 +469,7 @@ def run_backtest(task_name: str, body: BacktestRequest):
                     "step": result["config"]["step"],
                     "expanding": result["config"]["expanding"],
                     "refit": result["config"]["refit"],
+                    "strategy": result["config"]["strategy"],
                     "scoring": body.scoring,
                     "features": body.features,
                 },
@@ -471,6 +477,10 @@ def run_backtest(task_name: str, body: BacktestRequest):
                     "mean_fold_score": result.get("mean_fold_score"),
                     "pooled": result.get("pooled"),
                 },
+                # Plan P4.2: every temporal record carries the naive baselines
+                # scored on the identical origins, so a bundle can never be read
+                # without the comparison that makes its MASE interpretable.
+                "baselines": result.get("baselines"),
                 "intervals": {
                     "available": bool(intervals.get("available")),
                     "alpha": body.alpha,
@@ -480,6 +490,11 @@ def run_backtest(task_name: str, body: BacktestRequest):
             }
         )
         bundle.metadata["evaluations"] = evaluations[-20:]
+        # Plan P4.2: ``baseline_scores`` is the bundle-level summary of the naive
+        # baselines measured on this backtest's origins (seasonal naive always
+        # included), so a promotion decision always has the honest comparator.
+        if result.get("baselines"):
+            bundle.metadata["baseline_scores"] = dict(result["baselines"])
         local_bundle_path = (
             settings.task_bundles_dir(task_name)
             / (safe_segment(bundle.model_version, "model version") + ".bundle")

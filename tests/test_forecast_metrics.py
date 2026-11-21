@@ -206,6 +206,22 @@ class TestBaselines(unittest.TestCase):
     def test_mean_is_the_historical_average(self):
         self.assertEqual(baseline_prediction(self.history, "mean", 5), float(np.mean(self.history)))
 
+    def test_historical_mean_by_series_is_the_same_per_series_mean(self):
+        # Plan P4.2 names this baseline explicitly. A backtest always conditions
+        # on one series' history, so the two names must denote one computation —
+        # a pooled cross-series mean would be a different (and misleading)
+        # number, and silently shipping that under this name would be a bug.
+        self.assertIn("historical_mean_by_series", BASELINE_METHODS)
+        for horizon in (1, 4):
+            self.assertEqual(
+                baseline_prediction(self.history, "historical_mean_by_series", horizon),
+                baseline_prediction(self.history, "mean", horizon),
+            )
+        self.assertEqual(
+            baseline_prediction(self.history, "historical_mean_by_series", 1),
+            float(np.mean(self.history)),
+        )
+
     def test_unknown_method_and_empty_history_are_refused(self):
         with self.assertRaises(ValueError):
             baseline_prediction(self.history, "ets", 1)

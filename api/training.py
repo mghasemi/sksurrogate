@@ -476,6 +476,172 @@ def _baseline_needs_preprocessing(frame):
     return False
 
 
+def _temporal_baseline_bundle(
+    tracker,
+    task_name,
+    target,
+    metadata,
+    train_frame,
+    estimator,
+    estimator_cls,
+    *,
+    train_partition="train",
+    horizon=None,
+    features=None,
+    strategy="direct",
+    seasonality=1,
+    n_splits=5,
+    owner=None,
+    run_id=None,
+):
+    """Fit a forecasting baseline for a task that declares a temporal spec.
+
+    A tabular baseline bundle cannot answer ``predict_forecast``: it needs a
+    feature builder that turns raw history into a design matrix. This path builds
+    that pipeline, stores the serving geometry (``TemporalServeState``) on the
+    bundle, and — plan P4.2 — always measures the naive baselines on a
+    rolling-origin backtest so the bundle record carries ``baseline_scores``
+    (seasonal naive included). Without that comparison a forecast metric cannot
+    be read honestly.
+    """
+    from sklearn.pipeline import Pipeline
+
+    from SKSurrogate import ForecastFeatureBuilder, TemporalServeState, TemporalSpec
+    from SKSurrogate.forecast_metrics import BASELINE_METHODS
+
+    spec = TemporalSpec.from_dict(tracker.GetTemporalSpec())
+    design_horizon = int(spec.horizon if horizon is None else horizon)
+    if design_horizon < 1:
+        raise bad_request("horizon must be >= 1")
+    design_spec = TemporalSpec(**{**spec.to_dict(), "horizon": design_horizon})
+    # ``train_frame`` arrives with the ignored columns dropped, and a temporal
+    # declaration puts the time/series columns on that list (decision D4). The
+    # builder needs them, so reload the partition and drop only *genuine*
+    # ignored features (plan P4.2 path, same rule as ``mltrack.backtest``).
+    train_frame = tracker.get_dataframe(train_partition)
+    ignored = set(read_ignored_columns(task_name)) - set(design_spec.temporal_columns)
+    ignored = {column for column in ignored if column in train_frame.columns}
+    if ignored:
+        train_frame = train_frame.drop(columns=sorted(ignored))
+    builder_kwargs = dict(features or {})
+    builder_kwargs.setdefault("lags", [design_horizon])
+    builder = ForecastFeatureBuilder(
+        spec=design_spec, target=target, **builder_kwargs
+    )
+    builder.fit(train_frame)
+    design = builder.build(
+        train_frame, target_horizon=1 if strategy == "recursive" else None
+    )
+    if not len(design.X):
+        raise bad_request(
+            "the feature configuration leaves no usable rows in partition %r"
+            % train_partition
+        )
+    model = estimator_cls().fit(design.X, design.y)
+    pipeline = Pipeline([("features", builder), ("model", model)])
+    state = TemporalServeState.from_parts(
+        design_spec, target, builder, strategy=strategy
+    )
+
+    metrics: dict = {}
+    baseline_scores: dict = {}
+    backtest_summary: dict = {"available": False}
+    try:
+        result = tracker.backtest(
+            estimator_cls(),
+            horizon=design_horizon,
+            n_splits=n_splits,
+            refit="first",
+            strategy=strategy,
+            train_partition=train_partition,
+            feature_kwargs=builder_kwargs,
+            exclude_columns=sorted(ignored),
+            seasonality=seasonality,
+            baselines=BASELINE_METHODS,
+            store=False,
+        )
+    except ValueError as exc:
+        # Too little history for an honest walk-forward: say so on the record
+        # instead of reporting an in-sample number as if it were a forecast.
+        backtest_summary = {"available": False, "reason": str(exc)}
+    else:
+        pooled = result.get("pooled") or {}
+        metrics = {
+            key: pooled[key]
+            for key in ("mae", "rmse", "mase", "smape")
+            if pooled.get(key) is not None
+        }
+        baseline_scores = dict(result.get("baselines") or {})
+        backtest_summary = {
+            "available": True,
+            "artifact_key": result.get("artifact_key"),
+            "config": result.get("config"),
+        }
+
+    run_record = _reproducibility_record(
+        task_name,
+        metadata,
+        train_frame,
+        target,
+        train_partition,
+        configuration={
+            "kind": "temporal-baseline",
+            "estimator": estimator,
+            "estimator_parameters": estimator_cls().get_params(deep=False),
+            "strategy": strategy,
+            "horizon": design_horizon,
+            "features": builder_kwargs,
+            "seasonality": seasonality,
+        },
+        transformations=[
+            {
+                "class": "%s.%s"
+                % (ForecastFeatureBuilder.__module__, ForecastFeatureBuilder.__qualname__),
+                "parameters": builder.to_dict(),
+            },
+            {
+                "class": "%s.%s" % (estimator_cls.__module__, estimator_cls.__qualname__),
+                "parameters": estimator_cls().get_params(deep=False),
+            },
+        ],
+        evaluation_protocol={
+            "selection": "none; fixed baseline forecaster",
+            "metric": "rolling-origin backtest",
+            "metric_scope": (
+                "walk-forward origins on partition %r" % train_partition
+                if backtest_summary["available"]
+                else "unavailable: %s" % backtest_summary.get("reason")
+            ),
+        },
+    )
+    bundle = ModelBundle(
+        pipeline,
+        task_name=task_name,
+        schema={
+            column: {"dtype": str(train_frame[column].dtype)}
+            for column in train_frame.columns
+        },
+        metrics=metrics,
+        metadata={
+            "reproducibility": run_record,
+            "baseline_scores": baseline_scores,
+            "backtest": backtest_summary,
+        },
+        dataset_fingerprint=run_record["data"]["train_fingerprint"],
+        temporal=state.to_dict(),
+        dependencies={},
+        owner=owner,
+        run_id=run_id,
+    )
+    bundle.record_audit_event(
+        "training",
+        estimator=estimator,
+        metrics=metrics,
+        baseline_scores=baseline_scores,
+    )
+    return bundle
+
+
 def fit_baseline_bundle(
     task_name,
     *,
@@ -484,16 +650,48 @@ def fit_baseline_bundle(
     validation_partition="validation",
     owner=None,
     run_id=None,
+    horizon=None,
+    features=None,
+    strategy="direct",
+    seasonality=1,
+    n_splits=5,
 ):
-    """Fit a simple scikit-learn baseline pipeline and wrap it into a ``ModelBundle``."""
+    """Fit a simple scikit-learn baseline pipeline and wrap it into a ``ModelBundle``.
+
+    Tasks that declare a temporal spec take the forecasting path instead
+    (``_temporal_baseline_bundle``): the baseline is fitted on a generated design
+    matrix, the bundle carries the serving geometry, and its record stores the
+    naive baselines measured on the same rolling origins (plan P4.2).
+    """
     if estimator not in BASELINE_ESTIMATORS:
         raise bad_request("Unknown estimator %r; choose one of %s" % (estimator, sorted(BASELINE_ESTIMATORS)))
     target, metadata = get_registered_target(task_name)
     train_frame = load_partition(task_name, train_partition)
+    estimator_cls = BASELINE_ESTIMATORS[estimator]
+
+    with open_tracker(task_name) as tracker:
+        if tracker.GetTemporalSpec() is not None:
+            return _temporal_baseline_bundle(
+                tracker,
+                task_name,
+                target,
+                metadata,
+                train_frame,
+                estimator,
+                estimator_cls,
+                train_partition=train_partition,
+                horizon=horizon,
+                features=features,
+                strategy=strategy,
+                seasonality=seasonality,
+                n_splits=n_splits,
+                owner=owner,
+                run_id=run_id,
+            )
+
     train_X = train_frame.drop(columns=[target])
     train_y = train_frame[target]
 
-    estimator_cls = BASELINE_ESTIMATORS[estimator]
     preprocessed = _baseline_needs_preprocessing(train_X)
     if preprocessed:
         # Mixed-type partition: the same fold-local encoder the experiment

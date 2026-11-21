@@ -171,14 +171,17 @@ def _recursive_reference(bundle: ModelBundle, history: pd.DataFrame, steps: int)
     step = observed_step if observed_step is not None else 1.0
     preds: list[float] = []
     for k in range(steps):
+        # Features are read at the *current* last origin, whose label is the next
+        # observation: that is the step-k forecast (t + k + 1). Appending the
+        # synthetic row first would predict t + k + 2 and shift the whole path.
+        x_last = transformer.transform(working).iloc[[-1]]
+        pred = float(estimator.predict(x_last)[0])
         row = {column: np.nan for column in working.columns}
         row["time"] = last_time + (k + 1) * step
         if "store" in working.columns:
             row["store"] = working["store"].iloc[-1]
+        row["y"] = pred
         working = pd.concat([working, pd.DataFrame([row])], ignore_index=True)
-        x_last = transformer.transform(working).iloc[[-1]]
-        pred = float(estimator.predict(x_last)[0])
-        working.loc[len(working) - 1, "y"] = pred
         preds.append(pred)
     return np.array(preds)
 

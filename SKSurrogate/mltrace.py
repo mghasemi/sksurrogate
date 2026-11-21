@@ -14,6 +14,7 @@ It also has built in capabilities to generate some typical plots and graph in ma
 
 import hashlib
 import json
+import time
 import numpy
 import joblib
 import warnings
@@ -36,10 +37,12 @@ from .forecast_metrics import BASELINE_METHODS
 from .temporal import (
     TEMPORAL_METADATA_KEY,
     TEMPORAL_REPORT_METADATA_KEY,
+    ForecastFeatureBuilder,
     RollingOriginSplit,
     TemporalSpec,
     TemporalValidationError,
     make_supervised,
+    recursive_steps,
     rolling_origin_indices,
     temporal_columns,
     validate_temporal_frame,
@@ -1633,11 +1636,8 @@ class mltrack(object):
         if horizon < 1:
             raise ValueError("horizon must be >= 1")
         step = int(horizon if step is None else step)
-        if strategy != "direct":
-            raise ValueError(
-                "backtest evaluates the 'direct' strategy only today; recursive "
-                "multi-step evaluation requires the serving state (phase P6)"
-            )
+        if strategy not in ("direct", "recursive"):
+            raise ValueError("strategy must be 'direct' or 'recursive'")
         seasonality = int(seasonality)
         if seasonality < 1:
             raise ValueError("seasonality must be >= 1")
@@ -1678,9 +1678,17 @@ class mltrack(object):
         design_spec = TemporalSpec(**{**spec.to_dict(), "horizon": horizon})
         builder_kwargs = dict(feature_kwargs or {})
         builder_kwargs.setdefault("lags", [horizon])
-        design = make_supervised(
-            frame, design_spec, target, strategy="direct", **builder_kwargs
+        # One builder instance serves both strategies: the direct design labels
+        # ``y_{t+horizon}``, the recursive design labels ``y_{t+1}`` while the
+        # declared horizon still constrains every feature shift. Keeping the
+        # fitted builder also lets the recursive walk reuse the exact transform
+        # serving uses (``serving_twin`` + ``recursive_steps``).
+        builder = ForecastFeatureBuilder(spec=design_spec, target=target, **builder_kwargs)
+        builder.fit(frame)
+        design = builder.build(
+            frame, target_horizon=1 if strategy == "recursive" else None
         )
+        design.strategy = strategy
         if not len(design.X):
             raise ValueError(
                 "the feature configuration leaves no usable rows in partition %r"
@@ -1694,48 +1702,109 @@ class mltrack(object):
                 return value
             return str(value)
 
-        if spec.series_id is None:
-            group_positions = {None: list(range(len(design.X)))}
+        if strategy == "direct":
+            if spec.series_id is None:
+                group_positions = {None: list(range(len(design.X)))}
+            else:
+                group_positions = {}
+                for position, label in enumerate(design.meta["series"].tolist()):
+                    group_positions.setdefault(label, []).append(position)
+
+            per_group_folds = {}
+            skipped = {}
+            for label, positions in group_positions.items():
+                try:
+                    folds_for_group = rolling_origin_indices(
+                        len(positions),
+                        n_splits=n_splits,
+                        horizon=horizon,
+                        step=step,
+                        min_train=min_train,
+                        expanding=expanding,
+                    )
+                except ValueError as exc:
+                    skipped[str(_scalar(label))] = str(exc)
+                    continue
+                per_group_folds[label] = (positions, folds_for_group)
+            if not per_group_folds:
+                raise ValueError(
+                    "no series has enough history for n_splits=%d, horizon=%d: %s"
+                    % (n_splits, horizon, skipped)
+                )
+
+            folds = []
+            for fold in range(n_splits):
+                train_positions, test_positions = [], []
+                for positions, folds_for_group in per_group_folds.values():
+                    train_part, test_part = folds_for_group[fold]
+                    train_positions.extend(positions[index] for index in train_part)
+                    test_positions.extend(positions[index] for index in test_part)
+                folds.append(
+                    (
+                        np.asarray(sorted(train_positions), dtype="int64"),
+                        np.asarray(test_positions, dtype="int64"),
+                    )
+                )
         else:
-            group_positions = {}
-            for position, label in enumerate(design.meta["series"].tolist()):
-                group_positions.setdefault(label, []).append(position)
-
-        per_group_folds = {}
-        skipped = {}
-        for label, positions in group_positions.items():
-            try:
-                folds_for_group = rolling_origin_indices(
-                    len(positions),
-                    n_splits=n_splits,
-                    horizon=horizon,
-                    step=step,
-                    min_train=min_train,
-                    expanding=expanding,
+            # Recursive folds walk the *observation* axis: each fold trains on
+            # origins whose one-step label is observed at or before the cutoff,
+            # then replays the horizon by feeding predictions back. The fold's
+            # test window is the ``horizon`` observations after the cutoff.
+            if spec.series_id is None:
+                ordered_groups = {
+                    None: frame.sort_values(spec.time_column, kind="stable")
+                }
+            else:
+                ordered_groups = {
+                    key: group.sort_values(spec.time_column, kind="stable")
+                    for key, group in frame.groupby(spec.series_id, sort=False)
+                }
+            origin_index = {}
+            for position, row in enumerate(design.meta.to_dict("records")):
+                origin_index.setdefault(str(_scalar(row["series"])), {})[
+                    str(row["origin_time"])
+                ] = position
+            usable_groups = {}
+            skipped = {}
+            for key, ordered in ordered_groups.items():
+                try:
+                    folds_for_group = rolling_origin_indices(
+                        len(ordered),
+                        n_splits=n_splits,
+                        horizon=horizon,
+                        step=step,
+                        min_train=min_train,
+                        expanding=expanding,
+                    )
+                except ValueError as exc:
+                    skipped[str(_scalar(key))] = str(exc)
+                    continue
+                usable_groups[key] = (ordered, folds_for_group)
+            if not usable_groups:
+                raise ValueError(
+                    "no series has enough history for n_splits=%d, horizon=%d: %s"
+                    % (n_splits, horizon, skipped)
                 )
-            except ValueError as exc:
-                skipped[str(_scalar(label))] = str(exc)
-                continue
-            per_group_folds[label] = (positions, folds_for_group)
-        if not per_group_folds:
-            raise ValueError(
-                "no series has enough history for n_splits=%d, horizon=%d: %s"
-                % (n_splits, horizon, skipped)
-            )
-
-        folds = []
-        for fold in range(n_splits):
-            train_positions, test_positions = [], []
-            for positions, folds_for_group in per_group_folds.values():
-                train_part, test_part = folds_for_group[fold]
-                train_positions.extend(positions[index] for index in train_part)
-                test_positions.extend(positions[index] for index in test_part)
-            folds.append(
-                (
-                    np.asarray(sorted(train_positions), dtype="int64"),
-                    np.asarray(test_positions, dtype="int64"),
-                )
-            )
+            folds = []
+            for fold in range(n_splits):
+                train_rows = []
+                group_plan = []
+                for key, (ordered, folds_for_group) in usable_groups.items():
+                    train_obs, test_obs = folds_for_group[fold]
+                    cutoff = int(test_obs[0]) - 1
+                    times = list(ordered[spec.time_column])
+                    index_map = origin_index.get(str(_scalar(key)), {})
+                    # Origin ``p`` carries the label ``y[p + 1]``; stop at
+                    # ``cutoff - 1`` so no test-window observation is trained on.
+                    for position in train_obs:
+                        position = int(position)
+                        if position >= cutoff:
+                            continue
+                        row = index_map.get(str(times[position]))
+                        if row is not None:
+                            train_rows.append(row)
+                    group_plan.append((key, ordered, cutoff))
+                folds.append((np.asarray(sorted(train_rows), dtype="int64"), group_plan))
 
         if refit == "every_fold":
             refit_every = 1
@@ -1764,55 +1833,147 @@ class mltrack(object):
         fit_count = 0
         fold_records = []
         origin_records = []
-        for fold_index, (train_idx, test_idx) in enumerate(folds):
+        for fold_index, fold in enumerate(folds):
+            train_idx = fold[0]
             if fitted is None or (refit_every is not None and fold_index % refit_every == 0):
                 fitted = clone(estimator)
+                fit_start = time.perf_counter()
                 fitted.fit(X.iloc[train_idx], y.iloc[train_idx])
+                fit_seconds = time.perf_counter() - fit_start
                 fit_count += 1
                 refitted = True
             else:
+                fit_seconds = 0.0
                 refitted = False
-            predictions = np.asarray(fitted.predict(X.iloc[test_idx]), dtype=float).ravel()
-            truth = y.iloc[test_idx].to_numpy(dtype=float)
-            X_test, y_test = X.iloc[test_idx], y.iloc[test_idx]
-            if scoring is None:
-                # R^2 on a single held-out row is undefined (and scikit-learn warns);
-                # a one-step test window is legitimate for horizon-1 backtests, so the
-                # score is recorded as None rather than as a warning-generating number.
-                fold_score = (
-                    float(fitted.score(X_test, y_test)) if len(test_idx) >= 2 else None
-                )
-                label = scoring_label or "estimator.score"
+            predict_start = time.perf_counter()
+            if strategy == "direct":
+                test_idx = fold[1]
+                predictions = np.asarray(fitted.predict(X.iloc[test_idx]), dtype=float).ravel()
+                truth = y.iloc[test_idx].to_numpy(dtype=float)
+                X_test, y_test = X.iloc[test_idx], y.iloc[test_idx]
+                if scoring is None:
+                    # R^2 on a single held-out row is undefined (and scikit-learn warns);
+                    # a one-step test window is legitimate for horizon-1 backtests, so the
+                    # score is recorded as None rather than as a warning-generating number.
+                    fold_score = (
+                        float(fitted.score(X_test, y_test)) if len(test_idx) >= 2 else None
+                    )
+                    label = scoring_label or "estimator.score"
+                else:
+                    fold_score = float(scoring(fitted, X_test, y_test))
+                    label = scoring_label or "scoring"
+                test_rows = int(len(test_idx))
             else:
-                fold_score = float(scoring(fitted, X_test, y_test))
-                label = scoring_label or "scoring"
+                # Recursive evaluation: replay the horizon from each cutoff with
+                # the same ``recursive_steps`` serving uses, so offline and
+                # served forecasts agree by construction. One record per step.
+                group_plan = fold[1]
+                twin = builder.serving_twin()
+                predictions_list: list[float] = []
+                truth_list: list[float] = []
+                for key, ordered, cutoff in group_plan:
+                    times = list(ordered[spec.time_column])
+                    future_times = times[cutoff + 1 : cutoff + 1 + horizon]
+                    observed = ordered[target].to_numpy(dtype="float64")
+                    actual_values = observed[cutoff + 1 : cutoff + 1 + horizon]
+                    if len(future_times) != horizon or len(actual_values) != horizon:
+                        continue
+                    source_rows = ordered.iloc[cutoff + 1 : cutoff + 1 + horizon]
+                    working = ordered.iloc[: cutoff + 1].reset_index(drop=True)
+                    series_value = (
+                        ordered[spec.series_id].iloc[cutoff]
+                        if spec.series_id is not None
+                        else None
+                    )
+                    working_columns = list(working.columns)
+
+                    def build_row(_working, step, prediction, source=source_rows):
+                        row = {column: np.nan for column in working_columns}
+                        row[spec.time_column] = future_times[step]
+                        if spec.series_id is not None:
+                            row[spec.series_id] = series_value
+                        row[target] = prediction
+                        # Future exogenous values are known at evaluation time;
+                        # copying the observed row keeps the comparison honest.
+                        for column in working_columns:
+                            if column in (spec.time_column, target, spec.series_id):
+                                continue
+                            row[column] = source.iloc[step][column]
+                        return row
+
+                    step_values = recursive_steps(
+                        twin.transform,
+                        fitted,
+                        working,
+                        target,
+                        horizon,
+                        future_times=future_times,
+                        build_row=build_row,
+                    )
+                    origin_time = str(times[cutoff])
+                    origin_records.extend(
+                        {
+                            "fold": fold_index,
+                            "series": _scalar(series_value),
+                            "origin_time": origin_time,
+                            "target_time": str(future_times[step]),
+                            "target_step": int(step) + 1,
+                            "y_true": float(actual_values[step]),
+                            "y_pred": float(step_values[step]),
+                            "fit_time": float(fit_seconds),
+                            "predict_time": float(time.perf_counter() - predict_start),
+                        }
+                        for step in range(len(step_values))
+                    )
+                    predictions_list.extend(float(value) for value in step_values)
+                    truth_list.extend(float(value) for value in actual_values)
+                predictions = np.asarray(predictions_list, dtype=float)
+                truth = np.asarray(truth_list, dtype=float)
+                test_rows = int(predictions.size)
+                if scoring is None and truth.size >= 2:
+                    residual = truth - predictions
+                    total = float(np.sum((truth - truth.mean()) ** 2))
+                    fold_score = (
+                        1.0 - float(np.sum(residual**2)) / total if total > 0 else None
+                    )
+                    label = scoring_label or "estimator.score"
+                else:
+                    # A custom scorer needs a feature matrix; recursive folds do
+                    # not have one (they rebuild features per step), so the fold
+                    # score is recorded as unavailable rather than faked.
+                    fold_score = None
             fold_records.append(
                 {
                     "fold": fold_index,
                     "train_rows": int(len(train_idx)),
-                    "test_rows": int(len(test_idx)),
+                    "test_rows": int(test_rows),
                     "refitted": bool(refitted),
                     "score": fold_score,
                     "mae": float(mean_absolute_error(truth, predictions)),
                     "rmse": float(np.sqrt(mean_squared_error(truth, predictions))),
                     "bias": float(np.mean(predictions - truth)),
+                    "fit_time": float(fit_seconds),
+                    "predict_time": float(time.perf_counter() - predict_start),
                 }
             )
-            for position, prediction, actual in zip(test_idx, predictions, truth):
-                row = design.meta.iloc[position]
-                origin_time = row.get("origin_time")
-                target_time = row.get("target_time")
-                origin_records.append(
-                    {
-                        "fold": fold_index,
-                        "series": _scalar(row.get("series")),
-                        "origin_time": None if origin_time is None else str(origin_time),
-                        "target_time": None if target_time is None else str(target_time),
-                        "target_step": int(row.get("target_step", horizon)),
-                        "y_true": float(actual),
-                        "y_pred": float(prediction),
-                    }
-                )
+            if strategy == "direct":
+                for position, prediction, actual in zip(test_idx, predictions, truth):
+                    row = design.meta.iloc[position]
+                    origin_time = row.get("origin_time")
+                    target_time = row.get("target_time")
+                    origin_records.append(
+                        {
+                            "fold": fold_index,
+                            "series": _scalar(row.get("series")),
+                            "origin_time": None if origin_time is None else str(origin_time),
+                            "target_time": None if target_time is None else str(target_time),
+                            "target_step": int(row.get("target_step", horizon)),
+                            "y_true": float(actual),
+                            "y_pred": float(prediction),
+                            "fit_time": float(fit_seconds),
+                            "predict_time": float(time.perf_counter() - predict_start),
+                        }
+                    )
 
         # MASE needs the in-sample scale of each origin's own training history, and
         # the naive baselines need that history too. Both come from the partition,
