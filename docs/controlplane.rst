@@ -285,7 +285,11 @@ dataset fingerprints stay valid.
     inapplicable diagnostics as successful results. It also computes all
     available family-specific learning curves on the train partition with five
     sizes (pinball quantile 0.5), and classification diagnostic curves with ten
-    bins. These fits can be costly. The fitted classifier is evaluated on a
+    bins. For a temporal task those curves run on the generated one-step forecast
+    design (``feature_source: temporal_design``) under the task's walk-forward
+    splitter, each size a *training length* up to the longest window the splitter
+    offers — scikit-learn's own ``learning_curve`` would instead cap the curve at
+    the first origin's training window. These fits can be costly. The fitted classifier is evaluated on a
     deterministic 25% slice of the preferred registered partition, which can
     overlap its training data; it is not guaranteed to be an independent
     holdout. Stored bundle metrics, the latest completed nested-CV job for each

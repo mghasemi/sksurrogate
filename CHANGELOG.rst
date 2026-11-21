@@ -26,6 +26,22 @@ Partition defaults, temporal experiments and the Advanced scorer
   space (``explain._explain_frame``: raw feature columns, or a temporal task's
   generated forecast design) instead of the raw partition columns, so a temporal
   report no longer clamps from a zero-feature frame.
+* **Fixed:** the Evaluation page reported every bundle of a temporal task as
+  ``Skipped N bundle(s): … expects feature columns absent from partition 'main':
+  Month``. ``compute_learning_curve`` sliced the raw partition by the bundle's
+  recorded schema, but a temporal bundle's schema names the *raw history* frame
+  (time/series columns included) while ``load_partition`` drops exactly those
+  columns; and even with the columns present it refitted the whole
+  ``Pipeline(ForecastFeatureBuilder, …)`` on a feature matrix. Temporal curves now
+  run on the generated one-step forecast design through the bare estimator
+  (``feature_source: temporal_design``) under the task's walk-forward splitter,
+  never a shuffled fold count. Each reported size is a *training length* up to the
+  longest window the splitter offers, computed by replaying the folds:
+  ``sklearn.model_selection.learning_curve`` anchors its sizes on the smallest
+  fold's training window, which is the first origin — on a 33-row design with
+  ``TimeSeriesSplit(5)`` that curve stopped at 8 training rows and hid what more
+  history buys (it now reaches 24). The explainability report's learning curves
+  benefit from the same path, and each curve echoes the ``cv`` it used.
 * **Fixed:** serving a forecast for a task registered with ``period_start`` rejected
   the dataset's own history. ``TemporalServeState.validate_history`` parsed the time
   column with ``pd.to_datetime`` even when the spec declares an anchor, so a period

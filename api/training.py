@@ -257,6 +257,66 @@ def _learning_curve_sign(scoring):
     return 1.0
 
 
+def _finite_row_stats(row):
+    """Mean and std of one fold-score row, ignoring folds that produced no score."""
+    values = np.asarray(row, dtype=float)
+    finite = values[np.isfinite(values)]
+    if finite.size == 0:
+        return None, None
+    return float(finite.mean()), float(finite.std())
+
+
+def _slice_rows(data, index):
+    """Positional rows of ``X``/``y`` without assuming numpy or pandas."""
+    if hasattr(data, "iloc"):
+        return data.iloc[index]
+    return data[index]
+
+
+def _walk_forward_learning_curve(estimator, X, y, folds, sizes, scorer):
+    """Learning curve over walk-forward folds, at fixed training *lengths*.
+
+    ``sklearn.model_selection.learning_curve`` anchors its sizes on the smallest
+    fold's training window, which for a rolling-origin splitter is the first origin:
+    a 33-row design under ``TimeSeriesSplit(5)`` produced a curve that stopped at 8
+    training rows, hiding the one thing a learning curve is for (what more history
+    buys). Here every size is a training length — for each fold that can train that
+    long, fit on its first ``size`` rows and score its own test block, i.e. the
+    future of that window — then average over the folds that qualified. Row order is
+    never broken and no row is both trained on and scored.
+
+    :returns: ``(sizes, train_scores, validation_scores)`` where the score arrays
+        are padded with ``nan`` so every row has one column per fold.
+    """
+    from sklearn.base import clone
+    from sklearn.metrics import check_scoring
+
+    scorer_fn = check_scoring(estimator, scoring=scorer)
+    y_array = np.asarray(y)
+    fold_count = len(folds)
+    train_scores = np.full((len(sizes), fold_count), np.nan, dtype=float)
+    validation_scores = np.full((len(sizes), fold_count), np.nan, dtype=float)
+    for row, size in enumerate(sizes):
+        for column, (train_index, test_index) in enumerate(folds):
+            train_index = np.asarray(train_index, dtype=int)[: int(size)]
+            if len(train_index) == 0:
+                continue
+            test_index = np.asarray(test_index, dtype=int)
+            try:
+                fitted = clone(estimator).fit(
+                    _slice_rows(X, train_index), y_array[train_index]
+                )
+                train_scores[row, column] = scorer_fn(
+                    fitted, _slice_rows(X, train_index), y_array[train_index]
+                )
+                validation_scores[row, column] = scorer_fn(
+                    fitted, _slice_rows(X, test_index), y_array[test_index]
+                )
+            except Exception:  # noqa: BLE001 - one degenerate fold must not lose the curve
+                continue
+    return np.asarray(sizes), train_scores, validation_scores
+
+
 def compute_learning_curve(
     bundle,
     *,
@@ -269,15 +329,18 @@ def compute_learning_curve(
     """Cross-validated learning curve for one bundle under a scikit-learn scorer.
 
     Scores are averaged over the folds of the splitter persisted for the task
-    (falling back to scikit-learn's default 3-fold convention), for training-set
-    fractions spread evenly between 10% and 100%. Non-finite scores (e.g. a fold
-    that could not be fitted) become ``None`` so the UI renders a gap.
+    (falling back to scikit-learn's default 3-fold convention, or to a walk-forward
+    ``TimeSeriesSplit`` on a temporal task), for training-set fractions spread
+    evenly between 10% and 100%. Non-finite scores (e.g. a fold that could not be
+    fitted) become ``None`` so the UI renders a gap.
 
-    Features are sliced to the bundle's recorded schema and passed as a
-    DataFrame, so bundles whose first step is a named-column encoder (the
-    explicit cat_cols path) keep working; when a schema column no longer exists
-    in the partition this raises a clear per-bundle error instead of failing
-    every fold.
+    A tabular bundle is fitted on its recorded schema sliced from the partition,
+    passed as a DataFrame, so bundles whose first step is a named-column encoder
+    (the explicit cat_cols path) keep working; when a schema column no longer
+    exists in the partition this raises a clear per-bundle error instead of failing
+    every fold. A temporal bundle is fitted on the generated one-step forecast
+    design through its bare estimator: its schema names the raw history frame
+    (time/series columns included), so slicing the partition by it never matched.
     """
     import numpy as np
     from sklearn.model_selection import learning_curve
@@ -313,49 +376,105 @@ def compute_learning_curve(
         raise bad_request("Bundle %r carries no fittable estimator" % bundle.model_version)
 
     target, _ = get_registered_target(task_name)
-    frame = load_partition(task_name, train_partition)
-    if target not in frame.columns:
-        raise bad_request("Partition %r of task %r has no target column %r" % (train_partition, task_name, target))
-
-    # Fit on the bundle's own feature schema rather than whatever columns the
-    # partition currently carries, and keep it a DataFrame: bundles from the
-    # explicit cat_cols path start with named-column encoders that cannot be
-    # fitted positionally, so an ndarray input fails every fold. When no schema
-    # was recorded (legacy bundles) fall back to every non-target column.
-    schema_columns = [column for column in (bundle.schema or {}) if column != target]
-    if schema_columns:
-        missing = [column for column in schema_columns if column not in frame.columns]
-        if missing:
-            raise bad_request(
-                "Bundle %r expects feature columns absent from partition %r: %s"
-                % (bundle.model_version, train_partition, ", ".join(missing))
-            )
-        X = frame[schema_columns]
-    else:
-        X = frame[[column for column in frame.columns if column != target]]
-    y = frame[target].values
-
+    with open_tracker(task_name) as tracker:
+        declares_temporal = tracker.GetTemporalSpec() is not None
     cv = get_stored_cv(task_name)
-    if cv is None:
-        cv = 3
-    n_points = min(10, max(2, int(n_points)))
-    train_sizes = np.linspace(0.1, 1.0, n_points)
+    if declares_temporal:
+        # A temporal bundle consumes the *generated one-step forecast design*, and
+        # its schema names the raw history frame (time/series columns included).
+        # Slicing the partition by that schema therefore failed for every bundle of
+        # a temporal task — "expects feature columns absent from partition 'main':
+        # Month" — which the Evaluation page reports as "Skipped N bundle(s)". Refit
+        # the bare estimator on the same design the search and backtest use.
+        X, y = temporal_design_inputs(task_name, target, train_partition)
+        estimator = unwrap_temporal_estimator(bundle)
+        feature_source = "temporal_design"
+        if cv is None:
+            # An integer fold count is a shuffled KFold: on time-ordered design rows
+            # it trains on the future and scores the past. Walk forward instead,
+            # keeping the fold count small enough for a short design.
+            from sklearn.model_selection import TimeSeriesSplit
 
-    sizes, train_scores, validation_scores = learning_curve(
-        estimator, X, y, cv=cv, scoring=scorer, train_sizes=train_sizes, n_jobs=1
-    )[:3]
+            cv = TimeSeriesSplit(n_splits=min(5, max(2, len(X) // 5)))
+    else:
+        frame = load_partition(task_name, train_partition)
+        if target not in frame.columns:
+            raise bad_request("Partition %r of task %r has no target column %r" % (train_partition, task_name, target))
+
+        # Fit on the bundle's own feature schema rather than whatever columns the
+        # partition currently carries, and keep it a DataFrame: bundles from the
+        # explicit cat_cols path start with named-column encoders that cannot be
+        # fitted positionally, so an ndarray input fails every fold. When no schema
+        # was recorded (legacy bundles) fall back to every non-target column.
+        schema_columns = [column for column in (bundle.schema or {}) if column != target]
+        if schema_columns:
+            missing = [column for column in schema_columns if column not in frame.columns]
+            if missing:
+                raise bad_request(
+                    "Bundle %r expects feature columns absent from partition %r: %s"
+                    % (bundle.model_version, train_partition, ", ".join(missing))
+                )
+            X = frame[schema_columns]
+        else:
+            X = frame[[column for column in frame.columns if column != target]]
+        y = frame[target].values
+        feature_source = "partition_columns"
+        if cv is None:
+            cv = 3
+
+    n_points = min(10, max(2, int(n_points)))
+    fractions = np.linspace(0.1, 1.0, n_points)
+    if declares_temporal:
+        folds = list(cv.split(X, y))
+        if not folds:
+            raise bad_request(
+                "the splitter stored for task %r produced no fold on the forecast design"
+                % task_name
+            )
+        # Sizes are training lengths, up to the longest walk-forward window (the
+        # last origin) — see _walk_forward_learning_curve for why sklearn's own
+        # learning_curve would stop at the first origin instead.
+        longest = max(len(train_index) for train_index, _ in folds)
+        sizes = sorted(
+            {
+                min(longest, max(1, int(round(fraction * longest))))
+                for fraction in fractions
+            }
+        )
+        sizes, train_scores, validation_scores = _walk_forward_learning_curve(
+            estimator, X, y, folds, np.asarray(sizes, dtype=int), scorer
+        )
+    else:
+        sizes, train_scores, validation_scores = learning_curve(
+            estimator, X, y, cv=cv, scoring=scorer, train_sizes=fractions, n_jobs=1
+        )[:3]
 
     sign = _learning_curve_sign(scoring)
     n_samples = float(len(y))
+
+    def _signed(value):
+        return None if value is None else finite_or_none(sign * value)
+
+    train_stats = [_finite_row_stats(row) for row in train_scores]
+    validation_stats = [_finite_row_stats(row) for row in validation_scores]
     return {
         "model_version": bundle.model_version,
         "pinball_alpha": pinball_alpha,
+        # Which feature space the folds saw: the partition's columns, or a temporal
+        # task's generated forecast design (labelled so a curve cannot be mistaken
+        # for a multi-step forecast score).
+        "feature_source": feature_source,
+        "cv": (
+            get_stored_cv_spec(task_name)
+            or ({"type": "n_splits", "value": int(cv)} if isinstance(cv, int)
+                else {"type": type(cv).__name__})
+        ),
         "train_sizes": [int(size) for size in sizes],
         "train_sizes_fraction": [round(float(size) / n_samples, 4) for size in sizes],
-        "train_scores_mean": [finite_or_none(sign * float(np.mean(row))) for row in train_scores],
-        "train_scores_std": [finite_or_none(float(np.std(row))) for row in train_scores],
-        "validation_scores_mean": [finite_or_none(sign * float(np.mean(row))) for row in validation_scores],
-        "validation_scores_std": [finite_or_none(float(np.std(row))) for row in validation_scores],
+        "train_scores_mean": [_signed(mean) for mean, _ in train_stats],
+        "train_scores_std": [_signed(std) for _, std in train_stats],
+        "validation_scores_mean": [_signed(mean) for mean, _ in validation_stats],
+        "validation_scores_std": [_signed(std) for _, std in validation_stats],
     }
 
 
