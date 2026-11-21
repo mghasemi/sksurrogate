@@ -380,6 +380,39 @@ class TestRecursiveBacktest(unittest.TestCase):
             self.assertIn("fit_time", record)
             self.assertIn("predict_time", record)
 
+    def test_panel_recursive_backtest_groups_by_series(self):
+        panel = pd.concat(
+            [
+                self.frame.assign(store="A"),
+                self.frame.assign(store="B", y=lambda frame: frame["y"] + 100.0),
+            ],
+            ignore_index=True,
+        )
+        tracker = mltrack(TASK, db_name=self.db)
+        try:
+            tracker.RegisterData(
+                panel,
+                "y",
+                partition="train",
+                temporal={"time_column": "time", "series_id": "store", "horizon": 3},
+            )
+            result = tracker.backtest(
+                LinearRegression(),
+                horizon=3,
+                n_splits=3,
+                strategy="recursive",
+                feature_kwargs={"lags": [3]},
+            )
+        finally:
+            tracker.close()
+
+        # Both series are represented, each with its own origins and its own
+        # level — a leaked shared level would blow the MAE up immediately.
+        self.assertEqual(sorted(result["per_series"]), ["A", "B"])
+        for label, record in result["per_series"].items():
+            self.assertEqual(record["rows"], 9, label)  # 3 origins x 3 steps
+            self.assertLess(record["mae"], 1e-9, label)
+
     def test_served_forecast_matches_the_fold_prediction_for_the_same_origin(self):
         tracker = self._tracker()
         try:
