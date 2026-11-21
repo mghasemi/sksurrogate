@@ -241,7 +241,7 @@ def recover_model(task_name: str, body: RecoverRequest):
     if settings.task_dataset_dir(task_name).exists():
         try:
             target, _ = get_registered_target(task_name)
-            frame = load_partition(task_name, "train")
+            frame = load_partition(task_name, resolve_partition(task_name, None))
             if target in frame.columns:
                 smoke_score = finite_or_none(float(model.score(frame.drop(columns=[target]), frame[target])))
         except Exception:

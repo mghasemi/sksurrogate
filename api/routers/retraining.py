@@ -24,6 +24,7 @@ from SKSurrogate import ModelRegistry, RetrainingJob
 from ..config import settings
 from ..deps import bad_request, not_found, open_tracker, task_access
 from ..jobs import dask_available, job_manager
+from ..partitions import resolve_partition
 from ..routers.experiments import ParamValue, _dump_config
 from ..training import fit_baseline_bundle, fit_experiment_bundle
 
@@ -33,7 +34,8 @@ router = APIRouter(prefix="/api/retraining", tags=["retraining"], dependencies=[
 class BaselineTrainerConfig(BaseModel):
     kind: str = "baseline"
     estimator: str = "linear_regression"
-    train_partition: str = "train"
+    #: Omitted means "the task's data" — see ``api/partitions.py``.
+    train_partition: str | None = None
     validation_partition: str | None = "validation"
 
 
@@ -46,7 +48,7 @@ class ExperimentTrainerConfig(BaseModel):
         validation_alias=AliasChoices("max_generations", "max_generation"),
     )
     num_parents: int = 4
-    train_partition: str = "train"
+    train_partition: str | None = None
     scoring: str = "accuracy"
     random_state: int | None = None
 
@@ -89,12 +91,15 @@ class TriggerRetrainingRequest(BaseModel):
 
 
 def _make_trainer(task_name, trainer_config, checkpoint_dir, owner, run_id):
+    # Resolve once, here: an omitted partition means the task's own data, while an
+    # explicit name is passed through so a typo still fails loudly.
+    train_partition = resolve_partition(task_name, trainer_config.train_partition)
     if trainer_config.kind == "baseline":
         def _train(context):
             return fit_baseline_bundle(
                 task_name,
                 estimator=trainer_config.estimator,
-                train_partition=trainer_config.train_partition,
+                train_partition=train_partition,
                 validation_partition=trainer_config.validation_partition,
                 owner=owner,
                 run_id=run_id,
@@ -111,7 +116,7 @@ def _make_trainer(task_name, trainer_config, checkpoint_dir, owner, run_id):
                 length=trainer_config.length,
                 max_generation=trainer_config.max_generations,
                 num_parents=trainer_config.num_parents,
-                train_partition=trainer_config.train_partition,
+                train_partition=train_partition,
                 scoring=trainer_config.scoring,
                 random_state=trainer_config.random_state,
                 owner=owner,
@@ -167,7 +172,7 @@ def trigger_retraining(task_name: str, body: TriggerRetrainingRequest):
             raise bad_request("on_data triggers do not accept due=false")
         if not body.data_partition or not body.data_fingerprint:
             raise bad_request("on_data triggers require data_partition and data_fingerprint")
-        if body.trainer.train_partition != body.data_partition:
+        if resolve_partition(task_name, body.trainer.train_partition) != body.data_partition:
             raise bad_request(
                 "on_data data_partition must match the trainer's train_partition"
             )

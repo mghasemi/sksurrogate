@@ -43,6 +43,7 @@ from ..config import settings
 from ..safety import safe_segment
 from ..deps import bad_request, bundle_summary, not_found, task_access
 from ..jobs import job_manager
+from ..partitions import resolve_partition
 from ..training import (
     ENSEMBLE_CAVEATS,
     MAX_ENSEMBLE_MEMBERS,
@@ -75,7 +76,7 @@ class FitEnsembleRequest(BaseModel):
     members: list[str] = Field(default_factory=list)
     method: str
     params: dict | None = None
-    train_partition: str = "train"
+    train_partition: str | None = None
     scoring: str | None = None  # defaults to the family's metric
     random_state: int | None = None
     owner: str | None = None
@@ -224,7 +225,8 @@ def _submit_ensemble(task_name, body):
         raise bad_request("An ensemble method is required.")
     _validate_combination_options(body)
     target, _ = get_registered_target(task_name)
-    frame = load_partition(task_name, body.train_partition)
+    train_partition = resolve_partition(task_name, body.train_partition)
+    frame = load_partition(task_name, train_partition)
     feature_columns = [column for column in frame.columns if column != target]
     # Fail fast: resolves members, checks the family, the capability requirements, every
     # parameter value, the calibration eligibility and the weight-optimization conflicts
@@ -247,7 +249,7 @@ def _submit_ensemble(task_name, body):
                 members=body.members,
                 method=body.method,
                 params=body.params,
-                train_partition=body.train_partition,
+                train_partition=train_partition,
                 scoring=body.scoring,
                 random_state=body.random_state,
                 owner=body.owner,

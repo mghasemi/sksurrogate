@@ -23,6 +23,7 @@ from ..features import (
 from ..safety import safe_segment
 from ..deps import bad_request, finite_or_none as _finite, not_found, open_tracker, task_access
 from ..jobs import job_manager
+from ..partitions import resolve_partition
 
 router = APIRouter(prefix="/api/sensitivity", tags=["sensitivity"], dependencies=[Depends(task_access)])
 
@@ -30,7 +31,8 @@ router = APIRouter(prefix="/api/sensitivity", tags=["sensitivity"], dependencies
 class SensitivityRequest(BaseModel):
     method: str = "sobol"
     n_features_to_select: int = 5
-    train_partition: str = "train"
+    #: Omitted means "the task's data" — see ``api/partitions.py``.
+    train_partition: str | None = None
     #: Temporal tasks only: ``make_supervised`` builder kwargs (lags, rolling,
     #: diffs, pct_changes, calendar, fourier, exogenous). Defaults to one lag at
     #: the declared horizon, which is what the backtest also defaults to.
@@ -115,8 +117,9 @@ def run_sensitivity(task_name: str, body: SensitivityRequest):
     """Submit a sensitivity-analysis job and return its job id immediately (202-style)."""
     if body.method not in {"sobol", "morris", "delta-mmnt"}:
         raise bad_request("method must be one of sobol, morris, delta-mmnt")
+    train_partition = resolve_partition(task_name, body.train_partition)
     projection, train_fingerprint, provenance = _load_train_xy(
-        task_name, body.train_partition, body.features
+        task_name, train_partition, body.features
     )
     feature_columns, X, y = projection.columns, projection.X, projection.y
 
@@ -154,7 +157,7 @@ def run_sensitivity(task_name: str, body: SensitivityRequest):
             "weights_stored": weights_stored,
             "storage_error": storage_error,
             "evaluation_protocol": {
-                "train_partition": body.train_partition,
+                "train_partition": train_partition,
                 "train_fingerprint": train_fingerprint,
                 "row_count": len(X),
                 "feature_columns": feature_columns,
@@ -170,7 +173,7 @@ def run_sensitivity(task_name: str, body: SensitivityRequest):
             "interpretation": {
                 "category": "input_sensitivity",
                 "measure": body.method,
-                "train_partition": body.train_partition,
+                "train_partition": train_partition,
                 "causal_effect": False,
                 "limitations": [
                     "Sensitivity describes the fitted surrogate's response over method-generated independent input ranges based on observed feature bounds plus a margin.",
@@ -213,10 +216,11 @@ def _features_from_query(raw):
 def run_correlation_threshold(
     task_name: str,
     threshold: float = 0.7,
-    train_partition: str = "train",
+    train_partition: str | None = None,
     features: str | None = None,
 ):
     """Fast, synchronous correlation-based feature pruning (no job needed)."""
+    train_partition = resolve_partition(task_name, train_partition)
     projection, _, provenance = _load_train_xy(
         task_name, train_partition, _features_from_query(features)
     )
@@ -243,11 +247,12 @@ def run_correlation_threshold(
 @router.get("/{task_name}/correlation-matrix")
 def get_correlation_matrix(
     task_name: str,
-    train_partition: str = "train",
+    train_partition: str | None = None,
     max_features: int = 60,
     features: str | None = None,
 ):
     """Pearson correlation matrix of the features — the data behind ``mltrack.heatmap``."""
+    train_partition = resolve_partition(task_name, train_partition)
     projection, _, provenance = _load_train_xy(
         task_name, train_partition, _features_from_query(features)
     )
@@ -269,7 +274,7 @@ def get_correlation_matrix(
 
 
 @router.get("/{task_name}/weights-heatmap")
-def get_weights_heatmap(task_name: str, train_partition: str = "train", max_features: int = 60):
+def get_weights_heatmap(task_name: str, train_partition: str | None = None, max_features: int = 60):
     """Feature weights table (pearson / variance / sobol / …) as heatmap data.
 
     Prefers the ``weights`` table of the task's tracking database — the default
@@ -280,6 +285,7 @@ def get_weights_heatmap(task_name: str, train_partition: str = "train", max_feat
     feature variance) computed from the stored train partition. Richer columns
     appear automatically once the weights table has been filled.
     """
+    train_partition = resolve_partition(task_name, train_partition)
     if not settings.mltrace_db_path(task_name).exists():
         raise not_found("No dataset registered for task %r" % task_name)
     with open_tracker(task_name) as tracker:
@@ -329,7 +335,7 @@ def get_weights_heatmap(task_name: str, train_partition: str = "train", max_feat
 
 
 @router.post("/{task_name}/base-weights")
-def compute_base_weights(task_name: str, train_partition: str = "train"):
+def compute_base_weights(task_name: str, train_partition: str | None = None):
     """Compute and store the dataset-level weightings (feature-target Pearson, variance).
 
     Registration seeds these for new partitions; this endpoint backfills tasks
@@ -338,6 +344,7 @@ def compute_base_weights(task_name: str, train_partition: str = "train"):
     ``top-features`` endpoint: the consensus card offers it when the task has no
     stored weighting at all.
     """
+    train_partition = resolve_partition(task_name, train_partition)
     projection, _, _provenance = _load_train_xy(task_name, train_partition)
     data = pd.DataFrame(projection.X, columns=projection.columns)
     values = pd.Series(projection.y)

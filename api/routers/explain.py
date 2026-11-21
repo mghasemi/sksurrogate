@@ -25,6 +25,7 @@ from SKSurrogate.mltrace import (
 )
 
 from ..deps import bad_request, finite_or_none, unprocessable, task_access
+from ..partitions import resolve_partition
 from ..explanations import (
     DEFAULT_MIN_BIN_FRACTION,
     accumulated_local_effects,
@@ -46,7 +47,7 @@ _PREVIEW_POINTS = 200
 
 
 class ExplainRequest(BaseModel):
-    partition: str = "train"
+    partition: str | None = None
     max_rows: int = Field(default=500, ge=20, le=_MAX_ROWS)
     n_repeats: int = Field(default=5, ge=1, le=20)
     top_k: int = Field(default=3, ge=0, le=6)
@@ -55,7 +56,7 @@ class ExplainRequest(BaseModel):
 
 
 class AleRequest(BaseModel):
-    partition: str = "train"
+    partition: str | None = None
     max_rows: int = Field(default=500, ge=20, le=_MAX_ROWS)
     n_bins: int = Field(default=20, ge=5, le=50)
     top_k: int = Field(default=3, ge=0, le=6)
@@ -65,7 +66,7 @@ class AleRequest(BaseModel):
 
 
 class RowExplainRequest(BaseModel):
-    partition: str = "train"
+    partition: str | None = None
     row_index: int = Field(default=0, ge=0)
     features: list[str] | None = None
     baseline: Literal["reference_mean", "row"] = "reference_mean"
@@ -77,7 +78,7 @@ class RowExplainRequest(BaseModel):
 
 
 class IntervalRequest(BaseModel):
-    train_partition: str = "train"
+    train_partition: str | None = None
     holdout_partition: str | None = None  # defaults to a slice of the train partition
     alpha: float = Field(default=0.1, gt=0.0, lt=1.0)
     diagnostic_confidence_level: float = Field(default=0.95, gt=0.0, lt=1.0)
@@ -154,7 +155,8 @@ def explain_bundle(task_name: str, model_version: str, body: ExplainRequest):
     bundle = _load_bundle(task_name, model_version)
     if problem_family(bundle.model) is None:
         raise unprocessable("Explanations need a scikit-learn estimator")
-    X, y = _features_and_target(task_name, body.partition)
+    partition = resolve_partition(task_name, body.partition)
+    X, y = _features_and_target(task_name, partition)
     source_rows = len(X)
     if body.stability_samples > 1 and source_rows <= body.max_rows:
         raise bad_request(
@@ -297,10 +299,10 @@ def explain_bundle(task_name: str, model_version: str, body: ExplainRequest):
             }
     return {
         "model_version": model_version,
-        "partition": body.partition,
+        "partition": partition,
         "rows": int(len(X)),
         "reference_sample": {
-            "partition": body.partition,
+            "partition": partition,
             "source_rows": int(source_rows),
             "used_rows": int(len(X)),
             "sampling": "random_without_replacement" if sampled else "all_rows",
@@ -326,7 +328,7 @@ def explain_bundle(task_name: str, model_version: str, body: ExplainRequest):
             },
             "partial_dependence": {
                 "category": "fitted_model_response_profile",
-                "reference_partition": body.partition,
+                "reference_partition": partition,
                 "causal_effect": False,
             },
             "limitations": [
@@ -359,7 +361,8 @@ def accumulated_local_effects_bundle(task_name: str, model_version: str, body: A
     except ValueError as exc:
         raise unprocessable(str(exc))
 
-    X, y = _features_and_target(task_name, body.partition)
+    partition = resolve_partition(task_name, body.partition)
+    X, y = _features_and_target(task_name, partition)
     source_rows = len(X)
     if body.stability_samples > 1 and source_rows <= body.max_rows:
         raise bad_request(
@@ -478,10 +481,10 @@ def accumulated_local_effects_bundle(task_name: str, model_version: str, body: A
 
     return {
         "model_version": model_version,
-        "partition": body.partition,
+        "partition": partition,
         "response": response_meta,
         "reference_sample": {
-            "partition": body.partition,
+            "partition": partition,
             "source_rows": int(source_rows),
             "used_rows": int(len(values)),
             "sampling": "random_without_replacement" if sampled else "all_rows",
@@ -503,7 +506,7 @@ def accumulated_local_effects_bundle(task_name: str, model_version: str, body: A
             "accumulated_local_effects": {
                 "category": "fitted_model_response_profile",
                 "method": "accumulated_local_effects",
-                "reference_partition": body.partition,
+                "reference_partition": partition,
                 "response_output": response_meta["output"],
                 "causal_effect": False,
             },
@@ -538,11 +541,12 @@ def explain_row(task_name: str, model_version: str, body: RowExplainRequest):
     except ValueError as exc:
         raise unprocessable(str(exc))
 
-    X, _ = _features_and_target(task_name, body.partition)
+    partition = resolve_partition(task_name, body.partition)
+    X, _ = _features_and_target(task_name, partition)
     if body.row_index >= len(X):
         raise bad_request(
             "row_index %d is outside the %d stored rows of partition %r"
-            % (body.row_index, len(X), body.partition)
+            % (body.row_index, len(X), partition)
         )
     names = list(X.columns)
     selected = names if body.features is None else list(body.features)
@@ -563,7 +567,7 @@ def explain_row(task_name: str, model_version: str, body: RowExplainRequest):
         )
 
     row_values = X.iloc[body.row_index].to_numpy()
-    baseline_partition = body.baseline_partition or body.partition
+    baseline_partition = body.baseline_partition or partition
     base_frame, _ = _features_and_target(task_name, baseline_partition)
     base_frame = _aligned_features(base_frame, names, "baseline")
     source_rows = len(base_frame)
@@ -628,7 +632,7 @@ def explain_row(task_name: str, model_version: str, body: RowExplainRequest):
 
     return {
         "model_version": model_version,
-        "partition": body.partition,
+        "partition": partition,
         "row_index": body.row_index,
         "row_count": int(len(X)),
         "response": response_meta,
@@ -706,7 +710,8 @@ def prediction_intervals(task_name: str, model_version: str, body: IntervalReque
             % (model_version, family if family else "non-regression"),
             reason="intervals_require_regression_bundle",
         )
-    X, y = _features_and_target(task_name, body.train_partition)
+    train_partition = resolve_partition(task_name, body.train_partition)
+    X, y = _features_and_target(task_name, train_partition)
     rng = np.random.RandomState(body.random_state)
     order = rng.permutation(len(X))
     if body.holdout_partition:
@@ -767,13 +772,13 @@ def prediction_intervals(task_name: str, model_version: str, body: IntervalReque
         "nominal_coverage": out["coverage_level"],
         "half_width": finite_or_none(out["quantile"]),
         "calibration_size": out["calibration_size"],
-        "training_partition": body.train_partition,
+        "training_partition": train_partition,
         "fit_rows": int(len(fit_index)),
-        "calibration_source_partition": body.train_partition,
+        "calibration_source_partition": train_partition,
         "holdout_partition": (
             body.holdout_partition
             if body.holdout_partition
-            else "random holdout slice of %s" % body.train_partition
+            else "random holdout slice of %s" % train_partition
         ),
         "random_state": body.random_state,
         "holdout_rows": int(len(y_hold)),

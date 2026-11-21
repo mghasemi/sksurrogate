@@ -315,7 +315,7 @@ def resume_experiment(record):
 class OptimizePipelineRequest(BaseModel):
     seq: list[str]  # ordered component names, e.g. ["sklearn.linear_model.LogisticRegression"]
     config: SearchSpace | None = None  # optional per-component search space
-    train_partition: str = "train"
+    train_partition: str | None = None
     scoring: str = "accuracy"
     random_state: int | None = None
     owner: str | None = None

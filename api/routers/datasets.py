@@ -62,6 +62,7 @@ from ..problem_type import (
     problem_type_metadata,
 )
 from ..jobs import job_manager
+from ..partitions import resolve_partition
 from ..preflight import submit_preflight
 from ..preprocessing import (
     CLIP_METHODS,
@@ -179,7 +180,8 @@ class ProblemTypeRequest(BaseModel):
 
 
 class DatasetProfileRequest(BaseModel):
-    partition: str = "train"
+    #: Omitted means "the task's data" — see ``api/partitions.py``.
+    partition: str | None = None
     target: str | None = None
     features: list[str] | None = None
     group_by: str | None = None
@@ -194,6 +196,7 @@ def profile_registered_dataset(task_name: str, body: DatasetProfileRequest):
     """Return bounded descriptive statistics and association diagnostics."""
     if not settings.mltrace_db_path(task_name).exists():
         raise not_found("No dataset registered for task %r" % task_name)
+    body.partition = resolve_partition(task_name, body.partition)
     try:
         with open_tracker(task_name) as tracker:
             frame = tracker.get_dataframe(partition=body.partition)
@@ -1136,10 +1139,11 @@ def _preprocessing_payload(
 
 
 @router.get("/{task_name}/preflight")
-def dataset_preflight(task_name: str, partition: str = "train", max_rows: int = 5000):
+def dataset_preflight(task_name: str, partition: str | None = None, max_rows: int = 5000):
     """Advisory pre-flight for a pending experiment run (never blocks it)."""
     if not settings.mltrace_db_path(task_name).exists():
         raise not_found("No dataset registered for task %r" % task_name)
+    partition = resolve_partition(task_name, partition)
     csv_path = settings.task_dataset_dir(task_name) / (safe_segment(partition, "partition") + ".csv")
     if not csv_path.exists():
         raise not_found("No dataset partition %r stored for task %r" % (partition, task_name))
@@ -1309,7 +1313,7 @@ class ImputeRequest(BaseModel):
     registered in the task's partition history.
     """
 
-    partition: str = "train"
+    partition: str | None = None
     method: str
     columns: list[str] | None = None
     params: dict = {}
@@ -1323,6 +1327,7 @@ def impute_dataset(task_name: str, body: ImputeRequest):
     """Impute missing values into a NEW partition; the source partition is untouched."""
     if not settings.mltrace_db_path(task_name).exists():
         raise not_found("No dataset registered for task %r" % task_name)
+    body.partition = resolve_partition(task_name, body.partition)
     csv_path = settings.task_dataset_dir(task_name) / (safe_segment(body.partition, "partition") + ".csv")
     if not csv_path.exists():
         raise not_found("No dataset partition %r stored for task %r" % (body.partition, task_name))
@@ -1515,7 +1520,7 @@ def _derived_output(task_name, partition, requested, default_suffix):
 class ClipRequest(BaseModel):
     """Winsorize numeric features into a NEW partition."""
 
-    partition: str = "train"
+    partition: str | None = None
     method: str
     columns: list[str] | None = None
     params: dict = {}
@@ -1526,6 +1531,7 @@ class ClipRequest(BaseModel):
 @router.post("/{task_name}/clip")
 def clip_dataset(task_name: str, body: ClipRequest):
     """Clip numeric features at robust bounds; preview or write a new partition."""
+    body.partition = resolve_partition(task_name, body.partition)
     csv_path, frame = _dataset_partition_frame(task_name, body.partition)
     if not body.preview_only:
         output, _output_path = _derived_output(
@@ -1592,7 +1598,7 @@ def clip_dataset(task_name: str, body: ClipRequest):
 class DeduplicateRequest(BaseModel):
     """Drop exact feature-duplicate rows into a NEW partition."""
 
-    partition: str = "train"
+    partition: str | None = None
     columns: list[str] | None = None
     keep: str = "first"
     output_partition: str | None = None
@@ -1602,6 +1608,7 @@ class DeduplicateRequest(BaseModel):
 @router.post("/{task_name}/deduplicate")
 def deduplicate_dataset(task_name: str, body: DeduplicateRequest):
     """Remove exact duplicate rows; always reports the distributional impact."""
+    body.partition = resolve_partition(task_name, body.partition)
     csv_path, frame = _dataset_partition_frame(task_name, body.partition)
     if not body.preview_only:
         output, _output_path = _derived_output(

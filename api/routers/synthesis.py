@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from ..deps import project_access
 from ..jobs import job_manager
+from ..partitions import resolve_partition
 from ..synthesis import (
     SynthesisError,
     build_messages,
@@ -87,6 +88,9 @@ def submit_synthesis(project_id: str, body: SynthesisRequest):
             ),
         )
     get_registered_target(body.task_name)  # 404 when the task is not registered
+    # An omitted partition means the task's own data (api/partitions.py); the
+    # resolved name is what the fact gatherers and the job record use.
+    body.partition = resolve_partition(body.task_name, body.partition)
 
     request = body.model_dump(mode="json")
 
