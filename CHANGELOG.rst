@@ -16,6 +16,16 @@ Partition defaults, temporal experiments and the Advanced scorer
   unknown. Every API request model that defaulted to ``"train"`` now defaults to
   ``None`` and resolves through ``api/partitions.py``, so a stale frontend cannot
   reintroduce the 404.
+* **Fixed:** the explainability report was the last caller that hard-coded the
+  literal partition ``train``. ``POST /api/reports/{task}/explain`` called
+  ``explain._features_and_target(task, "train")`` before any diagnostic ran, so a
+  task stored as ``main`` failed the whole job with ``404: No dataset partition
+  'train' stored``. The report now resolves the task's partition once and uses it
+  for the row-order clamp, the learning-curve fits, the recorded train fingerprint
+  and the PDF title; the row-order clamp also counts the *explainable* feature
+  space (``explain._explain_frame``: raw feature columns, or a temporal task's
+  generated forecast design) instead of the raw partition columns, so a temporal
+  report no longer clamps from a zero-feature frame.
 * **Fixed:** the Experiments “Advanced” tab sent the regression search space with
   a hard-coded ``accuracy`` scorer for a regression-declared task, and AML then
   rejected every candidate with ``ValueError: continuous is not supported``. The

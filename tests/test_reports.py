@@ -429,7 +429,8 @@ def test_explain_report_runs_every_diagnostic_and_preserves_unavailable_results(
         return run
 
     monkeypatch.setattr(reports, "_bundle_versions", lambda task: ["regressor", "classifier"])
-    monkeypatch.setattr(reports.explain, "_features_and_target", lambda task, partition: (pd.DataFrame(columns=["x", "z"]), []))
+    monkeypatch.setattr(reports.explain, "_explain_frame",
+                        lambda task, partition: (pd.DataFrame(columns=["x", "z"]), [], "partition_columns"))
     monkeypatch.setattr(reports.evaluation, "_load_bundle", load_bundle)
     monkeypatch.setattr(reports.evaluation, "bundle_curves", curves)
     monkeypatch.setattr(reports, "compute_learning_curve", learning)
@@ -499,6 +500,69 @@ def test_explain_report_runs_every_diagnostic_and_preserves_unavailable_results(
             assert archive.read(name).startswith(b"%PDF-")
             assert name.encode() in source
         assert "figures/model-1-intervals.pdf" not in archive.namelist()
+
+
+def test_explain_report_reads_the_registered_partition(client, monkeypatch):
+    """A task stored as ``main`` must be reported against ``main``, not a literal ``train``.
+
+    The report used to call ``explain._features_and_target(task, "train")``
+    before any diagnostic ran, so a task without a ``train`` partition failed the
+    whole job with ``404 No dataset partition 'train' stored`` instead of
+    producing per-diagnostic results.
+    """
+    from types import SimpleNamespace
+    from sklearn.linear_model import LinearRegression
+    from api.routers import reports
+
+    frame = pd.DataFrame({"x": list(range(30)), "z": list(range(30)), "target": list(range(30))})
+    registered = client.post(
+        "/api/datasets/main-only/register",
+        data={"target": "target", "partition": "main"},
+        files={"file": ("data.csv", frame.to_csv(index=False), "text/csv")},
+    )
+    assert registered.status_code == 200, registered.text
+    from api.deps import open_tracker
+
+    with open_tracker("main-only") as tracker:
+        fingerprint = tracker.dataset_splits()["main"]["fingerprint"]
+
+    learning_partitions = []
+
+    def learning(bundle, *, task_name, scoring, pinball_alpha, train_partition, n_points):
+        learning_partitions.append(train_partition)
+        return {"train_sizes": [10], "train_sizes_fraction": [0.5],
+                "train_scores_mean": [1.0], "train_scores_std": [0.0],
+                "validation_scores_mean": [0.5], "validation_scores_std": [0.0]}
+
+    feature_calls = []
+
+    def explain_frame(task, partition):
+        feature_calls.append(partition)
+        return pd.DataFrame(columns=["x", "z"]), [], "partition_columns"
+
+    monkeypatch.setattr(reports.evaluation, "_load_bundle", lambda task, version: SimpleNamespace(
+        model=LinearRegression(), metrics={}, metadata={}, created_at="now",
+        dataset_fingerprint=None, run_id=None, model_version=version,
+    ))
+    monkeypatch.setattr(reports, "learning_curve_metric_options",
+                        lambda family: {"metrics": [{"value": "r2", "higher_is_better": True}]})
+    monkeypatch.setattr(reports, "compute_learning_curve", learning)
+    monkeypatch.setattr(reports.explain, "_explain_frame", explain_frame)
+    for name in ("explain_bundle", "accumulated_local_effects_bundle", "explain_row", "prediction_intervals"):
+        monkeypatch.setattr(reports.explain, name, lambda task, version, request: {})
+    monkeypatch.setattr(reports, "compile_report", lambda source, *, figures: b"%PDF-1.7\n")
+
+    reports._make_report("main-only", ["model"], reports.ExplainReportRequest(row_orders=9), "job")
+
+    assert feature_calls == ["main"]
+    assert learning_partitions == ["main"]
+    with zipfile.ZipFile(settings.task_report_dir("main-only", "job") / "report.zip") as archive:
+        diagnostics = json.loads(archive.read("results.json"))["models"][0]["diagnostics"]
+        assert diagnostics["Learning curves"]["train_partition"] == "main"
+        assert diagnostics["Learning curves"]["train_fingerprint"] == fingerprint
+        assert diagnostics["Row-level explanation"]["report_order_adjustment"]["effective_orders"] == 2
+        source = archive.read("report.tex")
+        assert b"main partition" in source and b"train partition" not in source
 
 
 def test_explain_report_requires_models_and_does_not_expose_unfinished_jobs(client, monkeypatch):

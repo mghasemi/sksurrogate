@@ -19,6 +19,7 @@ from ..config import settings
 from ..deps import bad_request, not_found, open_tracker, task_access
 from ..eda import _format_number, _markdown_table
 from ..jobs import job_manager
+from ..partitions import resolve_partition
 from ..report_plots import explain_figures
 from ..reports import compile_report, explain_appendix_latex, figure_latex, report_latex, source_archive
 from ..training import (
@@ -129,7 +130,8 @@ def _summary_markdown(task_name, generated_at, models, history=None):
                 else:
                     lines.append("- No stored metrics are available.")
             elif name == "Learning curves":
-                lines.append("- Cross-validation on the train partition using the task's stored splitter (or default 3-fold); estimator clones are fitted at each size.")
+                lines.append("- Cross-validation on the %s partition using the task's stored splitter (or default 3-fold); estimator clones are fitted at each size."
+                             % (result.get("train_partition") or "train"))
                 rows = []
                 for curve in result.get("curves") or []:
                     if curve.get("error"):
@@ -265,9 +267,9 @@ def _figure_inserts(models, figures):
         for curve_index, curve in enumerate(learning.get("curves") or []):
             filename = "figures/model-%d-learning-%d.pdf" % (index, curve_index)
             if filename in figures:
-                caption = ("Cross-validated learning curve for %s on the train partition. "
+                caption = ("Cross-validated learning curve for %s on the %s partition. "
                            "Training and validation scores are fold means; error bars show fold standard deviations."
-                           % curve["scoring_label"])
+                           % (curve["scoring_label"], learning.get("train_partition") or "train"))
                 inserts.setdefault((section, "Learning curves"), []).extend(figure_latex(filename, caption))
         global_result = model["diagnostics"].get("Permutation importance and partial dependence") or {}
         if global_result.get("importance"):
@@ -288,9 +290,10 @@ def _figure_inserts(models, figures):
     return inserts
 
 
-def _evaluation_diagnostics(task_name, version, jobs):
+def _evaluation_diagnostics(task_name, version, jobs, partition=None):
     bundle = evaluation._load_bundle(task_name, version)
     family = problem_family(bundle.model)
+    partition = resolve_partition(task_name, partition)
     metadata = bundle.metadata if isinstance(bundle.metadata, dict) else {}
     stored = {
         "family": family,
@@ -302,8 +305,8 @@ def _evaluation_diagnostics(task_name, version, jobs):
         "recorded_evaluations": metadata.get("evaluations", []),
     }
     with open_tracker(task_name) as tracker:
-        train_fingerprint = (tracker.dataset_splits().get("train") or {}).get("fingerprint")
-    learning = {"family": family, "train_partition": "train",
+        train_fingerprint = (tracker.dataset_splits().get(partition) or {}).get("fingerprint")
+    learning = {"family": family, "train_partition": partition,
                 "train_fingerprint": train_fingerprint, "ignored_columns": read_ignored_columns(task_name),
                 "cv_spec": get_stored_cv_spec(task_name), "curves": []}
     for metric in learning_curve_metric_options(family)["metrics"]:
@@ -316,7 +319,7 @@ def _evaluation_diagnostics(task_name, version, jobs):
         try:
             series = compute_learning_curve(
                 bundle, task_name=task_name, scoring=scoring, pinball_alpha=alpha,
-                train_partition="train", n_points=5,
+                train_partition=partition, n_points=5,
             )
             curve["series"] = series
             if not any(value is not None for value in series["validation_scores_mean"]):
@@ -361,14 +364,43 @@ def _evaluation_diagnostics(task_name, version, jobs):
     }
 
 
-def _make_report(task_name, versions, body, job_id):
-    features, _ = explain._features_and_target(task_name, "train")
-    effective_orders = min(body.row_orders, math.factorial(min(len(features.columns), 4)))
-    if effective_orders != body.row_orders:
+def _explained_feature_count(task_name, partition):
+    """Width of the feature space the explain diagnostics attribute, or ``None``.
+
+    ``explain._explain_frame`` is the single definition of that space: a tabular
+    bundle reads the partition's feature columns, a temporal bundle reads the
+    *generated* forecast design because its raw partition carries no feature
+    column of its own. Counting raw columns instead clamped a temporal report's
+    row orders from a 0-feature frame, and reading the literal ``"train"``
+    partition 404'd a task stored as ``main`` before any diagnostic ran.
+
+    ``None`` means the space could not be established (e.g. a partition with no
+    feature column); the caller then keeps the requested orders and lets each
+    diagnostic report its own error instead of failing the whole report.
+    """
+    try:
+        features, _, _ = explain._explain_frame(task_name, partition)
+    except HTTPException as exc:
         logs.log_event(
-            "INFO", "Using %d distinct row orders instead of %d: only %d exist for %d features"
-            % (effective_orders, body.row_orders, effective_orders, len(features.columns)),
+            "WARNING", "Cannot size the explainable feature space of %r on partition %r: %s"
+            % (task_name, partition, exc.detail),
         )
+        return None
+    return int(features.shape[1])
+
+
+def _make_report(task_name, versions, body, job_id):
+    partition = resolve_partition(task_name, None)
+    feature_count = _explained_feature_count(task_name, partition)
+    if feature_count is None:
+        effective_orders = body.row_orders
+    else:
+        effective_orders = min(body.row_orders, math.factorial(min(feature_count, 4)))
+        if effective_orders != body.row_orders:
+            logs.log_event(
+                "INFO", "Using %d distinct row orders instead of %d: only %d exist for %d features"
+                % (effective_orders, body.row_orders, effective_orders, feature_count),
+            )
     diagnostics = (
         ("Permutation importance and partial dependence", explain.explain_bundle,
          explain.ExplainRequest(max_rows=body.max_rows, stability_samples=body.stability_samples)),
@@ -389,7 +421,8 @@ def _make_report(task_name, versions, body, job_id):
         for job in jobs if job.get("kind") == "experiment" and job.get("status") == "completed"
     ]
     for version in versions:
-        model = {"model_version": version, "diagnostics": _evaluation_diagnostics(task_name, version, jobs)}
+        model = {"model_version": version,
+                 "diagnostics": _evaluation_diagnostics(task_name, version, jobs, partition)}
         failures += sum(
             1 for value in model["diagnostics"].values() if value.get("status") == "unavailable"
         ) + sum(1 for curve in model["diagnostics"]["Learning curves"]["curves"] if curve.get("error"))
@@ -424,7 +457,7 @@ def _make_report(task_name, versions, body, job_id):
     _check_stop()
     source = report_latex(
         summary, task_name, "Model Explainability Report",
-        "Task %s; %d model(s); train partition" % (task_name, len(versions)), generated_at,
+        "Task %s; %d model(s); %s partition" % (task_name, len(versions), partition), generated_at,
         inserts=_figure_inserts(models, figures), appendix_latex=explain_appendix_latex(models),
     )
     archive = source_archive(source, markdown, data_json=json.dumps(data, ensure_ascii=False, indent=2),
