@@ -54,6 +54,19 @@ Datetime columns: the declared type is real, and the feature is centred
   *or* numeric seconds, uses the column's unit, and maps a constant column to the
   lower bound instead of dividing by a zero span.
 
+Dead code removed from the AML search path
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Removed:** `AML._uses_preset_surrogates` — assigned in three places and read
+  nowhere (verified across the repo, including dynamic ``getattr`` lookups). The
+  behaviour it was meant to record is already available from
+  `_uses_implicit_surrogates` and `preset`.
+* **Removed:** an unused `from .structsearch import BoxSample, CompactSample` inside
+  `AML.eoa_fit`; sampling is resolved inside ``structsearch``, and neither name was
+  used in that method body (both remain public API).
+
+No behaviour change; the removal was verified against the AML, experiment and
+surrogate-diagnostic suites.
 [Unreleased]
 ------------
 

@@ -557,10 +557,8 @@ class AML(BaseEstimator):
         self.cat_cols = cat_cols
         if preset is not None and surrogates is None:
             self.surrogates = _preset_surrogates()
-            self._uses_preset_surrogates = True
         else:
             self.surrogates = surrogates
-            self._uses_preset_surrogates = False
         self._uses_implicit_surrogates = surrogates is None
         self.check_point = check_point
         self.min_random_evals = min_random_evals
@@ -889,7 +887,6 @@ class AML(BaseEstimator):
         :param kwargs: `EOA` parameters
         :return: `self`
         """
-        from .structsearch import BoxSample, CompactSample
         from .eoa import EOA
 
         self.models.clear()
@@ -1195,10 +1192,8 @@ class AML(BaseEstimator):
             self.words = Words(self.letters, last=self.couldBlast, first=self.couldBfirst)
         if "preset" in params and previous_preset != preset and self._uses_implicit_surrogates:
             self.surrogates = _preset_surrogates() if preset is not None else None
-            self._uses_preset_surrogates = preset is not None
         if "surrogates" in params:
             self.surrogates = params["surrogates"]
-            self._uses_preset_surrogates = False
             self._uses_implicit_surrogates = False
         for key, value in params.items():
             if key in {"config", "preset", "scoring", "surrogates"}:
