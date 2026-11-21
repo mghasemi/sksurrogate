@@ -170,6 +170,38 @@ def test_the_experiment_bundle_is_backtested_recursively(client):
     assert result["pooled"]["mae"] is not None
 
 
+def test_explanations_run_on_the_generated_design(client):
+    """Explain/ALE/row act on the design, not on a 0-column raw partition.
+
+    The reported failure: ``Found array with 0 feature(s) (shape=(36, 0))`` — a
+    temporal partition has no raw feature column, so explanations must use the
+    same generated matrix the search and the backtest see.
+    """
+    _register(client, "tem-explain")
+    _declare_temporal(client, "tem-explain")
+    experiment = _submit_experiment(client, "tem-explain")
+    assert experiment["status"] == "completed", experiment.get("error")
+    version = experiment["result"]["model_version"]
+
+    explain = client.post(
+        f"/api/evaluation/tem-explain/{version}/explain", json={"top_k": 1, "max_rows": 200}
+    )
+    assert explain.status_code == 200, explain.text
+    payload = explain.json()
+    assert payload["feature_source"] == "temporal_design"
+    assert payload["importance"]
+    assert "__lag_" in payload["importance"][0]["feature"]
+    assert payload["errors"] == []
+
+    ale = client.post(f"/api/evaluation/tem-explain/{version}/ale", json={"top_k": 1})
+    assert ale.status_code == 200, ale.text
+    assert ale.json()["feature_source"] == "temporal_design"
+
+    row = client.post(f"/api/evaluation/tem-explain/{version}/explain/row", json={"row_index": 0})
+    assert row.status_code == 200, row.text
+    assert row.json()["feature_source"] == "temporal_design"
+
+
 def test_pipeline_optimization_points_a_temporal_task_at_the_design_search(client):
     _register(client, "tem-pipe")
     _declare_temporal(client, "tem-pipe")

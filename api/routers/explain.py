@@ -24,7 +24,8 @@ from SKSurrogate.mltrace import (
     split_conformal_regression_interval,
 )
 
-from ..deps import bad_request, finite_or_none, unprocessable, task_access
+from ..deps import bad_request, finite_or_none, open_tracker, unprocessable, task_access
+from ..columns import read_ignored_columns
 from ..partitions import resolve_partition
 from ..explanations import (
     DEFAULT_MIN_BIN_FRACTION,
@@ -94,6 +95,80 @@ def _features_and_target(task_name, partition) -> tuple[pd.DataFrame, np.ndarray
     return frame[columns], frame[target].to_numpy()
 
 
+def _explainable_estimator(bundle):
+    """The estimator explanations attribute: the bare model of a forecast bundle.
+
+    A temporal bundle's pipeline starts with ``ForecastFeatureBuilder``, which
+    expects raw history and builds the design itself. Explanations operate on the
+    already-built design matrix, so the model to explain is the estimator that
+    follows the builder.
+    """
+    from SKSurrogate import ForecastFeatureBuilder
+    from SKSurrogate.DataProcess import frame_tolerant
+
+    steps = getattr(bundle.model, "steps", None) or []
+    if any(isinstance(step, ForecastFeatureBuilder) for _, step in steps):
+        # The search's fitted pipeline may itself start with
+        # FoldLocalDataPreprocessor (a preset search does), which only accepts a
+        # DataFrame. Explanations feed positional arrays, so give the estimator the
+        # same ArrayAsFrame adapter a tabular bundle already carries.
+        return frame_tolerant(steps[-1][1])
+    return bundle.model
+
+
+def _explain_frame(task_name, partition) -> tuple[pd.DataFrame, np.ndarray, str]:
+    """``(X, y, feature_source)`` on the space the model actually consumes.
+
+    A tabular task's model reads the partition's feature columns. A temporal
+    task's model reads the *generated* forecast design — such a partition has no
+    raw feature column of its own, because the time/series columns are excluded by
+    the temporal contract and the target is the label. Explaining the raw columns
+    there found a 0-column frame and answered sklearn's
+    ``Found array with 0 feature(s)``. The design is the same matrix the search
+    and the rolling-origin backtest see.
+    """
+    from SKSurrogate import temporal_columns
+
+    target, _ = get_registered_target(task_name)
+    with open_tracker(task_name) as tracker:
+        spec = tracker.GetTemporalSpec()
+        raw = tracker.get_dataframe(partition) if spec is not None else pd.DataFrame()
+    if spec is not None:
+        from ..features import NumericFeatureError, temporal_design_xy
+
+        ignored = set(read_ignored_columns(task_name)) - set(temporal_columns(spec))
+        present = {column for column in ignored if column in raw.columns}
+        if present:
+            raw = raw.drop(columns=sorted(present))
+        try:
+            projection = temporal_design_xy(raw, spec, target)
+        except (NumericFeatureError, ValueError) as exc:
+            raise bad_request(str(exc))
+        frame = pd.DataFrame(projection.X)
+        frame.columns = [str(column) for column in projection.columns]
+        return (
+            frame,
+            np.asarray(projection.y, dtype=float),
+            "temporal_design",
+        )
+    X, y = _features_and_target(task_name, partition)
+    if X.shape[1] == 0:
+        ignored = sorted(read_ignored_columns(task_name))
+        raise bad_request(
+            "Partition %r of task %r has no feature columns to explain: %r is the "
+            "target and %s are excluded from the feature matrix."
+            % (
+                partition,
+                task_name,
+                target,
+                "the ignored column(s) %s" % ", ".join(repr(name) for name in ignored)
+                if ignored
+                else "no other column exists",
+            )
+        )
+    return X, y, "partition_columns"
+
+
 def _json_scalar(value):
     """JSON-safe rendering of one stored feature value (NaN/inf become null)."""
     if isinstance(value, (bool, np.bool_)):
@@ -153,10 +228,11 @@ def explain_bundle(task_name: str, model_version: str, body: ExplainRequest):
     from sklearn.inspection import partial_dependence, permutation_importance
 
     bundle = _load_bundle(task_name, model_version)
-    if problem_family(bundle.model) is None:
+    estimator = _explainable_estimator(bundle)
+    if problem_family(estimator) is None:
         raise unprocessable("Explanations need a scikit-learn estimator")
     partition = resolve_partition(task_name, body.partition)
-    X, y = _features_and_target(task_name, partition)
+    X, y, feature_source = _explain_frame(task_name, partition)
     source_rows = len(X)
     if body.stability_samples > 1 and source_rows <= body.max_rows:
         raise bad_request(
@@ -174,7 +250,7 @@ def explain_bundle(task_name: str, model_version: str, body: ExplainRequest):
     values = X.to_numpy()
     try:
         result = permutation_importance(
-            bundle.model, values, y, n_repeats=body.n_repeats, random_state=body.random_state
+            estimator, values, y, n_repeats=body.n_repeats, random_state=body.random_state
         )
     except Exception as exc:
         raise bad_request("Could not compute importance: %s: %s" % (type(exc).__name__, exc))
@@ -192,7 +268,7 @@ def explain_bundle(task_name: str, model_version: str, body: ExplainRequest):
         try:
             stability_results.append(
                 permutation_importance(
-                    bundle.model,
+                    estimator,
                     X_source.iloc[subset].to_numpy(),
                     y_source[subset],
                     n_repeats=body.n_repeats,
@@ -238,7 +314,7 @@ def explain_bundle(task_name: str, model_version: str, body: ExplainRequest):
     curves, errors = [], []
     for i in order[: body.top_k]:
         try:
-            pd_result = partial_dependence(bundle.model, values, [int(i)], kind="average", grid_resolution=20)
+            pd_result = partial_dependence(estimator, values, [int(i)], kind="average", grid_resolution=20)
             curves.append(
                 {
                     "feature": names[i],
@@ -251,7 +327,7 @@ def explain_bundle(task_name: str, model_version: str, body: ExplainRequest):
     partial_dependence_stability = None
     if body.stability_samples > 1 and curves:
         try:
-            response, response_meta = response_callable(bundle.model, problem_family(bundle.model))
+            response, response_meta = response_callable(estimator, problem_family(estimator))
         except ValueError as exc:
             partial_dependence_stability = {"skipped_reason": str(exc)}
         else:
@@ -300,6 +376,7 @@ def explain_bundle(task_name: str, model_version: str, body: ExplainRequest):
     return {
         "model_version": model_version,
         "partition": partition,
+        "feature_source": feature_source,
         "rows": int(len(X)),
         "reference_sample": {
             "partition": partition,
@@ -353,16 +430,17 @@ def accumulated_local_effects_bundle(task_name: str, model_version: str, body: A
     from sklearn.inspection import permutation_importance
 
     bundle = _load_bundle(task_name, model_version)
-    family = problem_family(bundle.model)
+    estimator = _explainable_estimator(bundle)
+    family = problem_family(estimator)
     if family is None:
         raise unprocessable("Explanations need a scikit-learn estimator")
     try:
-        response, response_meta = response_callable(bundle.model, family)
+        response, response_meta = response_callable(estimator, family)
     except ValueError as exc:
         raise unprocessable(str(exc))
 
     partition = resolve_partition(task_name, body.partition)
-    X, y = _features_and_target(task_name, partition)
+    X, y, feature_source = _explain_frame(task_name, partition)
     source_rows = len(X)
     if body.stability_samples > 1 and source_rows <= body.max_rows:
         raise bad_request(
@@ -393,7 +471,7 @@ def accumulated_local_effects_bundle(task_name: str, model_version: str, body: A
             ranking_values, ranking_y = X.to_numpy(), y
         try:
             ranking = permutation_importance(
-                bundle.model, ranking_values, ranking_y, n_repeats=3, random_state=body.random_state
+                estimator, ranking_values, ranking_y, n_repeats=3, random_state=body.random_state
             )
         except Exception as exc:
             raise bad_request(
@@ -482,6 +560,7 @@ def accumulated_local_effects_bundle(task_name: str, model_version: str, body: A
     return {
         "model_version": model_version,
         "partition": partition,
+        "feature_source": feature_source,
         "response": response_meta,
         "reference_sample": {
             "partition": partition,
@@ -533,16 +612,17 @@ def explain_row(task_name: str, model_version: str, body: RowExplainRequest):
     model attribution rather than a causal effect.
     """
     bundle = _load_bundle(task_name, model_version)
-    family = problem_family(bundle.model)
+    estimator = _explainable_estimator(bundle)
+    family = problem_family(estimator)
     if family is None:
         raise unprocessable("Explanations need a scikit-learn estimator")
     try:
-        response, response_meta = response_callable(bundle.model, family)
+        response, response_meta = response_callable(estimator, family)
     except ValueError as exc:
         raise unprocessable(str(exc))
 
     partition = resolve_partition(task_name, body.partition)
-    X, _ = _features_and_target(task_name, partition)
+    X, _, feature_source = _explain_frame(task_name, partition)
     if body.row_index >= len(X):
         raise bad_request(
             "row_index %d is outside the %d stored rows of partition %r"
@@ -568,7 +648,7 @@ def explain_row(task_name: str, model_version: str, body: RowExplainRequest):
 
     row_values = X.iloc[body.row_index].to_numpy()
     baseline_partition = body.baseline_partition or partition
-    base_frame, _ = _features_and_target(task_name, baseline_partition)
+    base_frame, _, _ = _explain_frame(task_name, baseline_partition)
     base_frame = _aligned_features(base_frame, names, "baseline")
     source_rows = len(base_frame)
     if body.baseline == "row":
@@ -633,6 +713,7 @@ def explain_row(task_name: str, model_version: str, body: RowExplainRequest):
     return {
         "model_version": model_version,
         "partition": partition,
+        "feature_source": feature_source,
         "row_index": body.row_index,
         "row_count": int(len(X)),
         "response": response_meta,
@@ -699,7 +780,8 @@ def explain_row(task_name: str, model_version: str, body: RowExplainRequest):
 def prediction_intervals(task_name: str, model_version: str, body: IntervalRequest):
     """Split-conformal intervals for a regression bundle, checked on held-out rows."""
     bundle = _load_bundle(task_name, model_version)
-    family = problem_family(bundle.model)
+    estimator = _explainable_estimator(bundle)
+    family = problem_family(estimator)
     if family != "Regression":
         # Guidance, not a failure: the request is well-formed but cannot apply to
         # this model — say what it got and how to proceed.
@@ -711,11 +793,11 @@ def prediction_intervals(task_name: str, model_version: str, body: IntervalReque
             reason="intervals_require_regression_bundle",
         )
     train_partition = resolve_partition(task_name, body.train_partition)
-    X, y = _features_and_target(task_name, train_partition)
+    X, y, feature_source = _explain_frame(task_name, train_partition)
     rng = np.random.RandomState(body.random_state)
     order = rng.permutation(len(X))
     if body.holdout_partition:
-        X_hold, y_hold = _features_and_target(task_name, body.holdout_partition)
+        X_hold, y_hold, _ = _explain_frame(task_name, body.holdout_partition)
         pool = order
     else:
         cut = max(1, int(0.2 * len(order)))
@@ -735,7 +817,7 @@ def prediction_intervals(task_name: str, model_version: str, body: IntervalReque
         group_values = X_hold[body.group_by].to_numpy()
     try:
         out = split_conformal_regression_interval(
-            bundle.model,
+            estimator,
             X.iloc[fit_index].to_numpy(),
             y[fit_index],
             X.iloc[cal_index].to_numpy(),
@@ -767,6 +849,7 @@ def prediction_intervals(task_name: str, model_version: str, body: IntervalReque
     return {
         "model_version": model_version,
         "method": out["method"],
+        "feature_source": feature_source,
         "coverage_assumption": out["coverage_assumption"],
         "alpha": out["alpha"],
         "nominal_coverage": out["coverage_level"],

@@ -506,6 +506,21 @@ shortcut. Individual ICE curves remain a plotting feature of
 ``plot_partial_dependence`` rather than part of the explanation API contract,
 so no ICE stability summary is estimated there.
 
+**Temporal bundles.** A forecasting bundle's pipeline starts with
+``ForecastFeatureBuilder``, which expects raw history, and a time-series
+partition has no raw feature column of its own (the time/series columns are
+excluded by the temporal contract and the target is the label). The
+explanation, ALE, row-attribution and prediction-interval endpoints therefore
+explain the **estimator after the builder**, evaluated on the generated design
+matrix — the same one-step matrix the experiment search and the rolling-origin
+backtest see. Feature names are the design's (``<target>__lag_4``,
+``…__roll_mean_3``, calendar fields), ``row_index`` addresses a design row (an
+origin), and the response echoes ``feature_source: "temporal_design"`` so the
+scope of the attribution is explicit. Interval calibration fitted on those rows
+inherits the exchangeability assumption of split conformal prediction, which a
+time series violates by construction — read the band as descriptive, and the
+rolling-origin backtest as the accuracy statement.
+
 Accumulated local effects (ALE) are a *supplement* to partial dependence, not a
 replacement. Where marginal partial dependence average predictions over
 feature values far outside the joint reference distribution, ALE varies each

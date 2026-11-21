@@ -40,6 +40,13 @@ Partition defaults, temporal experiments and the Advanced scorer
   experiment model) instead of always scoring it as ``direct``. Temporal
   experiment bundles are now also composed as ``features``/``model`` explicitly,
   matching the baseline bundle contract.
+* **Fixed:** explanations, ALE, row attribution and prediction intervals on a
+  temporal bundle read the raw partition and failed with
+  ``Found array with 0 feature(s)`` (the time column is excluded and the target is
+  the label). They now run on the generated forecast design — the same one-step
+  matrix the search and the backtest see — with the bare estimator behind the
+  feature builder (frame-tolerant for preset pipelines), and echo
+  ``feature_source: "temporal_design"``.
 
 Experiments search space follows the task's problem type
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
