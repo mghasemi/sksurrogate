@@ -364,6 +364,36 @@ frame-preprocessing. An ensemble has no ``steps`` of its own, so
 whole combination. Without that, every member would have received an already-encoded
 matrix.
 
+Temporal tasks (forecast bundles)
+=================================
+
+Combining a temporal task's bundles works on the **generated one-step forecast
+design**, not on the raw partition. A temporal partition has no feature column of
+its own — the time and series columns are excluded by the temporal contract and the
+target is the label — so the combination is fitted on exactly the matrix the
+experiment search, the rolling-origin backtest and the explanations consume.
+
+Three consequences are recorded with the model:
+
+* Members enter the merge through their **bare estimators**. A temporal member
+  bundle is ``Pipeline(ForecastFeatureBuilder, estimator)`` and expects raw
+  history; the builder is removed before combining, because a builder handed a
+  design matrix fails with ``missing required column(s): <time>``.
+* The scoring folds are order-respecting. With no stored splitter the fallback is
+  :class:`~SKSurrogate.temporal.RollingOriginSplit`, never an integer fold count —
+  an integer means a shuffled ``KFold`` in scikit-learn, which would train on the
+  future and score the past. The same rule is applied to the ``honest_cv``
+  nestings.
+* The result is still an ordinary forecast bundle:
+  ``Pipeline(ForecastFeatureBuilder, ensemble)`` plus the serving geometry
+  (``strategy: recursive``), its schema describing the raw history columns. It
+  answers ``POST /api/inference/{task}/forecast`` like any temporal bundle, and
+  the record carries ``feature_source: temporal_design`` with the builder and spec.
+
+``cv_score`` on such a bundle is an out-of-fold score on the **design**, i.e. a
+one-step forecast score, and it is presented as such. Multi-step accuracy is the
+rolling-origin backtest's measurement; the ensemble's caveat list says so.
+
 Limitations
 ===========
 

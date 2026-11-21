@@ -1511,6 +1511,14 @@ CALIBRATION_CAVEAT = (
     "move while log loss falls sharply on an overconfident member."
 )
 
+TEMPORAL_ENSEMBLE_CAVEAT = (
+    "This task is temporal, so the members were refit on the generated one-step "
+    "forecast design and combined there; cv_score is an out-of-fold score on that "
+    "design under an order-respecting rolling-origin splitter, not a multi-step "
+    "forecast score. The rolling-origin backtest is what measures multi-step accuracy, "
+    "and the combined bundle serves recursively through its own feature builder."
+)
+
 
 def load_member_bundle(task_name, model_version):
     """Load one member bundle by version id or alias, and say where it lives.
@@ -1586,7 +1594,15 @@ def ensemble_plan(
     the members' family, and the stacking meta-learner) but never fitted.
     """
     resolved = resolve_ensemble_members(task_name, members)
-    pairs = [(entry["model_version"], entry["bundle"].model) for entry in resolved]
+    # A temporal member bundle is ``Pipeline(ForecastFeatureBuilder, estimator)`` and
+    # expects *raw history*; the combination is fitted on the generated design matrix
+    # instead (see fit_ensemble_bundle), so the form that enters the ensemble must be
+    # the bare estimator behind the builder. For a tabular bundle this returns the
+    # model unchanged.
+    pairs = [
+        (entry["model_version"], unwrap_temporal_estimator(entry["bundle"]))
+        for entry in resolved
+    ]
     try:
         validate_combination(method, params, calibration, weight_optimization)
         forms, family, cleaned = member_forms(
@@ -1639,12 +1655,36 @@ def fit_ensemble_bundle(
     job result.
     """
     target, metadata = get_registered_target(task_name)
-    frame = load_partition(task_name, train_partition)
-    feature_columns = [column for column in frame.columns if column != target]
-    # The frame, not `.values`: members may carry a DataFrame-first encoder, and
-    # handing them an object array is what made bagging misread every numeric column.
-    X = frame[feature_columns]
-    y = frame[target].values
+    # Members are combined on the *feature space they consume*: a tabular bundle
+    # reads the partition's feature columns; a temporal bundle reads the generated
+    # one-step forecast design (its partition has no feature column of its own —
+    # the time/series columns are excluded and the target is the label). Slicing the
+    # raw partition for a temporal task handed the aggregator an (n, 0) matrix, and
+    # scikit-learn answered `at least one array or dtype is required` from
+    # check_X_y. The design is the same matrix the search, backtest and explanations
+    # use, and the members enter it through their bare estimators (no builder).
+    temporal = _temporal_design(task_name, target, train_partition)
+    temporal_builder = temporal_spec = None
+    if temporal is not None:
+        frame, design, temporal_builder, temporal_spec = temporal
+        feature_columns = [str(column) for column in design.X.columns]
+        X = design.X if isinstance(design.X, pd.DataFrame) else pd.DataFrame(
+            design.X, columns=feature_columns
+        )
+        y = (
+            design.y.to_numpy(dtype=float)
+            if hasattr(design.y, "to_numpy")
+            else np.asarray(design.y, dtype=float)
+        )
+    else:
+        frame = load_partition(task_name, train_partition)
+        feature_columns = _require_feature_columns(
+            task_name, train_partition, target, frame
+        )
+        # The frame, not `.values`: members may carry a DataFrame-first encoder, and
+        # handing them an object array is what made bagging misread every numeric column.
+        X = frame[feature_columns]
+        y = frame[target].values
 
     # The process's compute budget, not scikit-learn's ``n_jobs=-1`` default: the four
     # API job slots share one joblib pool (see api/compute.py).
@@ -1664,10 +1704,24 @@ def fit_ensemble_bundle(
     cv_spec = get_stored_cv_spec(task_name)
     cv = get_stored_cv(task_name)
     if cv is None:
-        # Fixed fold count so the member rows and the ensemble row share folds.
-        cv = DEFAULT_ENSEMBLE_FOLDS
+        if temporal is not None:
+            # An integer fold count means a shuffled KFold in scikit-learn: on
+            # time-ordered design rows that trains on the future and scores the past.
+            from SKSurrogate.temporal import RollingOriginSplit
 
-    pairs = [(entry["model_version"], entry["bundle"].model) for entry in resolved]
+            cv = RollingOriginSplit(n_splits=DEFAULT_ENSEMBLE_FOLDS, horizon=1)
+            if cv_spec is None:
+                from SKSurrogate.mltrace import cv_to_spec
+
+                cv_spec = cv_to_spec(cv)
+        else:
+            # Fixed fold count so the member rows and the ensemble row share folds.
+            cv = DEFAULT_ENSEMBLE_FOLDS
+
+    pairs = [
+        (entry["model_version"], unwrap_temporal_estimator(entry["bundle"]))
+        for entry in resolved
+    ]
     try:
         estimator, provenance = fit_ensemble(
             method,
@@ -1754,6 +1808,15 @@ def fit_ensemble_bundle(
 
     nested_record = None
     if honest_cv:
+        outer_cv = honest_cv.get("folds", 5)
+        inner_cv = honest_cv.get("inner_folds", 3)
+        if temporal is not None:
+            # Same rule as the scoring folds: the honest estimate must not shuffle
+            # time-ordered design rows, so both nestings walk forward.
+            from SKSurrogate.temporal import RollingOriginSplit
+
+            outer_cv = RollingOriginSplit(n_splits=int(outer_cv), horizon=1)
+            inner_cv = RollingOriginSplit(n_splits=int(inner_cv), horizon=1)
         try:
             nested_record = nested_ensemble_cv(
                 method,
@@ -1765,8 +1828,8 @@ def fit_ensemble_bundle(
                 calibration=calibration,
                 weight_optimization=weight_optimization,
                 columns=feature_columns,
-                outer_cv=honest_cv.get("folds", 5),
-                inner_cv=honest_cv.get("inner_folds", 3),
+                outer_cv=outer_cv,
+                inner_cv=inner_cv,
                 scoring=scoring,
                 random_state=random_state,
                 n_jobs=n_jobs,
@@ -1786,6 +1849,8 @@ def fit_ensemble_bundle(
             }
 
     caveats = list(ENSEMBLE_CAVEATS)
+    if temporal is not None:
+        caveats.append(TEMPORAL_ENSEMBLE_CAVEAT)
     if weight_optimization:
         caveats.append(WEIGHT_OPTIMIZATION_CAVEAT)
     if calibration:
@@ -1820,8 +1885,32 @@ def fit_ensemble_bundle(
             "scoring": scoring,
             "random_state": random_state,
             "n_jobs": n_jobs,
+            "feature_source": "temporal_design" if temporal is not None else "partition_columns",
+            **(
+                {
+                    "temporal_spec": temporal_spec.to_dict(),
+                    "feature_builder": temporal_builder.to_dict(),
+                    "serving_strategy": "recursive",
+                }
+                if temporal_builder is not None
+                else {}
+            ),
         },
-        transformations=[
+        transformations=(
+            [
+                {
+                    "class": "%s.%s"
+                    % (
+                        temporal_builder.__class__.__module__,
+                        temporal_builder.__class__.__qualname__,
+                    ),
+                    "parameters": temporal_builder.to_dict(),
+                }
+            ]
+            if temporal_builder is not None
+            else []
+        )
+        + [
             {
                 "class": "%s.%s" % (type(estimator).__module__, type(estimator).__qualname__),
                 "parameters": {
@@ -1842,9 +1931,38 @@ def fit_ensemble_bundle(
             ),
         },
     )
-    bundle = _new_bundle(
-        estimator, metrics, task_name, {column: {"dtype": str(frame[column].dtype)} for column in feature_columns}, run_record, owner, run_id, label=label
-    )
+    if temporal is not None:
+        # The record's feature list and row count must name what the members were
+        # combined on: the generated design, not the raw partition with its time
+        # column and untrimmed tail.
+        run_record["data"]["features"] = list(feature_columns)
+        run_record["data"]["rows_used"] = int(len(X))
+        from SKSurrogate import TemporalServeState
+
+        serving_state = TemporalServeState.from_parts(
+            temporal_spec, target, temporal_builder, strategy="recursive"
+        )
+        bundle_metadata = {"reproducibility": run_record}
+        if label:
+            bundle_metadata["label"] = label
+        # ``_new_bundle`` prefixes ``ArrayAsFrame`` for positional callers; a forecast
+        # bundle must instead start with its builder and take the raw history frame,
+        # so it is assembled the way the temporal baseline/experiment paths do.
+        bundle = ModelBundle(
+            Pipeline([("features", temporal_builder), ("model", estimator)]),
+            task_name=task_name,
+            schema={column: {"dtype": str(frame[column].dtype)} for column in frame.columns},
+            metrics=metrics,
+            metadata=bundle_metadata,
+            dataset_fingerprint=run_record["data"]["train_fingerprint"],
+            temporal=serving_state.to_dict(),
+            owner=owner,
+            run_id=run_id,
+        )
+    else:
+        bundle = _new_bundle(
+            estimator, metrics, task_name, {column: {"dtype": str(frame[column].dtype)} for column in feature_columns}, run_record, owner, run_id, label=label
+        )
     ensemble_metadata = {
         "schema": "sksurrogate.ensemble.v1",
         "method": method,
@@ -1855,6 +1973,18 @@ def fit_ensemble_bundle(
         "calibration": calibration_record,
         "weight_optimization": provenance["weights"],
         "scoring": scoring,
+        "feature_source": "temporal_design" if temporal is not None else "partition_columns",
+        **(
+            {
+                "temporal": {
+                    "spec": temporal_spec.to_dict(),
+                    "feature_builder": temporal_builder.to_dict(),
+                    "serving_strategy": "recursive",
+                }
+            }
+            if temporal_builder is not None
+            else {}
+        ),
         "cv": cv_spec if cv_spec is not None else {"folds": DEFAULT_ENSEMBLE_FOLDS, "source": "default"},
         "scores": {
             "train_score": train_score,
@@ -1900,6 +2030,7 @@ def fit_ensemble_bundle(
         "family": family,
         "members": member_entries,
         "metrics": metrics,
+        "feature_source": "temporal_design" if temporal is not None else "partition_columns",
         "calibration": calibration_record,
         "weight_optimization": provenance["weights"],
         "nested": nested_record,

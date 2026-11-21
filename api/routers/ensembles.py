@@ -41,7 +41,7 @@ from SKSurrogate import load_bundle, method_catalogue, problem_family_of
 
 from ..config import settings
 from ..safety import safe_segment
-from ..deps import bad_request, bundle_summary, not_found, task_access
+from ..deps import bad_request, bundle_summary, not_found, open_tracker, task_access
 from ..jobs import job_manager
 from ..partitions import resolve_partition
 from ..training import (
@@ -51,6 +51,7 @@ from ..training import (
     fit_ensemble_bundle,
     get_registered_target,
     load_partition,
+    temporal_design_inputs,
 )
 
 router = APIRouter(prefix="/api/ensembles", tags=["ensembles"], dependencies=[Depends(task_access)])
@@ -226,8 +227,19 @@ def _submit_ensemble(task_name, body):
     _validate_combination_options(body)
     target, _ = get_registered_target(task_name)
     train_partition = resolve_partition(task_name, body.train_partition)
-    frame = load_partition(task_name, train_partition)
-    feature_columns = [column for column in frame.columns if column != target]
+    with open_tracker(task_name) as tracker:
+        declares_temporal = tracker.GetTemporalSpec() is not None
+    if declares_temporal:
+        # A temporal partition has no feature column of its own, so the submit-time
+        # validation must describe the generated design the job will fit on — the
+        # same space ``fit_ensemble_bundle`` uses.
+        feature_columns = [
+            str(column)
+            for column in temporal_design_inputs(task_name, target, train_partition)[0].columns
+        ]
+    else:
+        frame = load_partition(task_name, train_partition)
+        feature_columns = [column for column in frame.columns if column != target]
     # Fail fast: resolves members, checks the family, the capability requirements, every
     # parameter value, the calibration eligibility and the weight-optimization conflicts
     # before the job is queued.

@@ -26,6 +26,18 @@ Partition defaults, temporal experiments and the Advanced scorer
   space (``explain._explain_frame``: raw feature columns, or a temporal task's
   generated forecast design) instead of the raw partition columns, so a temporal
   report no longer clamps from a zero-feature frame.
+* **Fixed:** combining models on a **temporal** task crashed the background job with
+  ``ValueError: at least one array or dtype is required``. The ensemble routes built
+  their feature matrix from the raw partition, which for a temporal task has no
+  feature column (time/series excluded, target is the label), so the aggregator's
+  member reached scikit-learn's ``check_X_y`` with an ``(n, 0)`` matrix. Members are
+  now refit on the generated one-step forecast design through their bare
+  estimators, scored under an order-respecting ``RollingOriginSplit`` (the stored
+  splitter when one exists, never a shuffled integer fold count), and the combined
+  bundle is composed as ``Pipeline(ForecastFeatureBuilder, ensemble)`` with the
+  serving geometry — so it forecasts recursively through the normal inference path.
+  The ensemble record carries ``feature_source: temporal_design``, the builder/spec
+  and a caveat that ``cv_score`` is a one-step design score.
 * **Fixed:** the Experiments “Advanced” tab sent the regression search space with
   a hard-coded ``accuracy`` scorer for a regression-declared task, and AML then
   rejected every candidate with ``ValueError: continuous is not supported``. The
