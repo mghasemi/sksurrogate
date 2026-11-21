@@ -4,6 +4,24 @@ Changelog
 [Unreleased]
 ------------
 
+Experiments search space follows the task's problem type
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Fixed:** the Experiments page's Advanced “Search space” editor opened with the
+  classification default even for regression tasks — a regression search was
+  pre-filled with ``LogisticRegression`` and classifier estimators. It now
+  pre-fills from the task's effective problem type (declared on the Datasets page,
+  or picked in Quick start): regression opens on the library preset space
+  (RandomForest/ExtraTrees regressors); classification keeps its classic editor
+  default. An edited space is never clobbered — the pre-fill re-applies on a type
+  switch only until you edit it, and “Reset to <type> defaults” re-applies it
+  explicitly any time.
+* **Added:** ``GET /api/experiments/presets`` returns a ``default_config`` per
+  preset, derived from the same table that
+  :class:`~SKSurrogate.aml.AML`'s ``preset=...`` uses (``PRESET_PARAM_SPECS`` in
+  ``SKSurrogate.aml``), so the editor pre-fill and the library presets cannot
+  drift apart.
+
 Temporal declaration no longer 500s on timestamps outside the nanosecond range
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

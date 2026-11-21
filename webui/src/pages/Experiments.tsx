@@ -14,6 +14,7 @@ import {
 import {
   addProjectArtifact,
   DEFAULT_EXPERIMENT_CONFIG,
+  DEFAULT_REGRESSION_EXPERIMENT_CONFIG,
   STACKING_COMPONENT,
   ApiError,
   getDatasetMetadata,
@@ -150,6 +151,9 @@ export default function ExperimentsPage() {
   const [quickScoring, setQuickScoring] = useState("");
   const [budget, setBudget] = useState(1);
   const [configJson, setConfigJson] = useState(defaultConfigJson);
+  // True once the user has typed into (or extended) the search space. Until then
+  // the pre-fill follows the effective problem type; after that it never clobbers.
+  const [configTouched, setConfigTouched] = useState(false);
   const [length, setLength] = useState(2);
   const [maxGeneration, setMaxGeneration] = useState(3);
   const [numParents, setNumParents] = useState(4);
@@ -291,6 +295,25 @@ export default function ExperimentsPage() {
   // Derived, not state: until the user picks a type, the declared one wins. No
   // effect, so there is no render cascade when the dataset query resolves.
   const preset = presetTouched ? presetChoice : declaredPreset ?? presetChoice;
+
+  /** Advanced editor pre-fill for a preset: server-served default, local fallback otherwise. */
+  const configJsonForPreset = useCallback(
+    (p: "classification" | "regression") => {
+      const fromApi = presetsQ.data?.presets.find((x) => x.value === p)?.default_config;
+      const space =
+        fromApi ?? (p === "regression" ? DEFAULT_REGRESSION_EXPERIMENT_CONFIG : DEFAULT_EXPERIMENT_CONFIG);
+      return JSON.stringify(space, null, 2);
+    },
+    [presetsQ.data],
+  );
+
+  // The pre-filled search space follows the effective problem type — declared on
+  // Datasets or picked in Quick start (regression opens on the library preset's
+  // regressor space instead of classifiers). Re-applied until the user edits it.
+  useEffect(() => {
+    if (configTouched) return;
+    setConfigJson(configJsonForPreset(preset));
+  }, [preset, configTouched, configJsonForPreset]);
   // quickScoring stays empty by default, so the form falls back to the preset's
   // own default scoring — switching the preset therefore switches the scorer too.
   // Temporal declaration (P7.3): changes what "score" means for this task —
@@ -403,6 +426,7 @@ export default function ExperimentsPage() {
     if (config[STACKING_KEY]) return;
     const next = { ...config, ...STACKING_COMPONENT };
     setConfigJson(JSON.stringify(next, null, 2));
+    setConfigTouched(true);
     setConfigError(null);
   };
 
@@ -419,6 +443,7 @@ export default function ExperimentsPage() {
         2,
       ),
     );
+    setConfigTouched(true);
     setConfigError(null);
   };
 
@@ -587,10 +612,29 @@ export default function ExperimentsPage() {
           className="mono"
           rows={16}
           value={configJson}
-          onChange={(e) => setConfigJson(e.target.value)}
+          onChange={(e) => {
+            setConfigJson(e.target.value);
+            if (!configTouched) setConfigTouched(true);
+          }}
           spellCheck={false}
         />
+        {!configTouched && (
+          <span className="hint">
+            Pre-filled with the <b>{preset}</b> default search space — it follows the problem type declared on the
+            Datasets page (or your Quick-start pick), and re-applies when you switch until you edit. “Reset to{" "}
+            {preset} defaults” re-applies it any time.
+          </span>
+        )}
         <div className="row fixed" style={{ marginTop: 8 }}>
+          <button
+            className="btn"
+            onClick={() => {
+              setConfigJson(configJsonForPreset(preset));
+              setConfigTouched(false);
+            }}
+          >
+            Reset to {preset} defaults
+          </button>
           <button className="btn" onClick={insertStackingComponent} disabled={"error" in parsed}>
             Add stacking component
           </button>

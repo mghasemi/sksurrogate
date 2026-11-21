@@ -376,18 +376,41 @@ default_config = {
     }
 
 
+#: Canonical parameter specs for the bounded task presets, in plain JSON shape
+#: (``real`` / ``integer`` / ``categorical``). Single source of truth: both the
+#: search space that ``AML(preset=...)`` actually searches (:func:`_preset_config`)
+#: and the API's ``/api/experiments/presets`` payload — which pre-fills the
+#: Experiments page's Advanced "Search space" editor for a regression task — are
+#: derived from this table, so they cannot drift apart.
+PRESET_PARAM_SPECS = {
+    "n_estimators": {"type": "integer", "low": 50, "high": 150},
+    "min_samples_leaf": {"type": "integer", "low": 1, "high": 10},
+    "max_features": {"type": "categorical", "items": ["sqrt", "log2", None]},
+}
+
+#: Ensemble family names shared by the task presets (see :func:`_preset_config`).
+PRESET_ESTIMATOR_NAMES = ("RandomForest", "ExtraTrees")
+
+
+def _spec_to_search(spec):
+    """Convert one entry of :data:`PRESET_PARAM_SPECS` into a search object."""
+    if spec["type"] == "integer":
+        return Integer(int(spec["low"]), int(spec["high"]))
+    if spec["type"] == "categorical":
+        return Categorical(list(spec["items"]))
+    # "real" (unused by the presets today, kept for table completeness)
+    low = None if spec.get("low") is None else float(spec["low"])
+    high = None if spec.get("high") is None else float(spec["high"])
+    return Real(low, high)
+
+
 def _preset_config(preset):
     """Build a bounded task-specific search space using only scikit-learn."""
     estimator_suffix = "Classifier" if preset == "classification" else "Regressor"
-    estimators = ("RandomForest", "ExtraTrees")
     config = {}
-    for estimator_name in estimators:
+    for estimator_name in PRESET_ESTIMATOR_NAMES:
         estimator = "sklearn.ensemble.%s%s" % (estimator_name, estimator_suffix)
-        config[estimator] = {
-            "n_estimators": Integer(50, 150),
-            "min_samples_leaf": Integer(1, 10),
-            "max_features": Categorical(["sqrt", "log2", None]),
-        }
+        config[estimator] = {name: _spec_to_search(spec) for name, spec in PRESET_PARAM_SPECS.items()}
     return config
 
 

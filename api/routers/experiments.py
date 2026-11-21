@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 from SKSurrogate import save_bundle
+from SKSurrogate.aml import PRESET_ESTIMATOR_NAMES, PRESET_PARAM_SPECS
 
 from ..config import settings
 from ..safety import safe_segment
@@ -91,6 +92,41 @@ class RunExperimentRequest(BaseModel):
         return values
 
 
+#: The Advanced tab's historical classification pre-fill: a subset of the library's
+#: legacy ``default_config``. Deliberately broader than the classification *preset*
+#: search space (RandomForest/ExtraTrees) — Quick start searches that bounded tree
+#: preset, while the editor opens on this classifier set for users to trim or extend.
+CLASSIFICATION_DEFAULT_CONFIG = {
+    "sklearn.linear_model.LogisticRegression": {
+        "C": {"type": "real", "low": 1e-6, "high": 10},
+        "penalty": {"type": "categorical", "items": ["l2"]},
+    },
+    "sklearn.tree.DecisionTreeClassifier": {
+        "criterion": {"type": "categorical", "items": ["gini", "entropy"]},
+        "min_samples_split": {"type": "integer", "low": 2, "high": 10},
+        "min_samples_leaf": {"type": "integer", "low": 1, "high": 10},
+    },
+    "sklearn.ensemble.RandomForestClassifier": {
+        "n_estimators": {"type": "integer", "low": 10, "high": 200},
+        "criterion": {"type": "categorical", "items": ["gini", "entropy"]},
+        "min_samples_split": {"type": "integer", "low": 2, "high": 10},
+    },
+}
+
+
+def _preset_default_config(preset):
+    """Plain-JSON default search space pre-filled for a quick-start preset.
+
+    Derived from the shared ``PRESET_PARAM_SPECS`` table — the same one
+    :func:`SKSurrogate.aml._preset_config` builds its search space from — so the
+    editor's regression pre-fill mirrors what Quick start actually searches.
+    """
+    suffix = "Classifier" if preset == "classification" else "Regressor"
+    return {
+        "sklearn.ensemble.%s%s" % (name, suffix): dict(PRESET_PARAM_SPECS) for name in PRESET_ESTIMATOR_NAMES
+    }
+
+
 #: Quick-start presets mirror ``AML(preset=...)``; each is a small, bounded search.
 PRESETS = [
     {
@@ -98,12 +134,14 @@ PRESETS = [
         "label": "Classification",
         "description": "Random forest and extra trees with a bounded search; scored by accuracy.",
         "default_scoring": "accuracy",
+        "default_config": CLASSIFICATION_DEFAULT_CONFIG,
     },
     {
         "value": "regression",
         "label": "Regression",
         "description": "Random forest and extra trees with a bounded search; scored by negative RMSE.",
         "default_scoring": "neg_root_mean_squared_error",
+        "default_config": _preset_default_config("regression"),
     },
 ]
 

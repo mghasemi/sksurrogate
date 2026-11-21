@@ -2598,6 +2598,24 @@ export const DEFAULT_EXPERIMENT_CONFIG: SearchSpace = {
   },
 };
 
+/**
+ * Fallback for the regression pre-fill when `/api/experiments/presets` is
+ * unavailable. Mirrors the server's `default_config` for the regression preset,
+ * which itself derives from `SKSurrogate.aml.PRESET_PARAM_SPECS`.
+ */
+export const DEFAULT_REGRESSION_EXPERIMENT_CONFIG: SearchSpace = {
+  "sklearn.ensemble.RandomForestRegressor": {
+    n_estimators: { type: "integer", low: 50, high: 150 },
+    min_samples_leaf: { type: "integer", low: 1, high: 10 },
+    max_features: { type: "categorical", items: ["sqrt", "log2", null] },
+  },
+  "sklearn.ensemble.ExtraTreesRegressor": {
+    n_estimators: { type: "integer", low: 50, high: 150 },
+    min_samples_leaf: { type: "integer", low: 1, high: 10 },
+    max_features: { type: "categorical", items: ["sqrt", "log2", null] },
+  },
+};
+
 /* ------------------------------------------------------------------ */
 /* Scoring (AML/EOA objective)                                         */
 /* ------------------------------------------------------------------ */
@@ -2979,6 +2997,8 @@ export interface ExperimentPreset {
   label: string;
   description: string;
   default_scoring: string;
+  /** Search space pre-filled in the Advanced tab for this preset (server-served). */
+  default_config?: SearchSpace;
 }
 
 export const getPresets = () => get<{ presets: ExperimentPreset[] }>("/api/experiments/presets");

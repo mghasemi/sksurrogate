@@ -52,6 +52,31 @@ def test_presets_listed(client):
     assert values == ["classification", "regression"]
 
 
+def test_preset_default_configs_track_the_library(client):
+    """The Advanced-tab pre-fill served per preset stays aligned with the library.
+
+    Regression mirrors ``SKSurrogate.aml._preset_config`` via the shared
+    ``PRESET_PARAM_SPECS`` table; classification keeps the historical editor default.
+    """
+    from SKSurrogate.aml import PRESET_ESTIMATOR_NAMES, PRESET_PARAM_SPECS
+
+    presets = {p["value"]: p for p in client.get("/api/experiments/presets").json()["presets"]}
+
+    regression_space = presets["regression"]["default_config"]
+    assert set(regression_space) == {
+        "sklearn.ensemble.%sRegressor" % name for name in PRESET_ESTIMATOR_NAMES
+    }
+    for row in regression_space.values():
+        assert row == PRESET_PARAM_SPECS
+
+    classification_space = presets["classification"]["default_config"]
+    assert set(classification_space) == {
+        "sklearn.linear_model.LogisticRegression",
+        "sklearn.tree.DecisionTreeClassifier",
+        "sklearn.ensemble.RandomForestClassifier",
+    }
+
+
 def test_config_and_preset_are_exclusive(client):
     body = {"preset": "classification", "config": {"sklearn.tree.DecisionTreeClassifier": {}}}
     assert client.post("/api/experiments/t/run", json=body).status_code == 422
