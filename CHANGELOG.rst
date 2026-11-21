@@ -31,6 +31,15 @@ Partition defaults, temporal experiments and the Advanced scorer
   columns only) now answers an actionable **400** naming the columns instead of
   the same opaque sklearn message, and pipeline optimization points a temporal
   task at the Experiments/baseline paths.
+* **Fixed:** the rolling-origin backtest of a temporal experiment bundle fitted
+  the bundle's whole pipeline on its own design matrix and failed with
+  ``ForecastFeatureBuilder is missing required column(s): Month, Sales …``. The
+  route now finds the builder by type (not by the ``features`` step name, which a
+  ``make_pipeline`` bundle does not use) and refits the bare estimator, and an
+  omitted ``strategy`` defaults to the bundle's own (``recursive`` for a one-step
+  experiment model) instead of always scoring it as ``direct``. Temporal
+  experiment bundles are now also composed as ``features``/``model`` explicitly,
+  matching the baseline bundle contract.
 
 Experiments search space follows the task's problem type
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

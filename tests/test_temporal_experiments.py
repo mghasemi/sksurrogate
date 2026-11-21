@@ -95,6 +95,9 @@ def test_the_search_runs_on_the_one_step_design(client):
     assert block["strategy"] == "recursive"
     assert block["target"] == "Sales"
     assert list(bundle.schema) == ["Month", "Sales"]
+    # The serving contract other routes rely on: the builder is the "features"
+    # step and the selected estimator is "model".
+    assert [name for name, _ in bundle.model.steps] == ["features", "model"]
 
     history = _series().tail(12)
     forecast = serve_forecast(bundle, history)
@@ -135,6 +138,36 @@ def test_a_featureless_tabular_partition_answers_an_actionable_400(client):
     assert record["status"] == "failed"
     assert "has no feature columns" in record["error"]
     assert "Month" in record["error"]
+
+
+def test_the_experiment_bundle_is_backtested_recursively(client):
+    """The rolling-origin backtest must refit the bare estimator, not the pipeline.
+
+    Fitting a temporal bundle's pipeline on the backtest's own design matrix fails
+    with ``ForecastFeatureBuilder is missing required column(s)`` — the builder
+    wants raw history. The experiment bundle's one-step model also has to be scored
+    on its own labels, i.e. recursively.
+    """
+    _register(client, "tem-bt")
+    _declare_temporal(client, "tem-bt")
+    experiment = _submit_experiment(client, "tem-bt")
+    assert experiment["status"] == "completed", experiment.get("error")
+
+    response = client.post(
+        "/api/evaluation/tem-bt/backtest",
+        json={
+            "model_version": experiment["result"]["model_version"],
+            "horizon": 4,
+            "n_splits": 3,
+            "scoring": "neg_mean_absolute_error",
+        },
+    )
+    assert response.status_code == 200, response.text
+    record = _wait(client, response.json()["job_id"])
+    assert record["status"] == "completed", record.get("error")
+    result = record["result"]
+    assert result["config"]["strategy"] == "recursive"
+    assert result["pooled"]["mae"] is not None
 
 
 def test_pipeline_optimization_points_a_temporal_task_at_the_design_search(client):

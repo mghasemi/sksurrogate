@@ -705,7 +705,10 @@ minimum training length, window mode (expanding/sliding), refit policy
 alpha and method, seasonality, and the
 ``make_supervised`` feature configuration as JSON — the last one must reproduce the
 bundle's feature design, since the backtest materializes its own design matrix and
-refits the bare estimator. The result shows pooled MAE/RMSE/MASE with interval
+refits the bare estimator. Omitting ``strategy`` scores the bundle on the labels it was
+fitted for: an experiment bundle (one-step design) is backtested **recursively**, a
+direct-strategy baseline keeps ``direct``. The result shows pooled MAE/RMSE/MASE with
+interval
 provenance, a per-horizon error table, and a candidate-vs-baseline leaderboard where
 every naive baseline is scored on the identical origins (the naive rows are pinned above
 the candidate, so a model that loses to "last value" cannot be read as the winner);

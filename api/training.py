@@ -7,7 +7,7 @@ from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.exceptions import NotFittedError
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import get_scorer, get_scorer_names
-from sklearn.pipeline import make_pipeline
+from sklearn.pipeline import Pipeline, make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils.validation import check_is_fitted
 
@@ -1220,7 +1220,7 @@ def fit_experiment_bundle(
         if label:
             bundle_metadata["label"] = label
         bundle = ModelBundle(
-            make_pipeline(temporal_builder, best_estimator),
+            Pipeline([("features", temporal_builder), ("model", best_estimator)]),
             task_name=task_name,
             schema=schema,
             metrics={"train_score": train_score},

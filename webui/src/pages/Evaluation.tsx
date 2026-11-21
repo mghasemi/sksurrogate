@@ -489,7 +489,9 @@ function BacktestCard({
   const [minTrain, setMinTrain] = useState(0); // 0 → splitter default
   const [expanding, setExpanding] = useState(true);
   const [refit, setRefit] = useState("every_fold");
-  const [strategy, setStrategy] = useState<"direct" | "recursive">("direct");
+  // Empty = let the server score the bundle on the labels it was fitted for
+  // (an experiment bundle is one-step, so it is backtested recursively).
+  const [strategy, setStrategy] = useState<"" | "direct" | "recursive">("");
   const [alpha, setAlpha] = useState(0.1);
   const [intervalMethod, setIntervalMethod] = useState("absolute");
   const [seasonality, setSeasonality] = useState(1);
@@ -511,7 +513,7 @@ function BacktestCard({
         min_train: minTrain > 0 ? minTrain : null,
         expanding,
         refit,
-        strategy,
+        strategy: strategy || undefined,
         alpha,
         interval_method: intervalMethod,
         seasonality: Math.max(1, seasonality),
@@ -602,8 +604,9 @@ function BacktestCard({
           <label>Strategy</label>
           <select
             value={strategy}
-            onChange={(e) => setStrategy(e.target.value as "direct" | "recursive")}
+            onChange={(e) => setStrategy(e.target.value as "" | "direct" | "recursive")}
           >
+            <option value="">bundle default (one-step ⇒ recursive)</option>
             <option value="direct">direct (y at t+h)</option>
             <option value="recursive">recursive (replay h steps)</option>
           </select>

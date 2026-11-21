@@ -213,7 +213,9 @@ class BacktestRequest(BaseModel):
     refit: str = "every_fold"
     #: ``direct`` labels ``y_{t+horizon}``; ``recursive`` labels ``y_{t+1}`` and
     #: replays the horizon by feeding each prediction back (plan phases P3/P6).
-    strategy: Literal["direct", "recursive"] = "direct"
+    #: Omitted → the bundle's own serving strategy (an experiment bundle fitted on
+    #: one-step labels is recursive); ``direct`` when the bundle is tabular.
+    strategy: Literal["direct", "recursive"] | None = None
     scoring: str | None = None
     #: Omitted → the task's registered partition; an explicit name is used as-is.
     train_partition: str | None = None
@@ -441,11 +443,16 @@ def run_backtest(task_name: str, body: BacktestRequest):
         # (predict_forecast feeds it raw history). The backtest materializes the
         # design itself from ``features``, so it must refit the bare estimator —
         # fitting the builder on an already-built design fails on missing
-        # time/series/target columns.
+        # time/series/target columns. Find the builder by type, not by step name:
+        # a bundle composed with ``make_pipeline`` names it after the class.
         estimator = bundle.model
-        named_steps = getattr(estimator, "named_steps", None) or {}
-        if isinstance(named_steps.get("features"), ForecastFeatureBuilder):
-            estimator = named_steps["model"]
+        steps = getattr(estimator, "steps", None) or []
+        if any(isinstance(step, ForecastFeatureBuilder) for _, step in steps):
+            estimator = steps[-1][1]
+        # Score the estimator on the labels it was fitted for: a one-step model
+        # (experiment bundles) is recursive; a bundle without temporal geometry
+        # keeps the historical direct default.
+        strategy = body.strategy or ((bundle.temporal or {}).get("strategy") or "direct")
         with open_tracker(task_name) as tracker:
             result = tracker.backtest(
                 estimator,
@@ -455,7 +462,7 @@ def run_backtest(task_name: str, body: BacktestRequest):
                 min_train=body.min_train,
                 expanding=body.expanding,
                 refit=body.refit,
-                strategy=body.strategy,
+                strategy=strategy,
                 scoring=scoring_fn,
                 scoring_label=body.scoring,
                 train_partition=resolve_partition(task_name, body.train_partition),
