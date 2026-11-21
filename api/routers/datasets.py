@@ -30,6 +30,7 @@ from SKSurrogate import (
     dataset_profile,
     default_cv_spec,
     sensitive_feature_report,
+    temporal_columns,
 )
 
 from ..config import settings
@@ -59,6 +60,7 @@ from ..preprocessing import (
     impute_partition,
     missing_overview,
     target_balance,
+    temporal_encoding_preview,
 )
 from ..safety import safe_segment
 from ..reports import ReportCompilationError, compile_report, eda_latex, source_archive
@@ -1401,6 +1403,9 @@ def deduplicate_dataset(task_name: str, body: DeduplicateRequest):
                 columns=body.columns,
                 keep=body.keep,
                 max_rows=0,
+                temporal_columns=temporal_columns(metadata.get("temporal_spec"))
+                if metadata.get("temporal_spec")
+                else (),
             )
         except ClipError as exc:
             raise bad_request(str(exc))
@@ -1446,20 +1451,42 @@ def deduplicate_dataset(task_name: str, body: DeduplicateRequest):
 
 
 @router.get("/{task_name}/{partition}/duplicates")
-def duplicate_rows(task_name: str, partition: str, max_rows: int = 20000):
-    """Describe exact duplicate rows and what removing them would change."""
+def duplicate_rows(
+    task_name: str,
+    partition: str,
+    max_rows: int = 20000,
+    columns: list[str] | None = None,
+):
+    """Describe exact duplicate rows and what removing them would change.
+
+    A temporal task has no raw feature column, so duplicates are judged on its
+    row identity (``series + time`` or ``time``); the report names the key via
+    ``key_kind``. ``columns`` narrows or overrides the key explicitly (temporal
+    columns are allowed there, unlike ignored feature columns).
+    """
     _csv_path, frame = _dataset_partition_frame(task_name, partition)
     with open_tracker(task_name) as tracker:
         metadata = tracker.GetMetadata()
     target = metadata.get("target_name")
     ignored = metadata.get("ignored_columns") or []
+    spec = metadata.get("temporal_spec")
     try:
         report = duplicate_analysis(
-            frame, target=target, ignored=ignored, max_rows=max_rows
+            frame,
+            target=target,
+            ignored=ignored,
+            columns=columns,
+            max_rows=max_rows,
+            temporal_columns=temporal_columns(spec) if spec else (),
         )
     except ClipError as exc:
         raise bad_request(str(exc))
-    return {"task_name": task_name, "partition": partition, **report}
+    return {
+        "task_name": task_name,
+        "partition": partition,
+        "temporal_columns": temporal_columns(spec) if spec else [],
+        **report,
+    }
 
 
 @router.get("/{task_name}/{partition}/encoding-preview")
@@ -1469,20 +1496,40 @@ def encoding_preview_route(
     sample_rows: int = 1000,
     max_outputs: int = 40,
 ):
-    """Show the feature matrix the model pipeline builds from this partition."""
+    """Show the feature matrix the model pipeline builds from this partition.
+
+    For a temporal task that matrix is the generated forecast design
+    (lag/rolling/calendar features), which is numeric by construction — there is
+    nothing categorical to encode, and the stored time/series columns are not
+    features at all.
+    """
     _csv_path, frame = _dataset_partition_frame(task_name, partition)
     with open_tracker(task_name) as tracker:
         metadata = tracker.GetMetadata()
     target = metadata.get("target_name")
     ignored = metadata.get("ignored_columns") or []
+    spec = metadata.get("temporal_spec")
     try:
-        report = encoding_preview(
-            frame,
-            target=target,
-            ignored=ignored,
-            sample_rows=sample_rows,
-            max_outputs=max_outputs,
-        )
+        if spec:
+            ignored_features = set(ignored) - set(temporal_columns(spec))
+            present = sorted(column for column in ignored_features if column in frame.columns)
+            if present:
+                frame = frame.drop(columns=present)
+            report = temporal_encoding_preview(
+                frame,
+                spec=spec,
+                target=target,
+                sample_rows=sample_rows,
+                max_outputs=max_outputs,
+            )
+        else:
+            report = encoding_preview(
+                frame,
+                target=target,
+                ignored=ignored,
+                sample_rows=sample_rows,
+                max_outputs=max_outputs,
+            )
     except ImputationError as exc:
         raise bad_request(str(exc))
     return {"task_name": task_name, "partition": partition, **report}

@@ -568,6 +568,7 @@ def duplicate_analysis(
     keep="first",
     max_rows=20000,
     random_state=0,
+    temporal_columns=(),
 ):
     """Assess exact duplicate rows and the distributional cost of removing them.
 
@@ -576,11 +577,24 @@ def duplicate_analysis(
     a random split or contradictory labels), and full-row duplicates are reported
     separately. The report is descriptive only; ``drop_duplicate_rows`` performs
     the removal.
+
+    A temporal task has no raw feature columns (its time/series columns are
+    excluded by the contract and its target is the label), so duplicates are
+    defined on the **row identity** instead — ``(series, time)`` or ``time``.
+    Registration already rejects a repeated key, so this is a consistency check
+    over the stored partition rather than a split hazard; the report says which
+    key was used via ``key_kind``.
     """
     ignored = set(ignored or [])
+    temporal = list(temporal_columns or [])
+    temporal_set = set(temporal)
     if target not in frame.columns:
         raise ClipError("target column %r is not present in the partition" % target)
-    available = [column for column in frame.columns if column != target and column not in ignored]
+    available = [
+        column
+        for column in frame.columns
+        if column != target and column not in ignored and column not in temporal_set
+    ]
     if columns is None:
         features = available
     else:
@@ -592,12 +606,22 @@ def duplicate_analysis(
                 raise ClipError("Unknown column %r" % column)
             if column == target:
                 raise ClipError("The target column cannot be part of the duplicate key")
-            if column in ignored:
+            if column in ignored and column not in temporal_set:
                 raise ClipError("Column %r is ignored for this dataset" % column)
             if column not in features:
                 features.append(column)
+    key_kind = "features"
     if not features:
-        raise ClipError("No feature columns available to define duplicate rows")
+        if not temporal:
+            raise ClipError("No feature columns available to define duplicate rows")
+        # Row identity for a temporal task: series (when declared) plus time.
+        features = [column for column in temporal if column in frame.columns]
+        key_kind = "temporal_identity"
+        if not features:
+            raise ClipError(
+                "the temporal spec names column(s) %s that are not present in the "
+                "partition" % ", ".join(temporal)
+            )
     if keep not in {"first", "last"}:
         raise ClipError("keep must be 'first' or 'last'")
 
@@ -699,10 +723,25 @@ def duplicate_analysis(
             % (conflicting_groups, conflicting_rows)
         )
     if duplicate_rows:
+        if key_kind == "temporal_identity":
+            warnings.append(
+                "Duplicates here are repeated forecast row identities (%s), which the "
+                "temporal contract forbids: registration rejects a repeated key. Deduplicate "
+                "and re-register rather than relying on a splitter."
+                % " + ".join(features)
+            )
+        else:
+            warnings.append(
+                "Duplicates are a split hazard: if identical feature rows land in both training "
+                "and validation folds, the validation score is not an out-of-sample estimate. "
+                "Deduplicate before splitting or use a grouped splitter."
+            )
+    elif key_kind == "temporal_identity":
         warnings.append(
-            "Duplicates are a split hazard: if identical feature rows land in both training "
-            "and validation folds, the validation score is not an out-of-sample estimate. "
-            "Deduplicate before splitting or use a grouped splitter."
+            "Duplicate rows are judged on the temporal row identity (%s): a temporal task "
+            "has no raw feature column to compare (time/series are excluded and the target "
+            "is the label). Registration enforces this key, so zero duplicates is expected."
+            % " + ".join(features)
         )
     if sampled:
         warnings.append(
@@ -712,6 +751,7 @@ def duplicate_analysis(
 
     return {
         "features": features,
+        "key_kind": key_kind,
         "keep": keep,
         "target": target,
         "sampled": sampled,
@@ -733,7 +773,9 @@ def duplicate_analysis(
     }
 
 
-def drop_duplicate_rows(frame, *, target, ignored, columns=None, keep="first", max_rows=20000):
+def drop_duplicate_rows(
+    frame, *, target, ignored, columns=None, keep="first", max_rows=20000, temporal_columns=()
+):
     """Drop exact feature-duplicate rows and return ``(frame, report)``."""
     report = duplicate_analysis(
         frame,
@@ -742,6 +784,7 @@ def drop_duplicate_rows(frame, *, target, ignored, columns=None, keep="first", m
         columns=columns,
         keep=keep,
         max_rows=max_rows,
+        temporal_columns=temporal_columns,
     )
     if report["sampled"]:
         raise ClipError(
@@ -863,6 +906,96 @@ def encoding_preview(frame, *, target, ignored, sample_rows=1000, max_outputs=40
             "explicit “__MISSING__” level, and datetimes become epoch seconds.",
             "Declared text columns (pandas StringDtype) receive TF-IDF features; plain "
             "object columns are treated as categorical.",
+        ],
+    }
+
+
+def temporal_encoding_preview(
+    frame,
+    *,
+    spec,
+    target,
+    features=None,
+    sample_rows=1000,
+    max_outputs=40,
+):
+    """Preview the *generated* forecast design a temporal task's model consumes.
+
+    A temporal partition has no raw feature column to encode (time/series are
+    excluded by the contract, the target is the label), so the encoding preview
+    previously answered "no active feature columns to encode". What the model
+    actually sees is the ``make_supervised`` design: numeric lag/rolling/diff and
+    calendar columns. None of them is categorical, so the honest preview is
+    "passthrough, generated" rather than a one-hot plan.
+
+    The response keeps :func:`encoding_preview`'s shape so the same UI card can
+    render it, and labels the source via ``feature_source``.
+    """
+    from .features import temporal_design_xy
+
+    projection = temporal_design_xy(frame, spec, target, features)
+    columns = list(projection.columns)
+    matrix = projection.X
+    sampled = False
+    if sample_rows and len(matrix) > sample_rows > 0:
+        # Deterministic head/tail-free thinning would bias the preview; a fixed
+        # stride keeps the temporal order visible in the 8-row sample.
+        stride = int(np.ceil(len(matrix) / sample_rows))
+        positions = np.arange(0, len(matrix), max(stride, 1))
+        matrix = matrix[positions]
+        sampled = True
+    per_column = []
+    specs = {entry["name"]: entry for entry in projection.feature_specs}
+    for index, column in enumerate(columns):
+        values = matrix[:, index]
+        provenance = specs.get(column, {})
+        per_column.append(
+            {
+                "column": column,
+                "dtype": "float64",
+                "kind": "generated",
+                "encoding": "Generated forecast feature (numeric passthrough)",
+                "op": provenance.get("op"),
+                "shift": provenance.get("shift"),
+                "cardinality": int(np.unique(values).size),
+                "missing": int(np.isnan(values).sum()),
+                "output_feature_count": 1,
+                "output_columns": [column],
+                "output_columns_truncated": 0,
+                "high_cardinality": False,
+            }
+        )
+
+    shown = columns[:max_outputs]
+    preview = [
+        {name: _finite(row[index]) for index, name in enumerate(shown)}
+        for row in matrix[:8]
+    ]
+    return {
+        "input_features": columns,
+        "input_feature_count": len(columns),
+        "output_features": columns,
+        "output_feature_count": len(columns),
+        "shown_output_features": shown,
+        "preview": preview,
+        "per_column": per_column,
+        "sampled": sampled,
+        "sample_rows": int(len(matrix)),
+        "feature_source": "temporal_design",
+        "temporal": {
+            "temporal_spec": dict(spec),
+            "feature_specs": list(projection.feature_specs),
+        },
+        "rows_dropped": projection.dropped_rows,
+        "notes": [
+            "This is the generated forecast design (make_supervised), not the stored "
+            "columns: a temporal partition has no raw feature column — the time/series "
+            "columns are excluded and the target is the label.",
+            "Every generated column is numeric, so no categorical encoding is applied. "
+            "Lags, rollings and diffs are shifted by at least the declared horizon, so "
+            "no feature reads a future observation.",
+            "The design is materialized per fold by the backtest; this preview is one "
+            "deterministic pass over the requested configuration.",
         ],
     }
 

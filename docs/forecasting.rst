@@ -412,6 +412,19 @@ and the sampled ranges are synthetic: the ranking explains *which history window
 model leans on. The rolling-origin backtest remains the accuracy statement, and the
 limitations block in the result says exactly that.
 
+Two data-quality views follow the same rule:
+
+* ``GET /datasets/{task}/{partition}/duplicates`` judges duplicates on the **row
+  identity** (``time``, or ``series + time``) when no raw feature column exists, and
+  reports ``key_kind: "temporal_identity"``. Registration already rejects a repeated
+  key, so zero duplicates is the expected answer — the warning says so, and lists the
+  key it used. An extra raw feature column (say ``temperature``) still defines the key,
+  as it does for a tabular task; ``columns=`` overrides the key explicitly.
+* ``GET /datasets/{task}/{partition}/encoding-preview`` shows the **generated design**
+  instead of the stored columns: every column is numeric (``kind: "generated"``, with
+  its builder op and shift), so no categorical vocabulary is claimed. It answered
+  "No active feature columns to encode" before, which was true but useless.
+
 
 Prediction intervals
 --------------------

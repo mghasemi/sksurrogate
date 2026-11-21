@@ -866,8 +866,12 @@ export interface ClipMethod {
 export interface EncodingColumn {
   column: string;
   dtype: string;
-  kind: "numeric" | "categorical" | "datetime" | "text";
+  /** ``generated`` marks a temporal-design column (numeric by construction). */
+  kind: "numeric" | "categorical" | "datetime" | "text" | "generated";
   encoding: string;
+  /** Builder provenance for a generated column (``lag``, ``roll_mean``, ``calendar``). */
+  op?: string | null;
+  shift?: number | null;
   cardinality: number;
   missing: number;
   output_feature_count: number;
@@ -887,6 +891,13 @@ export interface EncodingPreview {
   sampled: boolean;
   sample_rows: number;
   notes: string[];
+  /** ``temporal_design`` when the matrix is generated from a temporal spec. */
+  feature_source?: string;
+  temporal?: {
+    temporal_spec?: Record<string, unknown>;
+    feature_specs?: Array<Record<string, unknown>>;
+  } | null;
+  rows_dropped?: number;
 }
 
 export interface ClipColumnReport {
@@ -923,7 +934,11 @@ export interface DuplicateTargetDistribution {
 export interface DuplicateAnalysis {
   task_name?: string;
   partition?: string;
+  /** Columns that define a duplicate. */
   features: string[];
+  /** ``temporal_identity`` when the key is (series, time) rather than feature columns. */
+  key_kind?: "features" | "temporal_identity";
+  temporal_columns?: string[];
   keep: "first" | "last";
   target: string;
   sampled: boolean;

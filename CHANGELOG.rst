@@ -4,8 +4,8 @@ Changelog
 [Unreleased]
 ------------
 
-Sensitivity and correlation on temporal tasks
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Numeric analyses and data-quality views on temporal tasks
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 * **Fixed:** ``POST /api/sensitivity/{task}/run`` (and the Pearson
   ``/correlation-threshold`` / ``/correlation-matrix`` endpoints) answered
@@ -26,6 +26,18 @@ Sensitivity and correlation on temporal tasks
   (``numpy.corrcoef`` returns a scalar); it now keeps every feature — nothing to prune.
 * **UI:** the Feature Analysis page labels a generated-design run and states that the
   ranking explains history windows, not measured inputs.
+* **Fixed:** ``GET /datasets/{task}/{partition}/duplicates`` answered "No feature columns
+  available to define duplicate rows" for a temporal task (nothing is left after the
+  time/series exclusions and the target). Duplicates are now judged on the row identity
+  (``series + time`` or ``time``), reported as ``key_kind: "temporal_identity"`` with a
+  warning that registration enforces that key; extra raw feature columns still define the
+  key, and ``columns=`` overrides it.
+* **Fixed:** ``GET /datasets/{task}/{partition}/encoding-preview`` showed the generated
+  forecast design instead of failing with "No active feature columns to encode": every
+  generated feature is numeric (``kind: "generated"`` with its op/shift), so the preview
+  no longer invents a categorical encoding plan for a temporal partition.
+* **UI:** the Preprocessing page labels the duplicate key and the generated-design
+  encoding preview.
 
 Temporal data contract (time-series support, phase 1)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

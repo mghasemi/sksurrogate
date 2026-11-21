@@ -1026,6 +1026,14 @@ function EncodingCard({ task, partition }: { task: string; partition: string }) 
       {previewQ.isError && <ErrorNote error={previewQ.error} />}
       {data && (
         <>
+          {data.feature_source === "temporal_design" && (
+            <p className="muted">
+              This task is temporal: the matrix below is the <strong>generated forecast design</strong>{" "}
+              (lags/rollings/calendar), not the stored columns. Every generated feature is numeric, so
+              nothing is one-hot encoded — a temporal partition has no raw feature column, since the
+              time/series columns are excluded and the target is the label.
+            </p>
+          )}
           <dl className="kv">
             <dt>Input features</dt>
             <dd>{fmtNum(data.input_feature_count)}</dd>
@@ -1137,6 +1145,19 @@ function DuplicatesCard({
               {fmtNum(analysis.duplicate_rows)} in {fmtNum(analysis.duplicate_groups)} group(s) ·{" "}
               {fmtNum(analysis.removable_rows)} removable
             </dd>
+            {analysis.key_kind === "temporal_identity" && (
+              <>
+                <dt>Duplicate key</dt>
+                <dd>
+                  <span className="mono">{analysis.features.join(" + ")}</span>{" "}
+                  <Badge tone="info">temporal row identity</Badge>
+                  <span className="muted">
+                    {" "}
+                    — a temporal task has no raw feature column to compare
+                  </span>
+                </dd>
+              </>
+            )}
             <dt>Full-row duplicates</dt>
             <dd>{fmtNum(analysis.full_duplicate_rows)}</dd>
             <dt>Conflicting labels</dt>
