@@ -88,6 +88,39 @@ def _deduced_synth_types(frame):
     return types
 
 
+def _available_partitions(task_name):
+    """Registered partition names for a task (empty when the task is unknown).
+
+    Guarded on the tracking DB's existence: ``open_tracker`` would create an empty
+    task database as a side effect, which then masks the "no dataset registered"
+    answer behind a partition-not-found one.
+    """
+    if not settings.mltrace_db_path(task_name).exists():
+        return []
+    try:
+        with open_tracker(task_name) as tracker:
+            return sorted(tracker.dataset_splits() or {})
+    except Exception:  # pragma: no cover - a missing task has no partitions
+        return []
+
+
+def _resolve_partition(task_name, partition):
+    """Pick the partition to sample when the caller did not name one.
+
+    The old default was the literal ``"train"``, which answered ``404 No dataset
+    partition 'train' stored`` for a task whose only partition is named something
+    else (e.g. a task registered directly under its own name). Prefer ``train``
+    when it exists, otherwise the single/first registered partition — a caller who
+    omitted the field is asking for "the data", not for a specific name.
+    """
+    if partition:
+        return partition
+    available = _available_partitions(task_name)
+    if not available:
+        return "train"  # let the loader produce its usual not-found error
+    return "train" if "train" in available else available[0]
+
+
 def _load_partition_frame(task_name, partition):
     """Return the registered frame for ``partition`` or raise 404.
 
@@ -105,7 +138,15 @@ def _load_partition_frame(task_name, partition):
     csv_path = settings.task_dataset_dir(task_name) / (safe_segment(partition, "partition") + ".csv")
     if csv_path.exists():
         return drop_ignored(pd.read_csv(csv_path), ignored)
-    raise not_found("No dataset partition %r stored for task %r" % (partition, task_name))
+    available = _available_partitions(task_name)
+    hint = (
+        "; available partitions: %s" % ", ".join(available)
+        if available
+        else ""
+    )
+    raise not_found(
+        "No dataset partition %r stored for task %r%s" % (partition, task_name, hint)
+    )
 
 
 @router.post("/{task_name}/synthetic")
@@ -118,7 +159,7 @@ def generate_synthetic(task_name: str, body: GenerateSyntheticRequest):
     if body.default_rv not in ("uniform", "normal"):
         raise bad_request("default_rv must be 'uniform' or 'normal'")
 
-    partition = body.partition or "train"
+    partition = _resolve_partition(task_name, body.partition)
     _validate_partition_name(partition)
     frame = _load_partition_frame(task_name, partition)
 

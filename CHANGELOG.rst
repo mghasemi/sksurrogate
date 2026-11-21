@@ -4,6 +4,24 @@ Changelog
 [Unreleased]
 ------------
 
+Synthetic sampling no longer assumes a partition called ``train``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Fixed:** ``POST /api/datasets/{task}/synthetic`` defaulted the source
+  partition to the literal ``"train"`` and answered
+  ``404 No dataset partition 'train' stored`` for any task whose data is
+  registered under another name (e.g. a task whose single partition is called like
+  the task). An omitted ``partition`` now resolves to ``train`` when it exists,
+  otherwise to the first registered partition. An explicit unknown name still
+  404s, but the message lists the partitions that do exist.
+* **Fixed:** the Datasets **Synthetic data** card initialised its partition select
+  to ``"train"``; when that name was not registered the browser displayed the first
+  real option while still sending ``"train"``. The control now binds to the
+  resolved partition (and disables generation when the task has none).
+* **Fixed:** resolving the partition could create an empty task database as a side
+  effect, which masked ``No dataset registered for task`` behind a
+  partition-not-found message.
+
 Declared problem type: one decision instead of five inferences
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

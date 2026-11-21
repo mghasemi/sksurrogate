@@ -922,6 +922,10 @@ function SyntheticDataCard({
   const ignored = metadata?.ignored_columns ?? [];
   const [num, setNum] = useState("100");
   const [partition, setPartition] = useState("train");
+  // The select is populated from the registered partitions, so a hard-coded
+  // initial "train" could show the first option while still *sending* "train" to
+  // the API — a 404 on any task whose partition is named differently.
+  const sourcePartition = partitions.includes(partition) ? partition : (partitions[0] ?? "");
   const [distribution, setDistribution] = useState<"marginal" | "joint">("marginal");
   const [types, setTypes] = useState<Record<string, string>>({});
   const typesTaskRef = useRef<string | null>(null);
@@ -971,7 +975,7 @@ function SyntheticDataCard({
   const generateMut = useMutation({
     mutationFn: () => generateSynthetic(task, {
       num: Number(num),
-      partition,
+      partition: sourcePartition || undefined,
       distribution_type: distribution,
       // Ignored columns are dropped server-side from the source frame; never
       // send a generation type for one (it would be an unknown column).
@@ -1003,7 +1007,7 @@ function SyntheticDataCard({
             </div>
             <div className="field fixed" style={{ flex: "0 1 220px", minWidth: 160 }}>
               <label>Source partition</label>
-              <select value={partition} onChange={(e) => setPartition(e.target.value)}>
+              <select value={sourcePartition} onChange={(e) => setPartition(e.target.value)}>
                 {partitions.map((p) => <option key={p} value={p}>{p}</option>)}
               </select>
             </div>
@@ -1100,7 +1104,7 @@ function SyntheticDataCard({
           <div className="row" style={{ marginTop: 12 }}>
             <button
               className="btn primary"
-              disabled={!task || !validNum || generateMut.isPending}
+              disabled={!task || !validNum || !sourcePartition || generateMut.isPending}
               onClick={() => generateMut.mutate()}
             >
               {generateMut.isPending ? "Generating…" : "Generate synthetic data"}
