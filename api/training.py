@@ -1205,9 +1205,11 @@ def fit_experiment_bundle(
         },
     )
     if temporal is not None:
-        # The record's feature list must name what the search actually saw: the
-        # generated design columns, not the raw partition's time column.
+        # The record's feature list and row count must name what the search
+        # actually saw: the generated design, not the raw partition with its
+        # time column and untrimmed tail.
         run_record["data"]["features"] = list(design.X.columns)
+        run_record["data"]["rows_used"] = int(len(design.X))
     if temporal is not None:
         from SKSurrogate import TemporalServeState
 
