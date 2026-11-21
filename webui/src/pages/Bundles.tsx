@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Package } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 
 import {
   BASELINE_ESTIMATORS,
@@ -159,18 +160,24 @@ export default function BundlesPage() {
         title={`Bundles (${fmtNum(bundles.length)})`}
         sub={
           bestQ.data
-            ? `Best ${bestQ.data.metric} = ${fmtNum(bestQ.data.value)} on ${bestQ.data.model_version}`
-            : "No bundle carries a rankable score metric yet"
+            ? `Best ${bestQ.data.metric} = ${fmtNum(bestQ.data.value)} on ${bestQ.data.model_version} · aliases are assigned on Registry & Deployment → Model aliases`
+            : "No bundle carries a rankable score metric yet · aliases are assigned on Registry & Deployment → Model aliases"
         }
         actions={
-          <button
-            className="btn"
-            disabled={!bestVersion}
-            title={bestVersion ? `Select ${bestVersion}` : "No bundle carries a rankable score metric"}
-            onClick={() => bestVersion && setSelected(bestVersion)}
-          >
-            ★ Jump to best
-          </button>
+          <>
+            <button
+              className="btn"
+              disabled={!bestVersion}
+              title={bestVersion ? `Select ${bestVersion}` : "No bundle carries a rankable score metric"}
+              onClick={() => bestVersion && setSelected(bestVersion)}
+            >
+              ★ Jump to best
+            </button>
+            {/* Aliases are edited on Registry & Deployment; this is the shortcut there. */}
+            <Link className="btn" to="/registry" title="Assign or change a named alias on Registry & Deployment">
+              Assign alias…
+            </Link>
+          </>
         }
       >
         {listQ.isLoading && task && <Loading />}

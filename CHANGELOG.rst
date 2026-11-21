@@ -113,6 +113,11 @@ Partition defaults, temporal experiments and the Advanced scorer
   RMSE for regression, accuracy for classification), the Experiments page sends its
   current scorer, and the rejection message names the scorer plus the candidates'
   first errors instead of leaving the cause implicit.
+* **Changed:** aliasing a bundle is easier to find. **Model Bundles** now says in
+  its card subtitle that aliases are assigned on **Registry & Deployment → Model
+  aliases**, and carries an **Assign alias…** button that opens that page; the
+  manual states that only registered versions can carry an alias (unregistered
+  ones are greyed out as "— register first").
 * **Fixed:** the rolling-origin backtest of a temporal experiment bundle fitted
   the bundle's whole pipeline on its own design matrix and failed with
   ``ForecastFeatureBuilder is missing required column(s): Month, Sales …``. The

@@ -932,7 +932,11 @@ Open **Registry & Deployment**:
    alias is not rewritten by promotion; it always points at the version you
    chose, is resolvable by the API and the Python registry, and can be deleted
    without touching the version. Every set/delete appears in the history and
-   audit log.
+   audit log. Only **registered** versions can carry an alias: unregistered ones
+   appear greyed out as "*— register first*" in the selector, so run step 1
+   before naming a freshly trained bundle. The **Model Bundles** page shows the
+   alias in its **Alias** column and carries an **Assign alias…** shortcut to
+   this card.
 6. Use **Use in Inference** to open the selected registry alias in the
    Inference page.
 
