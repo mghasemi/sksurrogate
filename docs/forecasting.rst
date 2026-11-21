@@ -723,7 +723,14 @@ for the selected panel series with the stored conformal band.
 **Experiments → Run settings.** For a temporal task the card states the declared
 horizon, frequency and panel column, and says plainly that the search scores one-step
 predictions with order-respecting splitters while multi-step scores come from the
-rolling-origin backtest — the forecast metrics in the Scoring list belong there.
+rolling-origin backtest — the forecast metrics in the Scoring list belong there. The
+search builds its design from the declared spec (``ForecastFeatureBuilder``, the
+declared horizon as the minimum lag, one-step labels) and keeps the task's stored
+``TimeSeriesSplit``; the resulting bundle carries the builder and the serving geometry,
+so it forecasts **recursively** through the same inference/serving path as a
+forecasting baseline. Pipeline optimization (``/optimize-pipeline``) searches the
+partition's own columns, so on a temporal task it answers an actionable 400 pointing at
+this page or a baseline instead.
 
 **Inference → Forecast console.** Paste one series of history as CSV (header plus
 rows, one series per request), optionally tick "use the pinned serving model", and read

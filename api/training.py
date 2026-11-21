@@ -1,5 +1,7 @@
 """Shared model-fitting helpers used by the bundles, experiments, and retraining routers."""
 
+from typing import Any
+
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.exceptions import NotFittedError
@@ -930,6 +932,70 @@ def build_forbidden_rules(forbidden):
     return tuple(rules)
 
 
+def _require_feature_columns(task_name, train_partition, target, frame):
+    """The partition's feature columns; a featureless partition is a 400.
+
+    A temporal task legitimately has none of its own columns left — the time and
+    series columns are excluded by the temporal contract — which is why
+    :func:`fit_experiment_bundle` builds a design matrix for it instead. A
+    *tabular* task with none is a data-configuration error, and AML would only
+    report it as every candidate failing with the opaque ``at least one array or
+    dtype is required``.
+    """
+    columns = [column for column in frame.columns if column != target]
+    if columns:
+        return columns
+    ignored = sorted(read_ignored_columns(task_name))
+    excluded = (
+        "the ignored column(s) %s are" % ", ".join(repr(name) for name in ignored)
+        if ignored
+        else "no other column exists"
+    )
+    raise bad_request(
+        "Partition %r of task %r has no feature columns: %r is the target and %s "
+        "excluded from the feature matrix. Re-enable a feature column on the "
+        "Datasets page, or declare the task temporal if time is its only driver."
+        % (train_partition, task_name, target, excluded)
+    )
+
+
+def _temporal_design(task_name, target, train_partition):
+    """The generated one-step forecast design for a temporal task.
+
+    Returns ``(raw_frame, design, builder, spec)``, or ``None`` when the task
+    declares no temporal spec. The raw partition keeps its time/series columns
+    (the builder needs them) and drops only *genuine* ignores — the same rule
+    ``_temporal_baseline_bundle`` follows.
+
+    The labels are one step ahead while the declared horizon still governs the
+    minimum feature shift, so the search scores one-step predictions and the
+    resulting bundle serves recursively (its own predictions are fed back as
+    history). Multi-step accuracy is the rolling-origin backtest's job.
+    """
+    from SKSurrogate import ForecastFeatureBuilder, TemporalSpec
+
+    with open_tracker(task_name) as tracker:
+        state = tracker.GetTemporalSpec()
+        if state is None:
+            return None
+        raw = tracker.get_dataframe(train_partition)
+    spec = TemporalSpec.from_dict(state)
+    ignored = set(read_ignored_columns(task_name)) - set(spec.temporal_columns)
+    present = {column for column in ignored if column in raw.columns}
+    if present:
+        raw = raw.drop(columns=sorted(present))
+    builder = ForecastFeatureBuilder(spec=spec, target=target, lags=[spec.horizon])
+    builder.fit(raw)
+    design = builder.build(raw, target_horizon=1)
+    if not len(design.X):
+        raise bad_request(
+            "Partition %r of task %r has no usable forecast row: the declared "
+            "horizon %d and its lag need more history than the partition holds."
+            % (train_partition, task_name, spec.horizon)
+        )
+    return raw, design, builder, spec
+
+
 def fit_experiment_bundle(
     task_name,
     *,
@@ -961,15 +1027,29 @@ def fit_experiment_bundle(
     otherwise scikit-learn's default fold convention applies.
     """
     target, metadata = get_registered_target(task_name)
-    frame = load_partition(task_name, train_partition)
-    feature_columns = [column for column in frame.columns if column != target]
-    # AML installs FoldLocalDataPreprocessor only when it is given a DataFrame,
-    # and that is what makes a mixed-type partition searchable: the encoder is
-    # then fitted inside every CV fold instead of leaking across the split.
-    # Handing it `X.values` (an object array) skipped preprocessing entirely and
-    # every candidate died on the first categorical value.
-    X = frame[feature_columns]
-    y = frame[target].values
+    # A temporal task's partition has no raw feature column of its own (the time
+    # column is excluded by contract), so the search runs on the generated
+    # one-step forecast design instead — the same design sensitivity, baselines
+    # and the backtest use.
+    temporal_builder: Any = None
+    temporal_spec: Any = None
+    design: Any = None
+    temporal = _temporal_design(task_name, target, train_partition)
+    if temporal is not None:
+        frame, design, temporal_builder, temporal_spec = temporal
+        feature_columns = [column for column in frame.columns if column != target]
+        X = design.X
+        y = design.y.to_numpy(dtype=float)
+    else:
+        frame = load_partition(task_name, train_partition)
+        feature_columns = _require_feature_columns(task_name, train_partition, target, frame)
+        # AML installs FoldLocalDataPreprocessor only when it is given a DataFrame,
+        # and that is what makes a mixed-type partition searchable: the encoder is
+        # then fitted inside every CV fold instead of leaking across the split.
+        # Handing it `X.values` (an object array) skipped preprocessing entirely and
+        # every candidate died on the first categorical value.
+        X = frame[feature_columns]
+        y = frame[target].values
 
     if preset is not None and config:
         raise bad_request("Send either a preset or a config, not both")
@@ -993,8 +1073,13 @@ def fit_experiment_bundle(
 
     # A preset encodes mixed-type data itself (fold-locally, see
     # _new_bundle); an explicit search space needs the columns named or every
-    # candidate dies on the first string value.
-    cat_cols = categorical_feature_columns(frame, feature_columns) if preset is None else []
+    # candidate dies on the first string value. A temporal design is already
+    # numeric, so it never needs an encoder.
+    cat_cols = (
+        categorical_feature_columns(frame, feature_columns)
+        if preset is None and temporal is None
+        else []
+    )
     cv_spec = get_stored_cv_spec(task_name)
     cv = get_stored_cv(task_name)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
@@ -1050,7 +1135,35 @@ def fit_experiment_bundle(
         ) from None
     train_score = float(aml.score(X, y))
 
-    schema = {column: {"dtype": str(frame[column].dtype)} for column in feature_columns}
+    if temporal is not None:
+        # A forecast bundle is fed the *raw* history frame; the builder inside its
+        # pipeline is what turns that into the design, so the schema describes the
+        # partition columns (time/series included), not the generated features.
+        schema = {column: {"dtype": str(frame[column].dtype)} for column in frame.columns}
+    else:
+        schema = {column: {"dtype": str(frame[column].dtype)} for column in feature_columns}
+    transformations: list[dict] = [
+        _transformation_entry(step) for _, step in getattr(best_estimator, "steps", [])
+    ]
+    if temporal is not None:
+        transformations.insert(
+            0,
+            {
+                "class": "%s.%s"
+                % (temporal_builder.__class__.__module__, temporal_builder.__class__.__qualname__),
+                "parameters": temporal_builder.to_dict(),
+            },
+        )
+    temporal_configuration = (
+        {
+            "feature_source": "temporal_design",
+            "temporal_spec": temporal_spec.to_dict(),
+            "feature_builder": temporal_builder.to_dict(),
+            "serving_strategy": "recursive",
+        }
+        if temporal is not None
+        else {}
+    )
     run_record = _reproducibility_record(
         task_name,
         metadata,
@@ -1077,15 +1190,46 @@ def fit_experiment_bundle(
             "conditional": conditional,
             "stacking": stacking or None,
             "n_jobs": n_jobs,
+            **temporal_configuration,
         },
-        transformations=[_transformation_entry(step) for _, step in getattr(best_estimator, "steps", [])],
+        transformations=transformations,
         evaluation_protocol={
             "scoring": scoring,
             "cv": cv_spec if cv_spec is not None else {"folds": 3, "source": "default"},
-            "metric_scope": "cross-validation search score; reported train_score is refit training score",
+            "metric_scope": (
+                "cross-validation search score on the generated one-step forecast "
+                "design; multi-step scores come from the rolling-origin backtest"
+                if temporal is not None
+                else "cross-validation search score; reported train_score is refit training score"
+            ),
         },
     )
-    bundle = _new_bundle(best_estimator, {"train_score": train_score}, task_name, schema, run_record, owner, run_id, label=label)
+    if temporal is not None:
+        # The record's feature list must name what the search actually saw: the
+        # generated design columns, not the raw partition's time column.
+        run_record["data"]["features"] = list(design.X.columns)
+    if temporal is not None:
+        from SKSurrogate import TemporalServeState
+
+        serve_state = TemporalServeState.from_parts(
+            temporal_spec, target, temporal_builder, strategy="recursive"
+        )
+        bundle_metadata = {"reproducibility": run_record}
+        if label:
+            bundle_metadata["label"] = label
+        bundle = ModelBundle(
+            make_pipeline(temporal_builder, best_estimator),
+            task_name=task_name,
+            schema=schema,
+            metrics={"train_score": train_score},
+            metadata=bundle_metadata,
+            dataset_fingerprint=run_record["data"]["train_fingerprint"],
+            temporal=serve_state.to_dict(),
+            owner=owner,
+            run_id=run_id,
+        )
+    else:
+        bundle = _new_bundle(best_estimator, {"train_score": train_score}, task_name, schema, run_record, owner, run_id, label=label)
     bundle.record_audit_event(
         "experiment",
         scoring=scoring,
@@ -1168,6 +1312,18 @@ def fit_pipeline_bundle(
     target, metadata = get_registered_target(task_name)
     frame = load_partition(task_name, train_partition)
     feature_columns = [column for column in frame.columns if column != target]
+    if not feature_columns:
+        with open_tracker(task_name) as tracker:
+            is_temporal = tracker.GetTemporalSpec() is not None
+        if is_temporal:
+            raise bad_request(
+                "Task %r is temporal: pipeline optimization searches the partition's own "
+                "feature columns, and its time/series columns are excluded by contract. "
+                "Use the Experiments page (the search there runs on the generated "
+                "one-step forecast design) or train a forecasting baseline instead."
+                % task_name
+            )
+        feature_columns = _require_feature_columns(task_name, train_partition, target, frame)
     # Same reason as fit_experiment_bundle: pass the frame, not `.values`.
     X = frame[feature_columns]
     y = frame[target].values

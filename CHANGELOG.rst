@@ -4,6 +4,34 @@ Changelog
 [Unreleased]
 ------------
 
+Partition defaults, temporal experiments and the Advanced scorer
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Fixed:** the web UI's train-partition field started as the literal ``train``
+  and always sent it, so a task whose data lives in another partition (a single
+  ``main``, or one named after the task) failed with ``404: No dataset partition
+  'train' stored``. Experiments, Bundles, Evaluation, Feature Analysis and
+  Retraining now derive the default from the dataset metadata (``train`` when it
+  exists, else the first registered partition) and omit the field while it is
+  unknown. Every API request model that defaulted to ``"train"`` now defaults to
+  ``None`` and resolves through ``api/partitions.py``, so a stale frontend cannot
+  reintroduce the 404.
+* **Fixed:** the Experiments “Advanced” tab sent the regression search space with
+  a hard-coded ``accuracy`` scorer for a regression-declared task, and AML then
+  rejected every candidate with ``ValueError: continuous is not supported``. The
+  scorer now follows the effective problem type until the user picks one.
+* **Added:** an experiment on a **temporal** task now searches the generated
+  one-step forecast design (``ForecastFeatureBuilder`` with the declared horizon
+  as the minimum lag) under the task's order-respecting splitter, and the bundle
+  it produces carries that builder plus the serving geometry, so it forecasts
+  recursively through the normal inference/serving path. Before this, a temporal
+  partition's only non-target column is its excluded time column, so every
+  candidate died with ``ValueError: at least one array or dtype is required``.
+* **Fixed:** a partition with no feature columns left (target plus ignored
+  columns only) now answers an actionable **400** naming the columns instead of
+  the same opaque sklearn message, and pipeline optimization points a temporal
+  task at the Experiments/baseline paths.
+
 Experiments search space follows the task's problem type
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
