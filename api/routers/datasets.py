@@ -45,7 +45,7 @@ from ..eda import (
     semantic_audit,
     stability,
 )
-from ..features import NumericFeatureError, numeric_train_xy
+from ..features import NumericFeatureError, features_from_json, numeric_train_xy
 from ..jobs import job_manager
 from ..preflight import submit_preflight
 from ..preprocessing import (
@@ -1495,13 +1495,17 @@ def encoding_preview_route(
     partition: str,
     sample_rows: int = 1000,
     max_outputs: int = 40,
+    features: str | None = None,
 ):
     """Show the feature matrix the model pipeline builds from this partition.
 
     For a temporal task that matrix is the generated forecast design
     (lag/rolling/calendar features), which is numeric by construction — there is
     nothing categorical to encode, and the stored time/series columns are not
-    features at all.
+    features at all. ``features`` accepts the same ``make_supervised`` JSON as
+    the backtest, so a preview can reproduce the bundle's actual design; the
+    response labels each row with its origin timestamp so the consumed time axis
+    stays visible.
     """
     _csv_path, frame = _dataset_partition_frame(task_name, partition)
     with open_tracker(task_name) as tracker:
@@ -1509,6 +1513,13 @@ def encoding_preview_route(
     target = metadata.get("target_name")
     ignored = metadata.get("ignored_columns") or []
     spec = metadata.get("temporal_spec")
+    if not spec and features is not None and str(features).strip():
+        # ``features`` describes a generated design; a tabular partition has real
+        # columns instead. Refuse rather than silently ignoring the setting.
+        raise bad_request(
+            "features applies to temporal tasks only: a tabular partition is "
+            "previewed from its own columns"
+        )
     try:
         if spec:
             ignored_features = set(ignored) - set(temporal_columns(spec))
@@ -1519,6 +1530,7 @@ def encoding_preview_route(
                 frame,
                 spec=spec,
                 target=target,
+                features=features_from_json(features),
                 sample_rows=sample_rows,
                 max_outputs=max_outputs,
             )
@@ -1530,7 +1542,7 @@ def encoding_preview_route(
                 sample_rows=sample_rows,
                 max_outputs=max_outputs,
             )
-    except ImputationError as exc:
+    except (ImputationError, NumericFeatureError) as exc:
         raise bad_request(str(exc))
     return {"task_name": task_name, "partition": partition, **report}
 

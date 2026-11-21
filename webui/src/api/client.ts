@@ -887,6 +887,9 @@ export interface EncodingPreview {
   output_feature_count: number;
   shown_output_features: string[];
   preview: Array<Record<string, unknown>>;
+  /** One label per preview row (the forecast origin) when the rows have an identity. */
+  preview_labels?: string[];
+  preview_label_name?: string | null;
   per_column: EncodingColumn[];
   sampled: boolean;
   sample_rows: number;
@@ -1093,10 +1096,14 @@ export const getEncodingPreview = (
   partition: string,
   sampleRows = 1000,
   maxOutputs = 40,
-) =>
-  get<EncodingPreview>(
-    `/api/datasets/${encodeURIComponent(task)}/${encodeURIComponent(partition)}/encoding-preview?sample_rows=${sampleRows}&max_outputs=${maxOutputs}`,
+  /** Temporal tasks only: ``make_supervised`` builder kwargs to reproduce the model's design. */
+  features?: Record<string, unknown>,
+) => {
+  const design = features ? `&features=${encodeURIComponent(JSON.stringify(features))}` : "";
+  return get<EncodingPreview>(
+    `/api/datasets/${encodeURIComponent(task)}/${encodeURIComponent(partition)}/encoding-preview?sample_rows=${sampleRows}&max_outputs=${maxOutputs}${design}`,
   );
+};
 
 export interface ClipRequest {
   partition: string;

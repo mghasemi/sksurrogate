@@ -36,8 +36,15 @@ Numeric analyses and data-quality views on temporal tasks
   forecast design instead of failing with "No active feature columns to encode": every
   generated feature is numeric (``kind: "generated"`` with its op/shift), so the preview
   no longer invents a categorical encoding plan for a temporal partition.
-* **UI:** the Preprocessing page labels the duplicate key and the generated-design
-  encoding preview.
+* **Encoding preview detail:** each preview row now carries its origin timestamp
+  (``preview_label_name``/``preview_labels``) — the time axis is consumed by the
+  feature builder, not hidden — and the endpoint accepts the same ``features`` JSON as
+  the backtest, so a preview can reproduce the model's actual design instead of always
+  showing the one-lag default. A tabular task is refused with a clear message if
+  ``features`` is supplied.
+* **UI:** the Preprocessing page labels the duplicate key, shows the origin column in
+  the encoded rows, and exposes a "Design features (JSON)" control with an
+  apply/reset action.
 
 Temporal data contract (time-series support, phase 1)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -28,6 +28,7 @@ column or pass a feature subset), and it is stated in the result's limitations.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
@@ -58,6 +59,10 @@ class NumericTrainData:
     dropped_rows: int = 0
     source: str = "partition_columns"
     feature_specs: list[dict] = field(default_factory=list)
+    #: One label per row of ``X`` when the rows have a natural identity (the
+    #: origin timestamp of a forecast design). ``label_name`` names that axis.
+    row_labels: list[str] = field(default_factory=list)
+    label_name: str | None = None
 
     @property
     def excluded_names(self) -> list[str]:
@@ -137,6 +142,25 @@ def excluded_names(excluded: list[dict]) -> list[str]:
     return [entry["column"] for entry in excluded]
 
 
+def features_from_json(raw: Any) -> dict | None:
+    """Parse a ``features`` JSON request field/query parameter.
+
+    Endpoints that accept ``make_supervised`` builder kwargs take them as JSON.
+    ``None`` or a blank string means "use the default design". Anything else that
+    is not a JSON object is refused as a :class:`NumericFeatureError`, so callers
+    answer 400 with the parse problem instead of silently ignoring the setting.
+    """
+    if raw is None or not str(raw).strip():
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise NumericFeatureError("features must be a JSON object: %s" % exc)
+    if not isinstance(parsed, dict):
+        raise NumericFeatureError("features must be a JSON object")
+    return parsed
+
+
 def temporal_design_xy(
     frame: pd.DataFrame,
     spec: Any,
@@ -183,6 +207,11 @@ def temporal_design_xy(
         dropped_rows=int(design.dropped_rows + int((~finite).sum())),
         source="temporal_design",
         feature_specs=[entry.to_dict() for entry in design.feature_specs],
+        # The origin timestamp is not a feature — it is the row's identity, and
+        # showing it is how a reader sees that the time axis was consumed rather
+        # than silently dropped.
+        row_labels=[str(value) for value in design.meta["origin_time"].to_numpy()[finite]],
+        label_name="origin_time",
     )
 
 

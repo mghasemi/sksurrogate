@@ -936,6 +936,7 @@ def temporal_encoding_preview(
     projection = temporal_design_xy(frame, spec, target, features)
     columns = list(projection.columns)
     matrix = projection.X
+    labels = list(projection.row_labels)
     sampled = False
     if sample_rows and len(matrix) > sample_rows > 0:
         # Deterministic head/tail-free thinning would bias the preview; a fixed
@@ -943,6 +944,7 @@ def temporal_encoding_preview(
         stride = int(np.ceil(len(matrix) / sample_rows))
         positions = np.arange(0, len(matrix), max(stride, 1))
         matrix = matrix[positions]
+        labels = [labels[index] for index in positions] if labels else []
         sampled = True
     per_column = []
     specs = {entry["name"]: entry for entry in projection.feature_specs}
@@ -978,6 +980,8 @@ def temporal_encoding_preview(
         "output_feature_count": len(columns),
         "shown_output_features": shown,
         "preview": preview,
+        "preview_labels": labels[: len(preview)],
+        "preview_label_name": projection.label_name,
         "per_column": per_column,
         "sampled": sampled,
         "sample_rows": int(len(matrix)),

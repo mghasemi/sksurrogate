@@ -6,8 +6,6 @@ be slow on larger feature sets. Also exposes the heatmap data behind
 weights table, rendered client-side by the web UI.
 """
 
-import json
-
 import pandas as pd
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -16,7 +14,12 @@ from SKSurrogate import CorrelationThreshold, SensAprx, temporal_columns
 
 from ..config import settings
 from ..columns import drop_ignored, read_ignored_columns
-from ..features import NumericFeatureError, numeric_train_xy, temporal_design_xy
+from ..features import (
+    NumericFeatureError,
+    features_from_json,
+    numeric_train_xy,
+    temporal_design_xy,
+)
 from ..safety import safe_segment
 from ..deps import bad_request, finite_or_none as _finite, not_found, open_tracker, task_access
 from ..jobs import job_manager
@@ -200,15 +203,10 @@ def run_sensitivity(task_name: str, body: SensitivityRequest):
 
 def _features_from_query(raw):
     """Parse the ``features`` JSON query parameter of the correlation endpoints."""
-    if raw is None or not str(raw).strip():
-        return None
     try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise bad_request("features must be a JSON object: %s" % exc)
-    if not isinstance(parsed, dict):
-        raise bad_request("features must be a JSON object")
-    return parsed
+        return features_from_json(raw)
+    except NumericFeatureError as exc:
+        raise bad_request(str(exc))
 
 
 @router.post("/{task_name}/correlation-threshold")

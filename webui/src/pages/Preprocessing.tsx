@@ -1011,9 +1011,15 @@ function StabilityCard({
 }
 
 function EncodingCard({ task, partition }: { task: string; partition: string }) {
+  // A temporal task's design is generated, so the preview is only as complete as
+  // the feature configuration: the default is one lag at the horizon. Expose the
+  // same JSON the backtest/bundle uses so the preview can reproduce it.
+  const [featuresJson, setFeaturesJson] = useState("");
+  const [featuresError, setFeaturesError] = useState<string | null>(null);
+  const [features, setFeatures] = useState<Record<string, unknown> | undefined>(undefined);
   const previewQ = useQuery<EncodingPreview>({
-    queryKey: ["encoding-preview", task, partition],
-    queryFn: () => getEncodingPreview(task, partition),
+    queryKey: ["encoding-preview", task, partition, features],
+    queryFn: () => getEncodingPreview(task, partition, 1000, 40, features),
     enabled: !!task && !!partition,
   });
   const data = previewQ.data;
@@ -1033,6 +1039,61 @@ function EncodingCard({ task, partition }: { task: string; partition: string }) 
               nothing is one-hot encoded — a temporal partition has no raw feature column, since the
               time/series columns are excluded and the target is the label.
             </p>
+          )}
+          {data.feature_source === "temporal_design" && (
+            <div className="field" style={{ marginTop: 8, marginBottom: 8 }}>
+              <label>Design features (make_supervised kwargs, JSON)</label>
+              <textarea
+                className="mono"
+                rows={2}
+                spellCheck={false}
+                value={featuresJson}
+                onChange={(e) => setFeaturesJson(e.target.value)}
+                placeholder='{"lags": [4], "rolling": [[7, "mean"]], "calendar": ["dow", "is_weekend"]}'
+              />
+              <span className="hint">
+                The time column is never a feature: its information reaches the model through lags
+                and optional calendar fields. The default design is one lag at the declared horizon,
+                which is why only that column appears below.
+              </span>
+              <div className="row" style={{ marginTop: 6 }}>
+                <button
+                  className="btn"
+                  onClick={() => {
+                    if (!featuresJson.trim()) {
+                      setFeatures(undefined);
+                      setFeaturesError(null);
+                      return;
+                    }
+                    try {
+                      const parsed = JSON.parse(featuresJson);
+                      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+                        throw new Error("expected a JSON object");
+                      }
+                      setFeatures(parsed as Record<string, unknown>);
+                      setFeaturesError(null);
+                    } catch (err) {
+                      setFeaturesError(
+                        `Invalid features JSON: ${err instanceof Error ? err.message : String(err)}`,
+                      );
+                    }
+                  }}
+                >
+                  Apply design
+                </button>
+                <button
+                  className="btn"
+                  onClick={() => {
+                    setFeaturesJson("");
+                    setFeatures(undefined);
+                    setFeaturesError(null);
+                  }}
+                >
+                  Reset to default
+                </button>
+              </div>
+              {featuresError && <div className="error-note">{featuresError}</div>}
+            </div>
           )}
           <dl className="kv">
             <dt>Input features</dt>
@@ -1065,30 +1126,41 @@ function EncodingCard({ task, partition }: { task: string; partition: string }) 
               </td>,
             ]}
           />
-          {data.preview.length > 0 && (
-            <>
-              <h4 style={{ marginTop: 14 }}>Encoded rows (first {data.preview.length})</h4>
-              <Table<Record<string, unknown>>
-                columns={data.shown_output_features.slice(0, 12)}
-                rows={data.preview}
-                keyOf={(_, index) => index}
-                render={(row) =>
-                  data.shown_output_features.slice(0, 12).map((name) => (
-                    <td key={name} className="mono">
-                      {row[name] === null || row[name] === undefined
-                        ? "—"
-                        : typeof row[name] === "number"
-                          ? num(row[name] as number, 3)
-                          : String(row[name])}
-                    </td>
-                  ))
-                }
-              />
-              {data.output_feature_count > 12 && (
-                <p className="hint">Showing 12 of {fmtNum(data.output_feature_count)} encoded columns.</p>
-              )}
-            </>
-          )}
+          {data.preview.length > 0 && (() => {
+            const labelName = data.preview_labels?.length
+              ? data.preview_label_name ?? "row"
+              : null;
+            const shown = data.shown_output_features.slice(0, 12);
+            const columns = labelName ? [labelName, ...shown] : shown;
+            const rows = data.preview.map((row, index) => ({
+              __index: index,
+              ...(labelName ? { [labelName]: data.preview_labels?.[index] ?? "" } : {}),
+              ...row,
+            }));
+            const cell = (value: unknown, key: string) => (
+              <td key={key} className="mono">
+                {value === null || value === undefined
+                  ? "—"
+                  : typeof value === "number"
+                    ? num(value, 3)
+                    : String(value)}
+              </td>
+            );
+            return (
+              <>
+                <h4 style={{ marginTop: 14 }}>Encoded rows (first {data.preview.length})</h4>
+                <Table<Record<string, unknown>>
+                  columns={columns}
+                  rows={rows}
+                  keyOf={(row) => Number(row.__index)}
+                  render={(row) => columns.map((name) => cell(row[name], name))}
+                />
+                {data.output_feature_count > 12 && (
+                  <p className="hint">Showing 12 of {fmtNum(data.output_feature_count)} encoded columns.</p>
+                )}
+              </>
+            );
+          })()}
           <ul className="hint" style={{ marginTop: 10 }}>
             {data.notes.map((note) => <li key={note}>{note}</li>)}
           </ul>

@@ -190,3 +190,74 @@ def test_tabular_endpoints_are_unchanged(client):
     assert report["input_features"] == ["x", "cat"]
     kinds = {entry["column"]: entry["kind"] for entry in report["per_column"]}
     assert kinds == {"x": "numeric", "cat": "categorical"}
+
+
+def test_encoding_preview_labels_each_row_with_its_origin(client):
+    """The time axis is consumed, not hidden: every preview row carries its origin."""
+    _register(
+        client,
+        _temporal_frame(),
+        TASK,
+        {"time_column": "date", "horizon": HORIZON, "freq": "D"},
+    )
+    report = client.get(f"/api/datasets/{TASK}/train/encoding-preview").json()
+    assert report["preview_label_name"] == "origin_time"
+    assert len(report["preview_labels"]) == len(report["preview"])
+    # First usable origin is the first timestamp with a complete lag vector.
+    # (The CSV stores ISO strings, so the label is the stored value verbatim.)
+    first_origin = _temporal_frame()["date"].iloc[HORIZON]
+    assert report["preview_labels"][0] == str(first_origin)
+
+
+def test_encoding_preview_accepts_a_design_configuration(client):
+    """The default design is one lag; ``features`` reproduces a richer model design."""
+    _register(
+        client,
+        _temporal_frame(),
+        TASK,
+        {"time_column": "date", "horizon": HORIZON, "freq": "D"},
+    )
+    features = {
+        "lags": [HORIZON],
+        "rolling": [[7, "mean"]],
+        "calendar": ["dow", "is_weekend"],
+    }
+    response = client.get(
+        f"/api/datasets/{TASK}/train/encoding-preview",
+        params={"features": json.dumps(features)},
+    )
+    assert response.status_code == 200, response.text
+    report = response.json()
+    assert report["input_features"] == [
+        "y__lag_4",
+        "y__roll_mean_7",
+        "cal__dow",
+        "cal__is_weekend",
+    ]
+    assert len(report["preview_labels"]) == len(report["preview"])
+    # Calendar fields come from the parsed date (object dtype in the CSV).
+    dow = [row["cal__dow"] for row in report["preview"]]
+    assert all(0.0 <= value <= 6.0 for value in dow)
+
+
+def test_encoding_preview_refuses_malformed_or_tabular_features(client):
+    _register(
+        client,
+        _temporal_frame(),
+        TASK,
+        {"time_column": "date", "horizon": HORIZON, "freq": "D"},
+    )
+    bad = client.get(
+        f"/api/datasets/{TASK}/train/encoding-preview", params={"features": "not-json"}
+    )
+    assert bad.status_code == 400
+    assert "JSON object" in bad.json()["detail"]
+
+    tabular = pd.DataFrame({"x": np.arange(60.0), "y": np.arange(60.0) * 2.0})
+    _register(client, tabular, TABULAR)
+    misplaced = client.get(
+        f"/api/datasets/{TABULAR}/train/encoding-preview",
+        params={"features": json.dumps({"lags": [1]})},
+    )
+    assert misplaced.status_code == 400
+    assert "temporal tasks only" in misplaced.json()["detail"]

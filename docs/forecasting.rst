@@ -423,7 +423,12 @@ Two data-quality views follow the same rule:
 * ``GET /datasets/{task}/{partition}/encoding-preview`` shows the **generated design**
   instead of the stored columns: every column is numeric (``kind: "generated"``, with
   its builder op and shift), so no categorical vocabulary is claimed. It answered
-  "No active feature columns to encode" before, which was true but useless.
+  "No active feature columns to encode" before, which was true but useless. Each
+  preview row is labelled with its **origin timestamp** (``preview_label_name`` /
+  ``preview_labels``), so the consumed time axis stays visible instead of looking
+  dropped, and ``features`` accepts the same ``make_supervised`` JSON as the backtest
+  — the default design is one lag at the declared horizon, so a richer design (lags,
+  rollings, ``calendar``) has to be requested explicitly.
 
 
 Prediction intervals
