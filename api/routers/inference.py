@@ -14,6 +14,7 @@ shared with the serving router in :mod:`api.inference_service`.
 import uuid
 from pathlib import Path
 
+import pandas as pd
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from starlette.responses import FileResponse
@@ -21,7 +22,7 @@ from starlette.responses import FileResponse
 from SKSurrogate import ModelRegistry
 
 from ..config import settings
-from ..inference_service import resolve_input_frame, score
+from ..inference_service import resolve_input_frame, score, score_forecast
 from ..safety import safe_segment
 from ..deps import bad_request, not_found, open_tracker, resolve_bundle, task_access
 
@@ -57,6 +58,51 @@ def predict(task_name: str, body: PredictRequest):
         "predictions": result["predictions"],
         "metrics": result["metrics"],
         "ignored_columns": ignored_columns,
+    }
+
+
+class ForecastRequest(BaseModel):
+    """Multi-step forecast payload for a temporal bundle (plan phase P6).
+
+    Carries *history* rows — one series of past observations — plus optional
+    future exogenous rows and horizon, not feature rows: the stored design
+    validates them before anything is predicted.
+    """
+
+    model_version: str | None = None
+    alias: str | None = None
+    history: list[dict]
+    future_exogenous: list[dict] | None = None
+    horizon: int | None = None
+    request_id: str | None = None
+
+
+@router.post("/{task_name}/forecast")
+def forecast(task_name: str, body: ForecastRequest):
+    """Serve a multi-step forecast from the task's temporal bundle (plan P6).
+
+    Temporal bundles — v2 records with the ``temporal`` block written by plan
+    phase P6 in ``TIME_SERIES_PLAN.md`` — resolve like any other model; tabular
+    bundles answer 400, since forecasting is refused rather than faked. The
+    response carries the strategy and requested horizon alongside one entry per
+    forecast step (times, predictions and interval bounds).
+    """
+    bundle = resolve_bundle(task_name, model_version=body.model_version, alias=body.alias)
+    future_frame = (
+        pd.DataFrame(body.future_exogenous) if body.future_exogenous is not None else None
+    )
+    result = score_forecast(
+        task_name,
+        pd.DataFrame(body.history),
+        bundle,
+        horizon=body.horizon,
+        future_exogenous=future_frame,
+        request_id=body.request_id,
+    )
+    return {
+        "task_name": task_name,
+        "model_version": bundle.model_version,
+        **result,
     }
 
 

@@ -1,3 +1,5 @@
+.. _modelbundles:
+
 ====================================
 Model Bundles and Registry
 ====================================
@@ -5,7 +7,10 @@ Model Bundles and Registry
 ``SKSurrogate`` provides portable model bundles for moving a fitted estimator from
 training to validation or deployment. A bundle stores the fitted model together with
 its preprocessing reference, feature schema, metrics, dataset fingerprint, configuration
-version, runtime dependency versions, task name, and model version.
+version, runtime dependency versions, task name, and model version. Since format **v2**,
+bundles trained on time-series data additionally carry an optional ``temporal`` block —
+the serving state of their forecasting design — plus optionally a calibrated interval
+block (see :ref:`format-versions`).
 
 Several bundles can also be combined into one model with scikit-learn's own
 meta-estimators — see :doc:`ensembles` for voting, averaging, stacking, bagging and
@@ -52,6 +57,43 @@ managed separately and dependency comparison is not required.
 The artifact is serialized with ``joblib`` and should only be loaded from trusted
 sources. The model version is generated automatically unless ``model_version`` is
 provided explicitly.
+
+.. _format-versions:
+
+Bundle format versions and temporal bundles
+===========================================
+
+The on-disk record carries a ``format_version`` field. Version **1** is the original
+tabular layout; version **2** — what :func:`~SKSurrogate.save_bundle` writes today (
+``BUNDLE_FORMAT_VERSION = 2``) — adds two optional fields to it, and both formats load
+through the same :func:`~SKSurrogate.load_bundle` (``SUPPORTED_BUNDLE_FORMAT_VERSIONS = (1, 2)``).
+A v1 record simply arrives without temporal content, so existing tabular bundles keep
+working unchanged.
+
+A **temporal** bundle is what a forecasting workflow produces — it adds:
+
+* ``temporal``: the serialized serving state of its design (:class:`~SKSurrogate.TemporalServeState`)
+  — series spec, target column, feature configuration, and the direct/recursive strategy; and
+* ``interval_calibration`` (optional): the split-conformal per-horizon offsets fitted by a
+  calibrated backtest (method, alpha, target step, residual count) plus any recorded
+  calibration notes.
+
+Serving such a bundle means forecasting from history rather than scoring feature rows:
+
+.. code-block:: python
+
+    result = loaded.predict_forecast(history_frame)   # one series in time order
+    print(result.times)        # origin+1 .. origin+h (design horizon for direct bundles)
+    print(result.means, result.lower, result.upper)   # bounds None unless calibrated
+
+``predict_forecast`` validates the history exactly as described in :doc:`inference`
+(one series, time order, enough tail rows for every feature the design reads) and then
+delegates to :func:`~SKSurrogate.serve_forecast`. For a temporal bundle,
+:func:`~SKSurrogate.predict_batch` routes into this same path — its input is the
+history frame and the result has one row per forecast step. The two shapes of bundle
+answer different questions, and each refuses the other's job with an actionable error
+rather than faking it: a tabular bundle asked to *forecast* raises ``ValueError`` at
+every serving path (400 over HTTP).
 
 Registry lifecycle
 ==================

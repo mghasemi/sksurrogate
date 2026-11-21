@@ -25,7 +25,7 @@ Only ``pandas`` and ``numpy`` are used here — no new hard dependency.
 from __future__ import annotations
 
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
 import numpy as np
@@ -1090,6 +1090,86 @@ class ForecastFeatureBuilder(BaseEstimator, TransformerMixin):
         )
         return target_values, meta
 
+    # -- serialization (plan phase P6) ------------------------------------
+    def to_dict(self) -> dict[str, Any]:
+        """JSON-safe serialization of this builder's *configuration*.
+
+        The values are the normalized forms ``transform`` actually uses, so
+        :meth:`from_dict` on the result reproduces a behaviorally identical
+        (unfitted) instance. Nothing fitted is stored: the step keeps no fit
+        state beyond its provenance bookkeeping, and serving reuses the trained
+        pipeline's own fitted instance anyway.
+        """
+        rolling = _normalize_rolling(self.rolling)
+        fourier = self.fourier
+        return {
+            "spec": TemporalSpec.from_dict(self.spec).to_dict(),
+            "target": str(self.target),
+            "lags": [int(lag) for lag in (self.lags or ())],
+            "seasonal_lags": [int(period) for period in (self.seasonal_lags or ())],
+            "rolling": [
+                {"window": int(window), "stats": list(stats)}
+                for window, stats in rolling
+            ],
+            "diffs": [int(step) for step in (self.diffs or ())],
+            "pct_changes": [int(step) for step in (self.pct_changes or ())],
+            "calendar": list(self.calendar or ()),
+            "fourier": None if not fourier else {
+                "periods": list(fourier.get("periods", ())),
+                "terms": int(fourier.get("terms", 1)),
+            },
+            "exogenous": list(self.exogenous or ()),
+            "min_periods": self.min_periods,
+            "dropna": bool(self.dropna),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Any) -> "ForecastFeatureBuilder":
+        """Rebuild an unfitted builder from a :meth:`to_dict` mapping.
+
+        Unknown fields are refused and the reconstructed instance is validated
+        against its spec (lags vs horizon, ...), so a corrupted or truncated
+        bundle block fails loudly at load time rather than mid-forecast.
+        """
+        if not isinstance(value, Mapping):
+            raise TypeError(
+                "feature_spec must be a mapping (see ForecastFeatureBuilder.to_dict)"
+            )
+        allowed = {
+            "spec",
+            "target",
+            "lags",
+            "seasonal_lags",
+            "rolling",
+            "diffs",
+            "pct_changes",
+            "calendar",
+            "fourier",
+            "exogenous",
+            "min_periods",
+            "dropna",
+        }
+        unknown = sorted(set(value) - allowed)
+        if unknown:
+            raise ValueError("unknown feature_spec field(s): %s" % ", ".join(unknown))
+        missing = sorted({"spec", "target"} - set(value))
+        if missing:
+            raise ValueError("feature_spec is missing required field(s): %s" % ", ".join(missing))
+        return cls(
+            spec=value["spec"],
+            target=value["target"],
+            lags=tuple(int(lag) for lag in value.get("lags", ())),
+            seasonal_lags=tuple(int(period) for period in value.get("seasonal_lags", ())),
+            rolling=[dict(entry) for entry in value.get("rolling", ())],
+            diffs=tuple(int(step) for step in value.get("diffs", ())),
+            pct_changes=tuple(int(step) for step in value.get("pct_changes", ())),
+            calendar=tuple(str(name) for name in value.get("calendar", ())),
+            fourier=None if not value.get("fourier") else dict(value["fourier"]),
+            exogenous=tuple(str(column) for column in value.get("exogenous", ())),
+            min_periods=value.get("min_periods"),
+            dropna=bool(value.get("dropna", True)),
+        )
+
 
 def _safe_pct_change(series: pd.Series, horizon: int, step: int) -> pd.Series:
     """Relative change from ``t-h-step`` to ``t-h``; zero denominators give NaN."""
@@ -1375,3 +1455,571 @@ class RollingOriginSplit:
                 self.expanding,
             )
         )
+
+
+# ---------------------------------------------------------------------------
+# Bundled multi-step inference (plan phase P6)
+# ---------------------------------------------------------------------------
+
+#: Format tag of the ``temporal`` block stored in a v2 model-bundle record.
+TEMPORAL_BLOCK_FORMAT = 1
+
+
+@dataclass(frozen=True)
+class TemporalServeState:
+    """The bundle-side view of a temporal design, enough to serve forecasts.
+
+    A fitted :class:`ForecastFeatureBuilder` is behaviorally defined by its
+    constructor arguments (``fit`` only validates and stores provenance), so the
+    state persists the *specification* — spec, target column, feature
+    configuration, strategy — not any fit artifact. The trained pipeline keeps
+    its own fitted builder for prediction; this object owns the serving
+    geometry instead: how much history is required, which rows to evaluate and
+    what times a forecast covers.
+
+    Build one with :meth:`from_parts`, store it in a bundle record via
+    :meth:`to_dict` (the ``temporal`` key of a v2 record) and rebuild it from
+    the loaded dict with :meth:`from_dict`.
+    """
+
+    spec: Any = None  # TemporalSpec or mapping; normalized in __post_init__
+    target: str = ""
+    feature_spec: Mapping[str, Any] = field(default_factory=dict)
+    strategy: str = "direct"
+
+    def __post_init__(self):
+        if self.strategy not in ("direct", "recursive"):
+            raise ValueError("strategy must be 'direct' or 'recursive'")
+        object.__setattr__(self, "spec", TemporalSpec.from_dict(self.spec))
+        # Rebuilding the builder validates feature_spec against the spec (lag >=
+        # horizon and friends), so a corrupted block fails here, at load time.
+        self.builder()  # noqa: F841
+
+    def __hash__(self):  # frozen dataclass + non-hashable mapping field
+        return hash((str(self.spec.to_dict()), str(self.target), self.strategy))
+
+    @classmethod
+    def from_parts(
+        cls,
+        spec: Any,
+        target: str,
+        builder_or_feature_spec: Any,
+        strategy: str = "direct",
+    ) -> "TemporalServeState":
+        """Build a serve state from a spec, target and a builder or its dict."""
+        if isinstance(builder_or_feature_spec, ForecastFeatureBuilder):
+            feature_spec = builder_or_feature_spec.to_dict()
+        else:
+            feature_spec = dict(builder_or_feature_spec)
+        return cls(spec=spec, target=target, feature_spec=feature_spec, strategy=strategy)
+
+    def to_dict(self) -> dict[str, Any]:
+        """The ``temporal`` block of a v2 model-bundle record."""
+        return {
+            "format": TEMPORAL_BLOCK_FORMAT,
+            "strategy": self.strategy,
+            "spec": self.spec.to_dict(),
+            "target": self.target,
+            "feature_spec": dict(self.feature_spec),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Any) -> "TemporalServeState":
+        """Rebuild a state from the ``temporal`` block of a bundle record."""
+        if not isinstance(value, Mapping):
+            raise TypeError("the temporal block must be a mapping")
+        unknown = sorted(set(value) - {"format", "strategy", "spec", "target", "feature_spec"})
+        if unknown:
+            raise ValueError("unknown temporal-block field(s): %s" % ", ".join(unknown))
+        missing = sorted({"spec", "target", "feature_spec"} - set(value))
+        if missing:
+            raise ValueError("temporal block is missing required field(s): %s" % ", ".join(missing))
+        version = int(value.get("format", TEMPORAL_BLOCK_FORMAT))
+        if version != TEMPORAL_BLOCK_FORMAT:
+            raise ValueError(
+                "unsupported temporal-block format %d (expected %d)"
+                % (version, TEMPORAL_BLOCK_FORMAT)
+            )
+        return cls(
+            spec=value["spec"],
+            target=str(value["target"]),
+            feature_spec=dict(value["feature_spec"]),
+            strategy=str(value.get("strategy", "direct")),
+        )
+
+    def builder(self) -> ForecastFeatureBuilder:
+        """An unfitted instance with the stored configuration (``fit`` is a no-op)."""
+        return ForecastFeatureBuilder.from_dict(self.feature_spec)
+
+    @property
+    def horizon(self) -> int:
+        return self.spec.horizon
+
+    @property
+    def exogenous_columns(self) -> tuple[str, ...]:
+        return tuple(self.builder()._resolved()["exogenous"])
+
+    def required_length(self) -> int:
+        """Minimum number of history observations needed to serve one forecast.
+
+        The count is the smallest ``n`` for which every feature value read at any
+        evaluated position is backed by real data, and it depends on strategy as
+        well as each term's lookback (``H`` = horizon):
+
+        * ``direct`` evaluates the final ``H`` origins (positions ``t-H+1 .. t``), so a lag or seasonal lag of step ``L`` needs ``n >= H + L``, a rolling window of width ``W`` needs ``n >= 2H + W - 1``, and a difference / percent-change of step ``k`` needs ``n >= 2H + k``;
+        * ``recursive`` evaluates from position ``t`` and reads no more than
+          ``H`` steps back — beyond that it feeds its own predictions (see
+          :func:`serve_forecast`) — so the same terms need only ``n >= L``, ``n >= H + W - 1`` and ``n >= H + k`` respectively.
+
+        The returned value is the maximum of these per-term bounds together with
+        a strategy base (``H`` for direct, ``1`` for recursive). Calendar, fourier and exogenous terms read no history at all and add nothing; a target-derived feature is required for the geometry to make sense in practice, but a pure calendar/exogenous bundle serves from ``H`` observations of history under direct and one under recursive (the declared minimums).
+        """
+        horizon = self.horizon
+        options = self.builder()._resolved()
+        if self.strategy == "direct":
+            needed = [horizon]
+            needed.extend(horizon + lag for lag in options["lags"] + options["seasonal_lags"])
+            needed.extend(2 * horizon + window - 1 for window, _stats in options["rolling"])
+            step_terms = sorted(set(options["diffs"]) | set(options["pct_changes"]))
+            needed.extend(2 * horizon + k for k in step_terms)
+        else:
+            needed = [1]
+            needed.extend(lag for lag in options["lags"] + options["seasonal_lags"])
+            needed.extend(horizon + window - 1 for window, _stats in options["rolling"])
+            step_terms = sorted(set(options["diffs"]) | set(options["pct_changes"]))
+            needed.extend(horizon + k for k in step_terms)
+        return int(max(needed))
+
+    def validate_history(self, history: Any) -> tuple[pd.DataFrame, Any]:
+        """Normalize a single-series history frame and check it can serve.
+
+        Returns ``(frame, series_label)`` where the frame has a clean
+        increasing time axis (parsed to datetime when possible), a fresh range
+        index and — for a panel spec — exactly one ``series_id`` value. Raises:
+
+        * ``TypeError`` if ``history`` is not a DataFrame;
+        * ``ValueError`` with an actionable message on missing columns, a
+          non-increasing or duplicated time axis, more than one series, a
+          timestamp grid that contradicts the declared frequency, or a history
+          shorter than :meth:`required_length`.
+        """
+        spec = self.spec
+        if not isinstance(history, pd.DataFrame):
+            raise TypeError("history must be a pandas DataFrame")
+        if len(history) == 0:
+            raise ValueError("history is empty")
+
+        required = [spec.time_column]
+        if spec.series_id is not None:
+            required.append(spec.series_id)
+        required.append(self.target)
+        missing = [column for column in required if column not in history.columns]
+        if missing:
+            raise ValueError("history is missing column(s): %s" % ", ".join(missing))
+        missing_exog = [c for c in self.exogenous_columns if c not in history.columns]
+        if missing_exog:
+            raise ValueError(
+                "exogenous column(s) not found in history: %s" % ", ".join(missing_exog)
+            )
+
+        frame = history.copy()
+        raw_times = frame[spec.time_column]
+        if pd.api.types.is_datetime64_any_dtype(raw_times):
+            times = raw_times
+        elif pd.api.types.is_numeric_dtype(raw_times):
+            # A purely numeric axis is a unit-spaced index (periods, steps),
+            # not an epoch encoding: keep it as float so the forecast axis
+            # extrapolates in the caller's own units. pd.to_datetime would
+            # reinterpret values like 60 as "60 nanoseconds since epoch".
+            times = raw_times.astype("float64")
+            frame[spec.time_column] = times
+        else:
+            parsed = pd.to_datetime(frame[spec.time_column], errors="coerce")
+            if bool(parsed.notna().all()):
+                frame[spec.time_column] = parsed
+                times = frame[spec.time_column]
+            else:
+                numeric = pd.to_numeric(raw_times, errors="coerce")
+                if not bool(numeric.notna().all()):
+                    raise ValueError(
+                        "time column %r holds neither parseable timestamps nor numbers"
+                        % spec.time_column
+                    )
+                frame[spec.time_column] = numeric.astype("float64")
+                times = frame[spec.time_column]
+
+        if bool(times.isna().any()):
+            raise ValueError("time column %r has missing values" % spec.time_column)
+        if not bool(times.is_monotonic_increasing):
+            raise ValueError(
+                "history time values must be strictly increasing; sort the frame by %r"
+                % spec.time_column
+            )
+        duplicates = int(times.duplicated().sum())
+        if duplicates:
+            raise ValueError(
+                "history has %d duplicate timestamp(s) in %r" % (duplicates, spec.time_column)
+            )
+
+        label = None
+        if spec.series_id is not None:
+            labels = frame[spec.series_id].dropna().unique()
+            if len(labels) != 1:
+                raise ValueError(
+                    "history must contain exactly one %r value; got %d (one forecast per series)"
+                    % (spec.series_id, len(labels))
+                )
+            label = labels[0]
+
+        if spec.freq is not None and pd.api.types.is_datetime64_any_dtype(times):
+            inferred = infer_freq(times)
+            if inferred is not None:
+                declared_name = to_offset(spec.freq).name
+                inferred_name = to_offset(inferred).name
+                # Alias spellings drift across pandas versions ("15min" vs "T");
+                # only refuse when the two aliases disagree even normalized.
+                normalize = lambda alias: str(alias).upper().replace("MIN", "T")  # noqa: E731
+                if normalize(declared_name) != normalize(inferred_name):
+                    raise ValueError(
+                        "history timestamps step by %r but the bundle was trained on a "
+                        "%r grid; serve it with history at the declared frequency"
+                        % (inferred, spec.freq)
+                    )
+
+        needed = self.required_length()
+        if len(frame) < needed:
+            raise ValueError(
+                "history has %d observation(s); this bundle needs at least %d for a %s "
+                "forecast — extend the history before serving"
+                % (len(frame), needed, ("direct" if self.strategy == "direct" else "recursive"))
+            )
+        return frame.reset_index(drop=True), label
+
+
+@dataclass
+class ForecastResult:
+    """One multi-step forecast from a temporal bundle.
+
+    ``means``/``lower``/``upper`` are aligned with ``times`` (the horizon many
+    steps after the last history observation). ``lower`` and ``upper`` are
+    ``None`` unless the bundle carries an :class:`IntervalCalibration`; when
+    they exist, ``interval_note`` says what the offsets were calibrated on.
+    """
+
+    series_id: Any
+    times: list
+    means: np.ndarray
+    lower: np.ndarray | None = None
+    upper: np.ndarray | None = None
+    horizon: int = 0
+    strategy: str = "direct"
+    interval_note: str | None = None
+
+    def to_frame(self) -> pd.DataFrame:
+        """Long-form table: one row per forecast step."""
+        lower = (
+            self.lower if self.lower is not None else np.full(len(self.means), np.nan)
+        )
+        upper = (
+            self.upper if self.upper is not None else np.full(len(self.means), np.nan)
+        )
+        return pd.DataFrame(
+            {
+                "series_id": [self.series_id] * len(self.times),
+                "time": list(self.times),
+                "mean": np.asarray(self.means, dtype="float64"),
+                "lower": np.asarray(lower, dtype="float64"),
+                "upper": np.asarray(upper, dtype="float64"),
+            }
+        )
+
+
+def _extend_axis(time_values: pd.Series, count: int, freq: str | None = None) -> list[Any]:
+    """The next ``count`` values of the history's time axis.
+
+    A datetime axis steps by the declared frequency when one was given; a
+    numeric (or irregular, or un-declared) axis extrapolates its median step.
+    The synthetic times both build the serving rows and label the result, so
+    they must match the axis kind of ``time_values`` exactly.
+    """
+    if count <= 0:
+        return []
+    last = time_values.iloc[-1]
+    if pd.api.types.is_datetime64_any_dtype(time_values):
+        if freq is not None:
+            try:
+                offset = to_offset(freq)
+                return [last + (k + 1) * offset for k in range(count)]
+            except (ValueError, TypeError):
+                pass  # fall back to the observed step below
+        values = pd.to_datetime(time_values).astype("int64").to_numpy(dtype="float64")
+    else:
+        values = pd.to_numeric(time_values).to_numpy(dtype="float64")
+    step = _numeric_step(np.unique(values))
+    if not step or step <= 0:
+        raise ValueError(
+            "cannot extend the forecast axis from %d observation(s) without a declared "
+            "frequency" % len(time_values)
+        )
+    last_value = float(values[-1])
+    return [pd.Timestamp(int(last_value + (k + 1) * step)) if isinstance(last, pd.Timestamp) else last_value + (k + 1) * step for k in range(count)]
+
+
+def _serving_steps(bundle: Any):
+    """Locate the pipeline's fitted builder and build row-preserving serving steps.
+
+    Returns ``(transformer_pipeline, predictor, builder_index)`` where every
+    transformer is reused by reference (fitted state intact) except the
+    :class:`ForecastFeatureBuilder` itself, which gets a behaviorally identical
+    twin with ``dropna=False``: dropping rows would silently shift row *i* of
+    the output away from row *i* of the frame, and serving must select exact
+    positions. The original bundle is not mutated.
+    """
+    from sklearn.pipeline import Pipeline
+
+    model = getattr(bundle, "model", None)
+    steps = getattr(model, "steps", None)
+    if not isinstance(steps, list) or not steps:
+        raise ValueError(
+            "a temporal bundle's model must be a scikit-learn pipeline that starts with "
+            "the ForecastFeatureBuilder it was trained with"
+        )
+    for index, (_name, estimator) in enumerate(steps):
+        if isinstance(estimator, ForecastFeatureBuilder):
+            break
+    else:
+        raise ValueError(
+            "the bundle's pipeline has no ForecastFeatureBuilder step; a tabular model "
+            "cannot be served as a forecast"
+        )
+    serving_steps = []
+    for i, (name, estimator) in enumerate(steps):
+        if i == index and isinstance(estimator, ForecastFeatureBuilder):
+            params = dict(estimator.get_params())
+            params["dropna"] = False
+            twin = type(estimator)(**params)
+            for attr_name in vars(estimator):  # carry the fit bookkeeping over
+                if attr_name.endswith("_"):
+                    setattr(twin, attr_name, getattr(estimator, attr_name))
+            serving_steps.append((name, twin))
+        else:
+            serving_steps.append((name, estimator))
+    transformers = Pipeline(serving_steps[:-1]) if len(serving_steps) > 1 else None
+    predictor = serving_steps[-1][1]
+    if isinstance(predictor, ForecastFeatureBuilder):
+        raise ValueError(
+            "the pipeline ends with the feature builder; it must end with an estimator"
+        )
+    return transformers, predictor, index
+
+
+def serve_forecast(
+    bundle: Any,
+    history: pd.DataFrame,
+    horizon: int | None = None,
+    future_exogenous: Any = None,
+) -> ForecastResult:
+    """Produce a multi-step forecast from a temporal model bundle.
+
+    :param bundle: a :class:`~SKSurrogate.modelbundle.ModelBundle` whose record
+        carries the ``temporal`` block written by plan phase P6 (a v1 tabular
+        bundle raises ``ValueError``). The duck-typed contract is only
+        ``.model``, ``.temporal`` and ``.interval_calibration``.
+    :param history: one series of past observations as a DataFrame with the
+        spec's time column, target column (and series_id / exogenous columns
+        when declared), strictly increasing in time.
+    :param horizon: forecast length in steps; defaults to the design horizon.
+        A ``direct`` bundle answers exactly its design horizon and refuses any
+        other value; a ``recursive`` bundle accepts any positive horizon — its
+        one-step model feeds predictions back into its own features.
+    :param future_exogenous: optional frame (or list of dicts) with the time
+        column plus every declared exogenous column, for the forecast steps.
+        Required when exogenous columns are declared and the strategy is
+        recursive; ignored by a direct bundle, which reads only history.
+
+    The predictions reuse the exact pipeline stored in ``bundle.model``, so a
+    serving result matches what an offline backtest produced for the same
+    origin — down to the floats (see ``tests/test_forecast_inference.py``).
+    """
+    block = getattr(bundle, "temporal", None)
+    if not isinstance(block, Mapping):
+        raise ValueError(
+            "this bundle has no temporal design; it cannot produce forecasts"
+        )
+    state = TemporalServeState.from_dict(block)
+    spec = state.spec
+
+    if horizon is None:
+        requested = int(spec.horizon)
+    else:
+        if isinstance(horizon, bool):
+            raise ValueError("horizon must be a positive integer")
+        requested = int(horizon)
+        if requested < 1:
+            raise ValueError("horizon must be >= 1")
+    if state.strategy == "direct" and requested != spec.horizon:
+        raise ValueError(
+            "a direct-strategy bundle can only forecast its design horizon (%d); "
+            "requesting %d is refused rather than answered by extrapolation"
+            % (spec.horizon, requested)
+        )
+
+    frame, label = state.validate_history(history)
+    times_series = frame[spec.time_column]
+    synthetic_times = _extend_axis(times_series, requested, freq=spec.freq)
+
+    transformers, predictor, _builder_index = _serving_steps(bundle)
+    target = state.target  # TemporalSpec carries no target; it lives on the state
+
+    exog_frame: pd.DataFrame | None = None
+    if future_exogenous is not None and state.exogenous_columns:
+        if isinstance(future_exogenous, (list, tuple)):
+            exog_frame = pd.DataFrame(list(future_exogenous))
+        elif isinstance(future_exogenous, pd.DataFrame):
+            exog_frame = future_exogenous.copy()
+        else:
+            raise TypeError("future_exogenous must be a DataFrame or list of dicts")
+        missing = [c for c in state.exogenous_columns if c not in exog_frame.columns]
+        if missing:
+            raise ValueError(
+                "future_exogenous is missing column(s): %s" % ", ".join(missing)
+            )
+
+    means: np.ndarray
+    if state.strategy == "direct":
+        n = len(frame)
+        positions = np.arange(n - requested, n, dtype="int64")
+        working = frame
+        X_all = transformers.transform(working) if transformers is not None else pd.DataFrame(
+            index=frame.index
+        )
+        if len(X_all) != n:
+            raise ValueError(
+                "a preprocessing step changed the row count (%d -> %d); only row-preserving "
+                "steps can serve a temporal bundle" % (n, len(X_all))
+            )
+        selected = X_all.iloc[positions]
+    else:
+        # Recursive serving with state feedback: extend the frame one synthetic
+        # step at a time, predicting each step *before* later steps' features are
+        # built — so target lags that reach past the real history read this call's
+        # earlier predictions instead of placeholders. If a feature is still NaN
+        # after that (history too short, missing exogenous), the check below fires.
+        working = frame.copy()
+        step_values: list[float] = []
+        for k in range(requested):
+            row = {column: np.nan for column in working.columns}
+            row[spec.time_column] = synthetic_times[k]
+            if spec.series_id is not None:
+                row[spec.series_id] = label
+            row[target] = np.nan  # placeholder, replaced by this step's prediction
+            if exog_frame is not None and len(exog_frame):
+                match = _exogenous_row(exog_frame, spec.time_column, synthetic_times[k])
+                for column in state.exogenous_columns:
+                    value = match.get(column) if isinstance(match, Mapping) else np.nan
+                    row[column] = np.nan if value is None or (isinstance(value, float) and pd.isna(value)) else value
+            working = pd.concat([working, pd.DataFrame([row], columns=working.columns)], ignore_index=True)
+            features = transformers.transform(working) if transformers is not None else pd.DataFrame(index=range(len(working)))
+            if len(features) != len(working):
+                raise ValueError(
+                    "a preprocessing step changed the row count; only row-preserving steps "
+                    "can serve a temporal bundle"
+                )
+            x_row = features.iloc[-1]
+            missing_values = [name for name, value in x_row.items() if pd.isna(value)]
+            if missing_values:
+                raise ValueError(
+                    "incomplete feature values at forecast step %d (%s): columns %s are not "
+                    "backed by the history — supply future_exogenous rows or a longer history"
+                    % (k + 1, synthetic_times[k], ", ".join(missing_values))
+                )
+            y_hat = float(np.asarray(predictor.predict(x_row.to_frame().T)).ravel()[0])
+            if not np.isfinite(y_hat):
+                raise ValueError(
+                    "the model produced a non-finite forecast value at step %d (%s); check the "
+                    "history for gaps or an exogenous value it cannot extrapolate"
+                    % (k + 1, synthetic_times[k])
+                )
+            # Feed the prediction back so later steps' target lags can read it.
+            working.iloc[-1, working.columns.get_loc(target)] = y_hat
+            step_values.append(y_hat)
+
+    if state.strategy == "direct":
+        bad = []
+        for position in positions:
+            row_bad = [name for name, value in selected.iloc[position - positions[0]].items() if pd.isna(value)]
+            if row_bad:
+                bad.append((frame.loc[position, spec.time_column], row_bad))
+        if bad:
+            detail = "; ".join("%s: %s" % (t, ", ".join(cols)) for t, cols in bad[:3])
+            raise ValueError(
+                "incomplete feature values at forecast origin(s) — %s; the history has gaps "
+                "or ends too close to its last observation" % detail
+            )
+
+    if state.strategy == "direct":
+        predictions = np.asarray(predictor.predict(selected)).ravel()
+        if not np.all(np.isfinite(predictions)):
+            raise ValueError(
+                "the model produced non-finite forecast values; check the history for gaps or an "
+                "exogenous value it cannot extrapolate"
+            )
+    else:
+        # Finiteness was checked per step inside the feedback loop.
+        predictions = np.asarray(step_values, dtype="float64")
+
+    lower = upper = None
+    interval_note = None
+    calibration_value = getattr(bundle, "interval_calibration", None)
+    if calibration_value is not None:
+        from .forecast_intervals import IntervalCalibration  # local: avoid a cycle at import time
+
+        calibration = (
+            calibration_value
+            if isinstance(calibration_value, IntervalCalibration)
+            else IntervalCalibration.from_dict(calibration_value)
+        )
+        lower, upper = calibration.bounds(predictions)
+        interval_note = (
+            "intervals apply the calibrated offsets (method=%s, alpha=%s, target_step=%d, "
+            "n_residuals=%d) to every step of the forecast; they were fitted on backtest "
+            "residuals and do not model error compounding along multi-step paths, so early "
+            "steps may be covered more often than nominal"
+            % (
+                calibration.method,
+                calibration.alpha,
+                int(calibration.target_step),
+                calibration.n_residuals,
+            )
+        )
+
+    return ForecastResult(
+        series_id=label,
+        times=list(synthetic_times),
+        means=predictions.astype("float64"),
+        lower=None if lower is None else np.asarray(lower).ravel(),
+        upper=None if upper is None else np.asarray(upper).ravel(),
+        horizon=requested,
+        strategy=state.strategy,
+        interval_note=interval_note,
+    )
+
+
+def _exogenous_row(exog_frame: pd.DataFrame, time_column: str, wanted):
+    """The exogenous row whose timestamp equals ``wanted`` (mapping or None).
+
+    Timestamps are compared as values on a common axis so a datetime request
+    matches ISO strings and vice versa; numeric axes match numerically.
+    """
+    parsed_wanted = pd.Timestamp(wanted) if not isinstance(wanted, (int, float)) else wanted
+    for index in range(len(exog_frame)):
+        candidate = exog_frame.iloc[index][time_column]
+        try:
+            if pd.api.types.is_datetime64_any_dtype(exog_frame[time_column]) or isinstance(candidate, str):
+                if pd.Timestamp(candidate) == (parsed_wanted if isinstance(parsed_wanted, pd.Timestamp) else pd.Timestamp(str(wanted))):
+                    return exog_frame.iloc[index].to_dict()
+            elif float(candidate) == float(wanted):
+                return exog_frame.iloc[index].to_dict()
+        except (TypeError, ValueError):
+            continue
+    return None

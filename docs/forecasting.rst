@@ -20,7 +20,9 @@ before: no timestamp inference, no re-ordering, no splitter restrictions.
    (``RollingOriginSplit`` / ``mltrack.backtest``) and **forecast metrics with naive
    baselines** (MASE, sMAPE, pinball/Winkler, naive/seasonal-naive/drift/mean).
    **Horizon-aware prediction intervals** (split-conformal calibration on backtest
-   residuals). Multi-step inference and the forecast UI are later phases.
+   residuals), and **bundled multi-step inference**: a format-v2 bundle carries the
+   serving state of its design, so ``bundle.predict_forecast(history)`` produces a
+   full horizon-$h$ forecast from history alone. The forecast UI is a later phase.
 
 Declaring a temporal spec
 -------------------------
@@ -185,7 +187,7 @@ Verifying the invariant
 column strictly after a cut time and rebuilt features for origins at or before
 that cut must be unchanged. A feature that reads the future either changes value
 or disappears (it now reads a missing observation), and the guard raises
-:class:`~SKSurrogate.temporal.LeakageError` naming the columns:
+:class:`~SKSurrogate.LeakageError` naming the columns:
 
 .. code-block:: python
 
@@ -250,7 +252,7 @@ forward::
 What the result guarantees:
 
 * **No overlap.** Training rows stop one step before the origin and the test window
-  starts there; the geometry comes from :func:`rolling_origin_indices`, which is
+  starts there; the geometry comes from :func:`~SKSurrogate.rolling_origin_indices`, which is
   validated against the available history and raises instead of silently shrinking.
 * **Honest labels.** Each record pairs a prediction with the actual value at
   ``origin_time + horizon`` (``target_step`` in ``meta``).
@@ -266,10 +268,11 @@ What the result guarantees:
   ``backtest:<config hash>`` unless ``store=False``; per-origin records are capped
   by ``max_records`` with an ``origins_truncated`` count.
 
-Only the **direct** strategy is evaluated today. A recursive forecast predicts one
-step at a time by feeding its own output back, which needs the serving state that
-arrives with multi-step inference; passing ``strategy="recursive"`` raises rather
-than silently returning one-step numbers labelled as multi-step.
+Only the **direct** strategy is evaluated by ``backtest``. A recursive forecast can be
+*served* — a format-v2 bundle re-runs its one-step model across the horizon, feeding
+each prediction back as the next origin (see :ref:`forecasting-serving`) — but rolling-origin *evaluation* of recursive designs is not implemented yet; passing
+``strategy="recursive"`` to ``backtest`` raises rather than silently returning
+one-step numbers labelled as multi-step.
 
 **Feature configuration must match how the model was trained.** ``backtest`` refits
 the estimator on the design it builds, so a bundle trained on a different feature
@@ -411,6 +414,93 @@ re-running the backtest::
 ``interval_bounds`` **raises** when the bundle was never calibrated. An uncalibrated
 bundle must not emit a zero-width interval that reads as "certain".
 
+
+.. _forecasting-serving:
+
+Bundled multi-step inference
+----------------------------
+
+A trained forecasting model is useless unless it can be *served* — asked for the next
+$h$ steps from history alone, with no feature matrix to hand over. A format-v2 bundle
+stores that serving state beside the estimator itself. ``TemporalServeState`` keeps
+only the geometry — spec, target column, feature configuration and strategy (a fitted
+:class:`~SKSurrogate.ForecastFeatureBuilder` is behaviorally defined by its constructor arguments, so
+no fit artifact is persisted) — and serializes into the record's optional ``temporal``
+block::
+
+    from SKSurrogate import TemporalServeState, serve_forecast
+
+    state = TemporalServeState.from_parts(
+        spec=spec, target="sales", builder_or_feature_spec=builder, strategy="direct"
+    )
+    # bundle.to_dict()["temporal"] == state.to_dict(); loading rebuilds it via from_dict
+
+Serving itself is a pure function of the *bundle* and the history — no tracker, no
+database, no file access::
+
+    result = serve_forecast(bundle, history=recent_rows)        # horizon from the design
+    result = bundle.predict_forecast(history)                   # same call via ModelBundle
+    result = bundle.predict_forecast(
+        history, future_exogenous=exo_rows                      # recursive + exogenous only
+    )
+
+``ForecastResult`` carries ``times`` (origin+1 .. origin+$h$), ``means``, and — only when
+the bundle holds an interval calibration — per-step ``lower``/``upper`` arrays plus a
+descriptive ``interval_note``. :meth:`~SKSurrogate.ForecastResult.to_frame` gives the long form with
+columns ``series_id, time, mean, lower, upper`` (bounds render as NaN there when not
+calibrated).
+
+History requirements are checked before any prediction is made and refused with an
+actionable ``ValueError``: the frame must hold **one series** — exactly one value of
+the declared ``series_id``, strictly increasing in time (a forecast is produced per
+call, per series); at least :meth:`~SKSurrogate.TemporalServeState.required_length` rows so every
+feature read at the first evaluated position is backed by real data — for horizon $h$, a
+rolling window of width $W$ alone needs $2h + W - 1$ rows under *direct* (each of the last $h$
+origins re-reads history) but only $h + W - 1$ under *recursive* (later steps feed their own
+predictions back), and lag or difference terms add their own bounds on top; every declared
+exogenous column is present on the history rows.
+
+Direct vs recursive at serving time
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+With the **direct** strategy the stored pipeline evaluates each of the last $h$ origins
+in one pass, so a direct bundle answers *only* its design horizon — any other request is
+refused rather than answered by extrapolation. With **recursive**, the same one-step
+model runs $h$ times: step 1 uses the observed tail and each later step feeds the
+previous prediction back as if it were the new last observation; recursive bundles
+accept any positive horizon. The two strategies produce different numbers — that is
+expected, they are two honest answers to the same question, not two estimates of one
+answer. A recursive bundle with declared exogenous columns requires
+``future_exogenous`` (a frame or list of dicts carrying the time column and each
+exogenous at the forecast times) so its synthetic steps have those inputs; a direct
+bundle ignores it, since every feature it needs sits inside the history.
+
+Intervals ride along when calibration exists: the calibrated offsets are applied to
+every step and ``interval_note`` records what they were fitted on (method, alpha,
+target step, number of residuals); an uncalibrated bundle returns no bounds at all —
+``lower is None`` / ``upper is None`` on the result, NaN in :meth:`~SKSurrogate.ForecastResult.to_frame` — rather
+than a zero-width band that reads as "certain".
+
+Serving paths, all the same function
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Library:** ``bundle.predict_forecast(history, horizon=None, future_exogenous=None)`` —
+  one call, no server involved.
+* **Batch inference:** for a temporal bundle, ``predict_batch(bundle, history)`` and
+  ``predict_batch_forecast(...)`` (see :ref:`inference`) return one row per forecast
+  step with columns ``time``, ``series_id``, ``prediction``, ``lower``, ``upper``; the
+  strategy, requested horizon and interval note are recorded in ``attrs["forecast"]``.
+* **Control plane:** ``POST /api/inference/{task}/forecast`` (and the serving pin's
+  ``POST /api/serving/{task}/forecast``) accept ``{"history": [...], "horizon"?: int,
+  "future_exogenous"?: [...]}`` and return times, predictions and bounds as JSON.
+* **WSGI server:** ``POST /forecast`` on the bundle-serving app — same payload shape,
+  no auth layer in front of it (which is why its history validation re-runs the full
+  temporal checks rather than trusting a caller).
+
+A tabular bundle with no ``temporal`` block is refused at every one of these paths —
+a forecasting endpoint on a non-temporal model would be a quiet lie.
+
+
 Control-plane endpoints
 -----------------------
 
@@ -436,6 +526,14 @@ Endpoint                                                  Purpose
                                                           n_splits, refit, features); returns a job id
                                                           whose result holds per-origin records and
                                                           metrics.
+``POST /api/inference/{task}/forecast``                   Serve a multi-step forecast from a format-v2
+                                                          temporal bundle: ``{"history": [...],
+                                                          "horizon"?: int, "future_exogenous"?: [...]}``
+                                                          returns times, predictions and (when the
+                                                          bundle is calibrated) interval bounds. The
+                                                          serving pin mirrors it at
+                                                          ``POST /api/serving/{task}/forecast`` for a
+                                                          pinned version; tabular bundles get 400.
 ========================================================  ============================================
 
 Non-goals

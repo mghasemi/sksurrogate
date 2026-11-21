@@ -19,12 +19,13 @@ so the served path and the per-request path validate, score and record
 identically — they differ only in how the bundle was chosen.
 """
 
+import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from .. import acl, serving
 from ..deps import bad_request, current_principal, resolve_bundle, task_access
-from ..inference_service import resolve_input_frame, score
+from ..inference_service import resolve_input_frame, score, score_forecast
 
 router = APIRouter(prefix="/api/serving", tags=["serving"], dependencies=[Depends(task_access)])
 
@@ -190,4 +191,50 @@ def predict_served(task_name: str, body: ServedPredictRequest):
         "predictions": result["predictions"],
         "metrics": result["metrics"],
         "ignored_columns": ignored_columns,
+    }
+
+
+class ServedForecastRequest(BaseModel):
+    """Forecast payload for the served model — deliberately has no model field.
+
+    ``history`` holds one series of past observations (the temporal design
+    validates it); tabular pins answer 400 on this route (plan phase P6).
+    """
+
+    history: list[dict]
+    future_exogenous: list[dict] | None = None
+    horizon: int | None = None
+    request_id: str | None = None
+
+
+@router.post("/{task_name}/forecast")
+def forecast_served(task_name: str, body: ServedForecastRequest):
+    """Serve a multi-step forecast through the pinned model (plan phase P6).
+
+    Mirrors :func:`predict_served` exactly — same pin resolution (an ``alias``
+    pin re-resolves on every call), same monitoring record — but scores with
+    :func:`api.inference_service.score_forecast`, so a temporal design and its
+    history rows are what the request carries.
+    """
+    state = serving.read_state(task_name)
+    if state is None or not state.get("active"):
+        raise _not_serving(task_name)
+    bundle = _resolve_pin(task_name, state)
+    future_frame = (
+        pd.DataFrame(body.future_exogenous) if body.future_exogenous is not None else None
+    )
+    result = score_forecast(
+        task_name,
+        pd.DataFrame(body.history),
+        bundle,
+        horizon=body.horizon,
+        future_exogenous=future_frame,
+        request_id=body.request_id,
+    )
+    return {
+        "task_name": task_name,
+        "model_version": bundle.model_version,
+        "resolve_mode": state.get("resolve_mode"),
+        "requested": state.get("requested"),
+        **result,
     }

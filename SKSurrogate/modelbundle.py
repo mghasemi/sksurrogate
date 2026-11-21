@@ -1,4 +1,13 @@
-"""Portable model bundles and a small filesystem-backed model registry."""
+"""Portable model bundles and a small filesystem-backed model registry.
+
+Records written by this version of the library are **format v2**: they carry an
+optional ``temporal`` block (see :mod:`SKSurrogate.temporal`) describing the
+design behind a forecasting bundle — its spec, target column, feature
+configuration and serving strategy — so a saved temporal model can be served as
+a multi-step forecast after a reload. Records written by earlier releases are
+**format v1**; both remain loadable (v1 records simply have no ``temporal``
+block). See plan phase P6 in ``TIME_SERIES_PLAN.md`` for the design.
+"""
 
 import importlib.metadata
 import json
@@ -14,7 +23,11 @@ from pathlib import Path
 import joblib
 
 
-BUNDLE_FORMAT_VERSION = 1
+BUNDLE_FORMAT_VERSION = 2
+#: Record format versions that :func:`load_bundle` / :meth:`ModelBundle.from_record`
+#: accept. v1 records (no temporal block) keep loading; anything newer than v2 is
+#: refused loudly rather than guessed at.
+SUPPORTED_BUNDLE_FORMAT_VERSIONS = (1, 2)
 REGISTRY_STATES = {"candidate", "validated", "staging", "production", "archived"}
 #: Names reserved for the lifecycle pointers maintained by promote/rollback.
 LIFECYCLE_ALIAS_NAMES = frozenset(REGISTRY_STATES | {"latest"})
@@ -58,7 +71,15 @@ def _dependencies():
 
 
 class ModelBundle:
-    """A fitted estimator and the metadata needed to reproduce its inputs."""
+    """A fitted estimator and the metadata needed to reproduce its inputs.
+
+    For tabular models ``model`` is a scikit-learn estimator (or pipeline) that
+    predicts from a feature frame. For temporal forecasting models it is a
+    pipeline whose first step is a :class:`~SKSurrogate.temporal.ForecastFeatureBuilder`
+    and the :attr:`temporal` block records the design behind it — spec, target
+    column, feature configuration and serving strategy — so the bundle can be
+    reloaded and served as multi-step forecasts via :meth:`predict_forecast`.
+    """
 
     def __init__(
         self,
@@ -78,6 +99,7 @@ class ModelBundle:
         sensitive_features=None,
         audit_events=None,
         interval_calibration=None,
+        temporal=None,
     ):
         self.model = model
         self.task_name = task_name
@@ -99,6 +121,20 @@ class ModelBundle:
         self.interval_calibration = (
             dict(interval_calibration) if interval_calibration is not None else None
         )
+        # Temporal design for forecasting bundles: the mapping produced by
+        # ``TemporalServeState.to_dict()`` (spec, target, feature_spec, strategy).
+        # Tabular bundles keep this as ``None``; :meth:`predict_forecast` raises
+        # on them. Stored verbatim — temporal.py owns its own schema validation.
+        if temporal is not None:
+            try:
+                self.temporal = dict(temporal)
+            except (TypeError, ValueError):
+                raise TypeError(
+                    "the temporal block must be a mapping (e.g. "
+                    "`TemporalServeState.to_dict()`), got %r" % type(temporal).__name__
+                ) from None
+        else:
+            self.temporal = None
         self.created_at = datetime.now(timezone.utc).isoformat()
 
     def record_audit_event(self, event_type, **details):
@@ -130,6 +166,9 @@ class ModelBundle:
             "sensitive_features": list(self.sensitive_features),
             "audit_events": self.audit_events,
             "interval_calibration": self.interval_calibration,
+            # v2: the temporal design block (None for tabular bundles). Kept at
+            # the end so records stay readable by hand and diffs stay stable.
+            "temporal": self.temporal,
         }
 
     def save(self, path):
@@ -143,10 +182,14 @@ class ModelBundle:
 
     @classmethod
     def from_record(cls, record):
-        if record.get("format_version") != BUNDLE_FORMAT_VERSION:
+        format_version = record.get("format_version")
+        if format_version not in SUPPORTED_BUNDLE_FORMAT_VERSIONS:
             raise ValueError(
-                "Unsupported model bundle format: %r" % record.get("format_version")
+                "Unsupported model bundle format %r (supported: %s)"
+                % (format_version, ", ".join(str(v) for v in SUPPORTED_BUNDLE_FORMAT_VERSIONS))
             )
+        # ``temporal`` is a v2 key; v1 records simply lack it and stay tabular.
+        temporal = record.get("temporal")
         bundle = cls(
             record["model"],
             task_name=record.get("task_name"),
@@ -163,6 +206,7 @@ class ModelBundle:
             sensitive_features=record.get("sensitive_features"),
             audit_events=record.get("audit_events", []),
             interval_calibration=record.get("interval_calibration"),
+            temporal=temporal,
         )
         bundle.created_at = record.get("created_at", bundle.created_at)
         return bundle
@@ -187,6 +231,26 @@ class ModelBundle:
 
         calibration = IntervalCalibration.from_dict(self.interval_calibration)
         return calibration.bounds(predictions)
+
+    def predict_forecast(self, history, horizon=None, future_exogenous=None):
+        """Serve a multi-step forecast from this bundle's temporal design.
+
+        Thin delegation to :func:`SKSurrogate.temporal.serve_forecast`. The
+        bundle must carry the ``temporal`` block written by plan phase P6 in
+        ``TIME_SERIES_PLAN.md`` (a v1 tabular bundle raises ``ValueError``).
+        ``history`` is one series of past observations; ``horizon`` steps are
+        predicted — a direct-strategy bundle answers exactly its design horizon,
+        while a recursive bundle accepts any positive horizon.
+
+        :raises ValueError: when this is a tabular bundle without a temporal
+            design, the requested horizon is refused by the stored strategy, or
+            the history does not satisfy the stored spec.
+        """
+        from .temporal import serve_forecast
+
+        return serve_forecast(
+            self, history, horizon=horizon, future_exogenous=future_exogenous
+        )
 
 
 def save_bundle(bundle, path):

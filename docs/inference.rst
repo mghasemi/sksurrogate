@@ -1,10 +1,13 @@
+.. _inference:
+
 ====================
 Batch Inference
 ====================
 
-The Phase 6 batch API scores tabular data with a portable ``ModelBundle`` and uses
-the bundle schema as the serving contract. Input can be a pandas DataFrame or a CSV
-file, and the bundle can be passed directly or loaded from a bundle path.
+The Phase 6 batch API scores data with a portable ``ModelBundle`` and uses the bundle
+schema as the serving contract. Input can be a pandas DataFrame or a CSV file, and the
+bundle can be passed directly or loaded from a bundle path. Temporal (forecasting)
+bundles take *history* instead of feature rows — see :ref:`forecast-inference`.
 
 .. code-block:: python
 
@@ -76,7 +79,10 @@ The endpoints are:
 * ``GET /ready`` returns readiness and the loaded ``model_version``;
 * ``GET /model`` returns the loaded model version;
 * ``POST /predict`` accepts ``{"data": [{...}], "request_id": "..."}`` and returns
-    predictions, model version, and request ID.
+    predictions, model version, and request ID;
+* ``POST /forecast`` — temporal bundles only — accepts ``{"history": [...],
+  "horizon"?: int, "future_exogenous"?: [...]}`` and returns the full multi-step
+  forecast (see :ref:`forecast-inference`). A tabular bundle answers **400**.
 
 Schema and malformed-request failures return HTTP 400 with a structured ``error``
 object. Unknown routes return HTTP 404. The adapter uses only the Python standard
@@ -131,6 +137,58 @@ dependency-check asymmetry: the control plane loads bundles with
 ``strict_dependencies=False`` and leaves compatibility to the deployment
 environment, while the library, CLI, and WSGI adapter default to strict
 checks.
+
+.. _forecast-inference:
+
+Forecast inference
+==================
+
+A **temporal** bundle — one carrying the v2 ``temporal`` block described in
+:doc:`modelbundles` — scores *history* instead of feature rows. The same entry points
+exist as for tabular bundles, and they all run one shared core: history is validated
+against the stored design (one series, strictly increasing time axis, enough tail rows
+for every feature read, exogenous columns present), then :func:`~SKSurrogate.serve_forecast`
+produces the multi-step forecast.
+
+.. code-block:: python
+
+    from SKSurrogate import predict_batch_forecast
+
+    frame = predict_batch_forecast(
+        bundle_or_path,               # must carry the temporal block; tabular -> ValueError
+        history_frame,                # one series in time order (DataFrame or CSV path)
+        output_path="forecasts/store-1.csv",   # optional atomic CSV write
+        horizon=None,                 # design horizon for direct bundles; any positive int for recursive
+        future_exogenous=None,        # required only for recursive + exogenous designs
+        request_id=None,
+    )
+
+The returned DataFrame holds one row per forecast step with columns ``time``,
+``series_id``, ``prediction``, ``lower``, ``upper``, plus ``model_version`` and
+``request_id``. ``lower``/``upper`` are NaN unless the bundle carries interval
+calibration; serving metadata (strategy, requested horizon, interval note) sits in
+``result.attrs["forecast"]`` and latency metrics in ``result.attrs["inference_metrics"]``.
+
+For a temporal bundle, :func:`~SKSurrogate.predict_batch` simply delegates to this path —
+its ``input_data`` argument is the *history* frame — so one call serves both shapes of
+bundle at the design horizon; use ``predict_batch_forecast`` for other horizons or
+future exogenous inputs.
+
+Control plane: ``POST /api/inference/{task_name}/forecast`` (body ``{"history": [...],
+"horizon"?: int, "future_exogenous"?: [...]}``, with the same optional
+``model_version``/``alias`` model selection as the tabular predict endpoint) and the
+serving pin's mirror at
+``POST /api/serving/{task_name}/forecast``, where the pin decides which temporal model
+answers. Both return times, predictions and interval bounds as JSON (bounds omitted when
+the bundle is uncalibrated) and append a monitoring record on success *and* failure;
+history-validation failures answer **400** with the structured error list rather than an
+opaque 500 — the batch path wraps ``TemporalServeState.validate_history``'s
+``ValueError`` into ``SchemaValidationError`` for exactly this reason.
+
+The standalone WSGI adapter exposes the same call at ``POST /forecast`` with no auth
+layer in front, so its payload is validated through the full temporal checks described
+above; a tabular bundle answers **400** there too — forecasting on a non-forecasting
+model is refused, not faked.
 
 Serving a pinned model
 ======================

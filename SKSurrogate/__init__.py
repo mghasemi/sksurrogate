@@ -43,13 +43,16 @@ from .temporal import (
     FeatureSpec,
     ForecastDesign,
     ForecastFeatureBuilder,
+    ForecastResult,
     LeakageError,
+    TemporalServeState,
     TemporalSpec,
     TemporalValidationError,
     assert_no_leakage,
     infer_freq,
     make_supervised,
     rolling_origin_indices,
+    serve_forecast,
     temporal_columns,
     validate_temporal_frame,
 )
@@ -84,7 +87,7 @@ from .ci import BundleQualityGateError, assert_bundle_quality, check_bundle_qual
 from .deployment import DeploymentApprovalGate
 from .execution import DaskExecutionBackend, ExecutionBackend, LocalProcessExecutionBackend
 from .modelbundle import ModelBundle, ModelRegistry, export_mlflow, load_bundle, save_bundle
-from .inference import SchemaValidationError, create_app, predict_batch, serve
+from .inference import SchemaValidationError, create_app, predict_batch, predict_batch_forecast, serve
 from .monitoring import (
     InferenceMonitor,
     delayed_label_performance,
@@ -165,6 +168,7 @@ __all__ = [
     "RetrainingJob",
     "STANDARD_CV_SPLITTERS",
     "TEMPORAL_CV_SPLITTERS",
+    "TemporalServeState",
     "TemporalSpec",
     "TemporalValidationError",
     "CALENDAR_FEATURES",
@@ -173,10 +177,12 @@ __all__ = [
     "FeatureSpec",
     "ForecastDesign",
     "ForecastFeatureBuilder",
+    "ForecastResult",
     "LeakageError",
     "assert_no_leakage",
     "make_supervised",
     "rolling_origin_indices",
+    "serve_forecast",
     "BASELINE_METHODS",
     "CONFORMAL_METHODS",
     "IntervalCalibration",
@@ -222,6 +228,7 @@ __all__ = [
     "ModelRegistry",
     "export_mlflow",
     "predict_batch",
+    "predict_batch_forecast",
     "SchemaValidationError",
     "create_app",
     "serve",

@@ -14,7 +14,7 @@ from time import perf_counter
 
 import pandas as pd
 
-from SKSurrogate import SchemaValidationError, predict_batch
+from SKSurrogate import SchemaValidationError, predict_batch, predict_batch_forecast
 
 from .config import settings
 from .deps import append_monitor_record, bad_request, not_found
@@ -143,5 +143,66 @@ def score(task_name, frame, bundle, *, request_id=None, preflight=False, output_
     return {
         "request_id": result["request_id"].iloc[0],
         "predictions": result["prediction"].tolist(),
+        "metrics": metrics,
+    }
+
+
+def score_forecast(task_name, frame, bundle, *, horizon=None, future_exogenous=None, request_id=None):
+    """Serve a multi-step forecast from a temporal bundle and record it (plan P6).
+
+    The :func:`score` counterpart for time-series models: ``frame`` is the
+    *history* series, validated against the stored design rather than treated as
+    feature rows — so no pre-flight schema check applies here. Tabular bundles
+    are refused with a 400 (forecasting is not faked), and rejected horizon
+    requests surface the same ``ValueError`` text that ``serve_forecast`` gives
+    programmatic callers, keeping both paths honest. One monitoring observation
+    is recorded either way, mirroring :func:`score`.
+    """
+    request_id = request_id or uuid.uuid4().hex
+    started = perf_counter()
+    try:
+        result = predict_batch_forecast(
+            bundle,
+            frame,
+            horizon=horizon,
+            future_exogenous=future_exogenous,
+            request_id=request_id,
+        )
+    except SchemaValidationError as exc:
+        latency_ms = (perf_counter() - started) * 1000
+        append_monitor_record(
+            task_name,
+            bundle.model_version,
+            latency_ms,
+            len(frame),
+            success=False,
+            error="History validation failed",
+        )
+        raise bad_request("; ".join(exc.errors))
+    except ValueError as exc:
+        # Tabular bundles or a horizon the design cannot answer fail at serving.
+        latency_ms = (perf_counter() - started) * 1000
+        append_monitor_record(
+            task_name, bundle.model_version, latency_ms, len(frame), success=False, error="Forecast refused"
+        )
+        raise bad_request(str(exc))
+    metrics = result.attrs["inference_metrics"]
+    forecast_meta = result.attrs["forecast"]
+    append_monitor_record(task_name, bundle.model_version, metrics["latency_ms"], metrics["rows"])
+
+    def _bounds(column):
+        if result[column].isna().all():
+            return None
+        return [None if pd.isna(value) else value for value in result[column]]
+
+    return {
+        "request_id": result["request_id"].iloc[0],
+        "strategy": forecast_meta["strategy"],
+        "horizon": int(forecast_meta["horizon"]),
+        "times": [str(value) for value in result["time"]],
+        "predictions": [None if pd.isna(value) else value for value in result["prediction"]],
+        "lower_bounds": _bounds("lower"),
+        "upper_bounds": _bounds("upper"),
+        "interval_note": forecast_meta["interval_note"],
         "metrics": metrics,
     }

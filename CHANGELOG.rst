@@ -171,6 +171,42 @@ its point forecast without recomputing anything.
 * **Tests** — ``tests/test_forecast_intervals.py`` (19 tests), including a Monte-Carlo
   coverage check and width monotonicity across horizons 1–4.
 
+Bundled multi-step inference (time-series phase 6)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A trained forecasting bundle can now be *served*: one call with trailing history returns the
+full-horizon forecast — point predictions and, when the bundle carries an interval calibration,
+calibrated bounds — without re-fitting or rebuilding features. Tabular bundles are unaffected;
+v1 records load as before.
+
+* **Bundle format v2** — ``BUNDLE_FORMAT_VERSION`` is now 2; the record carries an optional
+  ``temporal`` block (spec, target column, feature configuration, strategy) written by
+  :class:`TemporalServeState`. The state persists geometry only: a fitted builder is defined
+  behaviourally by its constructor arguments, so no fit artifacts are stored. A v1 bundle loads
+  as a plain tabular bundle; corrupted temporal blocks fail at load time when they are rebuilt
+  and re-validated against the spec.
+* **predict_forecast** — ``bundle.predict_forecast(history, horizon=None, future_exogenous=...)``
+  returns one row per forecast step (times, means, bounds only if calibrated). Direct bundles
+  answer exactly their design horizon; recursive bundles accept any positive horizon and feed
+  each prediction back in as the next observation. Results match the offline rolling-origin
+  reference to $10^{-9}$ on identical origins — including a state-feedback check confirming that
+  from step $H$ onward the lag window contains earlier *predictions*, not true values.
+* **Serving API** — top-level ``serve_forecast(...)`` / ``predict_batch_forecast(...)``, with
+  ``predict_batch`` dispatching temporal bundles to the forecast path; plus control-plane routes
+  ``POST /api/inference/{task}/forecast`` and the serving pin's
+  ``POST /api/serving/{task}/forecast``, which validate payloads against the recorded spec
+  before touching the model. Insufficient or invalid history is rejected with an actionable
+  message (400), tabular bundles get "no temporal design" (400) rather than a fabricated
+  forecast, and missing payload fields surface as pydantic's 422.
+* **Docs** — new "Bundled multi-step inference" section in ``docs/forecasting.rst`` plus an
+  endpoint-table row; format-v2 fields in ``docs/modelbundles.rst``; the batch forecast contract
+  in ``docs/inference.rst``. The minimum-history contract (per-term bounds, direct vs recursive)
+  is now stated consistently across docs and docstrings.
+* **Tests** — ``tests/test_forecast_inference.py``: 21 tests covering bundle round-trips, the
+  serve-state contract, batch-frame shape/metrics/request-id, interval wiring, a two-series panel
+  serving per-series 12-step forecasts with calibrated intervals, and HTTP round-trips through
+  the FastAPI test client.
+
 Pipeline-space benchmark track (C-space)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
