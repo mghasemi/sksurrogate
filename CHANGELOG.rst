@@ -119,6 +119,12 @@ Partition defaults, temporal experiments and the Advanced scorer
   shuffled splitter on a temporal task. ``StackingEstimator.fit_transform`` also
   clamps its internal fold count to the rows it receives, so a small
   outer/inner block no longer fails with "Cannot have number of splits ...".
+* **Fixed:** the explainability report counted every `unavailable` diagnostic as a
+  failure, so a healthy regression task reported "15 unavailable diagnostics"
+  made up of "classification curves require a classifier" and "no completed
+  nested-CV job". Those are now marked `by_design` and reported separately as
+  `diagnostics_not_applicable`; `diagnostic_failures` counts only diagnostics that
+  ran and failed.
 
 Experiments search space follows the task's problem type
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

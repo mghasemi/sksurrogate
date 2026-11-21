@@ -174,7 +174,7 @@ export default function ExplainPage() {
           {reportsQ.isError && <ErrorNote error={reportsQ.error} />}
           {reportJob?.job_id === reportId && reportJob.status === "completed" && (
             <p className="hint">
-              {String(reportJob.result?.model_count ?? 0)} model(s); {String(reportJob.result?.diagnostic_failures ?? 0)} unavailable diagnostic(s). Inspect the report for details and per-feature skips.
+              {String(reportJob.result?.model_count ?? 0)} model(s); {String(reportJob.result?.diagnostic_failures ?? 0)} unavailable diagnostic(s), {String(reportJob.result?.diagnostics_not_applicable ?? 0)} not applicable to the model family. Inspect the report for details and per-feature skips.
             </p>
           )}
           {reportId && <JobTracker jobId={reportId} label="Explainability report" />}

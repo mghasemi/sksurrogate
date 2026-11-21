@@ -302,6 +302,12 @@ dataset fingerprints stay valid.
     includes the vector figures and full diagnostic results as JSON. Available
     diagnostics are summarized in model-specific plots and tables, with
     grouped, styled tables and limitation notes in the detailed appendix.
+    The job result reports two separate counts: ``diagnostic_failures`` (a
+    diagnostic that ran and could not produce a result) and
+    ``diagnostics_not_applicable`` (a diagnostic that cannot apply to the
+    model — classification curves for a regression model, nested CV with no
+    completed job — marked ``by_design`` in the JSON). Absences never inflate
+    the failure count.
     Collections over 50 entries are previewed in the PDF appendix (the first
     and last 25 entries); the ZIP's JSON and Markdown retain the complete data.
     Non-finite interval previews are not plotted, but remain in the full results. The files are retained in

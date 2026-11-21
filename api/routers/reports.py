@@ -348,14 +348,16 @@ def _evaluation_diagnostics(task_name, version, jobs, partition=None):
         if curves.get("status") == "unavailable":
             logs.log_event("WARNING", "Classification curves unavailable for %s: %s" % (version, curves["detail"]))
     else:
-        curves = {"status": "unavailable", "detail": "Classification diagnostic curves require a classifier."}
+        curves = {"status": "unavailable", "detail": "Classification diagnostic curves require a classifier.",
+                  "by_design": True, "reason": "curves_require_classifier"}
     nested = next((job for job in jobs if job.get("kind") == "nested-cv"
                    and job.get("status") == "completed"
                    and (job.get("result") or {}).get("model_version") == version), None)
     nested_result = ({"job_id": nested["job_id"], "created_at": nested["created_at"],
                       "request": nested.get("request"), "result": nested["result"]}
                      if nested else {"status": "unavailable",
-                                     "detail": "No completed nested-CV job is available for this model."})
+                                     "detail": "No completed nested-CV job is available for this model.",
+                                     "by_design": True, "reason": "no_nested_cv_job"})
     return {
         "Stored model metrics": stored,
         "Learning curves": learning,
@@ -413,6 +415,7 @@ def _make_report(task_name, versions, body, job_id):
     )
     models = []
     failures = 0
+    not_applicable = 0
     jobs = job_manager.list(task_name)
     history = [
         {"job_id": job["job_id"], "created_at": job["created_at"],
@@ -423,9 +426,22 @@ def _make_report(task_name, versions, body, job_id):
     for version in versions:
         model = {"model_version": version,
                  "diagnostics": _evaluation_diagnostics(task_name, version, jobs, partition)}
-        failures += sum(
-            1 for value in model["diagnostics"].values() if value.get("status") == "unavailable"
-        ) + sum(1 for curve in model["diagnostics"]["Learning curves"]["curves"] if curve.get("error"))
+        # ``by_design`` marks a diagnostic that cannot apply to this bundle (a
+        # regression model has no classification curves; a model with no nested-CV
+        # job has no nested-CV result). Those are absences, not failures, and used
+        # to inflate the reported count into "15 unavailable diagnostics" on a
+        # perfectly healthy report.
+        model_failures = sum(
+            1 for value in model["diagnostics"].values()
+            if value.get("status") == "unavailable" and not value.get("by_design")
+        )
+        model_not_applicable = sum(
+            1 for value in model["diagnostics"].values()
+            if value.get("status") == "unavailable" and value.get("by_design")
+        )
+        failures += model_failures
+        not_applicable += model_not_applicable
+        failures += sum(1 for curve in model["diagnostics"]["Learning curves"]["curves"] if curve.get("error"))
         for name, function, request in diagnostics:
             _check_stop()
             logs.log_event("INFO", "Computing %s for %s" % (name, version))
@@ -475,7 +491,8 @@ def _make_report(task_name, versions, body, job_id):
         (root / "report.zip").write_bytes(archive)
         _check_stop()
         os.rename(root, destination)
-    return {"model_count": len(models), "diagnostic_failures": failures, "generated_at": generated_at}
+    return {"model_count": len(models), "diagnostic_failures": failures,
+            "diagnostics_not_applicable": not_applicable, "generated_at": generated_at}
 
 
 @router.post("/{task_name}/explain")

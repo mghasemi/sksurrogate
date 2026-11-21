@@ -453,7 +453,11 @@ def test_explain_report_runs_every_diagnostic_and_preserves_unavailable_results(
         time.sleep(0.05)
     assert job["status"] == "completed", job.get("error")
     assert job["result"]["model_count"] == 2
-    assert job["result"]["diagnostic_failures"] == 4
+    # Only genuine failures count: the classifier's intervals (422) and its
+    # unavailable learning curve. The regressor's missing classification curves and
+    # missing nested-CV job are absences reported separately, not failures.
+    assert job["result"]["diagnostic_failures"] == 2
+    assert job["result"]["diagnostics_not_applicable"] == 2
     assert ("regressor", "neg_mean_pinball_loss", 0.5) in evaluation_calls
     assert ("classifier", "f1", None) in evaluation_calls
     assert len(calls) == 8
@@ -476,7 +480,9 @@ def test_explain_report_runs_every_diagnostic_and_preserves_unavailable_results(
         assert regression["Learning curves"]["cv_spec"]["n_splits"] == 3
         assert regression["Nested cross-validation"]["result"]["evaluation_protocol"]["train_fingerprint"] == "old"
         assert regression["Classification evaluation curves"]["status"] == "unavailable"
+        assert regression["Classification evaluation curves"]["by_design"] is True
         assert classification["Nested cross-validation"]["status"] == "unavailable"
+        assert classification["Nested cross-validation"]["by_design"] is True
         assert next(c for c in classification["Learning curves"]["curves"] if c["scoring"] == "f1")["error"] == "ValueError: f1 unavailable"
         assert results["experiment_history"][0]["history_length"] == 2
         failed = results["models"][1]["diagnostics"]["Prediction intervals"]
