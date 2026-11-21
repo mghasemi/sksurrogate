@@ -101,19 +101,11 @@ def _explainable_estimator(bundle):
     A temporal bundle's pipeline starts with ``ForecastFeatureBuilder``, which
     expects raw history and builds the design itself. Explanations operate on the
     already-built design matrix, so the model to explain is the estimator that
-    follows the builder.
+    follows the builder (frame-tolerant for a preset pipeline).
     """
-    from SKSurrogate import ForecastFeatureBuilder
-    from SKSurrogate.DataProcess import frame_tolerant
+    from ..training import unwrap_temporal_estimator
 
-    steps = getattr(bundle.model, "steps", None) or []
-    if any(isinstance(step, ForecastFeatureBuilder) for _, step in steps):
-        # The search's fitted pipeline may itself start with
-        # FoldLocalDataPreprocessor (a preset search does), which only accepts a
-        # DataFrame. Explanations feed positional arrays, so give the estimator the
-        # same ArrayAsFrame adapter a tabular bundle already carries.
-        return frame_tolerant(steps[-1][1])
-    return bundle.model
+    return unwrap_temporal_estimator(bundle)
 
 
 def _explain_frame(task_name, partition) -> tuple[pd.DataFrame, np.ndarray, str]:
@@ -127,30 +119,18 @@ def _explain_frame(task_name, partition) -> tuple[pd.DataFrame, np.ndarray, str]
     ``Found array with 0 feature(s)``. The design is the same matrix the search
     and the rolling-origin backtest see.
     """
-    from SKSurrogate import temporal_columns
-
     target, _ = get_registered_target(task_name)
     with open_tracker(task_name) as tracker:
         spec = tracker.GetTemporalSpec()
-        raw = tracker.get_dataframe(partition) if spec is not None else pd.DataFrame()
     if spec is not None:
-        from ..features import NumericFeatureError, temporal_design_xy
+        from ..features import NumericFeatureError
+        from ..training import temporal_design_inputs
 
-        ignored = set(read_ignored_columns(task_name)) - set(temporal_columns(spec))
-        present = {column for column in ignored if column in raw.columns}
-        if present:
-            raw = raw.drop(columns=sorted(present))
         try:
-            projection = temporal_design_xy(raw, spec, target)
+            X, y = temporal_design_inputs(task_name, target, partition)
         except (NumericFeatureError, ValueError) as exc:
             raise bad_request(str(exc))
-        frame = pd.DataFrame(projection.X)
-        frame.columns = [str(column) for column in projection.columns]
-        return (
-            frame,
-            np.asarray(projection.y, dtype=float),
-            "temporal_design",
-        )
+        return X, y, "temporal_design"
     X, y = _features_and_target(task_name, partition)
     if X.shape[1] == 0:
         ignored = sorted(read_ignored_columns(task_name))

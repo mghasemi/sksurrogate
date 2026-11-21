@@ -13,7 +13,7 @@ import pandas as pd
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.datasets import make_classification
 from sklearn.dummy import DummyClassifier
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.model_selection import ShuffleSplit
 from sklearn.model_selection import KFold, GroupKFold
 from sklearn.neighbors import KNeighborsClassifier
@@ -1044,6 +1044,23 @@ class TestOptimizedPaths(unittest.TestCase):
         stacked = StackingEstimator(RandomForestClassifier(n_estimators=3, random_state=1))
         stacked.fit(X, y)
         self.assertEqual(stacked.transform(X).shape, (4, 4))
+
+    def test_stacking_estimator_clamps_folds_on_a_small_block(self):
+        """A block smaller than the configured fold count still yields OOF features.
+
+        Nested evaluation hands the stacking wrapper a small outer/inner block;
+        ``cross_val_predict`` with the configured 5 folds used to fail with
+        "Cannot have number of splits n_splits=5 greater than the number of
+        samples" before the fold could be scored.
+        """
+        X = np.array([[0.0], [1.0], [2.0], [3.0], [4.0], [5.0]])
+        y = np.array([0.0, 0.1, 0.2, 0.4, 0.7, 1.0])
+        stacked = StackingEstimator(
+            RandomForestRegressor(n_estimators=3, random_state=1), cv=5
+        )
+        transformed = stacked.fit_transform(X, y)
+        self.assertEqual(transformed.shape[0], len(X))
+        self.assertGreater(transformed.shape[1], X.shape[1])
 
     def test_fold_local_preprocessor_learns_only_from_fit_partition(self):
         frame = pd.DataFrame(

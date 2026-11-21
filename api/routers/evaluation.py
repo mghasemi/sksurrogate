@@ -16,7 +16,7 @@ Endpoints:
 """
 
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query, Depends
@@ -47,9 +47,12 @@ from ..deps import (
 from ..jobs import job_manager
 from ..training import (
     compute_learning_curve,
+    get_registered_target,
     learning_curve_metric_label,
     learning_curve_metric_options,
     problem_family,
+    temporal_design_inputs,
+    unwrap_temporal_estimator,
 )
 
 router = APIRouter(prefix="/api/evaluation", tags=["evaluation"], dependencies=[Depends(task_access)])
@@ -260,6 +263,32 @@ def _nested_cv_scorer(scoring, pinball_alpha):
         raise bad_request(str(exc))
 
 
+def _temporal_cv(cv, label):
+    """An order-respecting splitter for a temporal task's nested CV.
+
+    An integer fold count means a *shuffled* ``KFold`` in the generic path, which
+    would train on future rows and score past ones. On a temporal task it becomes
+    ``TimeSeriesSplit``. No gap is applied: the design's labels are one step ahead
+    and its features are already shifted by the declared horizon, so a training
+    row's label never reaches past the test row — the gap that multi-step
+    labels would need would also make small designs unsplittable.
+    An explicit spec must already be order-respecting.
+    """
+    from sklearn.model_selection import TimeSeriesSplit
+
+    from SKSurrogate.mltrace import cv_is_temporal_safe
+
+    if isinstance(cv, int):
+        return TimeSeriesSplit(n_splits=cv)
+    if cv_is_temporal_safe(cv):
+        return cv
+    raise bad_request(
+        "%s must be an order-respecting splitter on a temporal task "
+        "(TimeSeriesSplit or RollingOriginSplit); a shuffled splitter would score "
+        "future rows against past ones." % label
+    )
+
+
 @router.post("/{task_name}/nested-cv")
 def run_nested_cv(task_name: str, body: NestedCVRequest):
     """Submit a nested-CV evaluation job for one bundle and return its id immediately.
@@ -281,24 +310,44 @@ def run_nested_cv(task_name: str, body: NestedCVRequest):
     scoring_fn = _nested_cv_scorer(body.scoring, body.pinball_alpha)
 
     # Resolve now so a missing bundle fails fast with 404/400, not as a job error.
-    resolve_bundle(
+    bundle = resolve_bundle(
         task_name,
         model_version=body.model_version,
         alias=body.alias,
         strict_dependencies=False,
     )
+    with open_tracker(task_name) as tracker:
+        temporal_spec = tracker.GetTemporalSpec()
+    if temporal_spec is not None:
+        # A temporal task has no raw feature column, so the folds run over the
+        # generated one-step design and must respect observation order.
+        inner_cv = _temporal_cv(inner_cv, "inner_cv")
+        outer_cv = _temporal_cv(outer_cv, "outer_cv")
 
     def _task():
-        bundle = resolve_bundle(
-            task_name,
-            model_version=body.model_version,
-            alias=body.alias,
-            strict_dependencies=False,
-        )
+        if temporal_spec is not None:
+            estimator = unwrap_temporal_estimator(bundle)
+            target, _ = get_registered_target(task_name)
+            X_train, y_train = temporal_design_inputs(
+                task_name, target, resolve_partition(task_name, body.train_partition)
+            )
+            validation_partition = resolve_optional_partition(
+                task_name, body.validation_partition
+            )
+            if validation_partition is not None:
+                X_valid, y_valid = temporal_design_inputs(
+                    task_name, target, validation_partition
+                )
+            else:
+                X_valid, y_valid = None, None
+            design = (X_train, y_train, X_valid, y_valid)
+        else:
+            estimator = bundle.model
+            design = None
 
         with open_tracker(task_name) as tracker:
             result = tracker.nested_cv_evaluation(
-                bundle.model,
+                estimator,
                 inner_cv=inner_cv,
                 outer_cv=outer_cv,
                 train_partition=resolve_partition(task_name, body.train_partition),
@@ -309,16 +358,25 @@ def run_nested_cv(task_name: str, body: NestedCVRequest):
                 repeats=body.repeats,
                 confidence_level=body.confidence_level,
                 exclude_columns=read_ignored_columns(task_name),
+                design=design,
             )
             tracker_metadata = tracker.GetMetadata()
 
         partition_history = tracker_metadata.get("dataset_partition_history", {})
 
-        def _clean(value):
+        def _clean(value: Any) -> Any:
+            # JSON-safe scalars: NaN/inf become null, but strings and booleans are
+            # kept as-is. Applying ``finite_or_none`` to every leaf used to null the
+            # protocol's own strings (partition names, splitter types), because a
+            # non-numeric string cannot be cast to float.
             if isinstance(value, dict):
                 return {key: _clean(item) for key, item in value.items()}
             if isinstance(value, list):
                 return [_clean(item) for item in value]
+            if value is None or isinstance(value, (bool, str, bytes)):
+                return value
+            if isinstance(value, (int, np.integer)) and not isinstance(value, bool):
+                return int(value)
             return finite_or_none(value)
 
         result = _clean(result)
@@ -443,12 +501,8 @@ def run_backtest(task_name: str, body: BacktestRequest):
         # (predict_forecast feeds it raw history). The backtest materializes the
         # design itself from ``features``, so it must refit the bare estimator —
         # fitting the builder on an already-built design fails on missing
-        # time/series/target columns. Find the builder by type, not by step name:
-        # a bundle composed with ``make_pipeline`` names it after the class.
-        estimator = bundle.model
-        steps = getattr(estimator, "steps", None) or []
-        if any(isinstance(step, ForecastFeatureBuilder) for _, step in steps):
-            estimator = steps[-1][1]
+        # time/series/target columns.
+        estimator = unwrap_temporal_estimator(bundle)
         # Score the estimator on the labels it was fitted for: a one-step model
         # (experiment bundles) is recursive; a bundle without temporal geometry
         # keeps the historical direct default.

@@ -211,6 +211,53 @@ def test_explanations_run_on_the_generated_design(client):
     assert row_payload["orders"]["available"] == 1
 
 
+def test_nested_cv_runs_on_the_design_with_order_respecting_folds(client):
+    """Nested CV of a temporal bundle scores the one-step design, not raw columns.
+
+    The reported failure: the bundle's pipeline (feature builder first) received a
+    design matrix and died with "ForecastFeatureBuilder works on pandas
+    DataFrames". The folds must also respect observation order, and a stacking
+    wrapper's inner CV has to survive the small outer/inner blocks.
+    """
+    _register(client, "tem-ncv")
+    _declare_temporal(client, "tem-ncv")
+    experiment = _submit_experiment(client, "tem-ncv")
+    assert experiment["status"] == "completed", experiment.get("error")
+
+    response = client.post(
+        "/api/evaluation/tem-ncv/nested-cv",
+        json={
+            "model_version": experiment["result"]["model_version"],
+            "inner_cv": 2,
+            "outer_cv": 2,
+            "scoring": "neg_mean_absolute_error",
+        },
+    )
+    assert response.status_code == 200, response.text
+    record = _wait(client, response.json()["job_id"])
+    assert record["status"] == "completed", record.get("error")
+    result = record["result"]
+    assert len(result["outer_scores"]) == 2
+    assert result["mean_outer_score"] is not None
+    assert result["evaluation_protocol"]["train_partition"] == "main"
+
+
+def test_nested_cv_refuses_a_shuffled_splitter_on_a_temporal_task(client):
+    _register(client, "tem-ncv-bad")
+    _declare_temporal(client, "tem-ncv-bad")
+    experiment = _submit_experiment(client, "tem-ncv-bad")
+    assert experiment["status"] == "completed", experiment.get("error")
+    response = client.post(
+        "/api/evaluation/tem-ncv-bad/nested-cv",
+        json={
+            "model_version": experiment["result"]["model_version"],
+            "outer_cv": {"type": "KFold", "n_splits": 2},
+        },
+    )
+    assert response.status_code == 400
+    assert "order-respecting" in response.json()["detail"]
+
+
 def test_pipeline_optimization_points_a_temporal_task_at_the_design_search(client):
     _register(client, "tem-pipe")
     _declare_temporal(client, "tem-pipe")

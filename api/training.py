@@ -2,6 +2,7 @@
 
 from typing import Any
 
+import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.exceptions import NotFittedError
@@ -994,6 +995,50 @@ def _temporal_design(task_name, target, train_partition):
             % (train_partition, task_name, spec.horizon)
         )
     return raw, design, builder, spec
+
+
+def temporal_design_inputs(task_name, target, partition):
+    """``(X, y)`` of the one-step forecast design for a temporal task.
+
+    The same matrix the experiment search, the backtest and the explanation
+    endpoints consume. The raw partition keeps its time/series columns (the
+    builder needs them); only genuine ignores are dropped — the temporal contract
+    already excludes the time columns from every *feature* matrix, so they must
+    stay present here.
+    """
+    from SKSurrogate import temporal_columns
+
+    from .features import temporal_design_xy
+
+    with open_tracker(task_name) as tracker:
+        spec = tracker.GetTemporalSpec()
+        raw = tracker.get_dataframe(partition)
+    ignored = set(read_ignored_columns(task_name)) - set(temporal_columns(spec))
+    present = {column for column in ignored if column in raw.columns}
+    if present:
+        raw = raw.drop(columns=sorted(present))
+    projection = temporal_design_xy(raw, spec, target)
+    frame = pd.DataFrame(projection.X)
+    frame.columns = [str(column) for column in projection.columns]
+    return frame, np.asarray(projection.y, dtype=float)
+
+
+def unwrap_temporal_estimator(bundle):
+    """The bare estimator of a temporal bundle: builder removed, frame-tolerant.
+
+    A forecast bundle's pipeline starts with ``ForecastFeatureBuilder``, which
+    expects raw history. Consumers that build their own design (backtest,
+    explanations, nested CV) refit the estimator behind it instead; the
+    ``ArrayAsFrame`` adapter keeps a preset pipeline's
+    ``FoldLocalDataPreprocessor`` happy with positional arrays.
+    """
+    from SKSurrogate import ForecastFeatureBuilder
+    from SKSurrogate.DataProcess import frame_tolerant
+
+    steps = getattr(bundle.model, "steps", None) or []
+    if any(isinstance(step, ForecastFeatureBuilder) for _, step in steps):
+        return frame_tolerant(steps[-1][1])
+    return bundle.model
 
 
 def fit_experiment_bundle(

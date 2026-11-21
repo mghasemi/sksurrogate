@@ -2224,6 +2224,7 @@ class mltrack(object):
         repeats=1,
         confidence_level=0.95,
         exclude_columns=None,
+        design=None,
     ):
         """Evaluate a model with nested CV while reserving the validation partition for the final score.
 
@@ -2234,6 +2235,13 @@ class mltrack(object):
 
         ``exclude_columns`` drops named feature columns from both partitions
         before evaluation (the control plane passes a dataset's ignored columns).
+
+        ``design`` replaces the partition read with prebuilt matrices
+        ``(X_train, y_train, X_valid, y_valid)``; ``X_valid``/``y_valid`` may be
+        ``None``. The control plane uses it for a temporal task, whose partition
+        carries no raw feature column: the generated forecast design (and the bare
+        estimator behind a bundle's feature builder) is what gets cross-validated.
+        The matrices must be numeric and already aligned column-for-column.
 
         Metric semantics:
         - ``outer_scores`` are fold-level scores computed on each held-out outer split.
@@ -2258,9 +2266,11 @@ class mltrack(object):
 
         # A TimeSeriesSplit whose gap is shorter than the forecast horizon lets a
         # training row share information with the step it is scored on. Warn instead
-        # of silently reporting a number that looks like a horizon-h score.
+        # of silently reporting a number that looks like a horizon-h score. A
+        # caller-supplied ``design`` defines its own label semantics (the control
+        # plane's is one-step), so the horizon rule does not apply to it.
         temporal_spec = self.GetTemporalSpec()
-        if temporal_spec is not None and int(temporal_spec.get("horizon", 1)) > 1:
+        if design is None and temporal_spec is not None and int(temporal_spec.get("horizon", 1)) > 1:
             horizon = int(temporal_spec["horizon"])
             for label, candidate in (("inner_cv", inner_cv), ("outer_cv", outer_cv)):
                 try:
@@ -2281,58 +2291,71 @@ class mltrack(object):
                         stacklevel=2,
                     )
 
-        train_frame = self.get_dataframe(train_partition)
-        if exclude_columns:
-            present = [column for column in exclude_columns if column in train_frame.columns]
-            if present:
-                train_frame = train_frame.drop(columns=present)
-        target = self.target or train_frame.columns[-1]
-        y_train = train_frame[target].to_numpy()
-        X_train_frame = train_frame.drop(columns=[target])
+        if design is not None:
+            # A prebuilt design is already the estimator's input space: no
+            # partition read, no ignored-column drop, no dtype inference or
+            # column alignment. Numeric matrices by contract.
+            X_train, y_train, X_valid, y_valid = design
+            X_train = numpy.asarray(X_train, dtype=float)
+            y_train = numpy.asarray(y_train)
+            if X_valid is not None:
+                X_valid = numpy.asarray(X_valid, dtype=float)
+            if y_valid is not None:
+                y_valid = numpy.asarray(y_valid)
+            uses_fold_local_preprocessing = False
+        else:
+            train_frame = self.get_dataframe(train_partition)
+            if exclude_columns:
+                present = [column for column in exclude_columns if column in train_frame.columns]
+                if present:
+                    train_frame = train_frame.drop(columns=present)
+            target: str = str(self.target or train_frame.columns[-1])
+            y_train = train_frame[target].to_numpy()
+            X_train_frame = train_frame.drop(columns=[target])
 
-        x_valid_frame = None
-        y_valid = None
-        if validation_partition is not None:
-            # ``None`` means "this task has no validation partition". Passing it to
-            # ``get_dataframe`` would read the unpartitioned ``data`` stub instead of
-            # failing, which then died later with a bare ``KeyError: <target>``.
-            try:
-                validation_frame = self.get_dataframe(validation_partition)
-                if exclude_columns:
-                    present = [column for column in exclude_columns if column in validation_frame.columns]
-                    if present:
-                        validation_frame = validation_frame.drop(columns=present)
-                y_valid = validation_frame[target].to_numpy()
-                x_valid_frame = validation_frame.drop(columns=[target])
-            except ValueError:
-                x_valid_frame = None
-                y_valid = None
-        X_valid_frame = x_valid_frame
+            x_valid_frame = None
+            y_valid = None
+            if validation_partition is not None:
+                # ``None`` means "this task has no validation partition". Passing it to
+                # ``get_dataframe`` would read the unpartitioned ``data`` stub instead of
+                # failing, which then died later with a bare ``KeyError: <target>``.
+                try:
+                    validation_frame = self.get_dataframe(validation_partition)
+                    if exclude_columns:
+                        present = [column for column in exclude_columns if column in validation_frame.columns]
+                        if present:
+                            validation_frame = validation_frame.drop(columns=present)
+                    y_valid = validation_frame[target].to_numpy()
+                    x_valid_frame = validation_frame.drop(columns=[target])
+                except ValueError:
+                    x_valid_frame = None
+                    y_valid = None
+            X_valid_frame = x_valid_frame
 
-        feature_dtypes = list(X_train_frame.dtypes)
-        if X_valid_frame is not None:
-            feature_dtypes.extend(X_valid_frame.dtypes)
-        uses_fold_local_preprocessing = any(
-            not pd.api.types.is_numeric_dtype(dtype)
-            or pd.api.types.is_bool_dtype(dtype)
-            or pd.api.types.is_complex_dtype(dtype)
-            for dtype in feature_dtypes
-        )
-
-        if X_valid_frame is not None:
-            X_train_frame, X_valid_frame = X_train_frame.align(
-                X_valid_frame,
-                join="outer",
-                axis=1,
-                fill_value=numpy.nan if uses_fold_local_preprocessing else 0,
+            feature_dtypes = list(X_train_frame.dtypes)
+            if X_valid_frame is not None:
+                feature_dtypes.extend(X_valid_frame.dtypes)
+            uses_fold_local_preprocessing = any(
+                not pd.api.types.is_numeric_dtype(dtype)
+                or pd.api.types.is_bool_dtype(dtype)
+                or pd.api.types.is_complex_dtype(dtype)
+                for dtype in feature_dtypes
             )
 
-        if uses_fold_local_preprocessing:
-            X_train = X_train_frame
-            X_valid = X_valid_frame
-        else:
-            X_train = X_train_frame.to_numpy()
-            X_valid = X_valid_frame.to_numpy() if X_valid_frame is not None else None
+            if X_valid_frame is not None:
+                X_train_frame, X_valid_frame = X_train_frame.align(
+                    X_valid_frame,
+                    join="outer",
+                    axis=1,
+                    fill_value=numpy.nan if uses_fold_local_preprocessing else 0,
+                )
+
+            if uses_fold_local_preprocessing:
+                X_train = X_train_frame
+                X_valid = X_valid_frame
+            else:
+                X_train = X_train_frame.to_numpy()
+                X_valid = X_valid_frame.to_numpy() if X_valid_frame is not None else None
 
         def clone_for_fit():
             candidate = clone(estimator)

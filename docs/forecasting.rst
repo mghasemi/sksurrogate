@@ -793,7 +793,9 @@ What is opt-in, what is default
      - order-respecting only (``SetCV`` rejects the rest)
    * - ``backtest`` / ``nested_cv``
      - unchanged
-     - available; the backtest walks origins
+     - available; the backtest walks origins and nested CV scores the generated
+       one-step design with order-respecting splitters (an integer fold count
+       becomes ``TimeSeriesSplit``; a shuffled spec is refused)
    * - ``predict`` / ``predict_batch``
      - unchanged
      - unchanged for v1 bundles; dispatch to ``predict_forecast`` for v2

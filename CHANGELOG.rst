@@ -47,6 +47,15 @@ Partition defaults, temporal experiments and the Advanced scorer
   matrix the search and the backtest see — with the bare estimator behind the
   feature builder (frame-tolerant for preset pipelines), and echo
   ``feature_source: "temporal_design"``.
+* **Fixed:** nested cross-validation of a temporal bundle handed the bundle's whole
+  pipeline to the tracker, which built folds from the partition's raw columns, and
+  failed with ``ForecastFeatureBuilder works on pandas DataFrames``. It now scores
+  the generated one-step design via ``mltrack.nested_cv_evaluation(..., design=...)``
+  (new parameter: prebuilt ``(X_train, y_train, X_valid, y_valid)``) with the bare
+  estimator, turns an integer fold count into ``TimeSeriesSplit`` and refuses a
+  shuffled splitter on a temporal task. ``StackingEstimator.fit_transform`` also
+  clamps its internal fold count to the rows it receives, so a small
+  outer/inner block no longer fails with "Cannot have number of splits ...".
 
 Experiments search space follows the task's problem type
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

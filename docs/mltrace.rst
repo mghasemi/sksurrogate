@@ -257,6 +257,15 @@ duplicate timestamps and gaps, excludes the time/series columns from the feature
 matrix, and restricts ``SetCV`` to order-respecting splitters
 (``TEMPORAL_CV_SPLITTERS``).
 
+When the caller builds the design matrix itself, pass it as
+``design=(X_train, y_train, X_valid, y_valid)``: the tracker then skips the
+partition read, ignored-column drop and dtype/column alignment, and cross-validates
+the matrices as given (``X_valid``/``y_valid`` may be ``None``). This is how the
+control plane evaluates a temporal task, whose partition carries no raw feature
+column: it generates the one-step forecast design and hands over the bare
+estimator behind the bundle's feature builder. The matrices define their own label
+semantics, so the horizon-gap warning does not apply to them.
+
 The generic Python estimator path also works with scikit-learn's
 ``QuantileRegressor``. To evaluate the selected quantile, pass a matching
 pinball-loss scorer; the scorer's ``alpha`` must match the estimator's
