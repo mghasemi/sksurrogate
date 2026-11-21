@@ -591,6 +591,11 @@ class AML(BaseEstimator):
             )
         else:
             self.scoring = scoring
+        # Reject a directionless scorer at construction, not as a per-candidate
+        # failure half way through the search.
+        from .structsearch import check_scoring_direction
+
+        check_scoring_direction(self.scoring)
         self.cat_cols = cat_cols
         if preset is not None and surrogates is None:
             self.surrogates = _preset_surrogates()
@@ -1213,6 +1218,9 @@ class AML(BaseEstimator):
                 else "accuracy"
             )
         if "scoring" in params:
+            from .structsearch import check_scoring_direction
+
+            check_scoring_direction(params["scoring"])
             self.scoring = params["scoring"]
             self._uses_preset_scoring = False
         if ("preset" in params or "config" in params):

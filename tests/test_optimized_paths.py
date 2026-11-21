@@ -11,7 +11,7 @@ matplotlib.use("Agg")
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, RegressorMixin
-from sklearn.datasets import make_classification
+from sklearn.datasets import make_classification, make_regression
 from sklearn.dummy import DummyClassifier
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.model_selection import ShuffleSplit
@@ -2623,6 +2623,102 @@ class TestOptimizedPaths(unittest.TestCase):
         self.assertIn("duration", search.cv_results_)
         self.assertIn("error", search.cv_results_)
         self.assertTrue(search.pareto_frontier())
+
+    def test_surrogate_search_minimizes_the_negated_classification_score(self):
+        """accuracy is higher-is-better, so the search minimizes -accuracy."""
+        X, y = make_classification(n_samples=120, n_features=5, n_informative=3, random_state=0)
+        search = SurrogateRandomCV(
+            RandomForestClassifier(n_estimators=10, random_state=0),
+            {"max_depth": Categorical([1, 3, None]), "min_samples_leaf": Categorical([1, 4])},
+            scoring="accuracy",
+            cv=2,
+            n_jobs=1,
+            max_iter=8,
+            min_evals=4,
+            refit=False,
+            random_state=0,
+        )
+        search.fit(X, y)
+        losses = np.array([v for v in search.cv_results_["loss"] if v is not None], dtype=float)
+        scores = np.array(
+            [v for v in search.cv_results_["mean_test_score"] if v is not None], dtype=float
+        )
+        self.assertTrue(np.allclose(losses, -scores))
+        self.assertTrue(np.all(scores > 0.0))          # accuracy, not a loss
+        self.assertAlmostEqual(search.best_score_, -losses.min(), places=12)
+        self.assertGreaterEqual(-losses.min(), 0.5)
+
+    def test_surrogate_search_minimizes_a_regression_error(self):
+        """neg_root_mean_squared_error arrives negated; the stored loss is +RMSE."""
+        data = make_regression(n_samples=120, n_features=5, noise=20.0, random_state=0)
+        X, y = data[0], data[1]
+        search = SurrogateRandomCV(
+            RandomForestRegressor(n_estimators=10, random_state=0),
+            {"max_depth": Categorical([1, 3, None]), "min_samples_leaf": Categorical([1, 4])},
+            scoring="neg_root_mean_squared_error",
+            cv=2,
+            n_jobs=1,
+            max_iter=8,
+            min_evals=4,
+            refit=False,
+            random_state=0,
+        )
+        search.fit(X, y)
+        losses = np.array([v for v in search.cv_results_["loss"] if v is not None], dtype=float)
+        scores = np.array(
+            [v for v in search.cv_results_["mean_test_score"] if v is not None], dtype=float
+        )
+        self.assertTrue(np.allclose(losses, -scores))
+        self.assertTrue(np.all(losses > 0.0))          # a positive RMSE to minimize
+        self.assertLessEqual(search.best_score_, 0.0)  # best_score_ keeps sklearn's sign
+
+    def test_surrogate_search_rejects_a_bare_callable_scorer(self):
+        """A callable without a sign would be negated into a metric to maximize."""
+
+        def mae(estimator, X, y):
+            return float(np.mean(np.abs(np.asarray(y) - estimator.predict(X))))
+
+        data = make_regression(n_samples=40, n_features=3, random_state=0)
+        X, y = data[0], data[1]
+        search = SurrogateRandomCV(
+            RandomForestRegressor(n_estimators=3, random_state=0),
+            {"max_depth": Categorical([1, 3])},
+            scoring=mae,
+            cv=2,
+            n_jobs=1,
+            max_iter=4,
+            min_evals=2,
+        )
+        with self.assertRaises(TypeError) as raised:
+            search.fit(X, y)
+        self.assertIn("make_scorer", str(raised.exception))
+        self.assertIn("bare callable", str(raised.exception))
+
+    def test_surrogate_search_honours_a_make_scorer_direction(self):
+        """make_scorer(mae, greater_is_better=False) picks the minimum-error trial."""
+        from sklearn.metrics import make_scorer, mean_absolute_error
+
+        data = make_regression(n_samples=120, n_features=5, noise=20.0, random_state=0)
+        X, y = data[0], data[1]
+        search = SurrogateRandomCV(
+            RandomForestRegressor(n_estimators=10, random_state=0),
+            {"max_depth": Categorical([1, 3, None]), "min_samples_leaf": Categorical([1, 4])},
+            scoring=make_scorer(mean_absolute_error, greater_is_better=False),
+            cv=2,
+            n_jobs=1,
+            max_iter=8,
+            min_evals=4,
+            refit=False,
+            random_state=0,
+        )
+        search.fit(X, y)
+        losses = np.array([v for v in search.cv_results_["loss"] if v is not None], dtype=float)
+        scores = np.array(
+            [v for v in search.cv_results_["mean_test_score"] if v is not None], dtype=float
+        )
+        self.assertTrue(np.allclose(losses, -scores))
+        self.assertTrue(np.all(losses > 0.0))          # -(-MAE) = +MAE
+        self.assertAlmostEqual(-search.best_score_, losses.min(), places=12)
 
     def test_surrogate_cv_never_refits_a_forbidden_combination(self):
         # In sklearn >= 1.8 the 'penalty' axis is gone: L1 (l1_ratio=1) with

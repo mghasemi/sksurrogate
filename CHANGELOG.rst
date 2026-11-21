@@ -125,6 +125,18 @@ Partition defaults, temporal experiments and the Advanced scorer
   nested-CV job". Those are now marked `by_design` and reported separately as
   `diagnostics_not_applicable`; `diagnostic_failures` counts only diagnostics that
   ran and failed.
+* **Fixed:** the surrogate search accepted a *bare* callable scorer, which
+  ``check_scoring`` passes through without a direction. Trial scores are negated
+  into a loss before ``scipy.optimize.minimize``, so a plain lower-is-better
+  function (e.g. ``lambda est, X, y: mean_absolute_error(y, est.predict(X))``) was
+  negated into ``-MAE`` and the search *maximized* the error — verified selecting
+  the worst trial (MAE 62.25 over a 43.56 best) while reporting a finite,
+  plausible score. ``SurrogateRandomCV``/``AML`` now reject a raw callable at
+  construction/fit with a ``TypeError`` naming ``make_scorer(fn,
+  greater_is_better=False)``; scorer names and ``make_scorer``/``get_scorer``
+  objects are unchanged. The sign contract and the ``best_estimator_score``
+  (loss) vs ``best_score_``/``mean_test_score`` (scorer units) split are now
+  documented in ``docs/surrogate.rst``.
 
 Experiments search space follows the task's problem type
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

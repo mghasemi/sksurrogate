@@ -217,6 +217,40 @@ def resolve_sampling(sampling):
     return sampling
 
 
+def check_scoring_direction(scoring):
+    """Reject a scorer that carries no direction.
+
+    The search normalizes every trial score to a *loss* by negating it and then
+    minimizes that loss with ``scipy.optimize.minimize``. That is only sound when
+    the value is higher-is-better, which scikit-learn guarantees for scorer names
+    (``neg_*`` metrics are already negated) and for ``make_scorer``/``get_scorer``
+    objects (they carry a ``_sign``). ``sklearn.check_scoring`` returns a *bare*
+    callable unchanged, so a plain lower-is-better function such as
+
+    .. code-block:: python
+
+        def mae(estimator, X, y): return float(np.mean(np.abs(y - estimator.predict(X))))
+
+    would be negated into ``-MAE`` and the search would then *maximize* the error —
+    it selects the worst model while reporting a finite, plausible score.
+
+    ``None`` (the estimator's own ``score``, higher-is-better) and strings are
+    accepted; anything callable must be a scikit-learn scorer object.
+    """
+    if scoring is None or isinstance(scoring, str):
+        return scoring
+    if hasattr(scoring, "_sign") and hasattr(scoring, "_score_func"):
+        return scoring
+    raise TypeError(
+        "scoring must be a scorer name (e.g. 'accuracy', 'neg_root_mean_squared_error') "
+        "or a make_scorer(...)/get_scorer(...) object, not a bare callable: a bare "
+        "callable carries no direction, and the search minimizes its negation — it "
+        "would maximize a loss. Wrap it explicitly: "
+        "make_scorer(fn, greater_is_better=False) for an error metric, or "
+        "make_scorer(fn, greater_is_better=True) for a score."
+    )
+
+
 class SurrogateSearch(object):
     """
     An implementation of the Surrogate Random Search (SRS).
@@ -872,10 +906,12 @@ class SurrogateRandomCV(BaseSearchCV):
     :param params: dict Dictionary with parameters names (string) as keys and domains as lists of parameter ranges
         to try. Domains are either lists of categorical (string) values or 2 element lists specifying a min and max
         for integer or float parameters
-    :param scoring: string, callable or `None`, default=None
-        A string (see model evaluation documentation) or a scorer callable
-        object / function with signature ``scorer(estimator, X, y)``. If
-        ``None``, the ``score`` method of the estimator is used.
+    :param scoring: string, scorer object or `None`, default=None
+        A scorer name (see model evaluation documentation) or a
+        ``make_scorer``/``get_scorer`` object. If ``None``, the ``score``
+        method of the estimator is used. A *bare* callable is rejected: it
+        carries no direction, and the search would minimize its negation —
+        maximizing a loss. Wrap it: ``make_scorer(fn, greater_is_better=False)``.
     :param max_iter: int, default=50
         Number of parameter settings that are sampled. max_iter trades
         off runtime vs quality of the solution. Consider increasing
@@ -1271,6 +1307,9 @@ class SurrogateRandomCV(BaseSearchCV):
             callbacks = list(callbacks)
         # from lightgbm.sklearn import LightGBMError
         radius_list = []
+        # A bare callable has no sign: negating it would turn a loss into a score
+        # to maximize. Fail here, before any fit, with guidance.
+        self.scoring = check_scoring_direction(self.scoring)
         self.scorer_ = check_scoring(self.estimator, scoring=self.scoring)
         target_classes = []
         if y is not None:

@@ -56,6 +56,45 @@ Clearly, there are various methods to accomplish some of the steps in the above 
 how to sample a new point :math:`x_0`, how to find the surrogate :math:`\hat{f}`, how to minimize
 and how to decide when we wish to use the surrogate.
 
+Scoring direction
+===================================
+The search minimizes, so a trial score is stored as a **loss**: every value is
+negated once before it reaches :math:`f`, the surrogate and `scipy.optimize.minimize`.
+That is sound only for a higher-is-better score, which is scikit-learn's own
+convention:
+
+.. list-table::
+   :header-rows: 1
+
+   * - ``scoring``
+     - scorer value
+     - stored ``loss`` (minimized)
+   * - ``"accuracy"``, ``"roc_auc"``
+     - :math:`+\text{accuracy}`
+     - :math:`-\text{accuracy}`
+   * - ``"neg_root_mean_squared_error"``
+     - :math:`-\text{RMSE}`
+     - :math:`+\text{RMSE}`
+   * - ``make_scorer(mean_absolute_error, greater_is_better=False)``
+     - :math:`-\text{MAE}`
+     - :math:`+\text{MAE}`
+   * - ``None`` (estimator's ``score``)
+     - :math:`R^2` / accuracy
+     - negated
+
+Consequently ``best_estimator_score`` is a loss (lower is better), while
+``best_score_`` and ``cv_results_["mean_test_score"]`` are reported back in the
+scorer's own units (higher is better), matching ``GridSearchCV``.
+
+A *bare* callable is refused with a ``TypeError``: ``check_scoring`` passes it
+through unchanged, so a plain lower-is-better function such as
+``lambda est, X, y: mean_absolute_error(y, est.predict(X))`` would be negated into
+:math:`-\text{MAE}` and the search would maximize the error. Wrap it explicitly::
+
+    from sklearn.metrics import make_scorer, mean_absolute_error
+
+    scoring = make_scorer(mean_absolute_error, greater_is_better=False)
+
 Sampling
 ===================================
 Three different sampling methods have been implemented and the `SurrogateSearch` class accepts
