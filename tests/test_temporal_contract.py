@@ -502,13 +502,19 @@ class TestTrackerIntegration(unittest.TestCase):
     def test_target_cannot_be_a_temporal_column(self):
         tracker = self._tracker()
         try:
-            with self.assertRaises(ValueError):
+            with self.assertRaises(ValueError) as ctx:
                 tracker.RegisterData(
                     self.frame, "target", partition="train",
                     temporal=TemporalSpec(time_column="target"),
                 )
         finally:
             tracker.close()
+        # The message must explain the distinction, not just repeat the name: a
+        # caller who picked the target in a time-column picker reads "cannot also
+        # be a temporal column ('target')" as a bug in the form.
+        message = str(ctx.exception)
+        self.assertIn("both the target and a temporal column", message)
+        self.assertIn("time_column must name", message)
 
 
 class TestTemporalEndpoints(unittest.TestCase):

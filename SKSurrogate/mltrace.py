@@ -974,8 +974,12 @@ class mltrack(object):
         target = metadata.get("target_name") or self.target
         if target is not None and target in temporal_spec.temporal_columns:
             raise ValueError(
-                "the target column %r cannot also be a temporal column (%s)"
-                % (target, ", ".join(temporal_spec.temporal_columns))
+                "column %r is both the target and a temporal column: time_column must "
+                "name *when* each observation happened (and series_id *which series*), "
+                "while %r is the value being predicted. Pass the timestamp column as "
+                "time_column — e.g. time_column='date' — and leave the target out of "
+                "the temporal declaration."
+                % (target, target)
             )
         known = metadata.get("dataset_columns") or []
         missing = [
@@ -1367,8 +1371,12 @@ class mltrack(object):
             temporal_spec = TemporalSpec.from_dict(temporal)
             if target in temporal_spec.temporal_columns:
                 raise ValueError(
-                    "the target column %r cannot also be a temporal column (%s)"
-                    % (target, ", ".join(temporal_spec.temporal_columns))
+                    "column %r is both the target and a temporal column: time_column "
+                    "must name *when* each observation happened (and series_id *which "
+                    "series*), while %r is the value being predicted. Pass the timestamp "
+                    "column as time_column — e.g. time_column='date' — and leave the "
+                    "target out of the temporal declaration."
+                    % (target, target)
                 )
             temporal_report = validate_temporal_frame(source_df, temporal_spec)
         if self.encode:

@@ -79,6 +79,16 @@ Period labels, ambiguous formats, and partition defaults
   period labels — so the message told the caller to rewrite data that the library can
   read fine once anchored. Both the overflow and the unparseable-value branches now
   name the anchor (``period_start`` + ``freq``) first.
+* **Fixed:** the **Time column** and **Series id** pickers offered the task's
+  *target* column. The server refuses it (a target is what you forecast, not when),
+  but the dropdown made the mistake one click away and the resulting
+  ``column 'X' is both the target and a temporal column`` read like a form bug. The
+  pickers now exclude the target, and the refusal explains the distinction instead of
+  repeating the name: ``time_column`` must name *when* the observation happened
+  and ``series_id`` *which series*, while the target is the value being predicted.
+* **Clarified:** the declared temporal summary shows ``anchor=<period_start>`` and
+  ``format=<time_format>`` when they are set, so a declaration built from a period
+  label is visible in the card rather than implied.
 * **Added:** ``TemporalSpec.period_start`` — the timestamp of each series' first row,
   for a time column that is a *period label* (``1-Jan``/``2-Jan``/``3-Dec``, ``Q1``,
   ``period 1``) rather than a date. It requires ``freq``; the axis is built from the

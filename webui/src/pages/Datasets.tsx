@@ -645,7 +645,12 @@ export default function DatasetsPage() {
       </Card>
 
       <div id="temporal-structure">
-        <TemporalCard task={task} revision={dataRevision} fallbackColumns={previewCols} />
+        <TemporalCard
+          task={task}
+          revision={dataRevision}
+          fallbackColumns={previewCols}
+          targetColumn={metaQ.data?.target_name ?? null}
+        />
       </div>
 
       <Card
@@ -1259,10 +1264,13 @@ function TemporalCard({
   task,
   revision,
   fallbackColumns,
+  targetColumn,
 }: {
   task: string;
   revision: number;
   fallbackColumns: string[];
+  /** The column being predicted: it can never be a time/series column. */
+  targetColumn?: string | null;
 }) {
   const qc = useQueryClient();
   const q = useQuery({
@@ -1329,6 +1337,9 @@ function TemporalCard({
   });
 
   const columns = q.data?.columns?.length ? q.data.columns : fallbackColumns;
+  // The target is what you forecast, not when: offering it in these pickers made
+  // the server's refusal look like a bug in the form.
+  const temporalCandidates = columns.filter((column) => column !== targetColumn);
   const declared = q.data?.spec ?? null;
   const reports = Object.entries(q.data?.validation ?? {}) as Array<
     [string, TemporalValidationReport]
@@ -1373,7 +1384,7 @@ function TemporalCard({
                 onChange={(e) => setDraft((d) => ({ ...d, time_column: e.target.value }))}
               >
                 <option value="">— select —</option>
-                {columns.map((column) => (
+                {temporalCandidates.map((column) => (
                   <option key={column} value={column}>
                     {column}
                   </option>
@@ -1387,7 +1398,7 @@ function TemporalCard({
                 onChange={(e) => setDraft((d) => ({ ...d, series_id: e.target.value || null }))}
               >
                 <option value="">(single series)</option>
-                {columns
+                {temporalCandidates
                   .filter((column) => column !== draft.time_column)
                   .map((column) => (
                     <option key={column} value={column}>
@@ -1482,6 +1493,8 @@ function TemporalCard({
                 {declared.series_id ? ` series=${declared.series_id}` : " (single series)"}
                 {declared.freq ? ` freq=${declared.freq}` : " (no declared frequency)"} h=
                 {declared.horizon ?? 1}
+                {declared.period_start ? ` anchor=${declared.period_start}` : ""}
+                {declared.time_format ? ` format=${declared.time_format}` : ""}
               </dd>
               <dt>Excluded columns</dt>
               <dd className="mono">{q.data.temporal_columns.join(", ") || "—"}</dd>
