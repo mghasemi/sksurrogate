@@ -6,15 +6,17 @@ be slow on larger feature sets. Also exposes the heatmap data behind
 weights table, rendered client-side by the web UI.
 """
 
+import json
+
 import pandas as pd
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from SKSurrogate import CorrelationThreshold, SensAprx
+from SKSurrogate import CorrelationThreshold, SensAprx, temporal_columns
 
 from ..config import settings
 from ..columns import drop_ignored, read_ignored_columns
-from ..features import NumericFeatureError, numeric_train_xy
+from ..features import NumericFeatureError, numeric_train_xy, temporal_design_xy
 from ..safety import safe_segment
 from ..deps import bad_request, finite_or_none as _finite, not_found, open_tracker, task_access
 from ..jobs import job_manager
@@ -26,6 +28,10 @@ class SensitivityRequest(BaseModel):
     method: str = "sobol"
     n_features_to_select: int = 5
     train_partition: str = "train"
+    #: Temporal tasks only: ``make_supervised`` builder kwargs (lags, rolling,
+    #: diffs, pct_changes, calendar, fourier, exogenous). Defaults to one lag at
+    #: the declared horizon, which is what the backtest also defaults to.
+    features: dict | None = None
 
 
 def _heatmap_payload(frame: pd.DataFrame, index_col: str | None, max_features: int) -> dict:
@@ -44,16 +50,23 @@ def _heatmap_payload(frame: pd.DataFrame, index_col: str | None, max_features: i
     }
 
 
-def _load_train_xy(task_name, train_partition):
-    """Load a partition and project it onto its numeric feature columns.
+def _load_train_xy(task_name, train_partition, features=None):
+    """Load a partition and project it onto numeric columns a analysis can use.
 
-    Returns ``(projection, fingerprint)`` where ``projection`` is an
-    :class:`api.features.NumericTrainData`. The projection is not optional:
-    sensitivity (SALib + surrogate regressor) and Pearson-correlation pruning are
-    numeric procedures, and a mixed-type partition previously crashed inside
-    sklearn with ``could not convert string to float``. Non-numeric columns are
-    excluded and reported, and an empty projection is a 400 — not a job that
-    fails later with a traceback.
+    Returns ``(projection, fingerprint, provenance)``. Two shapes exist:
+
+    * **tabular task** — the numeric feature columns of the partition, with
+      non-numeric columns excluded and reported;
+    * **temporal task** — the *generated* design matrix (lag/rolling/diff/calendar
+      features from :func:`~SKSurrogate.make_supervised`). Such a partition usually
+      has no raw feature column at all: the time/series columns are excluded by the
+      temporal contract and the target is the label, so projecting the raw columns
+      found nothing and answered a misleading "encode or drop those columns" 400.
+
+    The projection is not optional: sensitivity (SALib + surrogate regressor) and
+    Pearson-correlation pruning are numeric procedures, and a mixed-type partition
+    previously crashed inside sklearn with ``could not convert string to float``.
+    An empty projection is a 400 — not a job that fails later with a traceback.
     """
     with open_tracker(task_name) as tracker:
         metadata = tracker.GetMetadata()
@@ -65,13 +78,33 @@ def _load_train_xy(task_name, train_partition):
     if not csv_path.exists():
         raise not_found("No dataset partition %r stored for task %r" % (train_partition, task_name))
     frame = pd.read_csv(csv_path)
-    frame = drop_ignored(frame, read_ignored_columns(task_name))
+    spec = metadata.get("temporal_spec")
     try:
-        projection = numeric_train_xy(frame, target)
+        if spec:
+            # The time/series columns are on the ignore list by design (decision
+            # D4). The design builder needs them, so drop only genuine ignores.
+            ignored = set(read_ignored_columns(task_name)) - set(temporal_columns(spec))
+            present = sorted(column for column in ignored if column in frame.columns)
+            if present:
+                frame = frame.drop(columns=present)
+            projection = temporal_design_xy(frame, spec, target, features)
+            provenance = {
+                "feature_source": "temporal_design",
+                "temporal_spec": dict(spec),
+                "feature_specs": projection.feature_specs,
+            }
+        else:
+            frame = drop_ignored(frame, read_ignored_columns(task_name))
+            projection = numeric_train_xy(frame, target)
+            provenance = {"feature_source": "partition_columns"}
     except NumericFeatureError as exc:
         raise bad_request(str(exc))
+    except ValueError as exc:
+        # make_supervised's own refusals (lag shorter than the horizon, calendar
+        # on a numeric axis, a shuffled frame) are the caller's to fix.
+        raise bad_request(str(exc))
     partition_metadata = partition_history.get(train_partition, {})
-    return projection, partition_metadata.get("fingerprint")
+    return projection, partition_metadata.get("fingerprint"), provenance
 
 
 @router.post("/{task_name}/run")
@@ -79,7 +112,9 @@ def run_sensitivity(task_name: str, body: SensitivityRequest):
     """Submit a sensitivity-analysis job and return its job id immediately (202-style)."""
     if body.method not in {"sobol", "morris", "delta-mmnt"}:
         raise bad_request("method must be one of sobol, morris, delta-mmnt")
-    projection, train_fingerprint = _load_train_xy(task_name, body.train_partition)
+    projection, train_fingerprint, provenance = _load_train_xy(
+        task_name, body.train_partition, body.features
+    )
     feature_columns, X, y = projection.columns, projection.X, projection.y
 
     def _task():
@@ -120,6 +155,12 @@ def run_sensitivity(task_name: str, body: SensitivityRequest):
                 "train_fingerprint": train_fingerprint,
                 "row_count": len(X),
                 "feature_columns": feature_columns,
+                "feature_source": provenance["feature_source"],
+                "temporal": (
+                    {k: v for k, v in provenance.items() if k != "feature_source"}
+                    if provenance["feature_source"] == "temporal_design"
+                    else None
+                ),
                 "excluded_columns": projection.excluded,
                 "rows_dropped": projection.dropped_rows,
             },
@@ -132,6 +173,13 @@ def run_sensitivity(task_name: str, body: SensitivityRequest):
                     "Sensitivity describes the fitted surrogate's response over method-generated independent input ranges based on observed feature bounds plus a margin.",
                     "Only numeric feature columns participate: non-numeric columns are excluded (see evaluation_protocol.excluded_columns) because the sampling procedure and its surrogate regressor are numeric.",
                     "Correlated features, and numeric columns that are identifiers rather than measurements, may produce unrealistic perturbations; these indices are not causal effects.",
+                    *(
+                        []
+                        if provenance["feature_source"] != "temporal_design"
+                        else [
+                            "Features are generated from the declared temporal spec (lags/rollings/calendar fields) rather than measured inputs: they are transforms of the target, so their correlations are structural and the sampled ranges are synthetic. This explains which history windows the model leans on; the rolling-origin backtest remains the accuracy statement."
+                        ]
+                    ),
                 ],
             },
         }
@@ -145,10 +193,30 @@ def run_sensitivity(task_name: str, body: SensitivityRequest):
     return {"job_id": job_id, "status": "queued"}
 
 
+def _features_from_query(raw):
+    """Parse the ``features`` JSON query parameter of the correlation endpoints."""
+    if raw is None or not str(raw).strip():
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise bad_request("features must be a JSON object: %s" % exc)
+    if not isinstance(parsed, dict):
+        raise bad_request("features must be a JSON object")
+    return parsed
+
+
 @router.post("/{task_name}/correlation-threshold")
-def run_correlation_threshold(task_name: str, threshold: float = 0.7, train_partition: str = "train"):
+def run_correlation_threshold(
+    task_name: str,
+    threshold: float = 0.7,
+    train_partition: str = "train",
+    features: str | None = None,
+):
     """Fast, synchronous correlation-based feature pruning (no job needed)."""
-    projection, _ = _load_train_xy(task_name, train_partition)
+    projection, _, provenance = _load_train_xy(
+        task_name, train_partition, _features_from_query(features)
+    )
     feature_columns, X = projection.columns, projection.X
     selector = CorrelationThreshold(threshold=threshold)
     selector.fit(X)
@@ -161,21 +229,31 @@ def run_correlation_threshold(task_name: str, threshold: float = 0.7, train_part
         "excluded_feature_names": projection.excluded_names,
         "excluded_columns": projection.excluded,
         "rows_dropped": projection.dropped_rows,
+        "feature_source": provenance["feature_source"],
         "interpretation": {
             "category": "numeric_only",
             "note": "Pearson correlation is undefined for non-numeric columns; they are excluded from pruning and reported separately.",
         },
     }
 
+
 @router.get("/{task_name}/correlation-matrix")
-def get_correlation_matrix(task_name: str, train_partition: str = "train", max_features: int = 60):
+def get_correlation_matrix(
+    task_name: str,
+    train_partition: str = "train",
+    max_features: int = 60,
+    features: str | None = None,
+):
     """Pearson correlation matrix of the features — the data behind ``mltrack.heatmap``."""
-    projection, _ = _load_train_xy(task_name, train_partition)
+    projection, _, provenance = _load_train_xy(
+        task_name, train_partition, _features_from_query(features)
+    )
     frame = pd.DataFrame(projection.X, columns=projection.columns).corr()
     return {
         "task_name": task_name,
         "partition": train_partition,
         "kind": "correlation",
+        "feature_source": provenance["feature_source"],
         "interpretation": {
             "category": "descriptive_association",
             "measure": "Pearson correlation",
@@ -213,7 +291,7 @@ def get_weights_heatmap(task_name: str, train_partition: str = "train", max_feat
         # projection is auxiliary here: a missing partition must not hide the
         # stored weights.
         try:
-            projection, _ = _load_train_xy(task_name, train_partition)
+            projection, _, _provenance = _load_train_xy(task_name, train_partition)
             excluded = projection.excluded
         except Exception:  # pragma: no cover - defensive
             excluded = []
@@ -226,7 +304,7 @@ def get_weights_heatmap(task_name: str, train_partition: str = "train", max_feat
             **payload,
         }
 
-    projection, _ = _load_train_xy(task_name, train_partition)
+    projection, _, _provenance = _load_train_xy(task_name, train_partition)
     frame = pd.DataFrame(projection.X, columns=projection.columns)
     frame["__target__"] = projection.y
     weights_df = pd.DataFrame(
@@ -257,7 +335,7 @@ def compute_base_weights(task_name: str, train_partition: str = "train"):
     ``top-features`` endpoint: the consensus card offers it when the task has no
     stored weighting at all.
     """
-    projection, _ = _load_train_xy(task_name, train_partition)
+    projection, _, _provenance = _load_train_xy(task_name, train_partition)
     data = pd.DataFrame(projection.X, columns=projection.columns)
     values = pd.Series(projection.y)
     weights = {

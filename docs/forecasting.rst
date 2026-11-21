@@ -383,6 +383,36 @@ backtest predictions. For plain CV and learning curves, **sMAPE** is available a
 ``neg_mean_pinball_loss`` with an explicit ``pinball_alpha``.
 
 
+Feature analysis on a temporal task
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A time-series partition usually has no raw feature column at all: the time (and panel
+id) columns are excluded by the temporal contract and the target is the label. Running
+sensitivity or Pearson pruning on such a partition used to answer "no numeric feature
+columns — encode or drop those columns", which described columns that did not exist.
+
+Those analyses now run over the **generated design**, built by the same
+``make_supervised`` call the backtest uses:
+
+* features are ``<target>__lag_h``, rollings, diffs, pct-changes and calendar fields —
+  names and provenance are reported in the job result
+  (``evaluation_protocol.feature_source == "temporal_design"`` plus
+  ``temporal.feature_specs``);
+* the default design is one lag at the declared horizon; pass ``features`` to
+  ``POST /api/sensitivity/{task}/run`` (and as a JSON query parameter to
+  ``/correlation-threshold`` and ``/correlation-matrix``) to mirror the model's
+  configuration;
+* calendar fields are derived from the parsed time column, so an ISO date stored as a
+  plain string in the CSV works: the builder parses it with ``pandas.to_datetime``
+  rather than trusting the stored dtype;
+* a design with a single feature is an all-kept pruning answer, not an error.
+
+Because these features are transforms of the target, their correlations are structural
+and the sampled ranges are synthetic: the ranking explains *which history windows* a
+model leans on. The rolling-origin backtest remains the accuracy statement, and the
+limitations block in the result says exactly that.
+
+
 Prediction intervals
 --------------------
 

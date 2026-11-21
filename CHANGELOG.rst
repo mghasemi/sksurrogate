@@ -4,6 +4,29 @@ Changelog
 [Unreleased]
 ------------
 
+Sensitivity and correlation on temporal tasks
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Fixed:** ``POST /api/sensitivity/{task}/run`` (and the Pearson
+  ``/correlation-threshold`` / ``/correlation-matrix`` endpoints) answered
+  ``400 Sensitivity and correlation analysis need numeric feature columns ... (non-numeric:
+  all columns). Encode or drop those columns`` for any time-series task. A temporal
+  partition has no raw feature column to encode: ``time``/``series_id`` are excluded by the
+  temporal contract and the target is the label. These analyses now project onto the
+  **generated design** (``make_supervised``: lags, rollings, diffs, pct-changes, calendar
+  fields), report ``feature_source: "temporal_design"`` with per-column provenance, and
+  accept a ``features`` configuration (default: one lag at the declared horizon).
+* **Fixed:** an empty projection caused by the ignore list now says the partition has no
+  feature column left instead of blaming non-numeric columns that do not exist.
+* **Fixed:** ``ForecastFeatureBuilder.fit`` rejected calendar features whenever the time
+  column's *stored* dtype was not datetime, so an ISO date read from CSV (``object``
+  dtype) failed even though ``transform`` and ``validate_temporal_frame`` both parse it.
+  The gate now uses the contract's parser.
+* **Fixed:** ``CorrelationThreshold.fit`` raised ``IndexError`` on a single feature
+  (``numpy.corrcoef`` returns a scalar); it now keeps every feature — nothing to prune.
+* **UI:** the Feature Analysis page labels a generated-design run and states that the
+  ranking explains history windows, not measured inputs.
+
 Temporal data contract (time-series support, phase 1)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

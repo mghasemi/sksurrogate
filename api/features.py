@@ -29,6 +29,7 @@ column or pass a feature subset), and it is stated in the result's limitations.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any, Mapping
 
 import numpy as np
 import pandas as pd
@@ -40,17 +41,28 @@ class NumericFeatureError(ValueError):
 
 @dataclass
 class NumericTrainData:
-    """A numeric ``(X, y)`` view of one partition plus what was excluded."""
+    """A numeric ``(X, y)`` view of one partition plus what was excluded.
+
+    ``source`` says where the columns came from: ``"partition_columns"`` for a
+    tabular task, ``"temporal_design"`` when the features were generated from a
+    declared :class:`~SKSurrogate.TemporalSpec` (see
+    :func:`temporal_design_xy`). ``feature_specs`` carries the provenance of each
+    generated column in the latter case, so a caller can state that e.g.
+    ``sales__lag_4`` is a lag rather than a measured input.
+    """
 
     columns: list[str]
     X: np.ndarray
     y: np.ndarray
     excluded: list[dict] = field(default_factory=list)
     dropped_rows: int = 0
+    source: str = "partition_columns"
+    feature_specs: list[dict] = field(default_factory=list)
 
     @property
     def excluded_names(self) -> list[str]:
         return [entry["column"] for entry in self.excluded]
+
 
 
 def numeric_train_xy(frame: pd.DataFrame, target: str) -> NumericTrainData:
@@ -76,11 +88,23 @@ def numeric_train_xy(frame: pd.DataFrame, target: str) -> NumericTrainData:
             excluded.append({"column": str(column), "dtype": str(series.dtype)})
 
     if not numeric:
+        if not feature_columns:
+            # Not the same failure as "the columns are strings": after the ignore
+            # list removed the temporal/target/ignored columns there is nothing
+            # left to analyse. Saying "encode or drop those columns" here would
+            # send the caller looking for columns that do not exist.
+            raise NumericFeatureError(
+                "This partition has no feature columns left: every non-target column "
+                "is ignored (or is the temporal time/series column). Register a "
+                "partition with feature columns, or, for a time-series task, run the "
+                "analysis over its generated forecast design (lag/rolling/calendar "
+                "features)."
+            )
         raise NumericFeatureError(
             "Sensitivity and correlation analysis need numeric feature columns, but "
             "this partition has none (non-numeric: %s). Encode or drop those columns, "
             "then re-register the partition."
-            % (", ".join(excluded_names(excluded)) or "all columns")
+            % ", ".join(excluded_names(excluded))
         )
 
     target_series = frame[target]
@@ -113,4 +137,59 @@ def excluded_names(excluded: list[dict]) -> list[str]:
     return [entry["column"] for entry in excluded]
 
 
-__all__ = ["NumericFeatureError", "NumericTrainData", "excluded_names", "numeric_train_xy"]
+def temporal_design_xy(
+    frame: pd.DataFrame,
+    spec: Any,
+    target: str,
+    features: Mapping[str, Any] | None = None,
+) -> NumericTrainData:
+    """Project a temporal partition onto the *generated* forecast design.
+
+    A time-series partition usually has no raw feature columns at all: the time
+    (and panel id) columns are excluded by the temporal contract and the target is
+    the label, so only generated lags/rollings/calendar fields carry information.
+    Sensitivity and correlation analyses therefore run over
+    :func:`SKSurrogate.make_supervised`, exactly as the rolling-origin backtest
+    does — the same builder, the same shift rule, the same dropped rows.
+
+    :param frame: the registered partition, including its time/series columns.
+    :param spec: the task's :class:`~SKSurrogate.TemporalSpec` (mapping or object).
+    :param target: label column.
+    :param features: ``make_supervised`` builder kwargs (``lags``, ``rolling``,
+        ``diffs``, ``pct_changes``, ``calendar``, ``fourier``, ``exogenous``).
+        Defaults to one lag at the declared horizon.
+    :raises NumericFeatureError: when the design has no usable row.
+    """
+    from SKSurrogate import TemporalSpec, make_supervised
+
+    resolved = TemporalSpec.from_dict(spec)
+    builder_kwargs = dict(features or {})
+    builder_kwargs.setdefault("lags", [resolved.horizon])
+    design = make_supervised(frame, resolved, target, strategy="direct", **builder_kwargs)
+    if not len(design.X):
+        raise NumericFeatureError(
+            "the forecast design has no usable row: the requested lags/windows are "
+            "longer than the available history. Shorten them, add history, or drop "
+            "features."
+        )
+    data = design.X.to_numpy(dtype=float, copy=True)
+    values = design.y.to_numpy(dtype=float, copy=True)
+    finite = np.isfinite(data).all(axis=1) & np.isfinite(values)
+    return NumericTrainData(
+        columns=list(design.X.columns),
+        X=data[finite],
+        y=values[finite],
+        excluded=[],
+        dropped_rows=int(design.dropped_rows + int((~finite).sum())),
+        source="temporal_design",
+        feature_specs=[entry.to_dict() for entry in design.feature_specs],
+    )
+
+
+__all__ = [
+    "NumericFeatureError",
+    "NumericTrainData",
+    "excluded_names",
+    "numeric_train_xy",
+    "temporal_design_xy",
+]

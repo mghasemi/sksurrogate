@@ -2104,6 +2104,13 @@ export interface SensitivityJobResult {
     train_fingerprint: string | null;
     row_count: number;
     feature_columns: string[];
+    /** ``partition_columns`` or ``temporal_design`` (generated lag/rolling/calendar features). */
+    feature_source?: string;
+    /** Present for a temporal design: the spec and each generated column's provenance. */
+    temporal?: {
+      temporal_spec?: Record<string, unknown>;
+      feature_specs?: Array<Record<string, unknown>>;
+    } | null;
     /** Non-numeric columns excluded from the analysis. */
     excluded_columns?: Array<{ column: string; dtype: string }>;
     rows_dropped?: number;
@@ -2146,6 +2153,8 @@ export interface CorrelationThresholdResult {
   /** Non-numeric columns: Pearson correlation is undefined for them. */
   excluded_feature_names?: string[];
   rows_dropped?: number;
+  /** ``partition_columns`` or ``temporal_design`` (generated features). */
+  feature_source?: string;
 }
 
 export const runCorrelationThreshold = (task: string, threshold = 0.7, trainPartition = "train") =>

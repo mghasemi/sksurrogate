@@ -845,13 +845,18 @@ class ForecastFeatureBuilder(BaseEstimator, TransformerMixin):
             raise ValueError(
                 "exogenous column(s) not found: %s" % ", ".join(missing_exog)
             )
-        if options["calendar"] and not pd.api.types.is_datetime64_any_dtype(
-            frame[spec.time_column]
-        ):
-            raise ValueError(
-                "calendar features require a datetime time column; %r is not one"
-                % spec.time_column
-            )
+        if options["calendar"] or options["fourier"] is not None:
+            # ``_time_axis`` is the contract's parser: it accepts anything
+            # ``pandas.to_datetime`` understands, including the object-dtype ISO
+            # strings a CSV produces. Gating on the *raw* dtype rejected exactly
+            # that common case while ``transform`` happily parsed it.
+            axis = _time_axis(frame, spec)
+            if options["calendar"] and axis["kind"] != "datetime":
+                raise ValueError(
+                    "calendar features require a datetime time column; %r is a numeric "
+                    "axis. Store it as a datetime, or drop the calendar fields."
+                    % spec.time_column
+                )
         # Ordering is the contract's job: fail here rather than build features on
         # a shuffled frame, where every lag silently reads the wrong row.
         validate_temporal_frame(frame, spec)

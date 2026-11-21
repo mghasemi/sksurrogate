@@ -231,6 +231,10 @@ class CorrelationThreshold(BaseEstimator, TransformerMixin):
         Finds the Pearson correlation among all features, selects the pairs with absolute value of correlation above
         the given threshold and selects a minimal set of features with low correlation
 
+        With fewer than two features there is no pair to prune: ``numpy.corrcoef``
+        returns a scalar there, so the matrix walk would fail on its shape. The
+        selector keeps every feature instead (an all-kept answer, not an error).
+
         :param X: Training data
         :param y: Target values (default: `None`)
         :return: `self`
@@ -239,6 +243,9 @@ class CorrelationThreshold(BaseEstimator, TransformerMixin):
         from numpy import corrcoef
 
         n = X.shape[1]
+        if n < 2:
+            self.indices = list(range(n))
+            return self
         crln = corrcoef(X.transpose())
         pairs, nodes = self._high_corr(crln)
         sel_features = self._minimal_selection(pairs)

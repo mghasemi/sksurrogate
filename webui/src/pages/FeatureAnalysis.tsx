@@ -226,6 +226,12 @@ export default function FeatureAnalysisPage() {
                   Encode or drop them to include them in pruning.
                 </p>
               )}
+              {corrResult.feature_source === "temporal_design" && (
+                <p className="muted">
+                  Pruned over the <strong>generated forecast design</strong> (lag/rolling/calendar
+                  features), not raw columns — a temporal partition has no feature columns of its own.
+                </p>
+              )}
             </>
           )}
         </Card>
@@ -423,12 +429,25 @@ function SensitivityHeatmap({ result }: { result: SensitivityJobResult }) {
         : "delta moment-independent measure";
 
   const excluded = result.evaluation_protocol?.excluded_columns ?? [];
+  const generated = result.evaluation_protocol?.feature_source === "temporal_design";
 
   return (
     <>
       <p className="muted">
-        Weights for all {fmtNum(result.feature_columns.length)} numeric features, strongest first; the top{" "}
-        {fmtNum(result.n_features_to_select)} are marked with ★.
+        {generated ? (
+          <>
+            Weights for all {fmtNum(result.feature_columns.length)} <strong>generated</strong> forecast
+            features (lags/rollings/calendar built from the declared temporal spec), strongest first;
+            the top {fmtNum(result.n_features_to_select)} are marked with ★. These are transforms of the
+            target, so the ranking explains which history windows drive the model — accuracy comes from
+            the rolling-origin backtest.
+          </>
+        ) : (
+          <>
+            Weights for all {fmtNum(result.feature_columns.length)} numeric features, strongest first; the
+            top {fmtNum(result.n_features_to_select)} are marked with ★.
+          </>
+        )}
       </p>
       {excluded.length > 0 && (
         <p className="muted">
