@@ -159,7 +159,7 @@ export default function ExperimentsPage() {
   const [maxGeneration, setMaxGeneration] = useState(3);
   const [numParents, setNumParents] = useState(4);
   const [trainPartition, setTrainPartition] = useState("");
-  const [scoring, setScoring] = useState("accuracy");
+  const [scoring, setScoring] = useState("");
   const [backend, setBackend] = useState<"local" | "dask">("local");
   const [strategy, setStrategy] = useState<"eoa" | "exhaustive">("eoa");
   const [surrogateEstimator, setSurrogateEstimator] = useState("gpr");
@@ -323,6 +323,7 @@ export default function ExperimentsPage() {
   // The typed partition belongs to the task it was typed for.
   useEffect(() => {
     setTrainPartition("");
+    setScoring("");
   }, [task]);
   // quickScoring stays empty by default, so the form falls back to the preset's
   // own default scoring — switching the preset therefore switches the scorer too.
@@ -349,6 +350,10 @@ export default function ExperimentsPage() {
     staleTime: 60_000,
   });
   const presetInfo = presetsQ.data?.presets.find((p) => p.value === preset);
+  // Advanced scoring follows the effective problem type until the user picks one:
+  // a regression-declared task must not open on `accuracy` (scikit-learn refuses
+  // a continuous target), so an empty state means "the preset's own default".
+  const advancedScoring = scoring || presetInfo?.default_scoring || "accuracy";
   const parsed = useMemo(() => parseSpace(configJson), [configJson]);
   const warnings = useMemo(
     () => ("error" in parsed ? [] : spaceWarnings(parsed, parsed.forbidden)),
@@ -364,7 +369,7 @@ export default function ExperimentsPage() {
         max_generations: maxGeneration,
         num_parents: numParents,
         train_partition: effectiveTrainPartition || undefined,
-        scoring,
+        scoring: advancedScoring,
         surrogate_estimator: surrogateEstimator,
         surrogate_itrs: surrogateItrs,
         surrogate_sampling: surrogateSampling,
@@ -695,7 +700,7 @@ export default function ExperimentsPage() {
             <label>Train partition</label>
             <input value={effectiveTrainPartition} onChange={(e) => setTrainPartition(e.target.value)} spellCheck={false} />
           </div>
-          <ScoringSelect value={scoring} onChange={setScoring} disabled={!task} />
+          <ScoringSelect value={advancedScoring} onChange={setScoring} disabled={!task} />
           <div className="field">
             <label>Execution backend</label>
             <select value={backend} onChange={(e) => setBackend(e.target.value as "local" | "dask")}>
