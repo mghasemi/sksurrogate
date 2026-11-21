@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Package } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   BASELINE_ESTIMATORS,
@@ -19,6 +19,7 @@ import {
 import type { BundleSummary, PreservedSnapshot, TrainBaselineResponse } from "../api/client";
 import { LineageRail } from "../components/LineageRail";
 import { Badge, Card, ErrorNote, JsonView, Loading, Table, fmtNum } from "../components/ui";
+import { useDefaultPartition } from "../lib/partition";
 import { useTask } from "../lib/task-context";
 
 export default function BundlesPage() {
@@ -26,9 +27,15 @@ export default function BundlesPage() {
   const qc = useQueryClient();
 
   const [estimator, setEstimator] = useState<string>(BASELINE_ESTIMATORS[0]);
-  const [trainPartition, setTrainPartition] = useState("train");
+  const defaultTrainPartition = useDefaultPartition(task);
+  const [trainPartition, setTrainPartition] = useState("");
   const [validationPartition, setValidationPartition] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  const effectiveTrainPartition = trainPartition || defaultTrainPartition;
+  // A typed partition belongs to the task it was typed for.
+  useEffect(() => {
+    setTrainPartition("");
+  }, [task]);
 
   const listQ = useQuery({ queryKey: ["bundles-list", task], queryFn: () => listBundles(task), enabled: !!task });
 
@@ -57,7 +64,7 @@ export default function BundlesPage() {
     mutationFn: () =>
       trainBaseline(task, {
         estimator,
-        train_partition: trainPartition,
+        train_partition: effectiveTrainPartition || undefined,
         validation_partition: validationPartition || null,
       }),
     onSuccess: (res) => {
@@ -125,7 +132,7 @@ export default function BundlesPage() {
           </div>
           <div className="field fixed" style={{ flex: "0 1 150px", minWidth: 120 }}>
             <label>Train partition</label>
-            <input value={trainPartition} onChange={(e) => setTrainPartition(e.target.value)} spellCheck={false} />
+            <input value={effectiveTrainPartition} onChange={(e) => setTrainPartition(e.target.value)} spellCheck={false} />
           </div>
           <div className="field fixed" style={{ flex: "0 1 170px", minWidth: 130 }}>
             <label>Validation partition (optional)</label>

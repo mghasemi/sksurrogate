@@ -143,6 +143,29 @@ job result and any saved note follow the normal jobs/notes storage rules; the
 operator is responsible for the chosen provider's retention behaviour. See
 :doc:`research-projects` for the full contract and limitations.
 
+Partitions: names and defaults
+==============================
+
+A task stores its data as named partitions — ``train``, ``validation``, a single
+``main``, a task-named partition, synthetic ``synthetic-…`` copies, derived
+``*_imputed``/``*_clipped`` outputs. Nothing requires a partition called
+``train`` to exist.
+
+Requests that read stored data accept ``train_partition`` (or ``partition``).
+The rule is implemented once in ``api/partitions.py`` and applied by every
+training, sensitivity, explanation, ensemble, retraining, preprocessing and
+synthesis endpoint:
+
+- an **omitted** name resolves to ``train`` when that partition exists,
+  otherwise to the task's first registered partition; responses and job records
+  report the resolved name;
+- an **explicit** name is used verbatim, so a typo still answers **404**
+  ``No dataset partition '…' stored``.
+
+The web UI derives the same default from ``GET /api/datasets/{task_name}`` and
+sends the field only once a name is known, so a task stored under ``main`` is
+not silently asked for ``train``.
+
 Dataset column exclusions
 =========================
 

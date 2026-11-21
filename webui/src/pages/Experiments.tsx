@@ -31,6 +31,7 @@ import { Badge, Card, ErrorNote, Table, Tabs, fmtNum } from "../components/ui";
 import { JobTracker } from "../components/JobTracker";
 import { ScoringSelect } from "../components/ScoringSelect";
 import { fmtElapsed, useElapsed } from "../lib/hooks";
+import { defaultPartition } from "../lib/partition";
 import { useTask } from "../lib/task-context";
 
 function defaultConfigJson(): string {
@@ -157,7 +158,7 @@ export default function ExperimentsPage() {
   const [length, setLength] = useState(2);
   const [maxGeneration, setMaxGeneration] = useState(3);
   const [numParents, setNumParents] = useState(4);
-  const [trainPartition, setTrainPartition] = useState("train");
+  const [trainPartition, setTrainPartition] = useState("");
   const [scoring, setScoring] = useState("accuracy");
   const [backend, setBackend] = useState<"local" | "dask">("local");
   const [strategy, setStrategy] = useState<"eoa" | "exhaustive">("eoa");
@@ -291,6 +292,11 @@ export default function ExperimentsPage() {
     metaQ.data?.problem_type === "classification" || metaQ.data?.problem_type === "regression"
       ? metaQ.data.problem_type
       : null;
+  // The partition the task's data actually lives in: `train` when it exists, else the
+  // first registered name. Sent only once known — an empty name is omitted from the
+  // request so the server's own resolution applies (api/partitions.py).
+  const defaultTrainPartition = defaultPartition(metaQ.data?.partitions);
+  const effectiveTrainPartition = trainPartition || defaultTrainPartition;
   const [presetTouched, setPresetTouched] = useState(false);
   // Derived, not state: until the user picks a type, the declared one wins. No
   // effect, so there is no render cascade when the dataset query resolves.
@@ -314,6 +320,10 @@ export default function ExperimentsPage() {
     if (configTouched) return;
     setConfigJson(configJsonForPreset(preset));
   }, [preset, configTouched, configJsonForPreset]);
+  // The typed partition belongs to the task it was typed for.
+  useEffect(() => {
+    setTrainPartition("");
+  }, [task]);
   // quickScoring stays empty by default, so the form falls back to the preset's
   // own default scoring — switching the preset therefore switches the scorer too.
   // Temporal declaration (P7.3): changes what "score" means for this task —
@@ -332,8 +342,8 @@ export default function ExperimentsPage() {
     retry: false,
   });
   const preflightQ = useQuery({
-    queryKey: ["preflight", task],
-    queryFn: () => getPreflight(task, "train"),
+    queryKey: ["preflight", task, effectiveTrainPartition],
+    queryFn: () => getPreflight(task, effectiveTrainPartition || undefined),
     enabled: !!task,
     retry: false,
     staleTime: 60_000,
@@ -353,7 +363,7 @@ export default function ExperimentsPage() {
         length,
         max_generations: maxGeneration,
         num_parents: numParents,
-        train_partition: trainPartition,
+        train_partition: effectiveTrainPartition || undefined,
         scoring,
         surrogate_estimator: surrogateEstimator,
         surrogate_itrs: surrogateItrs,
@@ -683,7 +693,7 @@ export default function ExperimentsPage() {
           </div>
           <div className="field">
             <label>Train partition</label>
-            <input value={trainPartition} onChange={(e) => setTrainPartition(e.target.value)} spellCheck={false} />
+            <input value={effectiveTrainPartition} onChange={(e) => setTrainPartition(e.target.value)} spellCheck={false} />
           </div>
           <ScoringSelect value={scoring} onChange={setScoring} disabled={!task} />
           <div className="field">

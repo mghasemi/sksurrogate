@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -14,6 +14,7 @@ import type { JobRecord, ParamSpec, RunRetrainingRequest } from "../api/client";
 import { Card, ErrorNote, StatusBadge, Table } from "../components/ui";
 import { JobTracker } from "../components/JobTracker";
 import { ScoringSelect } from "../components/ScoringSelect";
+import { defaultPartition } from "../lib/partition";
 import { useTask } from "../lib/task-context";
 
 type TrainerKind = "baseline" | "experiment";
@@ -30,8 +31,8 @@ export default function RetrainingPage() {
   /* Trainer selection */
   const [kind, setKind] = useState<TrainerKind>("baseline");
   const [estimator, setEstimator] = useState<string>(BASELINE_ESTIMATORS[0]);
-  const [trainPartition, setTrainPartition] = useState("train");
-  const [validationPartition, setValidationPartition] = useState("validation");
+  const [trainPartition, setTrainPartition] = useState("");
+  const [validationPartition, setValidationPartition] = useState("");
 
   /* Experiment trainer fields */
   const [configJson, setConfigJson] = useState(defaultConfigJson);
@@ -63,6 +64,14 @@ export default function RetrainingPage() {
     () => Object.keys(datasetQ.data?.partitions ?? {}),
     [datasetQ.data],
   );
+  // `train` when the task has it, else the first registered partition; `""` means
+  // "not named yet" and is omitted from the request (api/partitions.py resolves it).
+  const effectiveTrainPartition = trainPartition || defaultPartition(datasetQ.data?.partitions);
+  // A typed partition belongs to the task it was typed for.
+  useEffect(() => {
+    setTrainPartition("");
+    setValidationPartition("");
+  }, [task]);
 
   const historyQ = useQuery({
     queryKey: ["jobs", task],
@@ -82,7 +91,7 @@ export default function RetrainingPage() {
         trainer = {
           kind: "baseline",
           estimator,
-          train_partition: trainPartition,
+          train_partition: effectiveTrainPartition || undefined,
           validation_partition: validationPartition || null,
         };
       } else {
@@ -98,7 +107,7 @@ export default function RetrainingPage() {
           length,
           max_generations: maxGeneration,
           num_parents: numParents,
-          train_partition: trainPartition,
+          train_partition: effectiveTrainPartition || undefined,
           scoring,
         };
       }
@@ -214,7 +223,7 @@ export default function RetrainingPage() {
           <div className="field fixed" style={{ flex: "0 1 150px", minWidth: 120 }}>
             <label>Train partition</label>
             {partitions.length > 0 ? (
-              <select value={trainPartition} onChange={(e) => setTrainPartition(e.target.value)}>
+              <select value={effectiveTrainPartition} onChange={(e) => setTrainPartition(e.target.value)}>
                 {partitions.map((p) => (
                   <option key={p} value={p}>
                     {p}
@@ -222,7 +231,7 @@ export default function RetrainingPage() {
                 ))}
               </select>
             ) : (
-              <input value={trainPartition} onChange={(e) => setTrainPartition(e.target.value)} spellCheck={false} />
+              <input value={effectiveTrainPartition} onChange={(e) => setTrainPartition(e.target.value)} spellCheck={false} />
             )}
           </div>
           {kind === "baseline" && (

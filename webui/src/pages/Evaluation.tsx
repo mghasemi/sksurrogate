@@ -33,6 +33,7 @@ import type { BacktestResult, BundleSummary, NestedCVJobResult } from "../api/cl
 import { Card, EmptyState, ErrorNote, Loading, Stat, Table, Tabs, fmtNum } from "../components/ui";
 import { JobTracker } from "../components/JobTracker";
 import { useBundleLabel } from "../lib/hooks";
+import { useDefaultPartition } from "../lib/partition";
 import { useTask } from "../lib/task-context";
 
 const CHART_COLORS = ["#4f8cff", "#7c5cff", "#34d399", "#fbbf24", "#f87171", "#60a5fa"];
@@ -800,12 +801,19 @@ export default function EvaluationPage() {
   const { task } = useTask();
 
   const [tab, setTab] = useState<string>(OVERVIEW_TAB);
-  const [trainPartition, setTrainPartition] = useState("train");
+  const defaultTrainPartition = useDefaultPartition(task);
+  const [trainPartition, setTrainPartition] = useState("");
+  const effectiveTrainPartition = trainPartition || defaultTrainPartition;
   const [pinballAlpha, setPinballAlpha] = useState("0.5");
 
   // Metric tabs describe metrics of *this* task's models, so drop the selection on task change.
   useEffect(() => {
     setTab(OVERVIEW_TAB);
+  }, [task]);
+
+  // A typed partition belongs to the task it was typed for.
+  useEffect(() => {
+    setTrainPartition("");
   }, [task]);
 
   const listQ = useQuery({ queryKey: ["bundles-list", task], queryFn: () => listBundles(task), enabled: !!task });
@@ -891,11 +899,11 @@ export default function EvaluationPage() {
 
   // Curves are expensive, so each metric tab loads on demand only while it is open.
   const curvesQ = useQuery({
-    queryKey: ["learning-curves", task, tab, trainPartition, modelVersions, activePinballAlpha],
+    queryKey: ["learning-curves", task, tab, effectiveTrainPartition, modelVersions, activePinballAlpha],
     queryFn: () => getLearningCurves(task, {
       scoring: tab,
       pinballAlpha: activePinballAlpha,
-      trainPartition,
+      trainPartition: effectiveTrainPartition || undefined,
       modelVersions,
     }),
     enabled: !!task && activeMetric !== null && (!activeMetric.requires_alpha || validPinballAlpha),
@@ -992,7 +1000,7 @@ export default function EvaluationPage() {
                 <div className="row">
                   <div className="field fixed" style={{ flex: "0 1 150px", minWidth: 120 }}>
                     <label>Train partition</label>
-                    <input value={trainPartition} onChange={(e) => setTrainPartition(e.target.value)} spellCheck={false} />
+                    <input value={effectiveTrainPartition} onChange={(e) => setTrainPartition(e.target.value)} spellCheck={false} />
                   </div>
                   {activeMetric.requires_alpha && (
                     <div className="field fixed" style={{ flex: "0 1 150px", minWidth: 120 }}>
@@ -1018,7 +1026,7 @@ export default function EvaluationPage() {
                 {curvesQ.data && curvesQ.data.series.length === 0 && (
                   <EmptyState
                     title="No learning curves available"
-                    hint={`No bundle could be scored for ${activeMetric.label} on the “${trainPartition}” partition.`}
+                    hint={`No bundle could be scored for ${activeMetric.label} on the “${effectiveTrainPartition}” partition.`}
                   />
                 )}
 

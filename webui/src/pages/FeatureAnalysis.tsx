@@ -1,7 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
-
 import {
   addProjectArtifact,
   asSensitivityResult,
@@ -17,6 +16,7 @@ import type { CorrelationThresholdResult, SensitivityJobResult } from "../api/cl
 import { Heatmap } from "../components/Heatmap";
 import { Card, ErrorNote, Loading, EmptyState, Tabs, Badge, fmtNum } from "../components/ui";
 import { JobTracker } from "../components/JobTracker";
+import { useDefaultPartition } from "../lib/partition";
 import { useTask } from "../lib/task-context";
 
 const METHODS = ["sobol", "morris", "delta-mmnt"] as const;
@@ -40,7 +40,9 @@ export default function FeatureAnalysisPage() {
 
   const [method, setMethod] = useState<(typeof METHODS)[number]>("sobol");
   const [nFeatures, setNFeatures] = useState(5);
-  const [trainPartition, setTrainPartition] = useState("train");
+  const defaultTrainPartition = useDefaultPartition(task);
+  const [trainPartition, setTrainPartition] = useState("");
+  const effectiveTrainPartition = trainPartition || defaultTrainPartition;
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobTask, setJobTask] = useState<string | null>(null);
 
@@ -53,6 +55,10 @@ export default function FeatureAnalysisPage() {
   // computation) so the consensus card refetches. The job id alone is not a
   // trigger: it changes at submission, before the weights exist on the server.
   const [weightsRevision, setWeightsRevision] = useState(0);
+  // A typed partition belongs to the task it was typed for.
+  useEffect(() => {
+    setTrainPartition("");
+  }, [task]);
 
   const linkProjectJobMut = useMutation({
     mutationFn: ({ jobId: completedJobId, taskName }: { jobId: string; taskName: string }) => {
@@ -76,7 +82,7 @@ export default function FeatureAnalysisPage() {
       ...(await runSensitivity(task, {
         method,
         n_features_to_select: nFeatures,
-        train_partition: trainPartition,
+        train_partition: effectiveTrainPartition || undefined,
       })),
       taskName: task,
     }),
@@ -89,7 +95,7 @@ export default function FeatureAnalysisPage() {
   });
 
   const corrMut = useMutation({
-    mutationFn: () => runCorrelationThreshold(task, threshold, trainPartition),
+    mutationFn: () => runCorrelationThreshold(task, threshold, effectiveTrainPartition),
     onSuccess: (res) => setCorrResult(res),
   });
 
@@ -97,15 +103,15 @@ export default function FeatureAnalysisPage() {
   const [tab, setTab] = useState<TabId>("ranking");
 
   const corrMatrixQ = useQuery({
-    queryKey: ["correlation-matrix", task, trainPartition],
-    queryFn: () => getCorrelationMatrix(task, trainPartition),
+    queryKey: ["correlation-matrix", task, effectiveTrainPartition],
+    queryFn: () => getCorrelationMatrix(task, effectiveTrainPartition),
     enabled: !!task && tab === "correlation",
     retry: false,
   });
 
   const weightsQ = useQuery({
-    queryKey: ["weights-heatmap", task, trainPartition],
-    queryFn: () => getWeightsHeatmap(task, trainPartition),
+    queryKey: ["weights-heatmap", task, effectiveTrainPartition],
+    queryFn: () => getWeightsHeatmap(task, effectiveTrainPartition),
     enabled: !!task && tab === "weights",
     retry: false,
   });
@@ -157,7 +163,7 @@ export default function FeatureAnalysisPage() {
             </div>
             <div className="field fixed" style={{ flex: "0 1 150px", minWidth: 120 }}>
               <label>Train partition</label>
-              <input value={trainPartition} onChange={(e) => setTrainPartition(e.target.value)} spellCheck={false} />
+              <input value={effectiveTrainPartition} onChange={(e) => setTrainPartition(e.target.value)} spellCheck={false} />
             </div>
           </div>
 
@@ -182,7 +188,7 @@ export default function FeatureAnalysisPage() {
                   setTab("ranking");
                   if (decoded.weights_stored) {
                     setWeightsRevision((revision) => revision + 1);
-                    qc.invalidateQueries({ queryKey: ["weights-heatmap", task, trainPartition] });
+                    qc.invalidateQueries({ queryKey: ["weights-heatmap", task, effectiveTrainPartition] });
                     qc.invalidateQueries({ queryKey: ["top-features"] });
                   }
                 }}
@@ -237,7 +243,7 @@ export default function FeatureAnalysisPage() {
         </Card>
       </div>
 
-      <TopFeaturesCard task={task} trainPartition={trainPartition} revision={weightsRevision} />
+      <TopFeaturesCard task={task} trainPartition={effectiveTrainPartition} revision={weightsRevision} />
 
       <Card
         title="Heatmaps"
@@ -261,7 +267,7 @@ export default function FeatureAnalysisPage() {
               <div className="row">
                 <div className="field fixed" style={{ flex: "0 1 150px", minWidth: 120 }}>
                   <label>Train partition</label>
-                  <input value={trainPartition} onChange={(e) => setTrainPartition(e.target.value)} spellCheck={false} />
+                  <input value={effectiveTrainPartition} onChange={(e) => setTrainPartition(e.target.value)} spellCheck={false} />
                 </div>
               </div>
             )}
@@ -283,7 +289,7 @@ export default function FeatureAnalysisPage() {
                 {corrMatrixQ.isError && <ErrorNote error={corrMatrixQ.error} />}
                 {corrMatrixQ.data && <Heatmap data={corrMatrixQ.data} mode="diverging" />}
                 <p className="muted" style={{ marginTop: 6 }}>
-                  Pairwise correlation of the <code>{trainPartition}</code> partition, from{" "}
+                  Pairwise correlation of the <code>{effectiveTrainPartition}</code> partition, from{" "}
                   <code>/api/sensitivity/{task}/correlation-matrix</code>.
                   This is descriptive association between observed feature values, not model attribution or causal evidence.
                 </p>

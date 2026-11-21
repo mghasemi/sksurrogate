@@ -1086,9 +1086,9 @@ export function downloadExplainReport(task: string, jobId: string, format: "pdf"
 }
 
 /** Advisory pre-flight warnings/hints for a pending experiment run. */
-export const getPreflight = (task: string, partition = "train") =>
+export const getPreflight = (task: string, partition?: string) =>
   get<PreflightReport>(
-    `/api/datasets/${encodeURIComponent(task)}/preflight?partition=${encodeURIComponent(partition)}`,
+    `/api/datasets/${encodeURIComponent(task)}/preflight${partition ? `?partition=${encodeURIComponent(partition)}` : ""}`,
   );
 
 export interface ImputeRequest {
@@ -2223,9 +2223,18 @@ export interface CorrelationThresholdResult {
   feature_source?: string;
 }
 
-export const runCorrelationThreshold = (task: string, threshold = 0.7, trainPartition = "train") =>
+/** Query string for the sensitivity endpoints; an unnamed partition is omitted. */
+function partitionQuery(trainPartition?: string, extra?: Record<string, string | number>): string {
+  const params = new URLSearchParams();
+  if (trainPartition) params.set("train_partition", trainPartition);
+  for (const [name, value] of Object.entries(extra ?? {})) params.set(name, String(value));
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+export const runCorrelationThreshold = (task: string, threshold = 0.7, trainPartition?: string) =>
   post<CorrelationThresholdResult>(
-    `/api/sensitivity/${encodeURIComponent(task)}/correlation-threshold?threshold=${threshold}&train_partition=${encodeURIComponent(trainPartition)}`,
+    `/api/sensitivity/${encodeURIComponent(task)}/correlation-threshold${partitionQuery(trainPartition, { threshold })}`,
   );
 
 /** Square feature-by-feature matrix as consumed by the heatmap renderer (mirrors mltrack.heatmap). */
@@ -2246,9 +2255,9 @@ export interface CorrelationMatrixResult extends HeatmapData {
   };
 }
 
-export const getCorrelationMatrix = (task: string, trainPartition = "train", maxFeatures = 60) =>
+export const getCorrelationMatrix = (task: string, trainPartition?: string, maxFeatures = 60) =>
   get<CorrelationMatrixResult>(
-    `/api/sensitivity/${encodeURIComponent(task)}/correlation-matrix?train_partition=${encodeURIComponent(trainPartition)}&max_features=${maxFeatures}`,
+    `/api/sensitivity/${encodeURIComponent(task)}/correlation-matrix${partitionQuery(trainPartition, { max_features: maxFeatures })}`,
   );
 
 export interface WeightsHeatmapResult extends HeatmapData {
@@ -2259,9 +2268,9 @@ export interface WeightsHeatmapResult extends HeatmapData {
   source: "stored" | "computed";
 }
 
-export const getWeightsHeatmap = (task: string, trainPartition = "train", maxFeatures = 60) =>
+export const getWeightsHeatmap = (task: string, trainPartition?: string, maxFeatures = 60) =>
   get<WeightsHeatmapResult>(
-    `/api/sensitivity/${encodeURIComponent(task)}/weights-heatmap?train_partition=${encodeURIComponent(trainPartition)}&max_features=${maxFeatures}`,
+    `/api/sensitivity/${encodeURIComponent(task)}/weights-heatmap${partitionQuery(trainPartition, { max_features: maxFeatures })}`,
   );
 
 /** Consensus top features across the stored weightings (mltrack.TopFeatures). */
@@ -2280,7 +2289,7 @@ export interface TopFeaturesResponse {
 }
 
 /** Recompute and store the dataset-level weightings (Pearson, variance). */
-export const computeBaseWeights = (task: string, trainPartition = "train") =>
+export const computeBaseWeights = (task: string, trainPartition?: string) =>
   post<{
     task_name: string;
     partition: string;
@@ -2290,7 +2299,7 @@ export const computeBaseWeights = (task: string, trainPartition = "train") =>
     excluded_columns: Array<{ column: string; dtype: string }>;
     rows_dropped: number;
   }>(
-    `/api/sensitivity/${encodeURIComponent(task)}/base-weights?train_partition=${encodeURIComponent(trainPartition)}`,
+    `/api/sensitivity/${encodeURIComponent(task)}/base-weights${partitionQuery(trainPartition)}`,
   );
 
 export const getTopFeatures = (task: string, num = 10) =>
