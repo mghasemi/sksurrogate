@@ -1,6 +1,30 @@
 Changelog
 =========
 
+Temporal declaration no longer 500s on timestamps outside the nanosecond range
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Fixed:** ``PUT /api/datasets/{task}/temporal`` answered ``500 Internal Server
+  Error`` (``OverflowError: Overflow when converting between datetime64 units``) for
+  any time column whose parsed values fall outside pandas' int64-nanosecond range
+  (1677-09-21 .. 2262-04-11). The reported case is a ``Month`` column of
+  ``1-Jan``/``1-Feb``/... labels: pandas 3 parses those to **year 1** (and keeps
+  ``datetime64[us]`` resolution), so the axis cast into nanoseconds overflowed deep
+  inside pandas. The declaration now answers **422** with the per-partition report and
+  an actionable message naming the parsed range and the fix ("values without a year
+  parse to year 1 — supply full dates or a numeric step index").
+* **Fixed:** timezone-aware timestamps are normalised to UTC before building the
+  int64 axis, so ``2026-01-01T00:00:00+02:00`` validates instead of failing on the
+  cast (the axis is UTC-based by definition).
+* **Fixed:** the temporal route also converts a residual ``OverflowError`` into a 400
+  rather than letting it escape as a server fault.
+* **Fixed:** registering an **empty CSV** crashed type deduction with
+  ``ZeroDivisionError`` (``DataPreprocess.is_categorical/is_bin`` divided by a
+  population of zero); a header-only upload now answers 400, and the library guards
+  the division so an all-missing *feature* column is typed instead of crashing.
+* **Fixed:** a **target column with no observed values** was accepted at
+  registration, leaving a task nothing can be modelled on; it now answers 400.
+
 [Unreleased]
 ------------
 

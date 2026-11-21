@@ -619,7 +619,13 @@ class DataPreprocess(object):
         :param clmn: the name of the column
         :return: boolean
         """
-        ratio = len(self.uniques[clmn]) / len(self.values[clmn])
+        population = len(self.values[clmn])
+        if not population:
+            # An all-missing column (or an empty frame) has no population to
+            # divide by; it is not binary, and this used to raise
+            # ZeroDivisionError from inside type deduction.
+            return False
+        ratio = len(self.uniques[clmn]) / population
         if self.force_threshold and (len(self.uniques[clmn]) == 2) and (ratio <= self.bin_threshold):
             return True
         if not self.force_threshold and (len(self.uniques[clmn]) == 2):
@@ -633,7 +639,12 @@ class DataPreprocess(object):
         :param clmn: the name of the column
         :return: boolean
         """
-        ratio = len(self.uniques[clmn]) / len(self.values[clmn])
+        population = len(self.values[clmn])
+        if not population:
+            # Same population guard as is_bin: a column with no observed values
+            # cannot be categorical, and the division would raise.
+            return False
+        ratio = len(self.uniques[clmn]) / population
         if self.force_threshold and (ratio <= self.cat_threshold):
             return True
         elif (ratio <= self.cat_threshold) and (self.types[clmn] == 'object'):

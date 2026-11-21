@@ -52,6 +52,14 @@ a matching estimator, and delayed-label monitoring uses the matching metrics.
 Declaring a temporal spec
 -------------------------
 
+The time column must be either a **numeric step index** (used as-is — no epoch
+coercion, so ``0, 1, 2`` stays a step axis) or **datetimes that fit the int64
+nanosecond range** (1677-09-21 .. 2262-04-11). Values that carry no year — a
+``Month`` column of ``1-Jan``/``1-Feb``/... — are refused rather than rescaled: pandas
+parses them to year 1, which is outside that range and would make every lag window
+meaningless. Supply full dates (``2026-01-01``) or a numeric index instead.
+Timezone-aware timestamps are accepted and normalised to UTC.
+
 .. code-block:: python
 
     from SKSurrogate import TemporalSpec, mltrack

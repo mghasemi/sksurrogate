@@ -235,6 +235,53 @@ class TestTemporalValidation(unittest.TestCase):
         self.assertIn("TimeSeriesSplit", TEMPORAL_CV_SPLITTERS)
 
 
+    def test_month_only_labels_are_refused_with_an_explanation(self):
+        # "1-Jan" carries no year. pandas 3/dateutil fills in year 1 (which cannot
+        # be represented in int64 nanoseconds and used to escape as an
+        # OverflowError → HTTP 500); pandas 2 coerces it to NaT. Either way the
+        # answer must be a validation error that names the column.
+        frame = pd.DataFrame(
+            {"time": ["1-Jan", "1-Feb", "1-Mar"], "target": [1.0, 2.0, 3.0]}
+        )
+        with self.assertRaises(TemporalValidationError) as ctx:
+            validate_temporal_frame(frame, TemporalSpec(time_column="time"))
+        message = str(ctx.exception)
+        self.assertIn("'time'", message)
+        self.assertTrue(
+            "nanosecond" in message or "unparseable" in message, message
+        )
+
+    def test_years_outside_the_nanosecond_range_are_refused(self):
+        # datetime64[s] keeps its resolution through to_datetime, so the values
+        # really are year 1000 and the int64-nanosecond cast overflows — on every
+        # pandas version (unlike the string form, which pandas 2 turns into NaT).
+        times = np.array(
+            ["1000-01-01", "1000-02-01", "1000-03-01"], dtype="datetime64[s]"
+        )
+        frame = pd.DataFrame({"time": times, "target": [1.0, 2.0, 3.0]})
+        with self.assertRaises(TemporalValidationError) as ctx:
+            validate_temporal_frame(frame, TemporalSpec(time_column="time"))
+        message = str(ctx.exception)
+        self.assertIn("nanosecond", message)
+        self.assertIn("1000-01-01", message)
+
+    def test_timezone_aware_times_are_normalised_to_utc(self):
+        frame = pd.DataFrame(
+            {
+                "time": [
+                    "2026-01-01T00:00:00+02:00",
+                    "2026-01-02T00:00:00+02:00",
+                    "2026-01-03T00:00:00+02:00",
+                ],
+                "target": [1.0, 2.0, 3.0],
+            }
+        )
+        report = validate_temporal_frame(frame, TemporalSpec(time_column="time", freq="D"))
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["time_kind"], "datetime")
+        self.assertEqual(report["inferred_freq"], "D")
+
+
 class TestTrackerIntegration(unittest.TestCase):
     """``mltrack`` registration, persistence and splitter enforcement."""
 
@@ -453,6 +500,25 @@ class TestTemporalEndpoints(unittest.TestCase):
         # The declaration itself also advertises the same legal set.
         temporal = datasets_router.get_temporal(TASK)
         self.assertEqual(sorted(temporal["temporal_splitters"]), sorted(payload["temporal_options"]))
+
+    def test_put_refuses_month_only_labels_with_422_not_500(self):
+        # The reporter's dataset: Month = "1-Jan", "1-Feb", ... — no year.
+        rows = 12
+        frame = pd.DataFrame(
+            {
+                "Month": ["%d-Jan" % (i + 1) for i in range(rows)],
+                "target": np.arange(rows, dtype=float),
+            }
+        )
+        self._register(frame=frame)
+        body = datasets_router.TemporalSpecRequest(time_column="Month", freq="MS")
+        with self.assertRaises(HTTPException) as ctx:
+            datasets_router.set_temporal(TASK, body)
+        self.assertEqual(ctx.exception.status_code, 422)
+        self.assertEqual(ctx.exception.headers.get("X-Reason"), "temporal-validation")
+        detail = ctx.exception.detail["message"]
+        self.assertIn("Month", detail)
+        self.assertTrue("nanosecond" in detail or "unparseable" in detail, detail)
 
     def test_put_rejects_unknown_temporal_column(self):
         self._register()

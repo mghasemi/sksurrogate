@@ -384,6 +384,13 @@ def set_temporal(task_name: str, body: TemporalSpecRequest):
             detail={"message": str(exc), "report": report},
             headers={"X-Reason": "temporal-validation"},
         )
+    except (OverflowError, ArithmeticError) as exc:
+        # A datetime axis that cannot be represented (year 1 from "1-Jan", or a
+        # year outside 1677..2262) is a data problem, not a server fault: answer
+        # 400 with the reason instead of letting the cast escape as a 500.
+        raise bad_request(
+            "temporal validation failed (%s): %s" % (type(exc).__name__, exc)
+        )
     except ValueError as exc:
         raise bad_request(str(exc))
     return payload
@@ -669,6 +676,16 @@ async def register_dataset(task_name: str, target: str = Form(...), partition: s
         raise bad_request("Could not parse the uploaded CSV: %s" % exc)
     if target not in frame.columns:
         raise bad_request("target column %r not found in the uploaded dataset" % target)
+    if frame.empty:
+        raise bad_request(
+            "the uploaded CSV has no data rows; it must contain a header and at least one row"
+        )
+    if bool(frame[target].isna().all()):
+        raise bad_request(
+            "target column %r has no observed values (every row is missing); "
+            "a dataset with no target cannot be modelled — fill the target before "
+            "registering it" % target
+        )
 
     preview = DataPreprocess(frame)
     preview.deduce_types()

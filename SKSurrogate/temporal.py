@@ -241,8 +241,51 @@ def _time_axis(frame: pd.DataFrame, spec: TemporalSpec) -> dict[str, Any]:
             "time column %r has %d missing or unparseable timestamp(s) "
             "(first row labels: %s)" % (spec.time_column, int(missing.sum()), bad)
         )
-    values = parsed.to_numpy(dtype="datetime64[ns]").astype("int64")
+    # ``to_datetime`` keeps the resolution it inferred (pandas >= 2 gives
+    # datetime64[us] for dateutil-parsed strings), and it happily produces years
+    # outside the nanosecond range — e.g. "1-Jan", which dateutil reads as year 1.
+    # Converting that to int64 nanoseconds raises OverflowError deep inside pandas,
+    # which used to escape as a 500. Normalise tz-aware input to UTC-naive first
+    # (the int64 axis is UTC-based anyway), then fail loudly with the parsed range
+    # instead of letting the cast blow up.
+    tz = getattr(parsed.dtype, "tz", None)
+    if tz is not None:
+        parsed = parsed.dt.tz_convert("UTC").dt.tz_localize(None)
+    try:
+        values = parsed.to_numpy(dtype="datetime64[ns]").astype("int64")
+    except (OverflowError, ValueError, TypeError) as exc:
+        raise TemporalValidationError(
+            _datetime_range_message(spec.time_column, parsed, exc)
+        )
     return {"kind": "datetime", "values": values}
+
+
+def _datetime_range_message(
+    column: str, parsed: "pd.Series", exc: BaseException
+) -> str:
+    """Actionable message for timestamps outside the int64-nanosecond range.
+
+    Two causes dominate in practice:
+
+    * values that carry no year (``1-Jan``, ``Mar-24``) — ``dateutil`` fills in year
+      1, so the axis would be 2000 years in the past;
+    * genuinely historical/futuristic dates (year < 1677 or > 2262), which pandas
+      cannot represent in nanoseconds at all.
+
+    Both are refused rather than silently rescaled: the year is part of the data.
+    """
+    try:
+        low = str(pd.Timestamp(parsed.min()))
+        high = str(pd.Timestamp(parsed.max()))
+        span = "the parsed range is %s .. %s" % (low, high)
+    except Exception:  # pragma: no cover - defensive formatting only
+        span = "the parsed timestamps do not fit"
+    return (
+        "time column %r cannot be represented as nanoseconds: %s, outside pandas' "
+        "range 1677-09-21 .. 2262-04-11. Values without a year (e.g. '1-Jan') parse "
+        "to year 1 — supply full dates such as '2026-01-01', or a numeric step "
+        "index, instead. (%s: %s)" % (column, span, type(exc).__name__, exc)
+    )
 
 
 def _numeric_step(values: np.ndarray) -> float | None:
