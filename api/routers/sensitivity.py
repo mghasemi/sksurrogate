@@ -188,7 +188,12 @@ def run_sensitivity(task_name: str, body: SensitivityRequest):
         task_name,
         "sensitivity",
         lambda job_id: _task,
-        metadata_factory=lambda job_id: {"request": body.model_dump(mode="json")},
+        # ``exclude_none`` keeps the recorded request to what the caller actually
+        # configured: the temporal-only ``features`` field must not show up as
+        # ``null`` on every tabular run (the job record is read as an audit trail).
+        metadata_factory=lambda job_id: {
+            "request": body.model_dump(mode="json", exclude_none=True)
+        },
     )
     return {"job_id": job_id, "status": "queued"}
 

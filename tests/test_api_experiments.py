@@ -242,6 +242,10 @@ def test_explain_intervals_and_project_summary(client):
         # tests/test_sensitivity_numeric.py.
         "excluded_columns": [],
         "rows_dropped": 0,
+        # A tabular task analyses its own columns; a temporal one analyses the
+        # generated design (tests/test_sensitivity_temporal.py).
+        "feature_source": "partition_columns",
+        "temporal": None,
     }
 
     correlation = client.get("/api/sensitivity/reg/correlation-matrix").json()
