@@ -26,6 +26,20 @@ Partition defaults, temporal experiments and the Advanced scorer
   space (``explain._explain_frame``: raw feature columns, or a temporal task's
   generated forecast design) instead of the raw partition columns, so a temporal
   report no longer clamps from a zero-feature frame.
+* **Fixed:** serving a forecast for a task registered with ``period_start`` rejected
+  the dataset's own history. ``TemporalServeState.validate_history`` parsed the time
+  column with ``pd.to_datetime`` even when the spec declares an anchor, so a period
+  label like ``1-Jan`` (*year 1, January*) produced an axis that was either outside
+  pandas' nanosecond range or — for these labels — running backwards
+  (``3-Oct`` → 2026-10-03, then ``2-Jan`` → 2026-01-02), and the request failed with
+  ``history time values must be strictly increasing``. The axis is now the registered
+  grid (anchor stepped by ``freq``, row order as time order — the rule
+  ``_time_axis`` already applies at registration), so labels are accepted unparsed
+  and forecast times continue the grid. A declared ``time_format`` is applied to
+  timestamp text, and the unparseable-column error names the ``period_start`` remedy.
+  The one-series check also moved before the axis check, so a panel frame now answers
+  ``history must contain exactly one <series> value`` instead of a misleading
+  "sort the frame" message.
 * **Fixed:** combining models on a **temporal** task crashed the background job with
   ``ValueError: at least one array or dtype is required``. The ensemble routes built
   their feature matrix from the raw partition, which for a temporal task has no

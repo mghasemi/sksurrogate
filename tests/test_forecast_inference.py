@@ -617,3 +617,92 @@ class TestForecastEndpoints:
 
         response = client.post(f"/api/inference/{TASK}/forecast", json={"alias": "production"})
         assert response.status_code == 422  # pydantic: history is required
+
+
+# ---------------------------------------------------------------------------
+# Period labels (spec.period_start): the anchor IS the axis
+# ---------------------------------------------------------------------------
+
+_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def _period_labels(n: int = 36) -> list[str]:
+    """``1-Jan``..``3-Dec``: *year index, month*, the shampoo-style label."""
+    return ["%d-%s" % (index // 12 + 1, _MONTHS[index % 12]) for index in range(n)]
+
+
+def _period_bundle(n: int = 36, horizon: int = 2) -> tuple[ModelBundle, pd.DataFrame]:
+    labels = _period_labels(n)
+    history = pd.DataFrame(
+        {"Month": labels, "y": 100.0 + 2.0 * np.arange(n, dtype=float)}
+    )
+    spec = TemporalSpec(
+        time_column="Month", horizon=horizon, freq="MS", period_start="2001-01-01"
+    )
+    pipeline, _design = _train(
+        spec, history, strategy="recursive", lags=(horizon,), target="y"
+    )
+    state = TemporalServeState.from_parts(
+        spec, "y", pipeline.named_steps["features"], strategy="recursive"
+    )
+    bundle = ModelBundle(
+        pipeline,
+        task_name="period-labels",
+        metrics={},
+        temporal=state.to_dict(),
+        dependencies={},
+    )
+    return bundle, history
+
+
+def test_period_labelled_history_serves_from_the_declared_anchor():
+    """A bundle declared with ``period_start`` must accept the labels it trained on.
+
+    ``1-Jan`` is *year 1, January*: parsing the column reads years 1..3 (outside
+    pandas' nanosecond range) and, worse, month/day confusion can make the axis
+    run backwards (``3-Oct`` -> 2026-10-03 then ``2-Jan`` -> 2026-01-02), so
+    ``validate_history`` answered ``history time values must be strictly
+    increasing`` for the bundle's own dataset. The axis must be built from the
+    anchor and row order — the rule ``_time_axis`` already applies at
+    registration — and the forecast must continue that grid.
+    """
+    bundle, history = _period_bundle()
+    state = TemporalServeState.from_dict(bundle.temporal)
+
+    frame, label = state.validate_history(history)
+    assert label is None
+    assert str(frame["Month"].iloc[0]) == "2001-01-01 00:00:00"
+    assert str(frame["Month"].iloc[-1]) == "2003-12-01 00:00:00"
+
+    result = serve_forecast(bundle, history, horizon=3)
+    assert [str(pd.Timestamp(value)) for value in result.times] == [
+        "2004-01-01 00:00:00",
+        "2004-02-01 00:00:00",
+        "2004-03-01 00:00:00",
+    ]
+    assert np.all(np.isfinite(np.asarray(result.means)))
+
+
+def test_panel_period_labels_serve_one_series_at_a_time():
+    """The anchor is per series: a panel's rows are ranked within their series."""
+    labels = _period_labels(24)
+    frame = pd.concat(
+        [
+            pd.DataFrame({"store": store, "Month": labels, "y": 10.0 + np.arange(24.0)})
+            for store in ("a", "b")
+        ],
+        ignore_index=True,
+    )
+    spec = TemporalSpec(
+        time_column="Month", series_id="store", horizon=2, freq="MS",
+        period_start="2001-01-01",
+    )
+    builder = ForecastFeatureBuilder(spec=spec, target="y", lags=(2,))
+    builder.fit(frame)
+    state = TemporalServeState.from_parts(spec, "y", builder, strategy="recursive")
+    one_series, label = state.validate_history(frame[frame["store"] == "b"])
+    assert label == "b"
+    assert str(one_series["Month"].iloc[0]) == "2001-01-01 00:00:00"
+    with pytest.raises(ValueError, match="exactly one 'store' value"):
+        state.validate_history(frame)

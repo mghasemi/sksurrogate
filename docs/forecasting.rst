@@ -591,6 +591,17 @@ origins re-reads history) but only $h + W - 1$ under *recursive* (later steps fe
 predictions back), and lag or difference terms add their own bounds on top; every declared
 exogenous column is present on the history rows.
 
+When the spec declares ``period_start``, the time column is **not parsed**: it holds
+period labels (``1-Jan`` is *year index 1, January*, not a date), so the axis is the
+registered grid — the anchor stepped by ``freq`` once per row, with row order as time
+order — exactly as registration builds it. Serving therefore accepts the same labels
+the dataset was trained on and returns forecast times on that grid (a 36-row monthly
+shampoo series anchored at ``2001-01-01`` answers ``2004-01-01, 2004-02-01, …``).
+Parsing would read year 1 (outside pandas' nanosecond range) and, for these labels,
+month/day confusion can even make the sequence run backwards. Declared
+``time_format`` is applied to plain timestamp text; a column that is neither
+parseable nor numeric is refused with a message naming the anchor remedy.
+
 Direct vs recursive at serving time
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

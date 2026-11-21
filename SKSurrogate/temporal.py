@@ -1808,9 +1808,39 @@ class TemporalServeState:
                 "exogenous column(s) not found in history: %s" % ", ".join(missing_exog)
             )
 
+        label = None
+        if spec.series_id is not None:
+            # One series per request, checked *before* the axis: on a panel frame
+            # the grid repeats per series, so the monotonicity test would answer
+            # "sort the frame by <time>" — a misleading remedy for the real
+            # contract violation (one forecast per series).
+            labels_in_frame = history[spec.series_id].dropna().unique()
+            if len(labels_in_frame) != 1:
+                raise ValueError(
+                    "history must contain exactly one %r value; got %d (one forecast per series)"
+                    % (spec.series_id, len(labels_in_frame))
+                )
+            label = labels_in_frame[0]
+
         frame = history.copy()
         raw_times = frame[spec.time_column]
-        if pd.api.types.is_datetime64_any_dtype(raw_times):
+        if spec.period_start is not None:
+            # The declared anchor *is* the axis: the column holds period labels
+            # ("1-Jan" is *year 1, January*), so parsing it is not merely unnecessary
+            # but wrong — dateutil reads year 1, which is both outside pandas'
+            # nanosecond range and not the intended date — and text order need not be
+            # time order. Registration already builds the axis this way
+            # (``_time_axis``); serving must apply the same rule, or the bundle
+            # rejects the very labels it was trained on with "history time values
+            # must be strictly increasing".
+            axis = _time_axis(frame, spec)
+            times = pd.Series(
+                pd.to_datetime(np.asarray(axis["values"]), unit="ns"),
+                index=frame.index,
+                name=spec.time_column,
+            )
+            frame[spec.time_column] = times
+        elif pd.api.types.is_datetime64_any_dtype(raw_times):
             times = raw_times
         elif pd.api.types.is_numeric_dtype(raw_times):
             # A purely numeric axis is a unit-spaced index (periods, steps),
@@ -1820,7 +1850,9 @@ class TemporalServeState:
             times = raw_times.astype("float64")
             frame[spec.time_column] = times
         else:
-            parsed = pd.to_datetime(frame[spec.time_column], errors="coerce")
+            parsed = pd.to_datetime(
+                frame[spec.time_column], format=spec.time_format, errors="coerce"
+            )
             if bool(parsed.notna().all()):
                 frame[spec.time_column] = parsed
                 times = frame[spec.time_column]
@@ -1828,8 +1860,10 @@ class TemporalServeState:
                 numeric = pd.to_numeric(raw_times, errors="coerce")
                 if not bool(numeric.notna().all()):
                     raise ValueError(
-                        "time column %r holds neither parseable timestamps nor numbers"
-                        % spec.time_column
+                        "time column %r holds neither parseable timestamps nor numbers; "
+                        "if it holds period labels (e.g. '1-Jan' for *year 1, January*), "
+                        "declare period_start together with freq on the task so the axis "
+                        "comes from each series' first row" % spec.time_column
                     )
                 frame[spec.time_column] = numeric.astype("float64")
                 times = frame[spec.time_column]
@@ -1846,16 +1880,6 @@ class TemporalServeState:
             raise ValueError(
                 "history has %d duplicate timestamp(s) in %r" % (duplicates, spec.time_column)
             )
-
-        label = None
-        if spec.series_id is not None:
-            labels = frame[spec.series_id].dropna().unique()
-            if len(labels) != 1:
-                raise ValueError(
-                    "history must contain exactly one %r value; got %d (one forecast per series)"
-                    % (spec.series_id, len(labels))
-                )
-            label = labels[0]
 
         if spec.freq is not None and pd.api.types.is_datetime64_any_dtype(times):
             inferred = infer_freq(times)
