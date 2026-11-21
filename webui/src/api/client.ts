@@ -1169,6 +1169,8 @@ export interface CVParamDef {
 export interface CVOptionsResponse {
   task_name: string;
   options: string[];
+  /** Order-respecting splitters only; the legal set once a temporal spec is declared. */
+  temporal_options?: string[];
   /** Constructor parameters per splitter, for rendering editable fields. */
   param_defs?: Record<string, CVParamDef[]>;
   current: CVSpec;
@@ -1183,6 +1185,84 @@ export const setDatasetCV = (task: string, spec: CVSpec, params?: Record<string,
     spec,
     ...(params ? { params } : {}),
   });
+
+/* ------------------------------------------------------------------ */
+/* Temporal (forecasting) declarations                                 */
+/* ------------------------------------------------------------------ */
+
+/** Temporal structure declaration, mirroring SKSurrogate.TemporalSpec. */
+export interface TemporalSpecState {
+  time_column: string;
+  series_id?: string | null;
+  freq?: string | null;
+  horizon?: number;
+  order?: "increasing" | "decreasing";
+  gap_tolerance?: number;
+}
+
+/** One series' summary inside a per-partition validation report. */
+export interface TemporalSeriesReport {
+  series: string | number | null;
+  rows: number;
+  inferred_freq?: string | null;
+  inferred_step?: number | null;
+  regular?: boolean;
+  missing_periods?: number;
+  [key: string]: unknown;
+}
+
+/**
+ * Structured report from ``SKSurrogate.temporal.validate_temporal_frame``.
+ *
+ * Returned per partition by the temporal endpoints; ``ok`` is the gate the
+ * write path enforces (422 with this report when a partition violates the
+ * declaration).
+ */
+export interface TemporalValidationReport {
+  ok: boolean;
+  time_column?: string;
+  series_id?: string | null;
+  horizon?: number;
+  order?: string;
+  declared_freq?: string | null;
+  gap_tolerance?: number;
+  time_kind?: string;
+  rows?: number;
+  series_count?: number;
+  inferred_freq?: string | null;
+  missing_periods?: number;
+  time_range?: { start?: string | number; end?: string | number };
+  series?: TemporalSeriesReport[];
+  warnings?: string[];
+  errors?: string[];
+  [key: string]: unknown;
+}
+
+/** Read-side payload of GET/PUT/DELETE /api/datasets/{task}/temporal. */
+export interface TemporalState {
+  task_name: string;
+  spec: TemporalSpecState | null;
+  /** Per-partition validation reports, keyed by partition name. */
+  validation: Record<string, TemporalValidationReport>;
+  partitions: string[];
+  columns: string[];
+  /** Columns excluded from every feature matrix by this declaration. */
+  temporal_columns: string[];
+  ignored_columns: string[];
+  cv: CVSpec;
+  /** Order-respecting splitters only, once temporal is declared (decision D2). */
+  temporal_splitters: string[];
+  cv_temporal_safe: boolean | null;
+}
+
+export const getDatasetTemporal = (task: string) =>
+  get<TemporalState>(`/api/datasets/${encodeURIComponent(task)}/temporal`);
+
+export const setDatasetTemporal = (task: string, body: TemporalSpecState) =>
+  request<TemporalState>("PUT", `/api/datasets/${encodeURIComponent(task)}/temporal`, body);
+
+export const clearDatasetTemporal = (task: string) =>
+  del<TemporalState>(`/api/datasets/${encodeURIComponent(task)}/temporal`);
 
 /** Descriptive statistics of the registered target column (pandas describe()). */
 export interface TargetStats {
@@ -1681,6 +1761,133 @@ export const stopServing = (task: string) =>
 /** Score through the served model: the caller sends no model id (409 when idle). */
 export const predictServed = (task: string, body: ServedPredictRequest) =>
   post<ServedPredictResponse>(`/api/serving/${encodeURIComponent(task)}/predict`, body);
+
+/* ------------------------------------------------------------------ */
+/* Forecasting (rolling-origin backtests + multi-step forecasts, P6/P7) */
+/* ------------------------------------------------------------------ */
+
+/** One history row for a forecast request: the raw observed columns. */
+export type ForecastHistoryRow = Record<string, unknown>;
+
+export interface ForecastRequest {
+  /** Exactly one of ``model_version`` / ``alias`` — the API answers 400 otherwise. */
+  model_version?: string | null;
+  alias?: string | null;
+  /** One series of past observations (the stored design validates it). */
+  history: ForecastHistoryRow[];
+  future_exogenous?: ForecastHistoryRow[] | null;
+  horizon?: number | null;
+  request_id?: string | null;
+}
+
+export interface ServedForecastRequest {
+  history: ForecastHistoryRow[];
+  future_exogenous?: ForecastHistoryRow[] | null;
+  horizon?: number | null;
+  request_id?: string | null;
+}
+
+/**
+ * Response of POST /api/inference/{task}/forecast and its serving twin.
+ *
+ * Parallel arrays over forecast steps: ``times[i]``, ``predictions[i]`` and,
+ * when the bundle carries a P5 calibration, ``lower_bounds[i]`` /
+ * ``upper_bounds[i]`` (both null when uncalibrated).
+ */
+export interface ForecastResponse {
+  task_name: string;
+  model_version: string;
+  request_id: string;
+  /** ``direct`` (per-horizon estimator) or ``recursive`` (state feedback). */
+  strategy: string;
+  horizon: number;
+  times: string[];
+  predictions: Array<number | null>;
+  lower_bounds: Array<number | null> | null;
+  upper_bounds: Array<number | null> | null;
+  interval_note?: string | null;
+  metrics: InferenceMetrics;
+  /** Serving route only: which pin resolved the model. */
+  resolve_mode?: ServingResolveMode | null;
+  requested?: string | null;
+}
+
+export const forecast = (task: string, body: ForecastRequest) =>
+  post<ForecastResponse>(`/api/inference/${encodeURIComponent(task)}/forecast`, body);
+
+/** Forecast through the pinned model: no model id; 409 when nothing is served. */
+export const forecastServed = (task: string, body: ServedForecastRequest) =>
+  post<ForecastResponse>(`/api/serving/${encodeURIComponent(task)}/forecast`, body);
+
+export interface BacktestRequest {
+  model_version?: string | null;
+  alias?: string | null;
+  horizon?: number | null;
+  n_splits?: number;
+  step?: number | null;
+  min_train?: number | null;
+  expanding?: boolean;
+  /** ``every_fold`` | ``first`` | ``every:k`` */
+  refit?: string;
+  scoring?: string | null;
+  train_partition?: string;
+  /** make_supervised kwargs (lags/rolling/diffs/calendar/fourier/exogenous). */
+  features?: Record<string, unknown>;
+  seasonality?: number;
+  baselines?: string[] | null;
+  alpha?: number;
+  interval_method?: string;
+  min_residuals?: number;
+  cost_limit?: number | null;
+}
+
+/** One origin's truth/prediction record from the rolling-origin backtest. */
+export interface BacktestOriginRecord {
+  /** Panel member this record belongs to (``None``/absent for a single series). */
+  series?: string | number | null;
+  series_id?: string | number | null;
+  origin_time?: string | number | null;
+  target_time?: string | number | null;
+  target_step?: number | null;
+  y_true?: number | null;
+  y_pred?: number | null;
+  score?: number | null;
+  refitted?: boolean;
+  mase_scale?: number | null;
+  baselines?: Record<string, number | null>;
+  [key: string]: unknown;
+}
+
+/** Forecast-error metrics block (nulls where undefined, e.g. MASE without scale). */
+export type ForecastMetricsBlock = Record<string, number | null | undefined>;
+
+/** Result document of ``mltrack.backtest``, as stored on the job record. */
+export interface BacktestResult {
+  task_name?: string;
+  model_version?: string;
+  config: Record<string, unknown>;
+  origins: BacktestOriginRecord[];
+  pooled: ForecastMetricsBlock;
+  /** Metric block per naive baseline, scored on the identical origins. */
+  baselines: Record<string, ForecastMetricsBlock>;
+  per_series: Record<string, Record<string, ForecastMetricsBlock>>;
+  per_horizon: Record<string, ForecastMetricsBlock>;
+  skipped_series?: Array<string | number>;
+  ranking?: unknown;
+  intervals?: {
+    available: boolean;
+    calibration: Record<string, unknown> | null;
+    diagnostics?: unknown;
+  };
+  mean_fold_score?: number | null;
+}
+
+/** Submit a rolling-origin backtest; the result arrives on the job record. */
+export const runBacktest = (task: string, body: BacktestRequest) =>
+  post<{ job_id: string; status: string }>(
+    `/api/evaluation/${encodeURIComponent(task)}/backtest`,
+    body,
+  );
 
 /* ------------------------------------------------------------------ */
 /* Monitoring                                                          */

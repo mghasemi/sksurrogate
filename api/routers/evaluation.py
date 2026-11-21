@@ -21,7 +21,14 @@ import numpy as np
 from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel, Field
 
-from SKSurrogate import BASELINE_METHODS, build_cv, load_bundle, mltrack, save_bundle
+from SKSurrogate import (
+    BASELINE_METHODS,
+    ForecastFeatureBuilder,
+    build_cv,
+    load_bundle,
+    mltrack,
+    save_bundle,
+)
 
 from ..config import settings
 from ..columns import drop_ignored, read_ignored_columns
@@ -405,9 +412,18 @@ def run_backtest(task_name: str, body: BacktestRequest):
     )
 
     def _task():
+        # Temporal bundles wrap the feature builder inside the pipeline
+        # (predict_forecast feeds it raw history). The backtest materializes the
+        # design itself from ``features``, so it must refit the bare estimator —
+        # fitting the builder on an already-built design fails on missing
+        # time/series/target columns.
+        estimator = bundle.model
+        named_steps = getattr(estimator, "named_steps", None) or {}
+        if isinstance(named_steps.get("features"), ForecastFeatureBuilder):
+            estimator = named_steps["model"]
         with open_tracker(task_name) as tracker:
             result = tracker.backtest(
-                bundle.model,
+                estimator,
                 horizon=body.horizon,
                 n_splits=body.n_splits,
                 step=body.step,

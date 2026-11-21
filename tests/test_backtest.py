@@ -335,6 +335,48 @@ class TestBacktestEndpoint(unittest.TestCase):
             time.sleep(0.2)
         raise AssertionError("backtest job did not finish within %.0fs" % timeout)
 
+    def test_route_unwraps_the_temporal_feature_builder(self):
+        """A P6 temporal bundle carries the builder inside the pipeline.
+
+        The backtest builds its own design from ``features``, so the route must
+        refit the bare estimator; cloning the whole pipeline fails on the
+        already-materialized design with "missing column(s): time, y".
+        """
+        from sklearn.linear_model import LinearRegression
+        from sklearn.pipeline import Pipeline
+
+        from SKSurrogate import ForecastFeatureBuilder, TemporalServeState
+
+        spec = TemporalSpec(time_column="time", horizon=3)
+        builder = ForecastFeatureBuilder(spec=spec, target="y", lags=[3])
+        builder.fit(self.frame)
+        design = builder.build(self.frame)
+        model = LinearRegression().fit(design.X, design.y)
+        temporal_bundle = ModelBundle(
+            Pipeline([("features", builder), ("model", model)]),
+            task_name=TASK,
+            model_version="v2",
+            schema={},
+            dependencies={},
+            temporal=TemporalServeState.from_parts(
+                spec, "y", builder, strategy="direct"
+            ).to_dict(),
+        )
+        save_bundle(temporal_bundle, settings.task_bundles_dir(TASK) / "v2.bundle")
+
+        response = evaluation_router.run_backtest(
+            TASK,
+            evaluation_router.BacktestRequest(
+                model_version="v2",
+                horizon=3,
+                n_splits=3,
+                features={"lags": [3]},
+            ),
+        )
+        record = self._wait(response["job_id"])
+        self.assertEqual(record["status"], "completed", record.get("error"))
+        self.assertLess(record["result"]["pooled"]["mae"], 0.05)
+
     def test_route_queues_a_job_and_records_the_backtest(self):
         response = evaluation_router.run_backtest(
             TASK,

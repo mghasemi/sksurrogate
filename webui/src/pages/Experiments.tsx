@@ -15,6 +15,8 @@ import {
   addProjectArtifact,
   DEFAULT_EXPERIMENT_CONFIG,
   STACKING_COMPONENT,
+  ApiError,
+  getDatasetTemporal,
   getProject,
   getPresets,
   getPreflight,
@@ -264,6 +266,21 @@ export default function ExperimentsPage() {
   const availableBackends = backendOptionsQ.data?.backends ?? ["local"];
 
   const presetsQ = useQuery({ queryKey: ["experiment-presets"], queryFn: getPresets, staleTime: Infinity });
+  // Temporal declaration (P7.3): changes what "score" means for this task —
+  // the search itself still evaluates one-step predictions.
+  const temporalQ = useQuery({
+    queryKey: ["dataset-temporal", task],
+    queryFn: async () => {
+      try {
+        return await getDatasetTemporal(task);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
+      }
+    },
+    enabled: !!task,
+    retry: false,
+  });
   const preflightQ = useQuery({
     queryKey: ["preflight", task],
     queryFn: () => getPreflight(task, "train"),
@@ -634,6 +651,18 @@ export default function ExperimentsPage() {
             is how many random initial points are sampled before the surrogate is exploited.
           </span>
         </div>
+
+        {temporalQ.data?.spec && (
+          <div className="muted" style={{ marginTop: 12 }}>
+            <strong>Temporal task.</strong> Horizon {temporalQ.data.spec.horizon ?? 1} step(s)
+            {temporalQ.data.spec.freq ? `, frequency ${temporalQ.data.spec.freq}` : ""}
+            {temporalQ.data.spec.series_id ? `, panel by “${temporalQ.data.spec.series_id}”` : ""}. The
+            search scores one-step predictions with order-respecting splitters; multi-step (h ={" "}
+            {temporalQ.data.spec.horizon ?? 1}) scores come from the{" "}
+            <Link to="/evaluation">Rolling-origin backtest</Link> on the Evaluation page (direct
+            strategy) — the forecast metrics in the Scoring list apply there, not to the search.
+          </div>
+        )}
 
         {runMut.isError && <ErrorNote error={runMut.error} />}
 

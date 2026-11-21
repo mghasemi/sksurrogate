@@ -536,6 +536,61 @@ Endpoint                                                  Purpose
                                                           pinned version; tabular bundles get 400.
 ========================================================  ============================================
 
+In the web UI
+-------------
+
+All four surfaces are opt-in and appear only when the task declares a temporal
+structure; a tabular task's pages are unchanged.
+
+**Datasets → Temporal structure.** Declare the time column, optional series id,
+frequency (pandas offset alias — leave blank to accept irregular sampling), horizon,
+order and gap tolerance. The card shows whether the sampled series is *regular* at the
+declared frequency, whether the stored CV splitter is temporal-safe, and the
+per-partition validation report the server computed — rows, series count, inferred
+frequency, missing periods and status — with a one-click "Use inferred" hint when the
+data disagrees with the declared frequency. Saving validates every registered partition
+and refuses with the server's report when a partition breaks the declaration. Once a
+declaration exists, the splitter picker offers only order-respecting splitters
+(decision D2): the server rejects shuffled splitters, so the UI never presents one.
+
+.. figure:: images/webui-temporal-panel.png
+   :alt: Datasets page, Temporal structure card with a two-series panel declared and its validation report.
+   :width: 100%
+
+   Declaring a temporal structure from the Datasets page — the panel is declared at
+   daily frequency with horizon 4, and both stores validate with no missing periods.
+
+**Evaluation → Rolling-origin backtest.** Pick a bundle, horizon, origin count, step,
+minimum training length, window mode (expanding/sliding), refit policy
+(``every_fold``/``first``/``every:k``), interval alpha and method, seasonality, and the
+``make_supervised`` feature configuration as JSON — the last one must reproduce the
+bundle's feature design, since the backtest materializes its own design matrix and
+refits the bare estimator. The result shows pooled MAE/RMSE/MASE with interval
+provenance, a per-horizon error table, and a candidate-vs-baseline leaderboard where
+every naive baseline is scored on the identical origins; MASE of 1 is parity with the
+seasonal-naive scale, above 1 is worse. The fan chart plots actual and predicted values
+for the selected panel series with the stored conformal band.
+
+.. figure:: images/webui-backtest.png
+   :alt: Evaluation page, rolling-origin backtest card with pooled metrics, fan chart, baseline leaderboard and per-horizon table.
+   :width: 100%
+
+   A completed backtest over two series at horizon 4: 40 origin records, model MAE below
+   every naive baseline, and the 90 % conformal band drawn from the stored calibration.
+
+**Experiments → Run settings.** For a temporal task the card states the declared
+horizon, frequency and panel column, and says plainly that the search scores one-step
+predictions with order-respecting splitters while multi-step scores come from the
+rolling-origin backtest — the forecast metrics in the Scoring list belong there.
+
+**Inference → Forecast console.** Paste one series of history as CSV (header plus
+rows, one series per request), optionally tick "use the pinned serving model", and read
+the multi-step forecast table — step, time, prediction and, when the bundle is
+calibrated, lower/upper bounds. Refusals are the server's own actionable messages: a
+history missing the series column, or too short for the design's required tail, is
+reported with the column or row count to fix, never padded silently. The result
+downloads as ``time,prediction,lower,upper`` CSV.
+
 Non-goals
 ---------
 

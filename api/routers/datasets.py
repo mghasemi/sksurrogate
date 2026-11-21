@@ -198,17 +198,28 @@ def profile_registered_dataset(task_name: str, body: DatasetProfileRequest):
 
 @router.get("/{task_name}/cv")
 def get_cv(task_name: str):
-    """Return the standard splitter options and the task's current CV selection."""
+    """Return the standard splitter options and the task's current CV selection.
+
+    ``param_defs`` covers the temporal-only splitters as well (e.g.
+    ``RollingOriginSplit``): a temporal task may only use those, so the UI must
+    be able to edit their constructor parameters even though they are not part
+    of ``STANDARD_CV_SPLITTERS``.
+    """
     if not settings.mltrace_db_path(task_name).exists():
         raise not_found("No dataset registered for task %r" % task_name)
     with open_tracker(task_name) as tracker:
         stored_spec = tracker.GetCVSpec()
+    param_defs = {name: cv_param_defs(name) for name in STANDARD_CV_SPLITTERS}
+    for name in TEMPORAL_CV_SPLITTERS:
+        if name not in param_defs:
+            param_defs[name] = cv_param_defs(name)
     return {
         "task_name": task_name,
         "options": list(STANDARD_CV_SPLITTERS),
-        # Constructor parameters each splitter exposes, so the UI can render
+        "temporal_options": list(TEMPORAL_CV_SPLITTERS),
+        # Constructor parameters per splitter, so the UI can render
         # editable fields below the dropdown (name/kind/default per parameter).
-        "param_defs": {name: cv_param_defs(name) for name in STANDARD_CV_SPLITTERS},
+        "param_defs": param_defs,
         "current": stored_spec if stored_spec is not None else default_cv_spec(),
         "stored": stored_spec is not None,
     }

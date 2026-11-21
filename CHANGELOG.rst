@@ -207,6 +207,42 @@ v1 records load as before.
   serving per-series 12-step forecasts with calibrated intervals, and HTTP round-trips through
   the FastAPI test client.
 
+Forecasting panels in the web UI (time-series phase 7)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The control plane now exposes the whole forecasting workflow; every surface is opt-in and a
+tabular task's pages are unchanged.
+
+* **Datasets — Temporal structure card** — declares the time column, optional series id,
+  frequency, horizon, order and gap tolerance; renders the server's per-partition validation
+  report (rows, series count, inferred frequency, missing periods, status), a regular/irregular
+  badge, a temporal-safety badge for the stored CV splitter, and a "Use inferred" shortcut when
+  the data's inferred frequency differs from the declared one. Clearing the declaration restores
+  the columns as features.
+* **Splitters, decision D2** — once a declaration exists, the splitter picker offers only
+  order-respecting splitters and the server rejects the rest. ``GET /api/datasets/{task}/cv``
+  gained ``temporal_options`` and now returns ``param_defs`` for temporal-only splitters too
+  (``RollingOriginSplit`` was previously unreachable from the UI: it is not in
+  ``STANDARD_CV_SPLITTERS``).
+* **Evaluation — Rolling-origin backtest card** — submits the backtest as a job and renders
+  pooled MAE/RMSE/MASE with interval provenance, a per-horizon error table, a candidate-vs-naive
+  leaderboard scored on the identical origins, and a forecast-vs-actual fan chart per panel
+  series using the stored conformal calibration. The feature configuration is an editable JSON
+  field because the backtest builds its own design; ``POST /api/evaluation/{task}/backtest`` now
+  unwraps a temporal bundle's ``ForecastFeatureBuilder`` and refits the bare estimator (fitting
+  the whole pipeline failed on the already-materialized design).
+* **Experiments — run-settings summary** — a temporal task states its horizon, frequency and
+  panel column, and points multi-step scoring at the backtest instead of implying the search
+  scores it.
+* **Inference — Forecast console** — paste a history series, pick a bundle or the serving pin,
+  and read/download the multi-step forecast (``time,prediction,lower,upper``). Refusals are the
+  server's actionable messages (missing series column, history shorter than the design's
+  required tail).
+* **Docs** — "In the web UI" section with two figures in ``docs/forecasting.rst``; a
+  time-series paragraph in ``docs/ui-manual.rst``.
+* **Tests** — ``tests/test_temporal_contract.py`` (+1: temporal splitters and their parameter
+  defs are exposed) and ``tests/test_backtest.py`` (+1: the route unwraps a temporal bundle).
+
 Pipeline-space benchmark track (C-space)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

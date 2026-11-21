@@ -434,6 +434,26 @@ class TestTemporalEndpoints(unittest.TestCase):
         )
         self.assertEqual(ok["cv"]["type"], "TimeSeriesSplit")
 
+    def test_cv_endpoint_offers_temporal_only_splitters(self):
+        """RollingOriginSplit is temporal-only, so GET /cv must expose it.
+
+        P7 needs the UI to offer order-respecting splitters for a temporal task;
+        the standard list omits RollingOriginSplit, and without its param_defs
+        the panel could show the name but never edit n_splits/step/min_train.
+        """
+        self._register(
+            temporal={"time_column": "time", "series_id": "series", "freq": "D"}
+        )
+        payload = datasets_router.get_cv(TASK)
+        self.assertIn("RollingOriginSplit", payload["temporal_options"])
+        self.assertIn("TimeSeriesSplit", payload["temporal_options"])
+        self.assertIn("RollingOriginSplit", payload["param_defs"])
+        names = {defn["name"] for defn in payload["param_defs"]["RollingOriginSplit"]}
+        self.assertIn("horizon", names)
+        # The declaration itself also advertises the same legal set.
+        temporal = datasets_router.get_temporal(TASK)
+        self.assertEqual(sorted(temporal["temporal_splitters"]), sorted(payload["temporal_options"]))
+
     def test_put_rejects_unknown_temporal_column(self):
         self._register()
         with self.assertRaises(HTTPException) as ctx:

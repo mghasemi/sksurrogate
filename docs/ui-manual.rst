@@ -105,6 +105,16 @@ feature analysis, or use the API and Python package independently of the UI.
 Long-running sensitivity, experiment, nested-CV, and retraining operations
 appear in **Jobs**.
 
+**Time-series tasks.** A task whose dataset declares a temporal structure
+(:doc:`forecasting`) gains four UI surfaces, all opt-in: the **Temporal
+structure** card under Datasets (declaration, validation report and a
+splitter picker restricted to order-respecting splitters), a
+**Rolling-origin backtest** card under Evaluation (per-horizon errors, naive
+baselines scored on the same origins, and a forecast-vs-actual fan chart),
+a temporal summary in Experiments' run settings, and a **Forecast console**
+under Inference that serves multi-step forecasts from pasted history. Nothing
+changes for tabular tasks.
+
 1. Open the Dashboard and select a task
 ---------------------------------------
 

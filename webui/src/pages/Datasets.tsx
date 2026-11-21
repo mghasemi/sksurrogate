@@ -5,10 +5,12 @@ import { UploadCloud } from "lucide-react";
 
 import {
   addProjectArtifact,
+  clearDatasetTemporal,
   downloadSynthetic,
   generateSynthetic,
   getDatasetCV,
   getDatasetMetadata,
+  getDatasetTemporal,
   getProject,
   getTargetStats,
   inspectDataset,
@@ -17,6 +19,7 @@ import {
   registerDataset,
   setDatasetCV,
   setDatasetTarget,
+  setDatasetTemporal,
   setIgnoredColumns,
   validateDataset,
   ApiError,
@@ -29,6 +32,8 @@ import type {
   DatasetPreview,
   RegisterDatasetResponse,
   SensitiveScanReport,
+  TemporalSpecState,
+  TemporalValidationReport,
 } from "../api/client";
 import { Card, EmptyState, ErrorNote, Loading, Table, Badge, fmtNum } from "../components/ui";
 import { useTask } from "../lib/task-context";
@@ -234,7 +239,28 @@ export default function DatasetsPage() {
     },
   });
 
-  const cvOptions = cvQ.data?.options ?? [];
+  // Temporal declaration: also decides which splitters the CV card may offer
+  // (decision D2 — SetCV hard-rejects order-violating splitters once declared).
+  const temporalQ = useQuery({
+    queryKey: ["dataset-temporal", task, dataRevision],
+    queryFn: async () => {
+      try {
+        return await getDatasetTemporal(task);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
+      }
+    },
+    enabled: !!task,
+    retry: false,
+  });
+  const temporalDeclared = !!temporalQ.data?.spec;
+  // Temporal tasks may only use order-respecting splitters (decision D2), and
+  // that set includes temporal-only ones (RollingOriginSplit) that are not in
+  // the standard option list.
+  const cvOptions = temporalDeclared
+    ? temporalQ.data?.temporal_splitters ?? []
+    : cvQ.data?.options ?? [];
   // Preselect the splitter matching the stored spec's type when available.
   const storedType =
     cvQ.data && typeof cvQ.data.current === "object" ? String(cvQ.data.current.type ?? "") : "";
@@ -507,6 +533,12 @@ export default function DatasetsPage() {
         )}
         {cvQ.data && (
           <>
+            {temporalDeclared && (
+              <div className="muted" style={{ marginBottom: 12 }}>
+                Temporal task: only order-respecting splitters are offered — the server rejects
+                shuffled splitters once a temporal structure is declared.
+              </div>
+            )}
             <div className="row">
               <div className="field fixed" style={{ flex: "0 1 320px", minWidth: 240 }}>
                 <label>Splitter</label>
@@ -594,6 +626,8 @@ export default function DatasetsPage() {
           </>
         )}
       </Card>
+
+      <TemporalCard task={task} revision={dataRevision} fallbackColumns={previewCols} />
 
       <Card title="Registered metadata" sub={metaQ.data?.dataset_fingerprint ?? undefined}>
         {metaQ.isLoading && task && <Loading />}
@@ -1070,6 +1104,297 @@ function TargetStatsCard({ task, enabled, revision }: { task: string; enabled: b
             <td key="v">{fmtNum(row[1])}</td>,
           ]}
         />
+      )}
+    </Card>
+  );
+}
+
+/**
+ * Temporal structure panel (plan phase P7.1).
+ *
+ * Declares the task's time geometry — opt-in, like the CLI/API path: the time
+ * (and optional series-id) columns are excluded from every feature matrix, the
+ * declaration gates gaps over `gap_tolerance`, and it unlocks lag features,
+ * rolling-origin backtests and multi-step serving. The per-partition report is
+ * the server's `validate_temporal_frame` output verbatim; a rejected save
+ * surfaces the 422's report in the error note.
+ */
+function TemporalCard({
+  task,
+  revision,
+  fallbackColumns,
+}: {
+  task: string;
+  revision: number;
+  fallbackColumns: string[];
+}) {
+  const qc = useQueryClient();
+  const q = useQuery({
+    queryKey: ["dataset-temporal", task, revision],
+    queryFn: async () => {
+      try {
+        return await getDatasetTemporal(task);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) return null;
+        throw err;
+      }
+    },
+    enabled: !!task,
+    retry: false,
+  });
+
+  const EMPTY_DRAFT: TemporalSpecState = {
+    time_column: "",
+    series_id: null,
+    freq: null,
+    horizon: 1,
+    order: "increasing",
+    gap_tolerance: 0,
+  };
+  const [draft, setDraft] = useState<TemporalSpecState>(EMPTY_DRAFT);
+
+  // Re-seed the form whenever the stored declaration changes (save, clear, or a
+  // fresh dataset registration bumping `revision`).
+  useEffect(() => {
+    const spec = q.data?.spec;
+    setDraft(
+      spec
+        ? {
+            time_column: spec.time_column,
+            series_id: spec.series_id ?? null,
+            freq: spec.freq ?? null,
+            horizon: spec.horizon ?? 1,
+            order: spec.order ?? "increasing",
+            gap_tolerance: spec.gap_tolerance ?? 0,
+          }
+        : EMPTY_DRAFT,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q.data]);
+
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ["dataset-temporal", task, revision] });
+    // The declaration rewrites the ignored columns and constrains CV (D2).
+    qc.invalidateQueries({ queryKey: ["dataset-meta", task] });
+    qc.invalidateQueries({ queryKey: ["dataset-cv", task, revision] });
+    qc.invalidateQueries({ queryKey: ["features"] });
+  };
+  const saveMut = useMutation({
+    mutationFn: (body: TemporalSpecState) => setDatasetTemporal(task, body),
+    onSuccess: refresh,
+  });
+  const clearMut = useMutation({
+    mutationFn: () => clearDatasetTemporal(task),
+    onSuccess: refresh,
+  });
+
+  const columns = q.data?.columns?.length ? q.data.columns : fallbackColumns;
+  const declared = q.data?.spec ?? null;
+  const reports = Object.entries(q.data?.validation ?? {}) as Array<
+    [string, TemporalValidationReport]
+  >;
+  const firstInferred = reports.find(([, report]) => report.inferred_freq)?.[1].inferred_freq ?? null;
+
+  const save = () => {
+    if (!task || !draft.time_column) return;
+    const freq = (draft.freq ?? "").trim();
+    saveMut.mutate({
+      time_column: draft.time_column,
+      series_id: draft.series_id || null,
+      freq: freq ? freq : null,
+      horizon: Math.max(1, Number(draft.horizon) || 1),
+      order: draft.order ?? "increasing",
+      gap_tolerance: Math.max(0, Number(draft.gap_tolerance) || 0),
+    });
+  };
+
+  return (
+    <Card
+      title="Temporal structure (forecasting)"
+      sub="Declare the time column (and optional series id) to enable lag features, rolling-origin backtests and multi-step forecasts. The time and series columns are excluded from every feature matrix."
+    >
+      {q.isLoading && task && <Loading />}
+      {q.isError && <ErrorNote error={q.error} />}
+      {q.data === null && (
+        <EmptyState
+          title="No dataset registered for this task yet"
+          hint="Register a partition above; the temporal declaration applies to the stored dataset."
+        />
+      )}
+      {q.data && (
+        <>
+          <div className="row">
+            <div className="field fixed" style={{ flex: "0 1 220px", minWidth: 160 }}>
+              <label>Time column</label>
+              <select
+                value={draft.time_column}
+                onChange={(e) => setDraft((d) => ({ ...d, time_column: e.target.value }))}
+              >
+                <option value="">— select —</option>
+                {columns.map((column) => (
+                  <option key={column} value={column}>
+                    {column}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field fixed" style={{ flex: "0 1 220px", minWidth: 160 }}>
+              <label>Series id (optional)</label>
+              <select
+                value={draft.series_id ?? ""}
+                onChange={(e) => setDraft((d) => ({ ...d, series_id: e.target.value || null }))}
+              >
+                <option value="">(single series)</option>
+                {columns
+                  .filter((column) => column !== draft.time_column)
+                  .map((column) => (
+                    <option key={column} value={column}>
+                      {column}
+                    </option>
+                  ))}
+              </select>
+            </div>
+            <div className="field fixed" style={{ flex: "0 1 160px", minWidth: 120 }}>
+              <label>Frequency</label>
+              <input
+                placeholder="e.g. D, h, 15min"
+                value={draft.freq ?? ""}
+                onChange={(e) => setDraft((d) => ({ ...d, freq: e.target.value }))}
+              />
+            </div>
+            <div className="field fixed" style={{ flex: "0 1 120px", minWidth: 90 }}>
+              <label>Horizon (steps)</label>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={String(draft.horizon ?? 1)}
+                onChange={(e) => setDraft((d) => ({ ...d, horizon: Number(e.target.value) }))}
+              />
+            </div>
+            <div className="field fixed" style={{ flex: "0 1 150px", minWidth: 120 }}>
+              <label>Order</label>
+              <select
+                value={draft.order ?? "increasing"}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, order: e.target.value as "increasing" | "decreasing" }))
+                }
+              >
+                <option value="increasing">increasing</option>
+                <option value="decreasing">decreasing</option>
+              </select>
+            </div>
+            <div className="field fixed" style={{ flex: "0 1 130px", minWidth: 100 }}>
+              <label>Gap tolerance</label>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={String(draft.gap_tolerance ?? 0)}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, gap_tolerance: Number(e.target.value) }))
+                }
+              />
+            </div>
+          </div>
+          <p className="muted" style={{ marginBottom: 12 }}>
+            Frequency is a pandas offset alias; leave it blank to accept irregular sampling
+            (advisory warning only).{firstInferred ? (
+              <>
+                {" "}
+                Inferred from the data: <code>{firstInferred}</code>
+                {firstInferred !== draft.freq && (
+                  <button
+                    className="btn"
+                    style={{ marginLeft: 8 }}
+                    onClick={() => setDraft((d) => ({ ...d, freq: firstInferred }))}
+                  >
+                    Use inferred
+                  </button>
+                )}
+              </>
+            ) : null}
+          </p>
+
+          {declared && (
+            <dl className="kv">
+              <dt>Declared</dt>
+              <dd className="mono">
+                time={declared.time_column}
+                {declared.series_id ? ` series=${declared.series_id}` : " (single series)"}
+                {declared.freq ? ` freq=${declared.freq}` : " (no declared frequency)"} h=
+                {declared.horizon ?? 1}
+              </dd>
+              <dt>Excluded columns</dt>
+              <dd className="mono">{q.data.temporal_columns.join(", ") || "—"}</dd>
+            </dl>
+          )}
+
+          {reports.length > 0 && (
+            <>
+              <div className="row" style={{ gap: 8, marginBottom: 8 }}>
+                <Badge tone={declared?.freq ? "ok" : "muted"}>
+                  {declared?.freq ? `regular @ ${declared.freq}` : "irregular allowed"}
+                </Badge>
+                <Badge tone={q.data.cv_temporal_safe === false ? "warn" : "info"}>
+                  CV {q.data.cv_temporal_safe === false ? "not temporal-safe — pick an order-respecting splitter" : "temporal-safe"}
+                </Badge>
+              </div>
+              <Table<[string, TemporalValidationReport]>
+                columns={["Partition", "Rows", "Series", "Inferred freq", "Missing periods", "Status"]}
+                rows={reports}
+                keyOf={([partition]) => partition}
+                render={([partition, report]) => [
+                  <td key="p" className="mono">{partition}</td>,
+                  <td key="r">{fmtNum(report.rows ?? null)}</td>,
+                  <td key="s">{report.series_count ?? report.series?.length ?? "—"}</td>,
+                  <td key="f" className="mono">{report.inferred_freq ?? "—"}</td>,
+                  <td key="m">{report.missing_periods ?? "—"}</td>,
+                  <td key="ok">
+                    <Badge tone={report.ok ? "ok" : "err"}>{report.ok ? "valid" : "invalid"}</Badge>
+                  </td>,
+                ]}
+              />
+              {reports
+                .filter(([, report]) => (report.warnings ?? []).length > 0)
+                .map(([partition, report]) => (
+                  <div key={partition} className="muted" style={{ marginTop: 8 }}>
+                    <strong>{partition}</strong> warnings: {(report.warnings ?? []).join("; ")}
+                  </div>
+                ))}
+            </>
+          )}
+
+          {saveMut.isError && <ErrorNote error={saveMut.error} />}
+          {saveMut.isSuccess && (
+            <div className="success-note">
+              Saved temporal declaration: time=<code>{saveMut.data.spec?.time_column}</code>
+              {saveMut.data.spec?.freq ? `, freq=${saveMut.data.spec.freq}` : ""}.
+            </div>
+          )}
+          {clearMut.isError && <ErrorNote error={clearMut.error} />}
+          {clearMut.isSuccess && (
+            <div className="success-note">Temporal declaration removed; columns re-enabled as features.</div>
+          )}
+
+          <button
+            className="btn primary"
+            disabled={!task || !draft.time_column || saveMut.isPending}
+            onClick={save}
+          >
+            {saveMut.isPending ? "Validating…" : declared ? "Update temporal structure" : "Declare temporal structure"}
+          </button>
+          {declared && (
+            <button
+              className="btn"
+              style={{ marginLeft: 8 }}
+              disabled={clearMut.isPending}
+              onClick={() => clearMut.mutate()}
+            >
+              {clearMut.isPending ? "Removing…" : "Remove declaration"}
+            </button>
+          )}
+        </>
       )}
     </Card>
   );

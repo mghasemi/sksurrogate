@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
+  Area,
   Bar,
   BarChart,
   CartesianGrid,
+  ComposedChart,
   Legend,
   Line,
   LineChart,
@@ -24,9 +26,10 @@ import {
   listJobs,
   registrySummary,
   retryUnlessNotFound,
+  runBacktest,
   runNestedCV,
 } from "../api/client";
-import type { BundleSummary, NestedCVJobResult } from "../api/client";
+import type { BacktestResult, BundleSummary, NestedCVJobResult } from "../api/client";
 import { Card, EmptyState, ErrorNote, Loading, Stat, Table, Tabs, fmtNum } from "../components/ui";
 import { JobTracker } from "../components/JobTracker";
 import { useBundleLabel } from "../lib/hooks";
@@ -436,6 +439,348 @@ function CurvesCard({ task, bundles, labelOf }: { task: string; bundles: BundleS
 
 
 
+/** Coerce a job result into the backtest document, or null when it is another job kind. */
+function asBacktestResult(value: unknown): BacktestResult | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  if (!Array.isArray(record.origins) || typeof record.pooled !== "object" || record.pooled === null) {
+    return null;
+  }
+  return record as unknown as BacktestResult;
+}
+
+const BASELINE_LABELS: Record<string, string> = {
+  naive: "naive (last value)",
+  seasonal_naive: "seasonal naive",
+  drift: "drift",
+  mean: "training mean",
+};
+
+function metricOf(block: Record<string, number | null | undefined> | undefined, key: string): number | null {
+  const value = block?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Rolling-origin backtest (plan phase P7.2).
+ *
+ * Submits `/api/evaluation/{task}/backtest` as a background job (one fit per
+ * origin) and renders the result: pooled metrics with every naive baseline
+ * scored on the identical origins, a per-horizon table, and a forecast-vs-
+ * actual fan chart whose band is the stored conformal calibration. MASE is
+ * shown only where the backtest recorded an in-sample scale — it is never
+ * replaced by a fabricated denominator.
+ */
+function BacktestCard({
+  task,
+  bundles,
+  labelOf,
+}: {
+  task: string;
+  bundles: BundleSummary[];
+  labelOf: (version: string) => string;
+}) {
+  const [modelVersion, setModelVersion] = useState(bundles[0]?.model_version ?? "");
+  const [horizon, setHorizon] = useState(1);
+  const [nSplits, setNSplits] = useState(5);
+  const [step, setStep] = useState(0); // 0 → splitter default (horizon)
+  const [minTrain, setMinTrain] = useState(0); // 0 → splitter default
+  const [expanding, setExpanding] = useState(true);
+  const [refit, setRefit] = useState("every_fold");
+  const [alpha, setAlpha] = useState(0.1);
+  const [intervalMethod, setIntervalMethod] = useState("absolute");
+  const [seasonality, setSeasonality] = useState(1);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [result, setResult] = useState<BacktestResult | null>(null);
+  const [seriesPick, setSeriesPick] = useState("");
+  // make_supervised kwargs — must reproduce the bundle's feature design, or the
+  // cloned estimator sees a different width and every origin fails.
+  const [featuresJson, setFeaturesJson] = useState("{}");
+  const [featuresError, setFeaturesError] = useState<string | null>(null);
+
+  const submit = useMutation({
+    mutationFn: (features: Record<string, unknown>) =>
+      runBacktest(task, {
+        model_version: modelVersion || null,
+        horizon: Math.max(1, horizon),
+        n_splits: Math.max(1, nSplits),
+        step: step > 0 ? step : null,
+        min_train: minTrain > 0 ? minTrain : null,
+        expanding,
+        refit,
+        alpha,
+        interval_method: intervalMethod,
+        seasonality: Math.max(1, seasonality),
+        features,
+      }),
+    onSuccess: (res) => {
+      setJobId(res.job_id);
+      setResult(null);
+    },
+  });
+
+  const origins = result?.origins ?? [];
+  // Panel records carry `series`; `series_id` is kept for older payloads.
+  const seriesOf = (o: { series?: unknown; series_id?: unknown }) =>
+    String(o.series ?? o.series_id ?? "(single series)");
+  const seriesKeys = Array.from(new Set(origins.map(seriesOf)));
+  const activeSeries = seriesPick && seriesKeys.includes(seriesPick) ? seriesPick : seriesKeys[0] ?? "";
+  const calibration = result?.intervals?.available
+    ? (result.intervals.calibration as Record<string, unknown> | null)
+    : null;
+  const lowerOffset = calibration ? Number(calibration.lower_offset ?? 0) : 0;
+  const upperOffset = calibration ? Number(calibration.upper_offset ?? 0) : 0;
+
+  const chartRows = origins
+    .filter((o) => seriesOf(o) === activeSeries)
+    .map((o, index) => {
+      const pred = o.y_pred ?? null;
+      const lower = pred != null && calibration ? pred - lowerOffset : null;
+      const upper = pred != null && calibration ? pred + upperOffset : null;
+      return {
+        label: String(o.target_time ?? index + 1),
+        step: o.target_step ?? index + 1,
+        actual: o.y_true ?? null,
+        predicted: pred,
+        lower,
+        span: lower != null && upper != null ? Math.max(0, upper - lower) : 0,
+        baseline: o.baselines?.naive ?? o.baselines?.seasonal_naive ?? null,
+      };
+    });
+
+  const leaderboard = result
+    ? [
+        { name: "model", role: "candidate", metrics: result.pooled },
+        ...Object.entries(result.baselines ?? {}).map(([name, metrics]) => ({
+          name,
+          role: BASELINE_LABELS[name] ?? name,
+          metrics,
+        })),
+      ]
+    : [];
+  const horizonRows = result
+    ? Object.entries(result.per_horizon ?? {}).map(([stepKey, metrics]) => ({
+        step: Number(stepKey),
+        metrics,
+      }))
+    : [];
+
+  return (
+    <Card
+      title="Rolling-origin backtest"
+      sub="Walk origins forward in time, refit per policy, and score multi-step forecasts against naive baselines on the identical origins. Runs as a background job."
+    >
+      <div className="row">
+        <BundlePicker bundles={bundles} value={modelVersion} onChange={setModelVersion} labelOf={labelOf} />
+        <NumberField label="Horizon" value={horizon} onChange={setHorizon} min={1} max={100} />
+        <NumberField label="Origins" value={nSplits} onChange={setNSplits} min={1} max={50} />
+        <NumberField label="Step (0=horizon)" value={step} onChange={setStep} min={0} max={100} />
+        <NumberField label="Min train (0=default)" value={minTrain} onChange={setMinTrain} min={0} max={10000} />
+      </div>
+      <div className="row" style={{ marginTop: 8 }}>
+        <label className="checkbox-row" style={{ marginBottom: 12 }}>
+          <input type="checkbox" checked={expanding} onChange={(e) => setExpanding(e.target.checked)} />
+          expanding window
+        </label>
+        <div className="field fixed" style={{ flex: "0 1 170px", minWidth: 140 }}>
+          <label>Refit policy</label>
+          <select value={refit} onChange={(e) => setRefit(e.target.value)}>
+            <option value="every_fold">every_fold</option>
+            <option value="first">first</option>
+            <option value="every:2">every:2</option>
+            <option value="every:3">every:3</option>
+            <option value="every:5">every:5</option>
+          </select>
+        </div>
+        <NumberField label="α (interval miss)" value={Math.round(alpha * 100)} onChange={(v) => setAlpha(Math.min(0.99, Math.max(0.001, v / 100)))} min={1} max={99} />
+        <div className="field fixed" style={{ flex: "0 1 170px", minWidth: 140 }}>
+          <label>Interval method</label>
+          <select value={intervalMethod} onChange={(e) => setIntervalMethod(e.target.value)}>
+            <option value="absolute">absolute (symmetric)</option>
+            <option value="asymmetric">asymmetric</option>
+          </select>
+        </div>
+        <NumberField label="Seasonality m" value={seasonality} onChange={setSeasonality} min={1} max={1000} />
+      </div>
+
+      <div className="row" style={{ marginTop: 8 }}>
+        <div className="field" style={{ flex: "1 1 480px" }}>
+          <label>Features (make_supervised kwargs, JSON)</label>
+          <textarea
+            className="mono"
+            rows={3}
+            spellCheck={false}
+            value={featuresJson}
+            onChange={(e) => setFeaturesJson(e.target.value)}
+            placeholder='{"lags": [4, 8], "rolling": [[4, "mean"]]}'
+          />
+          <span className="hint">
+            Must reproduce the bundle's feature design (lags/rolling/diffs/calendar/fourier/exogenous) —
+            a wider or narrower design makes every origin fail on feature width.
+          </span>
+        </div>
+      </div>
+
+      {featuresError && <div className="error-note">{featuresError}</div>}
+
+      <div className="row" style={{ marginTop: 8 }}>
+        <button
+          className="btn primary"
+          disabled={submit.isPending || bundles.length === 0}
+          onClick={() => {
+            let features: Record<string, unknown> = {};
+            try {
+              const parsed = JSON.parse(featuresJson || "{}");
+              if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+                throw new Error("expected a JSON object");
+              }
+              features = parsed as Record<string, unknown>;
+            } catch (err) {
+              setFeaturesError(`Invalid features JSON: ${err instanceof Error ? err.message : String(err)}`);
+              return;
+            }
+            setFeaturesError(null);
+            submit.mutate(features);
+          }}
+        >
+          {submit.isPending ? "Submitting…" : "Run backtest"}
+        </button>
+      </div>
+
+      {submit.isError && <ErrorNote error={submit.error} />}
+
+      {jobId && (
+        <JobTracker
+          jobId={jobId}
+          onResult={(r) => {
+            const parsed = asBacktestResult(r);
+            if (parsed) setResult(parsed);
+          }}
+        />
+      )}
+
+      {result && (
+        <>
+          <div className="stat-row">
+            <Stat label="MAE (pooled)" value={fmtNum(metricOf(result.pooled, "mae"))} sub={`${origins.length} origin records`} />
+            <Stat label="RMSE (pooled)" value={fmtNum(metricOf(result.pooled, "rmse"))} />
+            <Stat
+              label="MASE"
+              value={fmtNum(metricOf(result.pooled, "mase"))}
+              sub="1 = seasonal-naive parity; >1 is worse"
+            />
+            <Stat
+              label="Intervals"
+              value={result.intervals?.available ? `${((1 - alpha) * 100).toFixed(0)}%` : "none"}
+              sub={result.intervals?.available ? `${intervalMethod}, α=${alpha}` : "calibration unavailable"}
+            />
+          </div>
+
+          {chartRows.length > 0 && (
+            <>
+              <div className="row" style={{ marginBottom: 4 }}>
+                {seriesKeys.length > 1 && (
+                  <div className="field fixed" style={{ flex: "0 1 220px", minWidth: 160 }}>
+                    <label>Series</label>
+                    <select value={activeSeries} onChange={(e) => setSeriesPick(e.target.value)}>
+                      {seriesKeys.map((key) => (
+                        <option key={key} value={key}>
+                          {key}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+              <h4 className="hm-title">Forecast vs actual — {activeSeries}</h4>
+              <div style={{ height: 300 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart data={chartRows} margin={{ top: 8, right: 16, bottom: 4, left: 0 }}>
+                    <CartesianGrid stroke="#232c40" strokeDasharray="3 3" />
+                    <XAxis dataKey="label" tick={{ fill: "#8b95ab", fontSize: 11 }} />
+                    <YAxis tick={{ fill: "#8b95ab", fontSize: 12 }} domain={["auto", "auto"]} />
+                    <Tooltip contentStyle={{ background: "#131926", border: "1px solid #232c40" }} />
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                    {calibration && (
+                      <Area
+                        dataKey="lower"
+                        stackId="band"
+                        stroke="none"
+                        fill="transparent"
+                        isAnimationActive={false}
+                        legendType="none"
+                        name="interval floor"
+                      />
+                    )}
+                    {calibration && (
+                      <Area
+                        dataKey="span"
+                        stackId="band"
+                        stroke="none"
+                        fill="#4f8cff"
+                        fillOpacity={0.18}
+                        isAnimationActive={false}
+                        name="prediction interval"
+                      />
+                    )}
+                    <Line type="monotone" dataKey="actual" stroke="#e2e8f0" strokeWidth={2} dot={{ r: 2 }} name="actual" connectNulls isAnimationActive={false} />
+                    <Line type="monotone" dataKey="predicted" stroke="#4f8cff" strokeWidth={2} dot={{ r: 2 }} name="model" connectNulls isAnimationActive={false} />
+                    <Line type="monotone" dataKey="baseline" stroke="#fbbf24" strokeDasharray="4 4" strokeWidth={1.5} dot={false} name="naive" connectNulls isAnimationActive={false} />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+            </>
+          )}
+
+          {leaderboard.length > 0 && (
+            <>
+              <h4 className="hm-title">Model vs naive baselines (same origins)</h4>
+              <Table<{ name: string; role: string; metrics: Record<string, number | null | undefined> }>
+                columns={["Method", "Role", "MAE", "RMSE", "Bias", "sMAPE (%)", "MASE"]}
+                rows={leaderboard}
+                keyOf={(row) => row.name}
+                render={(row) => [
+                  <td key="n" className="mono">{row.name}</td>,
+                  <td key="r">{row.role}</td>,
+                  <td key="mae">{fmtNum(metricOf(row.metrics, "mae"))}</td>,
+                  <td key="rmse">{fmtNum(metricOf(row.metrics, "rmse"))}</td>,
+                  <td key="bias">{fmtNum(metricOf(row.metrics, "bias"))}</td>,
+                  <td key="smape">{fmtNum(metricOf(row.metrics, "smape"))}</td>,
+                  <td key="mase">{fmtNum(metricOf(row.metrics, "mase"))}</td>,
+                ]}
+              />
+            </>
+          )}
+
+          {horizonRows.length > 0 && (
+            <>
+              <h4 className="hm-title">Error by horizon step</h4>
+              <Table<{ step: number; metrics: Record<string, number | null | undefined> }>
+                columns={["Step", "MAE", "RMSE", "Bias", "MASE"]}
+                rows={horizonRows}
+                keyOf={(row) => row.step}
+                render={(row) => [
+                  <td key="s">{fmtNum(row.step)}</td>,
+                  <td key="mae">{fmtNum(metricOf(row.metrics, "mae"))}</td>,
+                  <td key="rmse">{fmtNum(metricOf(row.metrics, "rmse"))}</td>,
+                  <td key="bias">{fmtNum(metricOf(row.metrics, "bias"))}</td>,
+                  <td key="mase">{fmtNum(metricOf(row.metrics, "mase"))}</td>,
+                ]}
+              />
+            </>
+          )}
+
+          {(result.skipped_series ?? []).length > 0 && (
+            <p className="muted">
+              Skipped (too short for the requested geometry): {(result.skipped_series ?? []).join(", ")}
+            </p>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
 export default function EvaluationPage() {
   const { task } = useTask();
 
@@ -588,6 +933,8 @@ export default function EvaluationPage() {
       {bundles.length > 0 && (
         <>
           <NestedCVCard task={task} bundles={bundles} labelOf={bundleLabelOf} />
+
+          <BacktestCard task={task} bundles={bundles} labelOf={bundleLabelOf} />
 
           <CurvesCard task={task} bundles={bundles} labelOf={bundleLabelOf} />
 

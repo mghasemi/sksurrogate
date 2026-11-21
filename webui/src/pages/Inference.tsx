@@ -6,6 +6,8 @@ import { Download } from "lucide-react";
 import {
   REGISTRY_STATES,
   findBestBundle,
+  forecast,
+  forecastServed,
   getDatasetMetadata,
   getEffectiveApiBase,
   getServing,
@@ -19,9 +21,12 @@ import {
   stopServing,
 } from "../api/client";
 import type {
+  ForecastRequest,
+  ForecastResponse,
   PredictRequest,
   PredictResponse,
   PredictBatchResponse,
+  ServedForecastRequest,
   ServedPredictRequest,
   ServedPredictResponse,
 } from "../api/client";
@@ -69,6 +74,7 @@ export default function InferencePage() {
         <>
           <ServingCard task={task} versions={versions} partitions={partitions} />
           <PredictConsole key={`predict-${task}`} task={task} versions={versions} partitions={partitions} initialVersion={initialVersion} />
+          <ForecastConsole key={`forecast-${task}`} task={task} versions={versions} initialVersion={initialVersion} />
           <BatchRun key={`batch-${task}`} task={task} versions={versions} partitions={partitions} initialVersion={initialVersion} />
         </>
       )}
@@ -318,6 +324,210 @@ function PredictConsole({ task, versions, partitions, initialVersion }: { task: 
           <IgnoredColumns columns={result.ignored_columns} />
           <h3 style={{ marginTop: 14 }}>Predictions</h3>
           <JsonView data={result.predictions} />
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/** Parse pasted CSV (header row + data rows) into history records; numbers are coerced. */
+function parseHistoryCsv(text: string): { rows: Array<Record<string, unknown>>; error?: string } {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length < 2) {
+    return { rows: [], error: "Paste a header row plus at least one observation row." };
+  }
+  const header = lines[0].split(",").map((cell) => cell.trim());
+  const rows = lines.slice(1).map((line) => {
+    const cells = line.split(",");
+    const row: Record<string, unknown> = {};
+    header.forEach((name, index) => {
+      const raw = (cells[index] ?? "").trim();
+      // Numeric coercion only when the cell looks numeric — epoch timestamps and
+      // ISO dates both survive as their original text.
+      row[name] = raw !== "" && /^-?\d/.test(raw) && Number.isFinite(Number(raw)) ? Number(raw) : raw;
+    });
+    return row;
+  });
+  return { rows };
+}
+
+function downloadCsv(
+  filename: string,
+  header: string[],
+  rows: Array<Array<string | number | null>>,
+): void {
+  const escape = (value: string | number | null) => {
+    const text = value == null ? "" : String(value);
+    return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+  const text = [header.join(","), ...rows.map((row) => row.map(escape).join(","))].join("\n");
+  const url = URL.createObjectURL(new Blob([text], { type: "text/csv;charset=utf-8" }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/**
+ * Forecast console for temporal bundles (plan phase P7.4).
+ *
+ * The multi-step counterpart of the predict console: the payload is *history*
+ * rows (one series), not feature rows — the bundle's stored design validates
+ * it. Works against an exact model/alias pick or the pinned serving model (the
+ * deployment path, which answers 409 while nothing is pinned). Results can be
+ * downloaded as the classic time/prediction/lower/upper CSV.
+ */
+function ForecastConsole({
+  task,
+  versions,
+  initialVersion,
+}: {
+  task: string;
+  versions: string[];
+  initialVersion: string;
+}) {
+  const inputs = useModelInputs(initialVersion);
+  const labelOf = useBundleLabel(task);
+  const [historyCsv, setHistoryCsv] = useState("");
+  const [horizon, setHorizon] = useState(1);
+  const [useServed, setUseServed] = useState(false);
+  const [inputError, setInputError] = useState<string | null>(null);
+  const [result, setResult] = useState<ForecastResponse | null>(null);
+
+  // Default to the newest bundle: a forecast with no model id is a 400, and a
+  // blank picker reads like a broken card rather than "pick a model".
+  useEffect(() => {
+    if (inputs.mode === "version" && !inputs.modelVersion && versions.length > 0) {
+      inputs.setModelVersion(versions[0]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inputs.mode, inputs.modelVersion, versions]);
+
+  const mut = useMutation({
+    mutationFn: (vars: { body: ForecastRequest | ServedForecastRequest; served: boolean }) =>
+      vars.served ? forecastServed(task, vars.body) : forecast(task, vars.body),
+    onSuccess: setResult,
+  });
+
+  const submit = () => {
+    const { rows, error } = parseHistoryCsv(historyCsv);
+    setInputError(error ?? null);
+    if (error) return;
+    const body: ForecastRequest = {
+      history: rows,
+      horizon: Math.max(1, horizon),
+    };
+    if (!useServed) {
+      if (inputs.mode === "version") body.model_version = inputs.modelVersion || null;
+      else body.alias = inputs.alias;
+    }
+    mut.mutate({ body: useServed ? { history: rows, horizon: body.horizon } : body, served: useServed });
+  };
+
+  const rows =
+    result?.times.map((time, index) => ({
+      time,
+      prediction: result.predictions[index] ?? null,
+      lower: result.lower_bounds?.[index] ?? null,
+      upper: result.upper_bounds?.[index] ?? null,
+    })) ?? [];
+
+  return (
+    <Card
+      title="Forecast console (temporal bundles)"
+      sub="Multi-step path: send one series of past observations as CSV (header + rows) and a horizon. The bundle's stored temporal design validates the history — a too-short or out-of-order series is refused with the reason, never silently padded."
+    >
+      <ModelPicker task={task} versions={versions} inputs={inputs} />
+      <label className="checkbox-row">
+        <input type="checkbox" checked={useServed} onChange={(e) => setUseServed(e.target.checked)} />
+        Use the pinned serving model (ignore the picker above; 409 while nothing is pinned)
+      </label>
+
+      <div className="row top" style={{ marginTop: 8 }}>
+        <div className="field" style={{ flex: "1 1 480px" }}>
+          <label>History CSV</label>
+          <textarea
+            className="mono"
+            rows={7}
+            spellCheck={false}
+            placeholder={"time,value\n2026-01-01,10.5\n2026-01-02,10.9\n2026-01-03,11.2"}
+            value={historyCsv}
+            onChange={(e) => setHistoryCsv(e.target.value)}
+          />
+        </div>
+        <div className="field fixed" style={{ flex: "0 1 130px", minWidth: 100 }}>
+          <label>Horizon (steps)</label>
+          <input
+            type="number"
+            min={1}
+            step={1}
+            value={horizon}
+            onChange={(e) => setHorizon(Number(e.target.value))}
+          />
+        </div>
+      </div>
+
+      {inputError && <div className="error-note">{inputError}</div>}
+      {mut.isError && <ErrorNote error={mut.error} />}
+
+      <button className="btn primary" disabled={!task || mut.isPending} onClick={submit}>
+        {mut.isPending ? "Forecasting…" : "Run forecast"}
+      </button>
+
+      {result && (
+        <div style={{ marginTop: 14 }}>
+          <div className="grid cols-3">
+            <Stat label="Model version" value={labelOf(result.model_version)} />
+            <Stat
+              label="Strategy"
+              value={result.strategy}
+              sub={useServed && result.requested ? `served via ${result.resolve_mode}: ${result.requested}` : "direct or recursive per bundle"}
+            />
+            <Stat label="Horizon" value={fmtNum(result.horizon)} sub={`${fmtNum(result.metrics.latency_ms)} ms`} />
+          </div>
+          {!result.lower_bounds && (
+            <p className="muted">{result.interval_note ?? "No interval calibration on this bundle."}</p>
+          )}
+          <h3 style={{ marginTop: 14 }}>Forecast</h3>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>Step</th>
+                <th>Time</th>
+                <th>Prediction</th>
+                <th>Lower</th>
+                <th>Upper</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, index) => (
+                <tr key={`${row.time}-${index}`}>
+                  <td>{index + 1}</td>
+                  <td className="mono">{row.time}</td>
+                  <td>{fmtNum(row.prediction)}</td>
+                  <td>{fmtNum(row.lower)}</td>
+                  <td>{fmtNum(row.upper)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <button
+            className="btn"
+            style={{ marginTop: 10 }}
+            onClick={() =>
+              downloadCsv(
+                `forecast-${task}-${result.model_version}.csv`,
+                ["time", "prediction", "lower", "upper"],
+                rows.map((row) => [row.time, row.prediction, row.lower, row.upper]),
+              )
+            }
+          >
+            <Download size={14} /> Download forecast CSV
+          </button>
         </div>
       )}
     </Card>
