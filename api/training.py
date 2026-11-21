@@ -132,7 +132,10 @@ def standard_scoring_options():
         groups[_scoring_family(name)].append({"value": name, "label": _scoring_label(name)})
     # Project-defined metrics that scikit-learn does not ship. MASE is not here on
     # purpose: it needs the in-sample history of the fold, so it is a backtest
-    # metric (mltrack.backtest), not a (y_true, y_pred) scorer.
+    # metric (mltrack.backtest), not a (y_true, y_pred) scorer. ``rmse_scaled``
+    # needs the same in-sample scale and ``winkler_score`` needs interval bounds,
+    # so neither can be expressed as a scorer signature; all three are documented
+    # in docs/forecasting.rst ("MASE is not a scikit-learn scorer").
     forecast = [
         {"value": "neg_smape", "label": "sMAPE (%) (negated)"},
     ]

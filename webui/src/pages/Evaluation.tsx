@@ -454,6 +454,7 @@ const BASELINE_LABELS: Record<string, string> = {
   seasonal_naive: "seasonal naive",
   drift: "drift",
   mean: "training mean",
+  historical_mean_by_series: "per-series mean",
 };
 
 function metricOf(block: Record<string, number | null | undefined> | undefined, key: string): number | null {
@@ -487,6 +488,7 @@ function BacktestCard({
   const [minTrain, setMinTrain] = useState(0); // 0 → splitter default
   const [expanding, setExpanding] = useState(true);
   const [refit, setRefit] = useState("every_fold");
+  const [strategy, setStrategy] = useState<"direct" | "recursive">("direct");
   const [alpha, setAlpha] = useState(0.1);
   const [intervalMethod, setIntervalMethod] = useState("absolute");
   const [seasonality, setSeasonality] = useState(1);
@@ -508,6 +510,7 @@ function BacktestCard({
         min_train: minTrain > 0 ? minTrain : null,
         expanding,
         refit,
+        strategy,
         alpha,
         interval_method: intervalMethod,
         seasonality: Math.max(1, seasonality),
@@ -548,14 +551,16 @@ function BacktestCard({
       };
     });
 
+  // Plan P7.2: the naive baselines are pinned above the candidate so a model
+  // that loses to "last value" cannot be read as the winner of the table.
   const leaderboard = result
     ? [
-        { name: "model", role: "candidate", metrics: result.pooled },
         ...Object.entries(result.baselines ?? {}).map(([name, metrics]) => ({
           name,
-          role: BASELINE_LABELS[name] ?? name,
+          role: `${BASELINE_LABELS[name] ?? name} · naive`,
           metrics,
         })),
+        { name: "model", role: "candidate", metrics: result.pooled },
       ]
     : [];
   const horizonRows = result
@@ -590,6 +595,16 @@ function BacktestCard({
             <option value="every:2">every:2</option>
             <option value="every:3">every:3</option>
             <option value="every:5">every:5</option>
+          </select>
+        </div>
+        <div className="field fixed" style={{ flex: "0 1 190px", minWidth: 160 }}>
+          <label>Strategy</label>
+          <select
+            value={strategy}
+            onChange={(e) => setStrategy(e.target.value as "direct" | "recursive")}
+          >
+            <option value="direct">direct (y at t+h)</option>
+            <option value="recursive">recursive (replay h steps)</option>
           </select>
         </div>
         <NumberField label="α (interval miss)" value={Math.round(alpha * 100)} onChange={(v) => setAlpha(Math.min(0.99, Math.max(0.001, v / 100)))} min={1} max={99} />

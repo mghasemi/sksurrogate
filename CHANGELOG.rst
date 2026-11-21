@@ -276,6 +276,40 @@ Monitoring windows, benchmark DGPs and release hygiene (time-series phase 8)
 * **Tests** — ``tests/test_temporal_monitoring.py`` (10) and
   ``tests/test_forecast_dgps.py`` (6).
 
+Forecasting review pass (P1--P8 gap closure)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Recursive backtesting** — ``mltrack.backtest(strategy="recursive")`` now evaluates a
+  recursive design: it trains on :math:`y_{t+1}`, replays the horizon from each cutoff by
+  feeding predictions back, and records one origin plus ``horizon`` step records. The
+  replay shares ``temporal.recursive_steps`` with serving, so offline and served forecasts
+  agree by construction. ``POST /api/evaluation/{task}/backtest`` accepts ``strategy`` and
+  the Evaluation card exposes it.
+* **Defect fixed by that refactor** — recursive serving predicted from an *appended empty
+  row*, so its first step was really :math:`y_{T+2}` (and it over-extended by one step).
+  Serving now reads features at the current last origin before appending; the oracle in
+  ``tests/test_forecast_inference.py`` encoded the old error and is corrected.
+* **Temporal baseline bundles (P4.2)** — ``fit_baseline_bundle`` gains the branch it was
+  missing: on a task with a declared temporal spec it builds a
+  ``ForecastFeatureBuilder`` pipeline, stores the serving geometry on the bundle, and
+  records ``baseline_scores`` from a rolling-origin backtest (``refit="first"``, seasonal
+  naive always scored). Previously the route produced a tabular bundle that could not
+  answer ``predict_forecast`` at all. Tests:
+  ``tests/test_temporal_baseline_bundle.py``.
+* **Baselines** — ``historical_mean_by_series`` joins ``BASELINE_METHODS`` as the explicit
+  per-series mean (identical to ``mean`` because every call conditions on one series'
+  history; documented and tested rather than silently duplicated).
+* **Timings (P3.2)** — fold and origin records carry ``fit_time`` (0 when a fit was
+  reused) and ``predict_time``.
+* **Baselines on the bundle record** — the backtest route persists ``baselines`` in the
+  bundle's evaluation entry and ``baseline_scores`` at bundle level.
+* **Docs accuracy** — ``docs/mlops-roadmap.md`` no longer claims time-series split support
+  is pending; ``docs/forecasting.rst`` documents recursive evaluation, the baseline-bundle
+  route, the five baselines, and why ``rmse_scaled``/``winkler_score``/``mase`` are not
+  scikit-learn scorers. The Evaluation leaderboard pins the naive rows above the candidate.
+* **Packaging** — ``TIME_SERIES_PLAN.md`` is now listed in ``.gitignore``; the plan doc was
+  untracked but not ignored, so it was one ``git add`` away from publication.
+
 Pipeline-space benchmark track (C-space)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

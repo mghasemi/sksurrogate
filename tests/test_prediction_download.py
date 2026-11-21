@@ -135,3 +135,82 @@ def test_artifacts_are_namespaced_per_task(env):
     assert other.status_code == 200, other.text
     # Each URL returns its own task's file — the contents must not be crossed.
     assert own.content != other.content
+
+
+# ---------------------------------------------------------------------------
+# Forecast payload → the classic time,prediction,lower,upper CSV
+# ---------------------------------------------------------------------------
+
+def _temporal_bundle():
+    """A minimal direct-horizon temporal bundle: ``y = 2t`` with lag 2."""
+    import numpy as np
+    from sklearn.linear_model import LinearRegression as _LR
+    from sklearn.pipeline import Pipeline
+
+    from SKSurrogate import ForecastFeatureBuilder, TemporalServeState, TemporalSpec
+
+    spec = TemporalSpec(time_column="time", horizon=2)
+    frame = pd.DataFrame({"time": np.arange(1.0, 41.0)})
+    frame["y"] = 2.0 * frame["time"]
+    builder = ForecastFeatureBuilder(spec=spec, target="y", lags=[2])
+    builder.fit(frame)
+    design = builder.build(frame)
+    pipeline = Pipeline(
+        [("features", builder), ("model", _LR().fit(design.X, design.y))]
+    )
+    bundle = ModelBundle(
+        pipeline,
+        task_name=TASK,
+        schema={},
+        metrics={},
+        temporal=TemporalServeState.from_parts(
+            spec, "y", builder, strategy="direct"
+        ).to_dict(),
+    )
+    return bundle, frame
+
+
+def test_forecast_payload_round_trips_to_the_download_csv(tmp_path, monkeypatch):
+    """The Inference page's forecast download is built from this payload.
+
+    ``docs/forecasting.rst`` promises ``time,prediction,lower,upper``; the client
+    writes exactly those columns from ``times`` / ``predictions`` /
+    ``lower_bounds`` / ``upper_bounds``. This test pins that the server supplies
+    every column (with nulls when the bundle is uncalibrated), so the download
+    cannot silently lose a field.
+    """
+    _open_root(tmp_path, monkeypatch)
+    bundle, frame = _temporal_bundle()
+    version = ModelRegistry(settings.registry_dir).register(bundle)
+    client = TestClient(app)
+    history = [
+        {"time": float(row.time), "y": float(row.y)}
+        for row in frame.itertuples(index=False)
+    ]
+
+    response = client.post(
+        f"/api/inference/{TASK}/forecast",
+        json={"model_version": version, "history": history, "horizon": 2},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    predictions = body["predictions"]
+    lower = body["lower_bounds"] or [None] * len(predictions)
+    upper = body["upper_bounds"] or [None] * len(predictions)
+    table = pd.DataFrame(
+        {
+            "time": body["times"],
+            "prediction": predictions,
+            "lower": lower,
+            "upper": upper,
+        }
+    )
+    lines = table.to_csv(index=False).splitlines()
+    assert lines[0] == "time,prediction,lower,upper"
+    assert len(table) == 2
+    # y = 2t: the next two values after t=40 are 82 and 84.
+    assert float(table["prediction"].iloc[0]) == pytest.approx(82.0)
+    assert float(table["prediction"].iloc[1]) == pytest.approx(84.0)
+    # Uncalibrated bundle: the columns exist and are empty, never fabricated.
+    assert table["lower"].isna().all() and table["upper"].isna().all()

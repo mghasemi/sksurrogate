@@ -267,12 +267,22 @@ What the result guarantees:
 * **Persistence.** The full result is stored in task metadata under
   ``backtest:<config hash>`` unless ``store=False``; per-origin records are capped
   by ``max_records`` with an ``origins_truncated`` count.
+* **Timings.** Every fold record carries ``fit_time`` and ``predict_time`` in
+  seconds (``fit_time`` is 0 on folds that reused the previous fit), and each origin
+  record repeats both, so the documented cost of a run can be checked against what it
+  actually cost.
 
-Only the **direct** strategy is evaluated by ``backtest``. A recursive forecast can be
-*served* — a format-v2 bundle re-runs its one-step model across the horizon, feeding
-each prediction back as the next origin (see :ref:`forecasting-serving`) — but rolling-origin *evaluation* of recursive designs is not implemented yet; passing
-``strategy="recursive"`` to ``backtest`` raises rather than silently returning
-one-step numbers labelled as multi-step.
+Both strategies are evaluated. ``strategy="direct"`` trains one model on labels
+$y_{t+h}$; ``strategy="recursive"`` trains on $y_{t+1}$ and **replays the horizon** from
+each origin by feeding every prediction back into the lag history. Recursive folds
+share :func:`~SKSurrogate.temporal.recursive_steps` with serving, so a fold's
+predictions for an origin and the bundle's ``predict_forecast`` output for the same
+origin agree to machine precision (this is asserted in
+``tests/test_backtest.py``). A recursive fold records one origin and ``horizon``
+step records (``target_step`` 1..h), which is what makes the per-horizon table
+meaningful instead of a single row. A custom ``scoring=`` callable needs a feature
+matrix, which a recursive fold does not keep, so its fold score is recorded as
+``None`` rather than faked; pooled metrics and every baseline are still computed.
 
 **Feature configuration must match how the model was trained.** ``backtest`` refits
 the estimator on the design it builds, so a bundle trained on a different feature
@@ -316,17 +326,20 @@ series counts once). The per-series block is always returned alongside it.
 Baselines
 ~~~~~~~~~
 
-Every backtest scores four naive baselines on **the same origins** as the model:
+Every backtest scores five naive baselines on **the same origins** as the model:
 
 * ``naive`` — the last observation, $\hat y_{T+h} = y_T$;
 * ``seasonal_naive`` — the same phase one season earlier,
   $\hat y_{T+h} = y_{T+h-m\lceil h/m\rceil}$ (for $h=m$ this is $y_T$);
 * ``drift`` — last value plus the average change per step, times $h$;
-* ``mean`` — the arithmetic mean of the history.
+* ``mean`` — the arithmetic mean of the history;
+* ``historical_mean_by_series`` — the same mean, named explicitly. A backtest always
+  conditions on one series' own history, so there is no pooled cross-series mean to
+  distinguish; the two names denote one computation, and a test pins their equality.
 
 ``baseline_prediction(history, method, horizon, seasonality)`` computes any of them
 from an ordered history array; ``baselines=(...)`` on ``backtest`` selects which are
-scored (default: all four). A model that cannot beat ``seasonal_naive`` on MASE has
+scored (default: all five). A model that cannot beat ``seasonal_naive`` on MASE has
 not earned the word "forecast", and the result says so:
 
 .. code-block:: python
@@ -343,13 +356,29 @@ the benchmark (``beats_baseline: false``, ``worse_than_baseline: false``), while
 ``unranked`` instead of being sorted to the bottom, so a broken run cannot look like
 a bad one.
 
+Baseline bundles
+~~~~~~~~~~~~~~~~
+
+``POST /api/bundles/{task}/train-baseline`` adapts to a declared temporal spec: instead
+of a scaler-plus-regressor over feature columns, the bundle's model is a ``Pipeline``
+whose first step is ``ForecastFeatureBuilder``, its record carries the serving
+geometry (``temporal``), and its ``metrics`` / ``baseline_scores`` come from a
+rolling-origin backtest with ``refit="first"`` — so seasonal naive is always measured
+next to the chosen model on identical origins. Such a bundle can be served directly
+through :ref:`forecast-inference`; a tabular baseline bundle is unchanged and has no
+``temporal`` block. The request accepts ``horizon``, ``features``, ``strategy``,
+``seasonality`` and ``n_splits``.
+
 MASE is not a scikit-learn scorer
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 MASE needs the in-sample history of each training window, and a scikit-learn scorer
 only ever sees ``(y_true, y_pred)``. Rather than invent a denominator, MASE is
 computed by the rolling-origin backtest, where the training window of every origin is
-known. For plain CV and learning curves, **sMAPE** is available as
+known. ``rmse_scaled`` has the same requirement and is absent for the same reason;
+``winkler_score`` needs ``(lower, upper)`` bounds, which a scorer's signature cannot
+carry. All three live in ``SKSurrogate.forecast_metrics`` and are applied to stored
+backtest predictions. For plain CV and learning curves, **sMAPE** is available as
 ``neg_smape`` (sign-flipped, as scikit-learn scorers are), and pinball loss via
 ``neg_mean_pinball_loss`` with an explicit ``pinball_alpha``.
 
@@ -562,12 +591,15 @@ declaration exists, the splitter picker offers only order-respecting splitters
 
 **Evaluation → Rolling-origin backtest.** Pick a bundle, horizon, origin count, step,
 minimum training length, window mode (expanding/sliding), refit policy
-(``every_fold``/``first``/``every:k``), interval alpha and method, seasonality, and the
+(``every_fold``/``first``/``every:k``), strategy (``direct`` or ``recursive``), interval
+alpha and method, seasonality, and the
 ``make_supervised`` feature configuration as JSON — the last one must reproduce the
 bundle's feature design, since the backtest materializes its own design matrix and
 refits the bare estimator. The result shows pooled MAE/RMSE/MASE with interval
 provenance, a per-horizon error table, and a candidate-vs-baseline leaderboard where
-every naive baseline is scored on the identical origins; MASE of 1 is parity with the
+every naive baseline is scored on the identical origins (the naive rows are pinned above
+the candidate, so a model that loses to "last value" cannot be read as the winner);
+MASE of 1 is parity with the
 seasonal-naive scale, above 1 is worse. The fan chart plots actual and predicted values
 for the selected panel series with the stored conformal band.
 

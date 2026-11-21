@@ -334,7 +334,7 @@ Dependencies: all prior phases.
 - Implemented the first Phase 2 milestone: explicit train/validation/test dataset retrieval by partition via `get_data(partition=...)` and `dataset_splits()`.
 - Completed the nested CV evaluation milestone: `mltrack.nested_cv_evaluation()` now uses the train split for inner model selection and outer-fold evaluation, and the validation split for the final held-out score.
 - Added group-aware handling for `GroupKFold` and safe fallbacks for insufficient groups so grouped evaluation remains valid when a fold becomes too small.
-- Current state is Phase 1 complete and Phase 2 materially complete for KFold/StratifiedKFold/GroupKFold evaluation paths, with repeated CV, metric reporting, and time-series split support still pending.
+- Current state is Phase 1 complete and Phase 2 materially complete for KFold/StratifiedKFold/GroupKFold evaluation paths, with repeated CV and metric reporting still pending. Time-series split (`TimeSeriesSplit`, `RollingOriginSplit`) *is* supported, and since the forecasting layer landed it is no longer splitter-only: a task can declare a temporal spec, build leakage-safe features, run a rolling-origin backtest with naive baselines, and serve multi-step forecasts — see `docs/forecasting.rst`.
 - Continued Phase 4 by adding pre-fit search-space validation for parameter names, bounds, categorical domains, and representative estimator configuration.
 - Added forbidden parameter rules using mappings or callables; rejected candidates are recorded as `invalid` without entering CV fitting.
 - Added structured fold failure records containing failure type, message, traceback, sampled parameters, and fold index, plus estimator-level failure-rate summaries in `failure_summary_` and `cv_results_`.

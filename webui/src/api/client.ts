@@ -1829,6 +1829,8 @@ export interface BacktestRequest {
   expanding?: boolean;
   /** ``every_fold`` | ``first`` | ``every:k`` */
   refit?: string;
+  /** ``direct`` labels y_{t+horizon}; ``recursive`` replays the horizon one step at a time. */
+  strategy?: "direct" | "recursive";
   scoring?: string | null;
   train_partition?: string;
   /** make_supervised kwargs (lags/rolling/diffs/calendar/fourier/exogenous). */
