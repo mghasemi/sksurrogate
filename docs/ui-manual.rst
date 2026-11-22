@@ -891,6 +891,12 @@ it empty only when you intentionally do not have a holdout.
 
 Select a model version and click **Inspect** to review its metrics, feature
 schema, dataset fingerprint, dependencies, audit events, and lineage. A
+**Trained pipeline** diagram shows the stored estimator using scikit-learn's
+visualization, including nested components where supported. Expand a block to
+inspect its parameters; a custom estimator may appear as a single block. The
+diagram is isolated from the application, so its documentation links and copy
+controls are disabled.
+
 ``ModelBundle`` packages the fitted estimator and its metadata; the bundle is
 saved as a versioned ``.bundle`` file. You can also:
 

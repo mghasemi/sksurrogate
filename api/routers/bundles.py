@@ -474,6 +474,18 @@ def export_run_configuration(task_name: str, model_version: str):
     return run_configuration(task_name, model_version)
 
 
+@router.get("/{task_name}/{model_version}/pipeline")
+def bundle_pipeline(task_name: str, model_version: str):
+    """Render the stored estimator with scikit-learn's pipeline visualization."""
+    from sklearn import config_context
+    from sklearn.utils import estimator_html_repr
+
+    bundle = load_bundle(_bundle_file(task_name, model_version), strict_dependencies=False)
+    with config_context(print_changed_only=False):
+        html = estimator_html_repr(bundle.model)
+    return {"task_name": task_name, "model_version": bundle.model_version, "html": html}
+
+
 @router.get("/{task_name}/{model_version}/report.md")
 def export_run_report(task_name: str, model_version: str):
     """Export a concise Markdown summary of methodology, metrics, uncertainty, and lineage."""

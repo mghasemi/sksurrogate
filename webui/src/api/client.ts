@@ -1418,6 +1418,11 @@ export const listBundles = (task: string) => get<BundleList>(`/api/bundles/${enc
 export const getBundle = (task: string, modelVersion: string) =>
   get<BundleSummary>(`/api/bundles/${encodeURIComponent(task)}/${encodeURIComponent(modelVersion)}`);
 
+export const getBundlePipeline = (task: string, modelVersion: string) =>
+  get<{ task_name: string; model_version: string; html: string }>(
+    `/api/bundles/${encodeURIComponent(task)}/${encodeURIComponent(modelVersion)}/pipeline`,
+  );
+
 /* --- Phase 3.1 model preservation --------------------------------- */
 
 export interface PreservedSnapshot {

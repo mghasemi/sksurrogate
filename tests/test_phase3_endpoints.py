@@ -121,6 +121,31 @@ class TestPhase3Endpoints(unittest.TestCase):
         self.assertEqual(payload["model_version"], GOOD_VERSION)
         self.assertAlmostEqual(payload["value"], 0.91, places=6)
 
+    def test_pipeline_visualization_preserves_nested_steps_and_parameters(self):
+        from sklearn import get_config
+        from sklearn.pipeline import FeatureUnion, Pipeline
+        from sklearn.preprocessing import MinMaxScaler, StandardScaler
+
+        X = self._train.drop(columns=[TARGET])
+        y = self._train[TARGET]
+        model = Pipeline([
+            ("features", FeatureUnion([
+                ("standard", StandardScaler()),
+                ("minmax", MinMaxScaler()),
+            ])),
+            ("unsafe<img src=x>", LogisticRegression(C=2.5, max_iter=300)),
+        ]).fit(X, y)
+        self._save_bundle(model, "nested")
+        previous_config = get_config()["print_changed_only"]
+        result = bundles_router.bundle_pipeline(TASK, "nested")
+        self.assertEqual(get_config()["print_changed_only"], previous_config)
+        self.assertEqual(result["model_version"], "nested")
+        for expected in ("FeatureUnion", "StandardScaler", "MinMaxScaler", "LogisticRegression",
+                         "C=2.5", "fit_intercept=True"):
+            self.assertIn(expected, result["html"])
+        self.assertIn("&lt;img", result["html"])
+        self.assertNotIn("<img src=x>", result["html"])
+
     def test_promote_requires_server_computed_quality_report(self):
         registry_router.register_bundle(TASK, RegisterRequest(model_version=GOOD_VERSION))
 

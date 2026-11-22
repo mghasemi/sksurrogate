@@ -194,6 +194,7 @@ def test_stranger_gets_404_not_403(alice, bob):
     hidden = bob.get("/api/datasets/iris")
     assert hidden.status_code == 404
     assert hidden.json()["detail"] == "No such task: 'iris'"
+    assert bob.get("/api/bundles/iris/model/pipeline").status_code == 404
 
 
 def test_share_grants_view_then_edit(alice, bob):

@@ -313,6 +313,12 @@ dataset fingerprints stay valid.
     Non-finite interval previews are not plotted, but remain in the full results. The files are retained in
     ``reports/<task>/<job>`` under API home and removed by task data reset.
 
+``GET /api/bundles/{task_name}/{model_version}/pipeline``
+    Return scikit-learn's HTML representation of the stored estimator, including
+    nested pipeline components and parameter details where supported. The UI
+    displays the HTML in a sandboxed frame; it must not be injected into the
+    application document. This endpoint requires access to the task.
+
 Ignored columns are dropped wherever a stored partition becomes a feature matrix:
 experiments, pipeline optimization, baselines, explanations, sensitivity and
 correlation analysis, dataset profiles, the Data-page EDA statistics (the

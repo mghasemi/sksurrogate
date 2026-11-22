@@ -10,6 +10,7 @@ import {
   exportMlflowUrl,
   findBestBundle,
   getBundle,
+  getBundlePipeline,
   listBundles,
   listPreservedModels,
   preserveBundle,
@@ -242,6 +243,7 @@ export default function BundlesPage() {
       {selected && (
         <>
           <LineageRail task={task} modelVersion={selected} />
+          <PipelineVisualization task={task} modelVersion={selected} />
           <Card
             title={
               <>
@@ -323,6 +325,66 @@ export default function BundlesPage() {
         </>
       )}
     </div>
+  );
+}
+
+function PipelineVisualization({ task, modelVersion }: { task: string; modelVersion: string }) {
+  const pipelineQ = useQuery({
+    queryKey: ["bundle-pipeline", task, modelVersion],
+    queryFn: () => getBundlePipeline(task, modelVersion),
+    enabled: !!task && !!modelVersion,
+  });
+  const document = pipelineQ.data && `<!doctype html><html><head>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">
+    <style>
+      html { color-scheme: dark; }
+      body { margin: 16px; background: #10141d; color: #e6ebf4; font-family: sans-serif; }
+      .sk-top-container.sk-global {
+        --sklearn-color-text: #e6ebf4;
+        --sklearn-color-text-muted: #aab6cb;
+        --sklearn-color-text-on-default-background: #aab6cb;
+        --sklearn-color-background: #10141d;
+        --sklearn-color-border-box: #607da7;
+        --sklearn-color-line: #607da7;
+        --sklearn-color-icon: #aab6cb;
+        --sklearn-color-unfitted-level-0: #182032;
+        --sklearn-color-unfitted-level-1: #60a5fa;
+        --sklearn-color-unfitted-level-2: #263958;
+        --sklearn-color-unfitted-level-3: #60a5fa;
+        --sklearn-color-fitted-level-0: #182032;
+        --sklearn-color-fitted-level-1: #60a5fa;
+        --sklearn-color-fitted-level-2: #263958;
+        --sklearn-color-fitted-level-3: #60a5fa;
+      }
+      .sk-top-container .estimator-table .parameters-table tr:nth-child(odd) { background: #182032; }
+      .sk-top-container .estimator-table .parameters-table tr:nth-child(even) { background: #202c42; }
+      .sk-top-container .estimator-table .parameters-table tr:hover td { background: #263958; }
+      .sk-top-container .estimator-table .default td,
+      .sk-top-container .estimator-table th { color: #e6ebf4; }
+      .sk-top-container .estimator-table .user-set td { color: #93c5fd; }
+      .sk-top-container .estimator-table .user-set td i,
+      .sk-top-container .estimator-table .default td i { color: inherit; }
+      .copy-paste-icon { display: none !important; }
+      a { pointer-events: none; cursor: default; }
+    </style>
+    </head>${pipelineQ.data.html}</html>`;
+
+  return (
+    <Card title="Trained pipeline" sub="Scikit-learn's diagram shows the stored estimator and its nested components. Expand blocks to inspect parameters; custom estimators may appear as a single block.">
+      {pipelineQ.isLoading && <Loading label="Loading pipeline…" />}
+      {pipelineQ.isError && <ErrorNote error={pipelineQ.error} />}
+      {document && (
+        <>
+          <iframe
+            title={`Pipeline for ${modelVersion}`}
+            sandbox=""
+            srcDoc={document}
+            className="pipeline-frame"
+          />
+          <p className="hint">Documentation links and copy controls are disabled in this isolated view.</p>
+        </>
+      )}
+    </Card>
   );
 }
 

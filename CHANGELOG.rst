@@ -203,6 +203,20 @@ Partition defaults, temporal experiments and the Advanced scorer
   (the weight search maximizes), via a shared ``SKSurrogate/scoring.py`` helper used by
   both the surrogate search and ``optimize_weights``.
 
+Trained-pipeline diagram on the Bundles page
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Added:** selecting a bundle now shows a **Trained pipeline** card above its
+  schema — scikit-learn's own estimator diagram, so the stored pipeline's nesting and
+  (expanded) parameters are visible instead of inferred from the schema. New endpoint
+  ``GET /api/bundles/{task_name}/{model_version}/pipeline`` returns
+  ``sklearn.utils.estimator_html_repr(bundle.model)`` rendered inside
+  ``config_context(print_changed_only=False)``; the UI displays it in a sandboxed
+  ``<iframe srcDoc sandbox="">`` (CSP ``default-src 'none'``, scripts and navigation
+  disabled, no access to the application document) with a dark-theme override of
+  sklearn's ``--sklearn-color-*`` variables. The endpoint sits behind the same
+  ``task_access`` check as the rest of the bundle routes.
+
 Ensembles keep cat_cols members frame-tolerant
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

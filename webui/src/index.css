@@ -200,6 +200,11 @@ textarea.mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-siz
 .btn.danger { background: rgba(248, 113, 113, 0.12); border-color: rgba(248, 113, 113, 0.4); color: var(--err); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+.pipeline-frame {
+  display: block; width: 100%; height: 480px;
+  background: var(--bg-soft); border: 1px solid var(--border); border-radius: 8px;
+}
+
 .eda-report-actions { align-items: stretch; }
 .eda-report-actions > .btn {
   flex: 1 1 180px; min-width: 0; height: auto; min-height: var(--control-h);

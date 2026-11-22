@@ -134,3 +134,13 @@ def test_train_baseline_numeric_keeps_scaler_pipeline(client):
     assert bundle.model.steps[0][1].__class__.__name__ == "StandardScaler"
     transformations = bundle.metadata["reproducibility"]["transformations"]
     assert transformations[0]["class"].endswith("StandardScaler")
+
+    version = trained.json()["model_version"]
+    response = client.get(f"/api/bundles/{NUMERIC_TASK}/{version}/pipeline")
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["model_version"] == version
+    assert "StandardScaler" in result["html"]
+    assert "LinearRegression" in result["html"]
+    assert "fit_intercept=True" in result["html"]
+    assert client.get(f"/api/bundles/{NUMERIC_TASK}/missing/pipeline").status_code == 404
