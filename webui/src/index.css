@@ -507,3 +507,39 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
   0% { transform: translateX(-105%); }
   100% { transform: translateX(300%); }
 }
+
+/* ---------- Visual search-space editor (Experiments → Advanced) ---------- */
+/* Two-column grid: fixed library aside + fluid card column; stacks under ~900px. */
+.ss-editor { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 900px) { .ss-editor { grid-template-columns: 1fr; } }
+
+.ss-library { border: 1px solid var(--border); background: var(--panel-2); border-radius: var(--radius); padding: 12px; max-height: 640px; overflow-y: auto; }
+.ss-library input { margin-bottom: 10px; }
+.ss-library h4 { margin: 10px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.ss-lib-row { display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); background: var(--panel); border-radius: 8px; padding: 7px 9px; margin-bottom: 6px; }
+.ss-lib-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ss-lib-name { font-size: 13px; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ss-lib-desc { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Compact Add button inside the library rows (the base .btn is too tall there). */
+.ss-add-btn { flex: 0 0 auto; height: 26px; padding: 0 10px; font-size: 12.5px; }
+
+.ss-main { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.ss-card { margin-bottom: 0; }
+.ss-empty { margin-top: 4px; }
+
+/* One parameter row: name, optional conditional badge, pin toggle, control. */
+.ss-param { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.ss-param > * { flex: 0 0 auto; min-width: 0; }
+.ss-param .spacer { flex: 1; }
+.ss-param .hint { flex-basis: 100%; }
+.ss-param-name { min-width: 150px; font-size: 12.5px; color: var(--muted); }
+/* Pin toggle reuses the chip look (on/off states are both just text). */
+.ss-pin-toggle { cursor: pointer; font-size: 12px; padding: 2px 9px; }
+.ss-range { display: inline-flex; align-items: center; gap: 6px; }
+.ss-range input { width: 96px; flex: 0 0 auto; min-width: 0; }
+
+/* Muted mono block for verbatim (unknown) entries. */
+.ss-verbatim { white-space: pre-wrap; word-break: break-word; font-size: 12px; color: var(--muted); background: var(--bg-soft); border: 1px solid var(--border); padding: 10px; border-radius: 8px; }
+
+.ss-error { color: var(--err) !important; }
+.ss-summary { margin-top: 2px; }
