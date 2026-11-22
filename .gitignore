@@ -105,3 +105,8 @@ playwright-report/
 err.log
 LaTeXDocker.md
 .hermes/preview-chip-contrast.html
+
+# GitHub: local workflow scratch/overrides. ci.yml stays tracked — .gitignore
+# never affects files already in the index, so this only shields future
+# untracked files under .github/.
+.github/
