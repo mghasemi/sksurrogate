@@ -293,6 +293,25 @@ Experiments search space follows the task's problem type
   ``SKSurrogate.aml``), so the editor pre-fill and the library presets cannot
   drift apart.
 
+Visual search-space editor
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Added:** a visual search-space editor on Experiments → Advanced — the raw
+  JSON textarea is now a **Raw** sub-tab beside a new **Visual** tab with a
+  server-curated component library (eight classifiers / eight regressors,
+  including XGBoost and LightGBM; three imbalanced-learn resamplers for
+  classification only; eight transformers shared by both, including SKSurrogate's
+  ``SensAprx`` and ``CorrelationThreshold``), per-hyperparameter range inputs
+  and value chips with *range ⇄ pinned* toggles, forbidden-rule rows and a
+  stacking checkbox. An untouched editor preselects the task's workhorses —
+  Random Forest, XGBoost, LightGBM (★ in the library) — for its problem type;
+  “Reset to <type> defaults” re-applies the server preset any time.
+* **Added:** ``GET /api/experiments/components`` serving that catalog with each
+  row's role and hyperparameter specs. Switching between the sub-tabs is lossless
+  in both directions: unknown FQNs round-trip verbatim (rendered read-only in
+  Visual mode) and conditional parameters keep their ``depends_on``, so raw-JSON
+  behavior is unchanged.
+
 Temporal declaration no longer 500s on timestamps outside the nanosecond range
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

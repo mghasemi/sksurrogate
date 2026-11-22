@@ -171,14 +171,17 @@ Open **Experiments → Quick start**:
    About 30 seconds later: the best pipeline (ExtraTrees followed by a
    RandomForest, RMSE ≈ 55) and the model bundle it produced.
 
-The **Advanced** tab exposes everything else: the search space — pre-filled
-from the task's problem type (regression opens on the library preset's
-RandomForest/ExtraTrees regressor space, classification keeps its classic
-default) and re-applied when you switch until you edit it; “Reset to <type>
-defaults” restores it any time — plus the search strategy (``eoa`` evolutionary
-or ``exhaustive``), forbidden combinations, generations, Dask backend and
-resumable runs. Quick start only fills in a preset for you; both tabs call the
-same endpoint.
+The **Advanced** tab exposes everything else: a visual search-space editor —
+**Visual | Raw** sub-tabs, a component library filtered by problem type
+(estimators, resamplers for classification, shared transformers), range inputs
+and value chips per hyperparameter with pin toggles, forbidden-combination
+rows and a stacking checkbox. An untouched editor opens on the task's
+workhorses (Random Forest, XGBoost, LightGBM — ★ in the library); “Reset to
+<type> defaults” restores the server preset (RandomForest/ExtraTrees) any time;
+**Raw** keeps the full JSON for reserved keys and custom components. Plus the
+search strategy (``eoa`` evolutionary or ``exhaustive``), generations, Dask
+backend and resumable runs. Quick start only fills in a preset for you; both
+tabs call the same endpoint.
 
 **Behind the scenes.** The experiment runs the library's ``AML`` search on the
 ``train`` partition, then saves the winning fitted pipeline as a *model
