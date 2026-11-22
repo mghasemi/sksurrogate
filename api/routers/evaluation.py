@@ -577,6 +577,29 @@ def run_backtest(task_name: str, body: BacktestRequest):
         # included), so a promotion decision always has the honest comparator.
         if result.get("baselines"):
             bundle.metadata["baseline_scores"] = dict(result["baselines"])
+        # The pooled errors are the only honest multi-step MAE/RMSE/MASE/sMAPE a
+        # bundle can carry; keeping them in the evaluation record alone left the
+        # Bundle metrics table looking as if they were never computed. Persist them
+        # with provenance so the table can label the scope.
+        pooled = result.get("pooled") or {}
+        recorded_at = datetime.now(timezone.utc).isoformat()
+        provenance = dict(bundle.metadata.get("metrics_provenance") or {})
+        for key in ("mae", "rmse", "mase", "smape"):
+            if pooled.get(key) is None:
+                continue
+            bundle.metrics[key] = float(pooled[key])
+            provenance[key] = {
+                "source": "rolling_origin_backtest",
+                "recorded_at": recorded_at,
+                "horizon": result["config"]["horizon"],
+                "n_splits": result["config"]["n_splits"],
+                "step": result["config"]["step"],
+                "strategy": result["config"]["strategy"],
+                "scoring": body.scoring,
+                "scope": "pooled multi-step forecasts over the walked origins",
+            }
+        if provenance:
+            bundle.metadata["metrics_provenance"] = provenance
         local_bundle_path = (
             settings.task_bundles_dir(task_name)
             / (safe_segment(bundle.model_version, "model version") + ".bundle")

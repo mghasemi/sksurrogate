@@ -314,6 +314,9 @@ def bundle_summary(bundle):
         "created_at": bundle.created_at,
         "schema": bundle.schema,
         "metrics": bundle.metrics,
+        # Provenance for metrics that were not measured at training time (a
+        # backtest's MAE/RMSE/MASE/sMAPE), so a reader can tell the scope apart.
+        "metrics_provenance": (bundle.metadata or {}).get("metrics_provenance") or {},
         "dependencies": bundle.dependencies,
         "dataset_fingerprint": bundle.dataset_fingerprint,
         "owner": bundle.owner,

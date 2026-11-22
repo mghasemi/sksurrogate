@@ -123,6 +123,13 @@ Partition defaults, temporal experiments and the Advanced scorer
   ``cv_score``/``mae`` reads as "training never measured this" rather than a broken
   run. Tabular baselines also record a ``train_score`` now (they used to record
   nothing without a validation partition, leaving the row empty).
+* **Fixed:** a rolling-origin backtest's pooled MAE/RMSE/MASE/sMAPE were only kept
+  in the bundle's ``evaluations`` metadata, so the **Bundle metrics** table still
+  looked as if those numbers had never been computed — every backtest had to be
+  re-run to see them. They are now written onto the bundle's ``metrics`` with a
+  ``metrics_provenance`` entry per metric (source, horizon, origins, strategy,
+  timestamp), exposed by ``GET /api/bundles/{task}/{version}`` and shown in the
+  table's cell tooltips; the per-origin record stays in ``evaluations``.
 * **Fixed:** the rolling-origin backtest of a temporal experiment bundle fitted
   the bundle's whole pipeline on its own design matrix and failed with
   ``ForecastFeatureBuilder is missing required column(s): Month, Sales …``. The

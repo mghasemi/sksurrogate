@@ -722,9 +722,12 @@ than a failed computation:
 Any other bundle can be measured on demand: **Nested CV** reports the honest
 outer score (mean and interval) for the model, and the **Rolling-origin
 backtest** reports MAE/RMSE/bias/sMAPE/MASE per model and per horizon together
-with the naive baselines on identical origins. Both write their result onto the
-bundle's ``evaluations`` record (and the job result), not into this table, so the
-bundles' stored metrics stay a record of what training measured.
+with the naive baselines on identical origins. A backtest's pooled errors are
+written onto the bundle's ``metrics`` (with provenance — horizon, origins,
+strategy, timestamp — shown in the cell tooltip), so they survive a reload and
+appear in this table; the full per-origin record stays in the bundle's
+``evaluations`` metadata. Nested CV keeps its outer score on that evaluation
+record only, because a fold-wise score is not the bundle's training metric.
 
 Bundles that have a named alias (set with **Model aliases** on the Registry &
 Deployment page) are shown by those names in the Bundle metrics table and used

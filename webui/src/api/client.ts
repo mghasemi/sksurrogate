@@ -177,6 +177,17 @@ export interface JobRecord {
   interrupted_at?: string | null;
 }
 
+export interface MetricProvenance {
+  source: string;
+  recorded_at?: string;
+  horizon?: number;
+  n_splits?: number;
+  step?: number;
+  strategy?: string;
+  scoring?: string | null;
+  scope?: string;
+}
+
 export interface BundleSummary {
   task_name: string;
   model_version: string;
@@ -185,6 +196,8 @@ export interface BundleSummary {
   created_at: string;
   schema: Record<string, { dtype: string }>;
   metrics: Record<string, number>;
+  /** Where each non-training metric came from (e.g. a rolling-origin backtest). */
+  metrics_provenance?: Record<string, MetricProvenance>;
   dependencies: unknown[];
   dataset_fingerprint: string | null;
   owner: string | null;

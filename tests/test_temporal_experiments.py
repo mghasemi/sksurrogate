@@ -169,6 +169,21 @@ def test_the_experiment_bundle_is_backtested_recursively(client):
     assert result["config"]["strategy"] == "recursive"
     assert result["pooled"]["mae"] is not None
 
+    # The pooled errors persist on the bundle (with provenance), so the Bundle
+    # metrics table shows them instead of looking as if they were never computed.
+    summary = client.get(
+        "/api/bundles/tem-bt/" + experiment["result"]["model_version"]
+    ).json()
+    for key in ("mae", "rmse", "mase", "smape"):
+        assert summary["metrics"].get(key) is not None, key
+        provenance = summary["metrics_provenance"][key]
+        assert provenance["source"] == "rolling_origin_backtest"
+        assert provenance["horizon"] == 4
+        assert provenance["n_splits"] == 3
+    # The training metric is untouched and carries no backtest provenance.
+    assert summary["metrics_provenance"].get("train_score") is None
+    assert summary["metrics"].get("train_score") is not None
+
 
 def test_explanations_run_on_the_generated_design(client):
     """Explain/ALE/row act on the design, not on a 0-column raw partition.

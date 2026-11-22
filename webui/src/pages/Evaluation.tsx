@@ -1111,7 +1111,7 @@ export default function EvaluationPage() {
 
           <Card
             title="Bundle metrics"
-            sub="Only the metrics a bundle's producer recorded. Experiments and pipeline optimization store train_score; ensembles add cv_score / cv_score_std; forecasting baselines add mae / rmse / mase / sMAPE from their walk-forward backtest. Compute the rest for any bundle with Nested CV or a Rolling-origin backtest below — those results are stored on the bundle's evaluation record."
+            sub="Only the metrics a bundle actually records. Experiments and pipeline optimization store train_score; ensembles add cv_score / cv_score_std; forecasting baselines and any bundle you run a Rolling-origin backtest on add mae / rmse / mase / sMAPE, stored with the protocol they were measured under. Nested CV stores its honest outer score on the bundle's evaluation record."
           >
             <Table<BundleSummary>
               columns={["Model version", "Alias", ...metricNames, "Created"]}
@@ -1128,8 +1128,18 @@ export default function EvaluationPage() {
                 ...metricNames.map((m) => {
                   const value = b.metrics[m];
                   const recorded = typeof value === "number";
+                  const provenance = b.metrics_provenance?.[m];
+                  const title = recorded
+                    ? provenance
+                      ? `${m}: ${provenance.scope ?? provenance.source}` +
+                        (provenance.horizon != null ? ` · horizon ${provenance.horizon}` : "") +
+                        (provenance.n_splits != null ? ` · ${provenance.n_splits} origins` : "") +
+                        (provenance.strategy ? ` · ${provenance.strategy}` : "") +
+                        (provenance.recorded_at ? ` · ${new Date(provenance.recorded_at).toLocaleString()}` : "")
+                      : METRIC_ORIGIN[m]
+                    : `${m} was not recorded by this bundle's producer (${METRIC_ORIGIN[m] ?? "see the note above"}). Run a Rolling-origin backtest to measure it.`;
                   return (
-                    <td key={m} title={recorded ? METRIC_ORIGIN[m] ?? undefined : `${m} was not recorded by this bundle's producer (${METRIC_ORIGIN[m] ?? "see the note above"}).`}>
+                    <td key={m} title={title}>
                       {fmtNum(value)}
                     </td>
                   );
