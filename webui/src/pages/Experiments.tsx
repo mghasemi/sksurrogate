@@ -327,24 +327,32 @@ export default function ExperimentsPage() {
   // regressor space instead of classifiers). Once the component catalog has loaded,
   // an untouched editor seeds to the workhorse estimators (★ rows) for that task;
   // while it is still in flight we keep today's server-preset fallback so nothing
-  // flashes empty. Re-applied until the user edits anything.
+  // flashes empty. Re-applied until the user edits anything — but NOT on a mere
+  // configTouched transition: "Reset to … defaults" deliberately keeps the editor
+  // untouched, and re-running here (configTouched back in the deps) would clobber
+  // the freshly applied server preset within one commit. Live verification caught
+  // exactly that: reset rendered the workhorse seed instead of RF/ExtraTrees.
   useEffect(() => {
     if (configTouched) return;
     setConfigJson(
       componentsQ.data ? preselectedConfigJson(componentsQ.data.components, preset) : configJsonForPreset(preset),
     );
-  }, [preset, configTouched, componentsQ.data, configJsonForPreset]);
+  }, [preset, componentsQ.data, configJsonForPreset]);
 
-  // Rebuild the editor model when entering visual mode or when the catalog first
-  // loads. Deliberately NOT keyed on configJson: while the visual editor is open it
-  // rewrites configJson on every change, and keying on it would loop the parse —
-  // Raw edits update configJson directly, and switching back to Visual runs this
-  // same derivation again.
+  // Rebuild the editor model when entering visual mode, when the catalog first
+  // loads, or whenever configJson changes. The configJson key is required — not
+  // optional: the pre-fill effect writes the new document one commit AFTER the
+  // catalog resolves (its setConfigJson lands in a later render), so without it
+  // this derivation parses the stale document and Visual renders cards that do
+  // not match what Raw shows. Re-deriving on every visual edit is cheap (one
+  // parse) and loop-free: handleVisualChange sets model + configJson together,
+  // so the follow-up parse sees an unchanged string and no further commit fires;
+  // raw-mode edits hit the guard below and return before parsing.
   useEffect(() => {
     if (spaceEditorMode !== "visual") return;
     const res = spaceToModel(configJson, componentsQ.data?.components ?? []);
     if (!("error" in res)) setSpaceModel(res);
-  }, [spaceEditorMode, componentsQ.data]);
+  }, [spaceEditorMode, configJson, componentsQ.data]);
 
   /** Visual edits write back to configJson immediately — the single source of truth. */
   const handleVisualChange = (next: SpaceModel) => {
