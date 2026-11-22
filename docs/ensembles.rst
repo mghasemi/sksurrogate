@@ -406,9 +406,10 @@ Three consequences are recorded with the model:
   ``cross_val_predict``, which refuses such a splitter with
   ``only works for partitions``. The rows no fold could predict are reported as
   ``rows_unscored`` next to the weights, not scored with a placeholder. A *repeated*
-  splitter (``RepeatedKFold``, ``RepeatedStratifiedKFold``) is a different case and is
-  refused: it scores each row once per repeat, so the replay would keep the last repeat's
-  value and fit the weights on a hybrid matrix no member produced.
+  splitter (``RepeatedKFold``, ``RepeatedStratifiedKFold``) is replayed too, but on its
+  **first pass only**: each repeat is a complete partition, so scoring all of them would
+  leave the last repeat's value in every row. The weight record reports the folds the
+  matrix actually came from and sets ``repeated_folds_collapsed: true``.
 * The result is still an ordinary forecast bundle:
   ``Pipeline(ForecastFeatureBuilder, ensemble)`` plus the serving geometry
   (``strategy: recursive``), its schema describing the raw history columns. It

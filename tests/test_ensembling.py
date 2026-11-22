@@ -839,24 +839,49 @@ def test_out_of_fold_outputs_replay_a_walk_forward_splitter():
     assert abs(sum(result["weights"]) - 1.0) < 1e-9
 
 
-def test_a_repeated_splitter_is_refused_instead_of_replayed():
-    """A repeated splitter has no single out-of-fold value per row.
+def test_a_repeated_splitter_is_collapsed_to_one_scoring_pass():
+    """A repeated splitter is a sequence of complete partitions; one of them is used.
 
-    ``RepeatedKFold``/``RepeatedStratifiedKFold`` cover every sample once *per repeat*.
-    ``cross_val_predict`` refuses them; the walk-forward replay would instead write one
-    value per repeat and let the last repeat win, so the weights would be fitted on a
-    hybrid matrix no member ever produced. The request must be refused with that reason.
+    ``RepeatedKFold``/``RepeatedStratifiedKFold`` score every row once *per repeat*.
+    Replaying all folds would keep the last repeat's value per row and fit weights on a
+    hybrid matrix no member produced, and ``cross_val_predict`` refuses the splitter
+    outright (live: task SPRA's stored repeated CV). The first repeat already gives each
+    row an out-of-fold value, so the replay keeps that pass — the same matrix the plain
+    K-fold of that pass produces.
     """
     from sklearn.model_selection import RepeatedStratifiedKFold
 
     frame = _weighting_frame(n=240)
+    features = frame[COLUMNS]
+    y = frame["y_cls"]
+    target = np.asarray(y)
     cv = RepeatedStratifiedKFold(n_splits=3, n_repeats=2, random_state=0)
-    member = [("lr", _member(LogisticRegression(max_iter=500)))]
+    members = [("lr", _member(LogisticRegression(max_iter=500)))]
 
-    with pytest.raises(EnsembleError, match="more than once"):
-        out_of_fold_outputs(member, frame[COLUMNS], frame["y_cls"], cv, None)
-    with pytest.raises(EnsembleError, match="more than once"):
-        optimize_weights(member, frame[COLUMNS], frame["y_cls"], cv=cv)
+    outputs, mask = out_of_fold_outputs(members, features, y, cv, None, return_mask=True)
+    assert mask is not None and bool(mask.all())
+    assert np.isfinite(outputs[0]).all()
+
+    # The values must come from the first pass: replay those folds by hand.
+    first_pass, scored = [], np.zeros(len(target), dtype=bool)
+    for train, test in cv.split(features, y):
+        if scored[test].any():
+            break
+        first_pass.append((train, test))
+        scored[test] = True
+    assert len(first_pass) == 3  # one repeat of a 3-fold split, not all six folds
+    expected = np.full(len(target), np.nan)
+    for train, test in first_pass:
+        fitted = clone(members[0][1]).fit(features.iloc[train], target[train])
+        probability = fitted.predict_proba(features.iloc[test])
+        expected[test] = probability[:, list(fitted.classes_).index(1)]
+    assert np.allclose(outputs[0][:, 1], expected)
+
+    result = optimize_weights(members, features, y, cv=cv)
+    assert result["rows_scored"] == len(target)
+    assert result["folds"] == 3  # what the weights were scored on, not 6 declared folds
+    assert result["repeated_folds_collapsed"] is True
+    assert abs(sum(result["weights"]) - 1.0) < 1e-9
 
 
 def _cat_cols_member(estimator, *, cat_column="team"):

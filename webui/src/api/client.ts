@@ -3835,6 +3835,8 @@ export interface EnsembleWeightReport {
   objective: number | null;
   objective_name: string;
   folds: number | null;
+  /** True when the splitter repeats its folds and only the first pass was scored. */
+  repeated_folds_collapsed?: boolean;
   budget: Record<string, number> | null;
   dropped: string[];
 }

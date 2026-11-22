@@ -220,11 +220,15 @@ Ensembles keep cat_cols members frame-tolerant
   attach the right names to the wrong columns. ``voting``/``averaging`` were never
   affected (they pass the frame through).
 * **Fixed:** a *repeated* cross-validation splitter (``RepeatedKFold``,
-  ``RepeatedStratifiedKFold``) was treated as a walk-forward splitter by the
-  out-of-fold replay, which wrote one value per repeat per row and kept the last
-  repeat's — fitting weights on a hybrid matrix no member produced. It is now refused
-  with an ``EnsembleError`` naming the splitter, matching ``cross_val_predict``'s own
-  refusal.
+  ``RepeatedStratifiedKFold``, or a stored task CV with repeats — live: task ``SPRA``)
+  is now replayed on its **first pass only**. Each repeat is a complete partition, so
+  the earlier version of the out-of-fold replay wrote one value per repeat per row and
+  kept the last repeat's, fitting weights on a hybrid matrix no member produced;
+  refusing the request instead (the first guard) broke a legitimate stored CV with
+  ``400: The cross-validation splitter scores N sample(s) more than once``.
+  ``cross_val_predict`` refuses repeated splitters outright, which is why the replay is
+  the only route. The weight record now reports the folds the matrix came from
+  (``folds``) and flags ``repeated_folds_collapsed``.
 
 Experiments search space follows the task's problem type
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

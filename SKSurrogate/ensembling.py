@@ -1047,27 +1047,39 @@ def _take_rows(data, index):
     return data[index]
 
 
-def _folds_partition(folds, n_samples):
-    """True when the folds' test sets cover every sample exactly once.
-
-    A *repeated* splitter (``RepeatedKFold``, ``RepeatedStratifiedKFold``) covers each
-    sample once per repeat. Replaying those folds would write several out-of-fold values
-    per row — the last repeat silently winning — so the weight search would judge a
-    hybrid matrix that no member ever produced. ``cross_val_predict`` refuses repeated
-    splitters for the same reason, so the request is refused here with a message that
-    names the cause instead of falling through to the walk-forward replay.
-    """
+def _fold_coverage(folds, n_samples):
+    """How many of the given folds score each row."""
     covered = np.zeros(int(n_samples), dtype=int)
     for _, test_index in folds:
         covered[np.asarray(test_index, dtype=int)] += 1
-    repeated = int((covered > 1).sum())
-    if repeated:
-        raise EnsembleError(
-            "The cross-validation splitter scores %d sample(s) more than once (it repeats "
-            "its folds), so a row has no single out-of-fold prediction; use a splitter "
-            "whose test folds partition the data, such as KFold or StratifiedKFold." % repeated
-        )
+    return covered
+
+
+def _folds_partition(folds, n_samples):
+    """True when the folds' test sets cover every sample exactly once."""
+    covered = _fold_coverage(folds, n_samples)
     return bool(covered.size and (covered == 1).all())
+
+
+def _first_scoring_pass(folds, n_samples):
+    """One complete pass through a repeated splitter's folds.
+
+    ``RepeatedKFold``/``RepeatedStratifiedKFold`` emit whole partitions one after the
+    other, so replaying every fold would assign several out-of-fold values per row and
+    keep the last repeat's. The first fold that reaches a row is the one whose model
+    never saw it, and a repeat already scores every row, so stopping at the first fold
+    that would re-score a row leaves exactly one partition — the same out-of-fold matrix
+    a plain K-fold of that repeat would produce.
+    """
+    scored = np.zeros(int(n_samples), dtype=bool)
+    kept = []
+    for train_index, test_index in folds:
+        test_index = np.asarray(test_index, dtype=int)
+        if scored[test_index].any():
+            continue
+        kept.append((train_index, test_index))
+        scored[test_index] = True
+    return kept
 
 
 def _walk_forward_outputs(members, X, y, folds, mask):
@@ -1109,7 +1121,7 @@ def _walk_forward_outputs(members, X, y, folds, mask):
     return outputs
 
 
-def out_of_fold_outputs(members, X, y, cv, n_jobs, *, return_mask=False):
+def out_of_fold_outputs(members, X, y, cv, n_jobs, *, return_mask=False, info=None):
     """Out-of-fold member outputs: probability matrices (classification) or predictions.
 
     One pass per member, on the same folds, so every weight the optimizer considers is
@@ -1122,16 +1134,42 @@ def out_of_fold_outputs(members, X, y, cv, n_jobs, *, return_mask=False):
     ``ValueError: cross_val_predict only works for partitions``. Those folds are
     replayed fold by fold instead, and the uncovered rows are dropped from every
     member through the same mask, so the members are still compared on identical,
-    never-trained-on rows. With ``return_mask=True`` the mask is returned too, so
-    the caller can align ``y`` (``None`` means every row was used).
+    never-trained-on rows. A *repeated* splitter (``RepeatedKFold``,
+    ``RepeatedStratifiedKFold``) is replayed the same way, on its **first pass only**:
+    each repeat is a complete partition, and replaying all of them would leave the last
+    repeat's value in every row. ``cross_val_predict`` refuses repeated splitters
+    outright, so without the replay no weight search could use one.
+
+    With ``return_mask=True`` the mask is returned too, so the caller can align ``y``
+    (``None`` means every row was used). ``info``, when given, is filled with ``folds``
+    (how many folds the outputs actually came from) and ``repeated`` (whether a repeated
+    splitter was collapsed to one pass).
     """
     from sklearn.model_selection import cross_val_predict
 
     folds = None
+    repeated = False
     if not isinstance(cv, (int, np.integer)) and hasattr(cv, "split"):
         candidate = list(cv.split(X, y))
-        if candidate and not _folds_partition(candidate, len(np.asarray(y))):
-            folds = candidate
+        if candidate:
+            n_samples = len(np.asarray(y))
+            repeated = bool((_fold_coverage(candidate, n_samples) > 1).any())
+            if repeated:
+                # A repeated splitter is a sequence of complete partitions; only one of
+                # them can describe "the" out-of-fold value of a row.
+                candidate = _first_scoring_pass(candidate, n_samples)
+            # ``cross_val_predict`` refuses both a repeated splitter and a
+            # non-partition splitter, so the paths that need it are replayed fold by
+            # fold — which reproduces what it does for a partition.
+            if repeated or not _folds_partition(candidate, n_samples):
+                folds = candidate
+    if info is not None:
+        info["repeated"] = repeated
+        info["folds"] = (
+            len(folds)
+            if folds is not None
+            else (cv if isinstance(cv, (int, np.integer)) else getattr(cv, "get_n_splits", lambda: None)())
+        )
     if folds is not None:
         mask = np.zeros(len(np.asarray(y)), dtype=bool)
         for _, test_index in folds:
@@ -1266,6 +1304,9 @@ def optimize_weights(
 
     :returns: ``{"weights", "strategy", "objective", "objective_name", "folds", "budget",
         "dropped"}`` — ``dropped`` names the members whose weight collapsed to zero.
+        ``folds`` counts the folds the out-of-fold matrix actually came from, and
+        ``repeated_folds_collapsed`` says whether a repeated splitter was replayed on its
+        first pass only.
     """
     # Same validation the submit-time path runs, so a bad strategy or budget is refused
     # before any cross-validation is spent and both callers say the same thing.
@@ -1274,7 +1315,10 @@ def optimize_weights(
     if len(members) < 1:
         raise EnsembleError("At least one member is required to optimize weights.")
     family = resolve_family(members)
-    outputs, mask = out_of_fold_outputs(members, X, y, cv, n_jobs, return_mask=True)
+    fold_info: dict = {}
+    outputs, mask = out_of_fold_outputs(
+        members, X, y, cv, n_jobs, return_mask=True, info=fold_info
+    )
     if mask is not None:
         # A walk-forward splitter cannot predict its own initial training window.
         # Dropping those rows from the target too keeps the weights fitted on rows
@@ -1328,7 +1372,11 @@ def optimize_weights(
         # result — the objective is the one field allowed to be absent instead.
         "objective": objective if math.isfinite(objective) else None,
         "objective_name": objective_name,
-        "folds": cv if isinstance(cv, int) else getattr(cv, "get_n_splits", lambda: None)(),
+        # The folds the out-of-fold matrix actually came from: a repeated splitter is
+        # collapsed to one pass, so its declared total (splits x repeats) would overstate
+        # how many folds the weights were fitted on.
+        "folds": fold_info.get("folds"),
+        "repeated_folds_collapsed": bool(fold_info.get("repeated")),
         "budget": budget,
         "rows_scored": int(len(np.asarray(y))),
         # Rows no fold could predict (a walk-forward splitter's initial training
