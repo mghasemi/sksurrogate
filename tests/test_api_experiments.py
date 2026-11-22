@@ -480,3 +480,119 @@ def test_optimize_pipeline_names_the_scorer_when_nothing_can_be_scored(client):
     assert record["status"] == "failed"
     assert "scoring 'accuracy'" in record["error"]
     assert "problem type" in record["error"]
+
+
+# ---------------------------------------------------------------------------
+# Component catalog (visual search-space editor)
+# ---------------------------------------------------------------------------
+
+
+def test_components_endpoint_shape(client):
+    res = client.get("/api/experiments/components")
+    assert res.status_code == 200
+    body = res.json()
+    assert set(body) == {"components"}
+    rows = body["components"]
+    assert isinstance(rows, list) and len(rows) >= 25
+    for row in rows:
+        assert set(row) <= {"fqn", "name", "role", "task", "description", "params", "preselected"}
+        assert row["role"] in ("estimator", "transformer", "sampler")
+        if row["role"] == "transformer":
+            assert "task" not in row
+        else:  # estimator or sampler rows are task-tagged (samplers: classification only)
+            assert row.get("task") in ("classification", "regression")
+        for spec in row["params"].values():
+            assert spec["type"] in ("real", "integer", "categorical")
+
+
+def test_components_split_by_task(client):
+    rows = client.get("/api/experiments/components").json()["components"]
+    clf = [r for r in rows if r.get("task") == "classification"]
+    reg = [r for r in rows if r.get("task") == "regression"]
+    # exact curated counts: 8 classifiers + 3 samplers, 8 regressors
+    assert len(clf) == 11 and len(reg) == 8
+    # a classifier FQN must never appear under regression (and vice versa)
+    clf_names = {r["fqn"] for r in clf if r["role"] == "estimator"}
+    reg_names = {r["fqn"] for r in reg}
+    assert not (clf_names & reg_names)
+
+
+def test_gradient_boosting_in_catalog(client):
+    rows = client.get("/api/experiments/components").json()["components"]
+    by_fqn = {r["fqn"]: r for r in rows}
+    for fqn, task in (
+        ("xgboost.XGBClassifier", "classification"),
+        ("lightgbm.LGBMClassifier", "classification"),
+        ("xgboost.XGBRegressor", "regression"),
+        ("lightgbm.LGBMRegressor", "regression"),
+    ):
+        row = by_fqn[fqn]
+        assert row["task"] == task and row.get("preselected") is True
+        params = set(row["params"])
+        assert {"n_estimators", "learning_rate"} <= params, f"{fqn} missing core GBM knobs"
+        assert len(params) >= 9, f"{fqn}: expected the full significant-knob set"
+
+
+def test_resamplers_classification_only(client):
+    rows = client.get("/api/experiments/components").json()["components"]
+    samplers = {r["fqn"]: r for r in rows if r["role"] == "sampler"}
+    assert set(samplers) == {
+        "imblearn.over_sampling.SMOTE",
+        "imblearn.over_sampling.ADASYN",
+        "imblearn.under_sampling.RandomUnderSampler",
+    }
+    for row in samplers.values():
+        assert row["task"] == "classification"
+
+
+def test_sk_surrogate_transformers_present(client):
+    rows = client.get("/api/experiments/components").json()["components"]
+    by_fqn = {r["fqn"]: r for r in rows}
+    sens = by_fqn["SKSurrogate.SensAprx"]
+    assert sens["role"] == "transformer" and "task" not in sens
+    assert sens["params"]["method"]["items"] == ["sobol", "morris", "delta-mmnt"]
+    corr = by_fqn["SKSurrogate.CorrelationThreshold"]
+    assert corr["role"] == "transformer"
+    assert corr["params"]["threshold"]["type"] == "real"
+
+
+def test_rgf_catalog_entries(client):
+    rows = client.get("/api/experiments/components").json()["components"]
+    by_fqn = {r["fqn"]: r for r in rows}
+    clf = by_fqn["rgf.sklearn.RGFClassifier"]["params"]
+    # underscore forms are the only ones rgf 3.12 accepts (fit-probed)
+    assert clf["algorithm"]["items"] == ["RGF", "RGF_Opt", "RGF_Sib"]
+    reg = by_fqn["rgf.sklearn.RGFRegressor"]["params"]
+    assert set(reg) >= {"algorithm", "reg_depth"}
+
+
+def test_rf_et_specs_match_preset_table(client):
+    from SKSurrogate.aml import PRESET_PARAM_SPECS
+
+    rows = client.get("/api/experiments/components").json()["components"]
+    by_fqn = {r["fqn"]: r for r in rows}
+    for fqn in (
+        "sklearn.ensemble.RandomForestClassifier",
+        "sklearn.ensemble.ExtraTreesClassifier",
+        "sklearn.ensemble.RandomForestRegressor",
+        "sklearn.ensemble.ExtraTreesRegressor",
+    ):
+        assert by_fqn[fqn]["params"] == PRESET_PARAM_SPECS, f"{fqn} drifted from the preset table"
+
+
+def test_preselected_sets(client):
+    rows = client.get("/api/experiments/components").json()["components"]
+    for task, expected in (
+        ("classification", {
+            "sklearn.ensemble.RandomForestClassifier",
+            "xgboost.XGBClassifier",
+            "lightgbm.LGBMClassifier",
+        }),
+        ("regression", {
+            "sklearn.ensemble.RandomForestRegressor",
+            "xgboost.XGBRegressor",
+            "lightgbm.LGBMRegressor",
+        }),
+    ):
+        got = {r["fqn"] for r in rows if r.get("task") == task and r.get("preselected")}
+        assert got == expected, f"preselected set for {task} drifted: {got}"
