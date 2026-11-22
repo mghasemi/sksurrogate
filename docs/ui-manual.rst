@@ -884,7 +884,16 @@ schema, dataset fingerprint, dependencies, audit events, and lineage. A
 ``ModelBundle`` packages the fitted estimator and its metadata; the bundle is
 saved as a versioned ``.bundle`` file. You can also:
 
-* click **Jump to best** to select the bundle with the best rankable metric;
+* click **Jump to best** to select the bundle with the best rankable metric. By
+  default the ranking takes a held-out ``score`` first, then ``train_score``, and
+  the badge names the metric **and** the population it was measured on — e.g.
+  ``Best by train_score = 0.9325 … (refit training rows (in-sample); higher is
+  better)``. That label matters: an in-sample winner is not necessarily the best
+  forecaster, since a different bundle can have a much lower backtest MAE. Use the
+  **Rank by** selector to rank on a held-out score, an ensemble CV score, or a
+  persisted backtest error (``mae``/``rmse``/``mase``/``smape``, ranked by the
+  smallest value). Only bundles that actually carry the chosen metric take part, so
+  ranking by ``mae`` compares backtested bundles only;
 * use **Preserve snapshot** for a legacy tracking snapshot, or recover an
   existing snapshot into a new bundle version;
 * download the bundle or export it to an MLflow-compatible model directory.

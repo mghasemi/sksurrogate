@@ -118,6 +118,13 @@ Partition defaults, temporal experiments and the Advanced scorer
   aliases**, and carries an **Assign alias…** button that opens that page; the
   manual states that only registered versions can carry an alias (unregistered
   ones are greyed out as "— register first").
+* **Fixed:** the **★ best** badge on Model Bundles ranked every metric as
+  higher-is-better. It now ranks error metrics (``mae``, ``rmse``, ``mase``,
+  ``smape``) by the smallest value, labels the winner with the population it was
+  measured on (``refit training rows (in-sample)``, ``held-out validation
+  partition``, ``ensemble out-of-fold folds``, ``rolling-origin backtest``) and
+  gains a **Rank by** selector, so a model that only won an in-sample comparison is
+  no longer read as the best forecaster.
 * **Changed:** the **Bundle metrics** table now says which producer records each
   metric, and every blank cell carries a tooltip naming the reason, so a missing
   ``cv_score``/``mae`` reads as "training never measured this" rather than a broken

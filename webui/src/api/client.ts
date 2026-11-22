@@ -1459,6 +1459,10 @@ export interface BestBundle {
   metrics_tried: string[];
   model_version: string;
   value: number | null;
+  /** `lower` for error metrics (mae/rmse/mase/smape), `higher` for scores. */
+  direction?: "higher" | "lower";
+  /** What the metric measured, e.g. "refit training rows (in-sample)". */
+  scope?: string;
 }
 
 /**

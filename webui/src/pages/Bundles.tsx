@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 
 import {
   BASELINE_ESTIMATORS,
+  BEST_METRIC_PREFERENCE,
   bundleDownloadUrl,
   exportMlflowUrl,
   findBestBundle,
@@ -32,6 +33,8 @@ export default function BundlesPage() {
   const [trainPartition, setTrainPartition] = useState("");
   const [validationPartition, setValidationPartition] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  /** "" = the default preference (held-out score, then training score). */
+  const [rankMetric, setRankMetric] = useState<string>("");
   const effectiveTrainPartition = trainPartition || defaultTrainPartition;
   // A typed partition belongs to the task it was typed for.
   useEffect(() => {
@@ -48,8 +51,9 @@ export default function BundlesPage() {
 
   // A 404 here means "no bundle carries that metric yet" — not an error worth showing.
   const bestQ = useQuery({
-    queryKey: ["bundle-best", task],
-    queryFn: () => findBestBundle(task),
+    queryKey: ["bundle-best", task, rankMetric],
+    queryFn: () =>
+      findBestBundle(task, rankMetric ? [rankMetric] : BEST_METRIC_PREFERENCE),
     enabled: !!task,
     retry: retryUnlessNotFound,
   });
@@ -160,11 +164,26 @@ export default function BundlesPage() {
         title={`Bundles (${fmtNum(bundles.length)})`}
         sub={
           bestQ.data
-            ? `Best ${bestQ.data.metric} = ${fmtNum(bestQ.data.value)} on ${bestQ.data.model_version} · aliases are assigned on Registry & Deployment → Model aliases`
+            ? `Best by ${bestQ.data.metric} = ${fmtNum(bestQ.data.value)} on ${bestQ.data.model_version}` +
+              ` (${bestQ.data.scope ?? "stored metric"}; ${bestQ.data.direction === "lower" ? "lower" : "higher"} is better)` +
+              " · aliases are assigned on Registry & Deployment → Model aliases"
             : "No bundle carries a rankable score metric yet · aliases are assigned on Registry & Deployment → Model aliases"
         }
         actions={
           <>
+            <div className="field" style={{ minWidth: 190 }}>
+              <label>Rank by</label>
+              <select value={rankMetric} onChange={(e) => setRankMetric(e.target.value)}>
+                <option value="">default (held-out, then training score)</option>
+                <option value="score">validation score</option>
+                <option value="train_score">training score</option>
+                <option value="cv_score">ensemble CV score</option>
+                <option value="mae">MAE (backtest)</option>
+                <option value="rmse">RMSE (backtest)</option>
+                <option value="mase">MASE (backtest)</option>
+                <option value="smape">sMAPE (backtest)</option>
+              </select>
+            </div>
             <button
               className="btn"
               disabled={!bestVersion}

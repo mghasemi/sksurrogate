@@ -92,12 +92,13 @@ class TestPhase3Endpoints(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def _save_bundle(self, model, version, *, score=None, train_score=None):
+    def _save_bundle(self, model, version, *, score=None, train_score=None, extra_metrics=None):
         metrics = {}
         if score is not None:
             metrics["score"] = float(score)
         if train_score is not None:
             metrics["train_score"] = float(train_score)
+        metrics.update({name: float(value) for name, value in (extra_metrics or {}).items()})
         bundle = ModelBundle(
             model,
             task_name=TASK,
@@ -190,6 +191,33 @@ class TestPhase3Endpoints(unittest.TestCase):
             bundles_router.best_bundle(TASK, metric="train_score")
 
         self.assertEqual(ctx.exception.status_code, 404)
+
+    def test_best_ranks_error_metrics_by_the_smallest_value(self):
+        """Asking for ``mae`` must crown the lowest error, not the highest.
+
+        The ranking assumed every metric is higher-is-better, so a caller who asked
+        for a backtest error would have been pointed at the worst model.
+        """
+        estimator = self._bundle_model(GOOD_VERSION)
+        self._save_bundle(estimator, "mae-good", extra_metrics={"mae": 12.0, "rmse": 15.0})
+        self._save_bundle(estimator, "mae-bad", extra_metrics={"mae": 140.0, "rmse": 180.0})
+
+        payload = bundles_router.best_bundle(TASK, metric="mae")
+
+        self.assertEqual(payload["metric"], "mae")
+        self.assertEqual(payload["direction"], "lower")
+        self.assertEqual(payload["scope"], "rolling-origin backtest (pooled multi-step)")
+        self.assertEqual(payload["model_version"], "mae-good")
+        self.assertAlmostEqual(payload["value"], 12.0, places=6)
+
+        # A score metric keeps the opposite direction and is labelled in-sample when
+        # that is what it measured.
+        self._save_bundle(estimator, "tr-low", train_score=0.32)
+        self._save_bundle(estimator, "tr-high", train_score=0.91)
+        scored = bundles_router.best_bundle(TASK, metric="train_score")
+        self.assertEqual(scored["direction"], "higher")
+        self.assertEqual(scored["scope"], "refit training rows (in-sample)")
+        self.assertEqual(scored["model_version"], "tr-high")
 
     def test_run_configuration_and_markdown_report_export(self):
         response = bundles_router.train_baseline(

@@ -276,17 +276,37 @@ _MLTRACE_METRIC_FIELDS = {
     "logloss", "variance", "max_error", "mse", "mae", "r2",
 }
 
+#: Error metrics rank by the **smallest** value; everything else by the largest.
+#: Without this, asking for ``mae`` would crown the worst model — the ranking used
+#: to assume every metric is higher-is-better.
+_LOWER_IS_BETTER = {"mae", "rmse", "mase", "smape", "mse", "logloss", "max_error", "cv_score_std"}
+
+#: What a metric actually measures, so a winner can be labelled instead of read as
+#: "the best model" when it only won an in-sample comparison.
+_METRIC_SCOPE = {
+    "score": "held-out validation partition",
+    "train_score": "refit training rows (in-sample)",
+    "cv_score": "ensemble out-of-fold folds",
+    "cv_score_std": "spread of the ensemble's out-of-fold folds",
+    "mae": "rolling-origin backtest (pooled multi-step)",
+    "rmse": "rolling-origin backtest (pooled multi-step)",
+    "mase": "rolling-origin backtest (pooled multi-step)",
+    "smape": "rolling-origin backtest (pooled multi-step)",
+}
+
 
 def _rank_bundles_by_metric(task_name: str, metric: str):
     """Best ``(value, model_version)`` among the task's bundle files for one metric, or ``(None, None)``.
 
     Bundles created through this API store their metrics on the bundle file
-    itself (``score`` for baselines, ``train_score`` for experiments), so a
-    scan over the stored files is the primary source.
+    itself (``score`` for baselines, ``train_score`` for experiments, pooled
+    ``mae``/``rmse``/… after a backtest), so a scan over the stored files is the
+    primary source. Error metrics rank by the minimum; scores by the maximum.
     """
     bundles_dir = settings.task_bundles_dir(task_name)
     if not bundles_dir.exists():
         return None, None
+    lower_is_better = metric in _LOWER_IS_BETTER
     candidates: list[tuple[float, str]] = []
     for path in sorted(bundles_dir.glob("*.bundle")):
         try:
@@ -296,7 +316,10 @@ def _rank_bundles_by_metric(task_name: str, metric: str):
         value = finite_or_none((bundle.metrics or {}).get(metric))
         if value is not None:
             candidates.append((value, path.stem))
-    return max(candidates, key=lambda item: item[0]) if candidates else (None, None)
+    if not candidates:
+        return None, None
+    better = min if lower_is_better else max
+    return better(candidates, key=lambda item: item[0])
 
 
 def _rank_logged_models_by_metric(task_name: str, metric: str):
@@ -306,12 +329,14 @@ def _rank_logged_models_by_metric(task_name: str, metric: str):
     if metric not in _MLTRACE_METRIC_FIELDS or not settings.mltrace_db_path(task_name).exists():
         return None, None
     with open_tracker(task_name) as tracker:
+        column = Metrics.__dict__[metric].__dict__["field"]
+        ordering = column.asc() if metric in _LOWER_IS_BETTER else column.desc()
         rows = (
             Metrics.select()
             .join(MLModel, on=Metrics.model_id == MLModel.model_id)
             .switch(Task, on=Task.task_id == MLModel.task_id)
             .where(Task.task_id == tracker.task_id)
-            .order_by(Metrics.__dict__[metric].__dict__["field"].desc())
+            .order_by(ordering)
         )
         if not len(rows):
             return None, None
@@ -345,6 +370,10 @@ def best_bundle(task_name: str, metric: str = "score"):
                 "metrics_tried": metrics,
                 "model_version": best_version,
                 "value": best_value,
+                # Direction and the measured population, so a caller cannot read a
+                # training-row winner as "the best model".
+                "direction": "lower" if name in _LOWER_IS_BETTER else "higher",
+                "scope": _METRIC_SCOPE.get(name, "stored bundle metric"),
             }
 
     raise not_found(
