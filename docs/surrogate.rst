@@ -217,8 +217,16 @@ Gaussian-process surrogate via ``build_surrogate("gpr", 30, "BoxSample")``.
 Optimizer
 ===================================
 A `scipy` optimizer can be used to find a minimum of the surrogate at each iteration.
-Note that if `ineqs` is not `None`, then most of scipy optimizers can not be used.
-The optimizers that work well with constraints include 'SLSQP' and 'COBYLA'.
+The local subproblem carries inequality constraints whenever the search has any —
+either user ``ineqs`` or the trust region added by ``search_sphere=True`` — and only
+four SciPy methods honour them: ``COBYLA``, ``SLSQP``, ``trust-constr`` and
+``COBYQA``. Passing constraints to any other method is a **silent** correctness bug:
+``scipy.optimize.minimize`` accepts the ``constraints`` argument, warns, ignores it,
+and returns a point that need not be feasible. ``SurrogateSearch`` and
+``SurrogateRandomCV`` therefore raise ``ValueError`` at configuration time when a
+bounds-only method (``L-BFGS-B``, ``TNC``, ``BFGS``, ``Powell``, …) is combined with
+constraints; the same method is accepted when the search has no constraints at all.
+``build_surrogate``'s ``L-BFGS-B`` default is the unconstrained case.
 
 An alternative for the scipy optimizer is 'Optimithon'.
 
@@ -323,4 +331,6 @@ documented in :doc:`telemetry`.
     The class ``SurrogateRandomCV`` works with intervals to handel the hyperparameters and
     the current sampling classes do not impose extra constraints on ``SurrogateSearch`` other
     than ranges for parameters, alternative `scipy.minimize` solvers can be used as well, such
-    as `L-BFGS-B`, `TNC`, `SLSQP`.
+    as `L-BFGS-B` and `TNC`. Those two are bounds-only, so they are refused as soon as the
+    search carries inequality constraints (``ineqs`` or ``search_sphere=True``); use `SLSQP`,
+    `COBYLA`, `trust-constr` or `COBYQA` there.

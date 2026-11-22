@@ -118,6 +118,19 @@ Partition defaults, temporal experiments and the Advanced scorer
   aliases**, and carries an **Assign alias…** button that opens that page; the
   manual states that only registered versions can carry an alias (unregistered
   ones are greyed out as "— register first").
+* **Fixed:** ``SurrogateSearch``/``SurrogateRandomCV`` accepted ``L-BFGS-B`` as a
+  solver for a *constrained* local subproblem, although
+  ``scipy.optimize.minimize`` accepts ``constraints=`` for that method and silently
+  ignores it — the search then returned infeasible candidates as if they had been
+  optimized under the constraints. Constraint support is now a capability check
+  (``COBYLA``, ``SLSQP``, ``trust-constr``, ``COBYQA``) applied at configuration
+  time and again before each round, including the trust region added by
+  ``search_sphere=True``; bounds-only methods stay valid for unconstrained searches.
+  The same audit found that ``ineqs=`` (the spelling ``SurrogateRandomCV`` forwards)
+  was silently dropped by ``SurrogateSearch``, which only read ``ineq`` — user
+  constraints never reached the sampler or the optimizer at all. Both spellings are
+  now read, so a constrained search is actually constrained (regression test:
+  minimising $(x-3)^2$ subject to $x\le1$ returns $x\approx1$, not $3$).
 * **Fixed:** the **★ best** badge on Model Bundles ranked every metric as
   higher-is-better. It now ranks error metrics (``mae``, ``rmse``, ``mase``,
   ``smape``) by the smallest value, labels the winner with the population it was

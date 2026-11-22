@@ -40,6 +40,39 @@ from ._logutil import emit, get_logger
 logger = get_logger(__name__)
 
 
+#: ``scipy.optimize.minimize`` methods that honour nonlinear constraints.
+#:
+#: Everything else (notably ``L-BFGS-B``, ``TNC``, ``BFGS``, ``Powell``,
+#: ``Nelder-Mead``, ``CG``) accepts a ``constraints=`` argument and then **ignores
+#: it** after a warning — the returned point need not be feasible at all. Passing
+#: constraints to such a method is a silent correctness bug, so it is refused here
+#: rather than left to SciPy's warning.
+SCIPY_CONSTRAINED_SOLVERS = frozenset({"COBYLA", "SLSQP", "trust-constr", "COBYQA"})
+
+
+def check_scipy_solver_supports_constraints(solver, has_constraints, context="SurrogateSearch"):
+    """Refuse a solver that would silently drop inequality constraints.
+
+    :param solver: the ``scipy.optimize.minimize`` method name.
+    :param has_constraints: whether the call will pass any constraints at all.
+    :param context: the configuration site named in the error, e.g. ``scipy_solver``.
+    :raises ValueError: when constraints are requested on a bounds-only method.
+    """
+    if not has_constraints or solver in SCIPY_CONSTRAINED_SOLVERS:
+        return
+    raise ValueError(
+        "%s(%r) cannot handle inequality constraints: scipy.optimize.minimize accepts "
+        "the constraints argument for this method and then ignores it, so the returned "
+        "point need not be feasible. Use one of %s, or remove the constraints."
+        % (
+            context,
+            solver,
+            ", ".join(sorted(SCIPY_CONSTRAINED_SOLVERS)),
+        )
+    )
+
+
+
 class SearchStopped(Exception):
     """Raised inside a search when its ``stop_check`` asks it to stop.
 
@@ -241,8 +274,10 @@ class SurrogateSearch(object):
         surrogate is a polynomial of degree 3)
     :param regressor: a regressor (scikit-learn style) to find a surrogate; default since v0.2 is an un-tuned RBF
         `GaussianProcessRegressor` — pass e.g. `HilbertRegressor(deg=3)` for the legacy cubic polynomial surface
-    :param scipy_solver: `str` the scipy solver ('COBYLA' or 'SLSQP') to solve the local optimization problem at each
-        iteration (default: 'COBYLA')
+    :param scipy_solver: `str` the scipy solver used for the local optimization problem at each
+        iteration (default: 'COBYLA'). Constraints are honoured only by 'COBYLA', 'SLSQP',
+        'trust-constr' and 'COBYQA'; bounds-only methods such as 'L-BFGS-B' are rejected when
+        constraints are present, because SciPy accepts the argument and then ignores it.
     :param max_itr_no_prog: `int` maximum number of iterations with no progress (default: infinity)
     :param continue_: `boolean` continues progress from where it was interrupted (default: False)
     :param Continue: legacy spelling for `continue_`; retained for compatibility
@@ -260,7 +295,13 @@ class SurrogateSearch(object):
         self.objective = objective
         self.random_state = kwargs.pop("random_state", None)
         self.rng = random.Random(self.random_state)
-        self.ineqs = kwargs.pop("ineq", [])
+        # Both spellings are accepted: ``ineq`` is the documented name on the sampler
+        # and ``ineqs`` is what SurrogateRandomCV forwards, which used to be dropped
+        # silently here (no constraints ever reached the sampler or the optimizer).
+        if "ineqs" in kwargs:
+            self.ineqs = kwargs.pop("ineqs")
+        else:
+            self.ineqs = kwargs.pop("ineq", [])
         self.bounds = kwargs.pop("bounds", None)
         self.MaxIter = kwargs.pop("max_iter", 50)
         self.time_limit = kwargs.pop("time_limit", None)
@@ -313,6 +354,12 @@ class SurrogateSearch(object):
         self.regressor = requested_regressor
         regressor_source = "user" if requested_regressor is not None else "default"
         self.scipy_solver = kwargs.get("scipy_solver", "COBYLA")
+        # Fail at configuration time rather than after a long search: an unsupported
+        # solver used to be accepted and then silently ignore the constraints.
+        if self.optimizer == "scipy":
+            check_scipy_solver_supports_constraints(
+                self.scipy_solver, bool(self.ineqs) or bool(self.search_sphere)
+            )
         self.termination_reason = None
         self.summary_ = {}
         if self.regressor is None:
@@ -421,12 +468,12 @@ class SurrogateSearch(object):
         if self.optimizer == "scipy":
             from scipy.optimize import minimize
 
-            if (len(cns) > 0) and (
-                    self.scipy_solver not in ["COBYLA", "SLSQP", "L-BFGS-B"]
-            ):
-                raise ValueError(
-                    "%s does not support arbitrary constraints" % self.scipy_solver
-                )
+            # A method that cannot handle constraints silently ignores them, so a
+            # constrained round must never be handed to one (L-BFGS-B used to be on
+            # the allowlist and returned infeasible points).
+            check_scipy_solver_supports_constraints(
+                self.scipy_solver, len(cns) > 0, context="scipy_solver"
+            )
             res = minimize(
                 obj, x0, method=self.scipy_solver, constraints=cns, bounds=self.bounds
             )
@@ -1041,6 +1088,13 @@ class SurrogateRandomCV(BaseSearchCV):
             if self.n_jobs == -1 or self.n_jobs > limit:
                 self.n_jobs = limit
         self.ineqs = ineqs
+        # A bounds-only method would drop those constraints, so reject it here rather
+        # than letting the first surrogate round hand SciPy an argument it ignores.
+        check_scipy_solver_supports_constraints(
+            self.scipy_solver,
+            self.optimizer == "scipy" and (bool(self.ineqs) or bool(search_sphere)),
+            context="SurrogateRandomCV(scipy_solver=...)",
+        )
         self.init = init if init is not None else {}
         self.OPTIM = None
         self.scorer_ = {}

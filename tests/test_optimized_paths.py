@@ -3023,6 +3023,107 @@ class TestOptimizedPaths(unittest.TestCase):
         self.assertEqual(search.summary_["termination_reason"], "max_iter_no_progress")
         self.assertIn("budget", search.summary_)
 
+    def test_surrogate_search_rejects_a_bounds_only_solver_when_constrained(self):
+        """L-BFGS-B accepts ``constraints`` and ignores them; a constrained search must refuse it."""
+        with self.assertRaises(ValueError) as raised:
+            SurrogateSearch(
+                lambda z: (z[0] - 3.0) ** 2,
+                ineqs=[lambda z: 1.0 - z[0]],
+                scipy_solver="L-BFGS-B",
+                bounds=[(0.0, 5.0)],
+                random_state=0,
+            )
+
+        message = str(raised.exception)
+        self.assertIn("L-BFGS-B", message)
+        self.assertIn("ignores it", message)
+        self.assertIn("SLSQP", message)
+
+    def test_search_sphere_rejects_a_bounds_only_solver_too(self):
+        """``search_sphere`` adds its own inequality, so the same rule applies without user constraints."""
+        with self.assertRaises(ValueError) as raised:
+            SurrogateSearch(
+                lambda z: (z[0] - 3.0) ** 2,
+                scipy_solver="L-BFGS-B",
+                search_sphere=True,
+                bounds=[(0.0, 5.0)],
+                random_state=0,
+            )
+
+        self.assertIn("L-BFGS-B", str(raised.exception))
+
+    def test_a_bounds_only_solver_is_fine_without_constraints(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            search = SurrogateSearch(
+                lambda z: (z[0] - 2.0) ** 2,
+                scipy_solver="L-BFGS-B",
+                x0=[0.0],
+                bounds=[(0.0, 5.0)],
+                max_iter=5,
+                min_evals=3,
+                task_name=str(Path(tmp) / "unconstrained"),
+                random_state=0,
+            )
+            point, value = search()
+
+        self.assertLessEqual(value, 4.5)
+
+    def test_surrogate_search_honours_inequality_constraints(self):
+        """Minimising (x-3)^2 subject to x <= 1 must return a feasible point, not 3.
+
+        The constraints used to be dropped twice over — ``SurrogateRandomCV`` forwards
+        ``ineqs`` and ``SurrogateSearch`` only read ``ineq``, and the sampler/optimizer
+        were then handed nothing — so the unconstrained optimum came back instead.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            search = SurrogateSearch(
+                lambda z: (z[0] - 3.0) ** 2,
+                ineqs=[lambda z: 1.0 - z[0]],
+                x0=[0.5],
+                bounds=[(0.0, 5.0)],
+                max_iter=20,
+                min_evals=6,
+                scipy_solver="SLSQP",
+                task_name=str(Path(tmp) / "constrained"),
+                random_state=0,
+            )
+            self.assertEqual(len(search.ineqs), 1)  # the ``ineqs`` spelling is read
+            point, value = search()
+
+        self.assertLessEqual(point[0], 1.005)
+        self.assertAlmostEqual(value, 4.0, delta=0.2)
+        # Every point the sampler itself proposed is feasible.
+        def first_component(point):
+            while isinstance(point, (list, tuple)):
+                point = point[0]
+            return float(np.ravel(point)[0])
+
+        sampled = [
+            first_component(candidate)
+            for candidate, source in zip(search.evaluated, search.sampling_sources_)
+            if source in ("init", "explore")
+        ]
+        self.assertTrue(sampled)
+        self.assertTrue(all(x <= 1.0 + 1e-9 for x in sampled), sampled)
+
+    def test_surrogate_random_cv_rejects_a_bounds_only_solver_when_constrained(self):
+        with self.assertRaises(ValueError) as raised:
+            SurrogateRandomCV(
+                RandomForestRegressor(n_estimators=5, random_state=0),
+                {"max_depth": Categorical([1, 3])},
+                ineqs=[lambda z: 1.0 - z[0]],
+                scipy_solver="L-BFGS-B",
+                cv=2,
+                n_jobs=1,
+                max_iter=4,
+                min_evals=2,
+                refit=False,
+                random_state=0,
+            )
+
+        self.assertIn("SurrogateRandomCV", str(raised.exception))
+        self.assertIn("SLSQP", str(raised.exception))
+
     def test_aml_cpu_limit_caps_parallelism(self):
         automl = AML(config={}, n_jobs=-1, cpu_limit=1, verbose=0)
         self.assertEqual(automl.n_jobs, 1)
