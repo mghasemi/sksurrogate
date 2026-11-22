@@ -11,6 +11,8 @@
 
 **Test strategy note.** The repo's `tests/` covers Python only; `webui/package.json` has dev/build/lint/preview and no test runner. TDD (RED→GREEN) applies to every backend task. Frontend tasks follow *spec → implement → build gate (`npm run build`) → live-browser assertion* per the webui-live-verification reference, with a real end-to-end experiment submission as acceptance evidence.
 
+**Branch (per user instruction).** All implementation work happens on a **separate feature branch `webui-visual-searchspace`**, created from master (`c05792e`) before Task 1. Master is not touched until the Task 8 gates pass and the PR/merge is requested.
+
 **Complete code is provided for:** the catalog module + endpoint, `client.ts` additions, and `lib/searchspace.ts`. The large React component is specified by structure, props and representative JSX; its final markup is written against the existing CSS classes (`mono`, `field`, `hint`, `row top`, `btn`, `card`) at implementation time.
 
 ---
@@ -20,13 +22,14 @@
 | # | Decision | Default adopted | Alternative |
 |---|----------|-----------------|-------------|
 | D1 | Catalog source | **New endpoint** `GET /api/experiments/components`, server-curated in a new module `api/experiment_catalog.py` (no frontend hardcoding; importable from tests) | extend `/presets`; hardcode in `client.ts` next to `DEFAULT_*_EXPERIMENT_CONFIG` |
-| D2 | Estimator roster | **sklearn core + RGF pair**: 6 classifiers, 6 regressors (RF/ET specs reuse `PRESET_PARAM_SPECS` so preset and visual defaults cannot drift), `rgf.sklearn.RGFClassifier/RGFRegressor` with `algorithm ∈ [RGF, RGF Opt, RGF Sib]`, `reg_depth`, `min_samples_leaf`. Transformers: StandardScaler, SimpleImputer, PCA | sklearn-only; add GBDT/MLP/etc. later (one table row each — trivial to extend) |
+| D2 | Roster (expanded per user instruction) | **All relevant implementations**: 8 classifiers + 8 regressors — sklearn core (`LogisticRegression`, `SVC`, `DecisionTree`, RF/ET, and the regression-side `Ridge`/`SVR`), **XGBoost** (`xgboost.XGBClassifier/Regressor` 2.1.4) and **LightGBM** (`lightgbm.LGBMClassifier/Regressor` 4.7.0) with their performance-significant hyperparameters, plus the RGF pair (verified strings `["RGF","RGF_Opt","RGF_Sib"]`). **Imbalanced-learn resamplers** (classification only): SMOTE, ADASYN, RandomUnderSampler — AML classifies them as `"sampler"` via `_estimator_type` and auto-places them first. **All transformers incl. SKSurrogate's own**: scalers, `SimpleImputer`, `PCA`, `SelectKBest`, `VarianceThreshold`, plus `SKSurrogate.SensAprx` (SALib sensitivity) and `SKSurrogate.CorrelationThreshold`. Full spec table = the literal in Task 1 | sklearn-only v1 (rejected); skrebate selectors deferred — installed & engine-recognized, one row each if requested |
 | D3 | Pin toggles | **First-class in v1** — per-parameter "pin" switches the control from range/chips to a single scalar input (pinned scalars are already legal `ParamValue` JSON; zero backend work) | ranges only in v1, pinning via Raw tab |
 | D4 | Stacking directive | **Toggle card in the visual editor** — on/off; "on" inserts the existing `STACKING_COMPONENT` payload from `client.ts`; field-level editing of stacking stays in Raw mode (v1) | reachable only via Raw fallback |
 | D5 | Visual/Raw coexistence | **Two sub-tabs sharing one state**: source of truth stays `configJson`; visual edits serialize back into it immediately; switching to Raw re-parses it. Lossless both ways, and submit/warnings/pre-fill keep working unchanged | visual fully replaces the textarea with a read-only JSON drawer only |
 | A1 | `depends_on` | **Not editable in v1.** Imported rules are preserved verbatim through round-trips; cards show a small "conditional" badge when present. Editing remains possible in Raw mode. | full conditional-rule editor (v2) |
 | A2 | Pipeline depth (`length`) | **No new control** — the existing "Max pipeline length" input in Run settings (`Experiments.tsx:707-710`) is kept as-is; the visual card only points at it. | a stepper inside the editor (rejected: duplicate state) |
 | A3 | Temporal tasks | No behavior change; the temporal note under Run settings already explains one-step scoring. The catalog/visual editor is task-type aware but not temporal-aware. | — |
+| D6 | Preselection (new per user instruction) | **Catalog rows carry `preselected: bool`**; per task the pre-selected set is **RandomForest + XGBoost + LightGBM** (the 2026 tabular workhorses). Mechanics: opening Advanced with an *untouched* config seeds the visual editor from the preselected rows for the effective problem type (this replaces the old preset-JSON seed, so untouched Start now searches a diverse RF/XGB/LGBM space); "Reset to {preset} defaults" still fetches the **server** preset JSON (RF/ET) — documented in the hint line. Quick-start tab is unchanged (server presets apply there). | preselect RF+ET only; no seeding at all (empty cards, user adds everything) |
 
 ---
 
@@ -40,7 +43,11 @@
   - Run settings card `:701-797`: `length`, generation/parents, partition, scoring, backend, strategy, surrogate fields, temporal note, **Start experiment** → `runMut` body built from `parsed.config` + `parsed.forbidden` (`:363-391`). **Untouched.**
 - Schema (server): `api/routers/experiments.py` — `ParamSpec{type: "real"|"integer"|"categorical", low?, high?, items?, depends_on?}`, `ParamValue = ParamSpec | bool | int | None`, `SearchSpace = dict[str, dict[str, ParamValue]]`; pinned scalars are legal entries (docstring `:30-47`).
 - Engine (`SKSurrogate/aml.py`): config keys are "letters" composed into sequences up to `length`; `_validate_sequence` (`:729`) requires the last element to be a regressor/classifier, so transformers as intermediate letters are legal. Preset specs live in `PRESET_PARAM_SPECS` / `PRESET_ESTIMATOR_NAMES` (`:395-406`).
-- RGF is installed (3.12.0); sklearn-wrapper params include `algorithm`, `reg_depth`, `min_samples_leaf`, `max_leaf`.
+- **Letter typing is dynamic** (`_classify`, `aml.py:~700-728`): importlib-resolved classes are typed via `is_classifier`/`is_regressor`; anything with `_estimator_type == "sampler"` (all imblearn resamplers) becomes `"sampler"` and is auto-placed first (`couldBfirst`, `init_genes=...:998`). No hardcoded FQN list — the catalog only needs importable FQNs. `known_feature_selectors` (`:557-579`) adds special placement rules for PCA etc.
+- **Engine auto-preprocessing** (`aml.py:1390-1420`): preset + no `cat_cols` → a fold-local `FoldLocalDataPreprocessor(scale_numeric=True)` is prepended to every candidate; explicit `cat_cols` → `category_encoders.OneHotEncoder`. User-added scaler/encoder letters remain legal (redundant but harmless) — the UI hint should mention this.
+- **Verified installed in `.venv` (2026-11-22):** xgboost 2.1.4 (kwargs-based sklearn API; `get_params()` round-trips `n_estimators, max_depth, learning_rate, subsample, colsample_bytree, min_child_weight, gamma, reg_alpha, reg_lambda`), lightgbm 4.7.0 (`num_leaves, n_estimators, learning_rate, max_depth, min_child_samples, subsample, colsample_bytree, reg_alpha, reg_lambda, boosting_type` in the real signature), imbalanced-learn 0.14.2 (`imblearn.combine` — not `combination`; SMOTE/ADASYN/RandomOverSampler/RandomUnderSampler/TomekLinks verified via signatures), skrebate 0.8.4 (deferred to v2 per D2).
+- RGF is installed (3.12.0); **live fit-probe verified** the only valid `algorithm` strings are `"RGF"`, `"RGF_Opt"`, `"RGF_Sib"` — spaced forms raise `ValueError`. The catalog must use underscore forms.
+- SKSurrogate's own transformers (`SKSurrogate/sensapprx.py`, exported at package root): `SensAprx(n_features_to_select=10, method="sobol"| "morris"|"delta-mmnt", margin=.2, num_smpl=512, ...)` — SALib-based, **expensive per fit** (UI warning; not preselected); `CorrelationThreshold(threshold=0.7)` — cheap Pearson-pruning selector. Both are in `known_feature_selectors`.
 - `webui/dist` is **not** git-tracked (Docker builds it), so no built assets are committed.
 - Docs that mention the search space: `docs/ui-manual.rst` (primary UI guide), `docs/walkthrough.rst`, `docs/dataproc.rst`, `docs/mltrace.rst`.
 
@@ -73,21 +80,32 @@
 
 Served by ``GET /api/experiments/components`` (see :mod:`api.routers.experiments`).
 Estimators are tagged with their task type so the web UI can filter the library;
-transformers are shared and carry no tag. Parameter specs use exactly the
-``ParamSpec`` shapes accepted in a search-space config, so what the editor shows is
-what it submits — including pinned scalars (plain values), which are legal entries.
+transformers and samplers carry no tag or a fixed classification tag respectively.
+Parameter specs use exactly the ``ParamSpec`` shapes accepted in a search-space
+config, so what the editor shows is what it submits — including pinned scalars
+(plain values), which are legal entries.
 
-RF/ExtraTrees specs deliberately reuse :data:`SKSurrogate.aml.PRESET_PARAM_SPECS`
-so the visual defaults and the preset payloads cannot drift apart.
+Rows with ``"preselected": True`` seed the visual editor on first open for that
+task (see decision D6). The RF/ExtraTrees rows deliberately reuse
+:data:`SKSurrogate.aml.PRESET_PARAM_SPECS` so the visual defaults and the preset
+payloads cannot drift apart.
+
+Parameters are included only when they materially affect performance *and* map
+to a spec-convertible type (real / integer / categorical). Boolean flags
+(``SVC.probability``, ``SimpleImputer.add_indicator``), string-valued objectives
+(``XGB*.objective``, task-coupled) and non-spec values such as SMOTE's
+``sampling_strategy="auto"`` are deliberately absent: they stay available by
+pinning scalars in Raw mode.
 """
 
 from __future__ import annotations
 
 from SKSurrogate.aml import PRESET_PARAM_SPECS
 
-# One row per library entry. ``task`` is set for estimators only.
+# One row per library entry. ``task`` is set for estimators and samplers only;
+# transformers appear under both problem types.
 EXPERIMENT_COMPONENTS: list[dict[str, object]] = [
-    # --- classification -------------------------------------------------
+    # --- classification estimators --------------------------------------
     {
         "fqn": "sklearn.linear_model.LogisticRegression",
         "name": "Logistic Regression",
@@ -99,13 +117,296 @@ EXPERIMENT_COMPONENTS: list[dict[str, object]] = [
             "penalty": {"type": "categorical", "items": ["l2", "l1"]},
         },
     },
-    # ... remaining rows per the note below (plain dicts, no tricks) ...
+    {
+        "fqn": "sklearn.svm.SVC",
+        "name": "Support Vector Classifier",
+        "role": "estimator",
+        "task": "classification",
+        "description": "Kernel classifier; effective on small-to-medium data.",
+        "params": {
+            "C": {"type": "real", "low": 0.01, "high": 10},
+            "kernel": {"type": "categorical", "items": ["rbf", "linear"]},
+            "gamma": {"type": "categorical", "items": ["scale", "auto"]},
+        },
+    },
+    {
+        "fqn": "sklearn.tree.DecisionTreeClassifier",
+        "name": "Decision Tree (clf)",
+        "role": "estimator",
+        "task": "classification",
+        "description": "Interpretable single tree; weak alone, useful as a baseline letter.",
+        "params": {
+            "max_depth": {"type": "integer", "low": 2, "high": 20},
+            "min_samples_leaf": {"type": "integer", "low": 1, "high": 20},
+        },
+    },
+    {
+        "fqn": "sklearn.ensemble.RandomForestClassifier",
+        "name": "Random Forest (clf)",
+        "role": "estimator",
+        "task": "classification",
+        "preselected": True,
+        "description": "Bagged trees; the default workhorse for tabular classification.",
+        "params": dict(PRESET_PARAM_SPECS),
+    },
+    {
+        "fqn": "sklearn.ensemble.ExtraTreesClassifier",
+        "name": "Extra Trees (clf)",
+        "role": "estimator",
+        "task": "classification",
+        "description": "Random splits on both sides; often trades a little accuracy for speed.",
+        "params": dict(PRESET_PARAM_SPECS),
+    },
+    {
+        "fqn": "xgboost.XGBClassifier",
+        "name": "XGBoost (clf)",
+        "role": "estimator",
+        "task": "classification",
+        "preselected": True,
+        "description": "Regularised gradient boosting; a top-3 tabular workhorse.",
+        "params": {
+            "n_estimators": {"type": "integer", "low": 50, "high": 200},
+            "max_depth": {"type": "integer", "low": 2, "high": 10},
+            "learning_rate": {"type": "real", "low": 0.01, "high": 0.3},
+            "subsample": {"type": "real", "low": 0.6, "high": 1.0},
+            "colsample_bytree": {"type": "real", "low": 0.6, "high": 1.0},
+            "min_child_weight": {"type": "real", "low": 1, "high": 10},
+            "gamma": {"type": "real", "low": 0, "high": 5},
+            "reg_alpha": {"type": "real", "low": 0, "high": 10},
+            "reg_lambda": {"type": "real", "low": 0, "high": 10},
+        },
+    },
+    {
+        "fqn": "lightgbm.LGBMClassifier",
+        "name": "LightGBM (clf)",
+        "role": "estimator",
+        "task": "classification",
+        "preselected": True,
+        "description": "Leaf-wise gradient boosting; fast, strong on medium/large tables.",
+        "params": {
+            "n_estimators": {"type": "integer", "low": 50, "high": 200},
+            "num_leaves": {"type": "integer", "low": 4, "high": 128},
+            "learning_rate": {"type": "real", "low": 0.01, "high": 0.3},
+            "max_depth": {"type": "integer", "low": 2, "high": 10},
+            "min_child_samples": {"type": "integer", "low": 1, "high": 100},
+            "subsample": {"type": "real", "low": 0.6, "high": 1.0},
+            "colsample_bytree": {"type": "real", "low": 0.6, "high": 1.0},
+            "reg_alpha": {"type": "real", "low": 0, "high": 10},
+            "reg_lambda": {"type": "real", "low": 0, "high": 10},
+            "boosting_type": {"type": "categorical", "items": ["gbdt", "dart", "goss"]},
+        },
+    },
+    {
+        "fqn": "rgf.sklearn.RGFClassifier",
+        "name": "RGF (clf)",
+        "role": "estimator",
+        "task": "classification",
+        "description": "Random Gradient Forest; competitive on structured data. `algorithm` uses the verified underscore forms.",
+        "params": {
+            "algorithm": {"type": "categorical", "items": ["RGF", "RGF_Opt", "RGF_Sib"]},
+            "max_leaf": {"type": "categorical", "items": [8, 16, 32, 64]},
+            "n_tree_search": {"type": "integer", "low": 1, "high": 10},
+            "learning_rate": {"type": "real", "low": 0.05, "high": 0.3},
+            "reg_depth": {"type": "integer", "low": 0, "high": 5},
+        },
+    },
+    # --- regression estimators ------------------------------------------
+    {
+        "fqn": "sklearn.linear_model.Ridge",
+        "name": "Ridge Regression",
+        "role": "estimator",
+        "task": "regression",
+        "description": "Linear baseline with L2 regularisation.",
+        "params": {"alpha": {"type": "real", "low": 0.01, "high": 100}},
+    },
+    {
+        "fqn": "sklearn.svm.SVR",
+        "name": "Support Vector Regressor",
+        "role": "estimator",
+        "task": "regression",
+        "description": "Kernel regressor; effective on small-to-medium data.",
+        "params": {
+            "C": {"type": "real", "low": 0.01, "high": 10},
+            "kernel": {"type": "categorical", "items": ["rbf", "linear"]},
+            "epsilon": {"type": "real", "low": 0, "high": 0.5},
+        },
+    },
+    {
+        "fqn": "sklearn.tree.DecisionTreeRegressor",
+        "name": "Decision Tree (reg)",
+        "role": "estimator",
+        "task": "regression",
+        "description": "Interpretable single tree; weak alone, useful as a baseline letter.",
+        "params": {
+            "max_depth": {"type": "integer", "low": 2, "high": 20},
+            "min_samples_leaf": {"type": "integer", "low": 1, "high": 20},
+        },
+    },
+    {
+        "fqn": "sklearn.ensemble.RandomForestRegressor",
+        "name": "Random Forest (reg)",
+        "role": "estimator",
+        "task": "regression",
+        "preselected": True,
+        "description": "Bagged trees; the default workhorse for tabular regression.",
+        "params": dict(PRESET_PARAM_SPECS),
+    },
+    {
+        "fqn": "sklearn.ensemble.ExtraTreesRegressor",
+        "name": "Extra Trees (reg)",
+        "role": "estimator",
+        "task": "regression",
+        "description": "Random splits on both sides; often trades a little accuracy for speed.",
+        "params": dict(PRESET_PARAM_SPECS),
+    },
+    {
+        "fqn": "xgboost.XGBRegressor",
+        "name": "XGBoost (reg)",
+        "role": "estimator",
+        "task": "regression",
+        "preselected": True,
+        "description": "Regularised gradient boosting; a top-3 tabular workhorse.",
+        "params": {
+            "n_estimators": {"type": "integer", "low": 50, "high": 200},
+            "max_depth": {"type": "integer", "low": 2, "high": 10},
+            "learning_rate": {"type": "real", "low": 0.01, "high": 0.3},
+            "subsample": {"type": "real", "low": 0.6, "high": 1.0},
+            "colsample_bytree": {"type": "real", "low": 0.6, "high": 1.0},
+            "min_child_weight": {"type": "real", "low": 1, "high": 10},
+            "gamma": {"type": "real", "low": 0, "high": 5},
+            "reg_alpha": {"type": "real", "low": 0, "high": 10},
+            "reg_lambda": {"type": "real", "low": 0, "high": 10},
+        },
+    },
+    {
+        "fqn": "lightgbm.LGBMRegressor",
+        "name": "LightGBM (reg)",
+        "role": "estimator",
+        "task": "regression",
+        "preselected": True,
+        "description": "Leaf-wise gradient boosting; fast, strong on medium/large tables.",
+        "params": {
+            "n_estimators": {"type": "integer", "low": 50, "high": 200},
+            "num_leaves": {"type": "integer", "low": 4, "high": 128},
+            "learning_rate": {"type": "real", "low": 0.01, "high": 0.3},
+            "max_depth": {"type": "integer", "low": 2, "high": 10},
+            "min_child_samples": {"type": "integer", "low": 1, "high": 100},
+            "subsample": {"type": "real", "low": 0.6, "high": 1.0},
+            "colsample_bytree": {"type": "real", "low": 0.6, "high": 1.0},
+            "reg_alpha": {"type": "real", "low": 0, "high": 10},
+            "reg_lambda": {"type": "real", "low": 0, "high": 10},
+            "boosting_type": {"type": "categorical", "items": ["gbdt", "dart", "goss"]},
+        },
+    },
+    {
+        "fqn": "rgf.sklearn.RGFRegressor",
+        "name": "RGF (reg)",
+        "role": "estimator",
+        "task": "regression",
+        "description": "Random Gradient Forest; competitive on structured data. `algorithm` uses the verified underscore forms.",
+        "params": {
+            "algorithm": {"type": "categorical", "items": ["RGF", "RGF_Opt", "RGF_Sib"]},
+            "max_leaf": {"type": "categorical", "items": [8, 16, 32, 64]},
+            "n_tree_search": {"type": "integer", "low": 1, "high": 10},
+            "learning_rate": {"type": "real", "low": 0.05, "high": 0.3},
+            "reg_depth": {"type": "integer", "low": 0, "high": 5},
+        },
+    },
+    # --- resamplers (classification only; AML places samplers first) ----
+    {
+        "fqn": "imblearn.over_sampling.SMOTE",
+        "name": "SMOTE",
+        "role": "sampler",
+        "task": "classification",
+        "description": "Synthesises minority samples. `sampling_strategy` is a real ratio here; the string \"auto\" stays in Raw mode.",
+        "params": {
+            "k_neighbors": {"type": "integer", "low": 3, "high": 15},
+            "sampling_strategy": {"type": "real", "low": 0.5, "high": 1.0},
+        },
+    },
+    {
+        "fqn": "imblearn.over_sampling.ADASYN",
+        "name": "ADASYN",
+        "role": "sampler",
+        "task": "classification",
+        "description": "Synthesises minority samples, concentrated where the class boundary is hardest.",
+        "params": {
+            "n_neighbors": {"type": "integer", "low": 3, "high": 20},
+            "sampling_strategy": {"type": "real", "low": 0.5, "high": 1.0},
+        },
+    },
+    {
+        "fqn": "imblearn.under_sampling.RandomUnderSampler",
+        "name": "Random Under-Sampler",
+        "role": "sampler",
+        "task": "classification",
+        "description": "Drops majority-class samples; cheap way to balance very skewed targets.",
+        "params": {"sampling_strategy": {"type": "real", "low": 0.3, "high": 1.0}},
+    },
+    # --- transformers (shared by both problem types) ---------------------
+    {
+        "fqn": "sklearn.preprocessing.StandardScaler",
+        "name": "Standard Scaler",
+        "role": "transformer",
+        "description": "Zero-mean, unit-variance scaling. No searchable parameters; the engine already scales numerics per fold for presets.",
+        "params": {},
+    },
+    {
+        "fqn": "sklearn.preprocessing.RobustScaler",
+        "name": "Robust Scaler",
+        "role": "transformer",
+        "description": "Median/IQR scaling; tolerant of outliers. No searchable parameters.",
+        "params": {},
+    },
+    {
+        "fqn": "sklearn.impute.SimpleImputer",
+        "name": "Simple Imputer",
+        "role": "transformer",
+        "description": "Mean/median/most-frequent imputation for missing values.",
+        "params": {"strategy": {"type": "categorical", "items": ["mean", "median", "most_frequent"]}},
+    },
+    {
+        "fqn": "sklearn.decomposition.PCA",
+        "name": "PCA",
+        "role": "transformer",
+        "description": "Variance-based dimensionality reduction. Integer component counts here; fractional targets (e.g. 0.95) via Raw mode.",
+        "params": {"n_components": {"type": "integer", "low": 2, "high": 32}},
+    },
+    {
+        "fqn": "sklearn.feature_selection.SelectKBest",
+        "name": "Select K Best",
+        "role": "transformer",
+        "description": "Univariate feature ranking; keeps the top-k by score.",
+        "params": {"k": {"type": "integer", "low": 2, "high": 50}},
+    },
+    {
+        "fqn": "sklearn.feature_selection.VarianceThreshold",
+        "name": "Variance Threshold",
+        "role": "transformer",
+        "description": "Drops near-constant features.",
+        "params": {"threshold": {"type": "real", "low": 0.1, "high": 5.0}},
+    },
+    {
+        "fqn": "SKSurrogate.SensAprx",
+        "name": "Sensitivity Approximation (SALib)",
+        "role": "transformer",
+        "description": "SKSurrogate's own sensitivity-analysis selector (Sobol/Morris/Delta). Expensive per fit — not preselected.",
+        "params": {
+            "n_features_to_select": {"type": "integer", "low": 3, "high": 20},
+            "method": {"type": "categorical", "items": ["sobol", "morris", "delta-mmnt"]},
+        },
+    },
+    {
+        "fqn": "SKSurrogate.CorrelationThreshold",
+        "name": "Correlation Threshold",
+        "role": "transformer",
+        "description": "SKSurrogate's own Pearson-correlation pruning selector; cheap.",
+        "params": {"threshold": {"type": "real", "low": 0.5, "high": 0.95}},
+    },
 ]
 ```
 
-> Implementation note (write the real literal, not the placeholder trick above — shown only to keep this plan compact): every row is a plain dict; finish all six classifiers: LogisticRegression, SVC (`C` real 0.01–10, `kernel` categorical `[rbf, linear]`), DecisionTreeClassifier (`max_depth` integer 2–10, `min_samples_leaf` integer 1–10), RandomForestClassifier and ExtraTreesClassifier (each `params = dict(PRESET_PARAM_SPECS)` — the three specs `n_estimators` / `min_samples_leaf` / `max_features`), and rgf.sklearn.RGFClassifier (`algorithm` categorical `["RGF", "RGF Opt", "RGF Sib"]`, `reg_depth` integer 4–10, `min_samples_leaf` integer 1–20).
-> Six regressors: Ridge (`alpha` real 0.01–10), SVR (same params as SVC), DecisionTreeRegressor (same as its classifier twin), RandomForestRegressor / ExtraTreesRegressor (`dict(PRESET_PARAM_SPECS)`), rgf.sklearn.RGFRegressor (same three params as RGFClassifier).
-> Three transformers (no `task` key): sklearn.preprocessing.StandardScaler (empty `params: {}` — still a legal pipeline letter), sklearn.impute.SimpleImputer (`strategy` categorical `[mean, median, most_frequent]`), sklearn.decomposition.PCA (`n_components` integer 1–20).
+> **Roster rationale (verified 2026-11-22 in `.venv`):** XGBoost 2.1.4 exposes all nine listed kwargs through the sklearn API (`get_params()` round-trip verified); LightGBM 4.7.0 lists them in its real signature; `imblearn` resamplers carry `_estimator_type == "sampler"`, which AML's dynamic letter typing uses to place them first (`couldBfirst`) — no engine change needed. RGF `algorithm` values were fit-probed: only the underscore forms are accepted. Booleans/objectives/`"auto"` strings are excluded on purpose (see module docstring) and remain reachable via Raw-mode pinning.
 
 Also add the helper used by tests and (optionally) the endpoint:
 
@@ -167,14 +468,14 @@ def test_components_endpoint_shape(client):
     body = res.json()
     assert set(body) == {"components"}
     rows = body["components"]
-    assert isinstance(rows, list) and len(rows) >= 15
+    assert isinstance(rows, list) and len(rows) >= 25
     for row in rows:
-        assert set(row) <= {"fqn", "name", "role", "task", "description", "params"}
-        assert row["role"] in ("estimator", "transformer")
-        if row["role"] == "estimator":
-            assert row.get("task") in ("classification", "regression")
-        else:
+        assert set(row) <= {"fqn", "name", "role", "task", "description", "params", "preselected"}
+        assert row["role"] in ("estimator", "transformer", "sampler")
+        if row["role"] == "transformer":
             assert "task" not in row
+        else:  # estimator or sampler rows are task-tagged (samplers: classification only)
+            assert row.get("task") in ("classification", "regression")
         for spec in row["params"].values():
             assert spec["type"] in ("real", "integer", "categorical")
 
@@ -183,32 +484,97 @@ def test_components_split_by_task(client):
     rows = client.get("/api/experiments/components").json()["components"]
     clf = [r for r in rows if r.get("task") == "classification"]
     reg = [r for r in rows if r.get("task") == "regression"]
-    assert len(clf) >= 5 and len(reg) >= 5
+    # exact curated counts: 8 classifiers + 3 samplers, 8 regressors
+    assert len(clf) == 11 and len(reg) == 8
     # a classifier FQN must never appear under regression (and vice versa)
-    clf_names = {r["fqn"] for r in clf}
+    clf_names = {r["fqn"] for r in clf if r["role"] == "estimator"}
     reg_names = {r["fqn"] for r in reg}
     assert not (clf_names & reg_names)
+
+
+def test_gradient_boosting_in_catalog(client):
+    rows = client.get("/api/experiments/components").json()["components"]
+    by_fqn = {r["fqn"]: r for r in rows}
+    for fqn, task in (
+        ("xgboost.XGBClassifier", "classification"),
+        ("lightgbm.LGBMClassifier", "classification"),
+        ("xgboost.XGBRegressor", "regression"),
+        ("lightgbm.LGBMRegressor", "regression"),
+    ):
+        row = by_fqn[fqn]
+        assert row["task"] == task and row.get("preselected") is True
+        params = set(row["params"])
+        assert {"n_estimators", "learning_rate"} <= params, f"{fqn} missing core GBM knobs"
+        assert len(params) >= 9, f"{fqn}: expected the full significant-knob set"
+
+
+def test_resamplers_classification_only(client):
+    rows = client.get("/api/experiments/components").json()["components"]
+    samplers = {r["fqn"]: r for r in rows if r["role"] == "sampler"}
+    assert set(samplers) == {
+        "imblearn.over_sampling.SMOTE",
+        "imblearn.over_sampling.ADASYN",
+        "imblearn.under_sampling.RandomUnderSampler",
+    }
+    for row in samplers.values():
+        assert row["task"] == "classification"
+
+
+def test_sk_surrogate_transformers_present(client):
+    rows = client.get("/api/experiments/components").json()["components"]
+    by_fqn = {r["fqn"]: r for r in rows}
+    sens = by_fqn["SKSurrogate.SensAprx"]
+    assert sens["role"] == "transformer" and "task" not in sens
+    assert sens["params"]["method"]["items"] == ["sobol", "morris", "delta-mmnt"]
+    corr = by_fqn["SKSurrogate.CorrelationThreshold"]
+    assert corr["role"] == "transformer"
+    assert corr["params"]["threshold"]["type"] == "real"
 
 
 def test_rgf_catalog_entries(client):
     rows = client.get("/api/experiments/components").json()["components"]
     by_fqn = {r["fqn"]: r for r in rows}
     clf = by_fqn["rgf.sklearn.RGFClassifier"]["params"]
-    assert clf["algorithm"]["items"] == ["RGF", "RGF Opt", "RGF Sib"]
-    assert set(by_fqn["rgf.sklearn.RGFRegressor"]["params"]) >= {"algorithm", "reg_depth"}
+    # underscore forms are the only ones rgf 3.12 accepts (fit-probed)
+    assert clf["algorithm"]["items"] == ["RGF", "RGF_Opt", "RGF_Sib"]
+    reg = by_fqn["rgf.sklearn.RGFRegressor"]["params"]
+    assert set(reg) >= {"algorithm", "reg_depth"}
 
 
 def test_rf_et_specs_match_preset_table(client):
     from SKSurrogate.aml import PRESET_PARAM_SPECS
     rows = client.get("/api/experiments/components").json()["components"]
     by_fqn = {r["fqn"]: r for r in rows}
-    for fqn in ("sklearn.ensemble.RandomForestClassifier", "sklearn.ensemble.ExtraTreesRegressor"):
+    for fqn in (
+        "sklearn.ensemble.RandomForestClassifier",
+        "sklearn.ensemble.ExtraTreesClassifier",
+        "sklearn.ensemble.RandomForestRegressor",
+        "sklearn.ensemble.ExtraTreesRegressor",
+    ):
         assert by_fqn[fqn]["params"] == PRESET_PARAM_SPECS, f"{fqn} drifted from the preset table"
+
+
+def test_preselected_sets(client):
+    rows = client.get("/api/experiments/components").json()["components"]
+    for task, expected in (
+        ("classification", {
+            "sklearn.ensemble.RandomForestClassifier",
+            "xgboost.XGBClassifier",
+            "lightgbm.LGBMClassifier",
+        }),
+        ("regression", {
+            "sklearn.ensemble.RandomForestRegressor",
+            "xgboost.XGBRegressor",
+            "lightgbm.LGBMRegressor",
+        }),
+    ):
+        got = {r["fqn"] for r in rows if r.get("task") == task and r.get("preselected")}
+        assert got == expected, f"preselected set for {task} drifted: {got}"
 ```
 
 ### Step 2 — verify failure
 
-`env -u PYTHONPATH ./.venv/bin/python -m pytest tests/test_api_experiments.py -q -p no:randomly --no-header -k components_or_rf_et` → **4 failed** (404 route missing).
+`env -u PYTHONPATH ./.venv/bin/python -m pytest tests/test_api_experiments.py -q -p no:randomly --no-header -k "components or rf_et or preselected"` → **8 failed** (404 route missing).
 
 > Adapt the `-k` expression to the exact test names and the file's fixture style once opened. If `client` is not a bare fixture name in that file, mirror how neighboring tests obtain their client.
 
@@ -248,12 +614,14 @@ export interface CatalogComponent {
   /** Fully-qualified class name, e.g. "sklearn.linear_model.LogisticRegression". */
   fqn: string;
   name: string;
-  role: "estimator" | "transformer";
-  /** Set for estimators only — the web UI filters the library by it. */
+  role: "estimator" | "transformer" | "sampler";
+  /** Set for estimators and samplers — the web UI filters the library by it (samplers are classification-only). */
   task?: "classification" | "regression";
   description: string;
   /** Default per-hyperparameter specs, exactly as accepted in a search-space config. */
   params: Record<string, ParamSpec>;
+  /** Rows seeding the editor on first open for their task (D6). */
+  preselected?: boolean;
 }
 
 export interface ComponentsResponse {
@@ -326,7 +694,7 @@ export interface ParamModel {
 
 export interface CardModel {
   fqn: string;
-  role: "estimator" | "transformer";
+  role: "estimator" | "transformer" | "sampler";
   task?: "classification" | "regression";
   name: string; // catalog display label, or the short class name when unknown
   description?: string;
@@ -532,7 +900,7 @@ export interface SearchSpaceEditorProps {
 
 ### Layout (two columns, left = library, right = cards + rules)
 
-- **Library panel** (`<aside>`): search input (filters by `name`/`fqn` substring); two sections — *Estimators* (rows where `role==="estimator" && task===activeTask`) and *Transformers* (`role==="transformer"`). Each row: name, short description line, and an **Add** button (disabled when the fqn already has a card; shows "Added ✓"). Loading state: single hint line “Loading component library…” while `catalog === null`.
+- **Library panel** (`<aside>`): search input (filters by `name`/`fqn` substring); three sections — *Estimators* (rows where `role==="estimator" && task===activeTask`), *Resamplers* (**classification only**: `role==="sampler"`; hidden for regression) and *Transformers* (`role==="transformer"`). Each row: name, short description line, a **★** badge when `row.preselected`, and an **Add** button (disabled when the fqn already has a card; shows "Added ✓"). Loading state: single hint line “Loading component library…” while `catalog === null`.
 - **Cards column**: one `<div className="ss-card">` per model card — header row (`name`, role badge, ↑ ↓ move buttons, ✕ remove), body = parameter controls. Unknown cards render a read-only `<pre className="mono">{rawJson}</pre>` with the hint “Not in the component library — edit in Raw JSON.” Cards with `customEntries` show them as a read-only mono block under their controls (“Custom parameters (edit in Raw JSON)”).
 - **Parameter control** per `ParamModel`:
   - free + numeric: two number inputs (`low`, `high`) side by side, min/max from the spec; invalid state (low > high or empty) renders a red hint and blocks submit via the returned error path.
@@ -565,7 +933,7 @@ const moveCard    = (index: number, dir: -1 | 1) => { /* swap */ };
 
 ## Task 6 — Frontend: integrate into `Experiments.tsx` (sub-tabs)
 
-**Objective.** The Advanced → Search space card gains **Visual | Raw** sub-tabs; the submit path, warnings and pre-fill keep working unchanged because `configJson` remains the single source of truth.
+**Objective.** The Advanced → Search space card gains **Visual | Raw** sub-tabs; the submit path and warnings keep working unchanged (`configJson` remains the single source of truth). The untouched-config pre-fill is replaced by the D6 catalog seed (step 3); everything else on this card behaves as today.
 
 **Files.** Modify `webui/src/pages/Experiments.tsx`.
 
@@ -594,14 +962,33 @@ const moveCard    = (index: number, dir: -1 | 1) => { /* swap */ };
    };
    ```
    > Note: not keying the effect on `configJson` avoids a re-parse loop while the visual editor is open; entering Raw mode and editing there updates `configJson` directly, and switching back to Visual runs this same derivation.
-3. Replace the card body (`:645-699`) with:
+3. **D6 preselection seed** (replaces the untouched-config pre-fill — see the decision table). Add next to `cardFromCatalog` in `webui/src/lib/searchspace.ts`:
+   ```ts
+   /** Search-space JSON seeding an *untouched* editor from the catalog's preselected rows for a task. */
+   export function preselectedConfigJson(catalog: CatalogComponent[], task: "classification" | "regression"): string {
+     const space: Record<string, Record<string, ParamValue>> = {};
+     for (const row of catalog) if (row.preselected && row.task === task) space[row.fqn] = { ...row.params };
+     return JSON.stringify(space, null, 2);
+   }
+   ```
+   In `Experiments.tsx`, the existing untouched-config prefill effect (`:317-322`) becomes:
+   ```ts
+   useEffect(() => {
+     if (configTouched) return;
+     const seed = componentsQ.data ? preselectedConfigJson(componentsQ.data.components, preset) : configJsonForPreset(preset);
+     setConfigJson(seed);
+   }, [preset, configTouched, componentsQ.data, configJsonForPreset]);
+   ```
+   i.e. once the catalog query has loaded, an untouched config seeds to the RF/XGBoost/LightGBM workhorses for the effective problem type; while the catalog is still in flight it keeps today's server-preset fallback so nothing flashes empty. `configJsonForPreset` (server `default_config`, local fallback) survives **only** as the target of “Reset to {preset} defaults” — that button keeps applying the *server* preset JSON per D6, which is a deliberately different document from the untouched seed.
+4. Replace the card body (`:645-699`) with:
    - sub-tab row (reuse the existing `<Tabs>` primitive or two `.btn` toggles — match house style);
    - **Visual** pane → `<SearchSpaceEditor model={spaceModel} catalog={catalog} activeTask={preset} onChange={handleVisualChange} />`;
    - **Raw** pane → today's textarea + its hint, byte-for-byte the same handlers (`setConfigJson`, `configTouched`);
    - move “Reset to {preset} defaults” above both panes (it sets `configJson` and clears touched; the visual model re-derives on next switch — also call the derivation synchronously after reset so the user doesn't have to flip tabs to see it);
+   - rewrite the pre-fill hint (`:658`) → “Pre-filled with the **{preset}** workhorses — Random Forest, XGBoost and LightGBM (★ in the library). Editing customises it; “Reset to {preset} defaults” re-applies the server preset.”;
    - remove the two old buttons (`Add stacking component`, `Add forbidden rule`) from the Raw pane footer only when a card-level replacement exists (it does: stacking toggle + forbidden rows) — keep their behavior reachable, not duplicated;
    - warnings list + `configError` render under both panes (unchanged code).
-4. Quick-start tab, Run settings card, `runMut`, temporal note: **untouched**.
+5. Quick-start tab, Run settings card, `runMut`, temporal note: **untouched** (server presets apply there exactly as today).
 
 **Verify.**
 - `npm run build` clean; oxlint pass.
@@ -620,12 +1007,13 @@ Per `.hermes` skill reference §1/§3: scratch `HOME`, fresh port, real registra
 2. Register **two** small CSVs through the Datasets API/UI: one with a binary target declared `problem_type=classification`, one numeric target declared `regression` (declaration path is the same field Quick start reads — `api/routers/datasets.py` accepts `problem_type` at registration).
 
 **Assertions (each = browser observation + screenshot):**
-1. **Filtering.** Open Experiments → Advanced for the classification task: library *Estimators* shows exactly the 6 classifier rows and zero regressors; switch Quick-start problem type to Regression (or use the regression task) → 6 regressor rows appear, classifiers gone. Transformers section constant in both.
-2. **Round-trip parity.** From the pre-filled visual cards (preset default): pin `n_estimators` on RandomForestClassifier to e.g. 100; toggle a category chip off for `max_features`; switch to Raw tab → JSON shows `"n_estimators": 100` and the reduced `items` list, everything else unchanged; switch back to Visual → pinned state and chip selection restored (lossless both ways).
-3. **Forbidden + stacking.** Add one forbidden rule row referencing an existing parameter; toggle stacking on then off → Raw JSON gains/loses the `"forbidden"` array / `"stacking"` key respectively; with a `depends_on`-bearing config imported via Raw, switching to Visual and back preserves it verbatim (A1).
-4. **Unknown-entry fallback.** In Raw mode add an ad-hoc FQN not in the catalog (e.g. `sklearn.neighbors.KNeighborsClassifier`) with one spec + one scalar; switch to Visual → card renders as a read-only mono block; switch back → byte-identical entry.
-5. **Real submission (classification).** Visual editor, length 1–2, small generation budget → Start experiment → job completes in seconds on the scratch dataset; Top pipelines renders. Same once for regression with a StandardScaler card added — transformer letter accepted by `_validate_sequence` (last element remains an estimator) and the run still completes (or fails *gracefully* with the existing all-candidates-rejected message, which is acceptable evidence of no crash).
-6. **Reset.** “Reset to {preset} defaults” in visual mode restores the preset cards; pre-fill effect still re-applies on problem-type change until touched (existing behavior unchanged — flip type before touching anything and confirm cards follow).
+1. **Filtering.** Open Experiments → Advanced for the classification task: library *Estimators* shows exactly the 8 classifier rows and zero regressors, plus a *Resamplers* section with exactly SMOTE / ADASYN / Random Under-Sampler; switch to a regression task (or Quick-start problem type Regression) → 8 regressor rows appear, classifiers **and** the Resamplers section gone. Transformers section constant in both (8 rows incl. the two SKSurrogate selectors).
+2. **Preselection seed (D6).** On an untouched Advanced card after the catalog query resolves: exactly three estimator cards are present — RandomForest · XGBoost · LightGBM for the active task (★ badges on their library rows); Raw JSON matches `preselectedConfigJson` output for that task; flipping problem type before touching anything re-seeds to the other trio.
+3. **Round-trip parity.** From the pre-filled visual cards (the D6 seed): pin `n_estimators` on RandomForestClassifier to e.g. 100; toggle a category chip off for `max_features`; switch to Raw tab → JSON shows `"n_estimators": 100` and the reduced `items` list, everything else unchanged; switch back to Visual → pinned state and chip selection restored (lossless both ways).
+4. **Forbidden + stacking.** Add one forbidden rule row referencing an existing parameter; toggle stacking on then off → Raw JSON gains/loses the `"forbidden"` array / `"stacking"` key respectively; with a `depends_on`-bearing config imported via Raw, switching to Visual and back preserves it verbatim (A1).
+5. **Unknown-entry fallback.** In Raw mode add an ad-hoc FQN not in the catalog (e.g. `sklearn.neighbors.KNeighborsClassifier`) with one spec + one scalar; switch to Visual → card renders as a read-only mono block; switch back → byte-identical entry.
+6. **Real submission (classification).** Visual editor, length 1–2, small generation budget → Start experiment → job completes in seconds on the scratch dataset; Top pipelines renders. Same once for regression with a StandardScaler card added — transformer letter accepted by `_validate_sequence` (last element remains an estimator) and the run still completes (or fails *gracefully* with the existing all-candidates-rejected message, which is acceptable evidence of no crash).
+7. **Reset.** “Reset to {preset} defaults” in visual mode applies the **server** preset JSON (RF/ExtraTrees document — visibly different from the D6 seed); the untouched-config pre-fill effect still re-applies on problem-type change until touched (now following the catalog seed once loaded — flip type before touching anything and confirm cards follow).
 
 **Evidence.** Screenshot per assertion stored under `docs/images/` (one composite figure for the manual); note the port, task names and timestamps in the verification log entry of this plan's commit message.
 
@@ -637,7 +1025,7 @@ Per `.hermes` skill reference §1/§3: scratch `HOME`, fresh port, real registra
 
 1. `docs/ui-manual.rst`: rewrite the Experiments → Advanced search-space section: describe Visual/Raw sub-tabs, library filtering by declared problem type, pin toggles, forbidden rows, stacking toggle; embed the composite screenshot (`.. image:: images/experiments-visual-searchspace.png`); keep a short “Raw JSON” paragraph for power users (reserved keys, `depends_on`, custom FQNs).
 2. Grep audit per the skill reference: every .rst mentioning “search space” (`ui-manual.rst`, `walkthrough.rst`, `dataproc.rst`, `mltrace.rst`) — update stale “paste JSON” phrasing; build Sphinx (or at least `make html` if available) and grep the rendered output for the new terms as evidence.
-3. `CHANGELOG.md`: entry under Unreleased — *Experiments: visual search-space editor with task-filtered component library, pin toggles, forbidden-rule rows and stacking toggle (raw-JSON mode retained).*
+3. `CHANGELOG.md`: entry under Unreleased — *Experiments: visual search-space editor with task-filtered component library, pin toggles, forbidden-rule rows and stacking toggle (raw-JSON mode retained). The catalog covers the full classifier/regressor roster incl. XGBoost and LightGBM, imbalanced-learn resamplers (classification) and SKSurrogate's SensAprx/CorrelationThreshold selectors; untouched configs pre-select Random Forest + XGBoost + LightGBM.*
 4. **Final gates:** full pytest suite green via the clean-env recipe (`env -u PYTHONPATH ./.venv/bin/python -m pytest tests -q --no-header` — baseline on master: 1138 passed / 32 subtests as of this week); `cd webui && npm run build`; oxlint.
 5. **Commit.** `[Docs] + [Chore(release)]` entries; then branch merge flow per the usual PR process (CI fires on master/PRs only).
 
