@@ -213,4 +213,10 @@ class TestRegistrationAndLoading:
         response = _register(client)
         assert response.status_code == 200, response.text
         frame = load_partition(TASK, "train")
-        assert frame["when"].dtype == object
+        # Not coerced to datetime: the column keeps its string type. The exact storage
+        # class is a pandas-version detail — pandas 2 infers ``object`` for text, pandas 3
+        # infers its ``str`` dtype — so assert the type family and the values, not
+        # ``dtype == object`` (which is what the "current deps" CI runner runs on pandas 3).
+        assert not pd.api.types.is_datetime64_any_dtype(frame["when"])
+        assert frame["when"].dtype == object or pd.api.types.is_string_dtype(frame["when"])
+        assert frame["when"].tolist() == _frame()["when"].tolist()
