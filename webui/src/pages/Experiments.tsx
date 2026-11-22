@@ -15,10 +15,10 @@ import {
   addProjectArtifact,
   DEFAULT_EXPERIMENT_CONFIG,
   DEFAULT_REGRESSION_EXPERIMENT_CONFIG,
-  STACKING_COMPONENT,
   ApiError,
   getDatasetMetadata,
   getDatasetTemporal,
+  getExperimentComponents,
   getProject,
   getPresets,
   getPreflight,
@@ -28,10 +28,13 @@ import {
 } from "../api/client";
 import type { ExperimentResult, JobRecord, ParamSpec, RunExperimentRequest, SearchSpace } from "../api/client";
 import { Badge, Card, ErrorNote, Table, Tabs, fmtNum } from "../components/ui";
+import SearchSpaceEditor from "../components/SearchSpaceEditor";
 import { JobTracker } from "../components/JobTracker";
 import { ScoringSelect } from "../components/ScoringSelect";
 import { fmtElapsed, useElapsed } from "../lib/hooks";
 import { defaultPartition } from "../lib/partition";
+import { modelToSpace, preselectedConfigJson, spaceToModel } from "../lib/searchspace";
+import type { SpaceModel } from "../lib/searchspace";
 import { useTask } from "../lib/task-context";
 
 function defaultConfigJson(): string {
@@ -155,6 +158,9 @@ export default function ExperimentsPage() {
   // True once the user has typed into (or extended) the search space. Until then
   // the pre-fill follows the effective problem type; after that it never clobbers.
   const [configTouched, setConfigTouched] = useState(false);
+  // Visual | Raw sub-tabs on the search-space card; the editor model is derived state.
+  const [spaceEditorMode, setSpaceEditorMode] = useState<"visual" | "raw">("visual");
+  const [spaceModel, setSpaceModel] = useState<SpaceModel | null>(null);
   const [length, setLength] = useState(2);
   const [maxGeneration, setMaxGeneration] = useState(3);
   const [numParents, setNumParents] = useState(4);
@@ -272,6 +278,9 @@ export default function ExperimentsPage() {
   const availableBackends = backendOptionsQ.data?.backends ?? ["local"];
 
   const presetsQ = useQuery({ queryKey: ["experiment-presets"], queryFn: getPresets, staleTime: Infinity });
+  const componentsQ = useQuery({ queryKey: ["experiment-components"], queryFn: getExperimentComponents, staleTime: Infinity });
+  /** Catalog rows for the visual editor's library panel; null while the query is in flight. */
+  const catalog = componentsQ.data?.components ?? null;
   // The declared problem type is the default for Quick start: a regression task
   // must not open on a classification search just because that was the hard-coded
   // initial state. A user choice is preserved once made.
@@ -315,11 +324,58 @@ export default function ExperimentsPage() {
 
   // The pre-filled search space follows the effective problem type — declared on
   // Datasets or picked in Quick start (regression opens on the library preset's
-  // regressor space instead of classifiers). Re-applied until the user edits it.
+  // regressor space instead of classifiers). Once the component catalog has loaded,
+  // an untouched editor seeds to the workhorse estimators (★ rows) for that task;
+  // while it is still in flight we keep today's server-preset fallback so nothing
+  // flashes empty. Re-applied until the user edits anything — but NOT on a mere
+  // configTouched transition: "Reset to … defaults" deliberately keeps the editor
+  // untouched, and re-running here (configTouched back in the deps) would clobber
+  // the freshly applied server preset within one commit. Live verification caught
+  // exactly that: reset rendered the workhorse seed instead of RF/ExtraTrees.
   useEffect(() => {
     if (configTouched) return;
-    setConfigJson(configJsonForPreset(preset));
-  }, [preset, configTouched, configJsonForPreset]);
+    setConfigJson(
+      componentsQ.data ? preselectedConfigJson(componentsQ.data.components, preset) : configJsonForPreset(preset),
+    );
+  }, [preset, componentsQ.data, configJsonForPreset]);
+
+  // Rebuild the editor model when entering visual mode, when the catalog first
+  // loads, or whenever configJson changes. The configJson key is required — not
+  // optional: the pre-fill effect writes the new document one commit AFTER the
+  // catalog resolves (its setConfigJson lands in a later render), so without it
+  // this derivation parses the stale document and Visual renders cards that do
+  // not match what Raw shows. Re-deriving on every visual edit is cheap (one
+  // parse) and loop-free: handleVisualChange sets model + configJson together,
+  // so the follow-up parse sees an unchanged string and no further commit fires;
+  // raw-mode edits hit the guard below and return before parsing.
+  useEffect(() => {
+    if (spaceEditorMode !== "visual") return;
+    const res = spaceToModel(configJson, componentsQ.data?.components ?? []);
+    if (!("error" in res)) setSpaceModel(res);
+  }, [spaceEditorMode, configJson, componentsQ.data]);
+
+  /** Visual edits write back to configJson immediately — the single source of truth. */
+  const handleVisualChange = (next: SpaceModel) => {
+    setSpaceModel(next);
+    const out = modelToSpace(next);
+    if (typeof out === "string") {
+      setConfigJson(out);
+      setConfigTouched(true);
+      setConfigError(null);
+    } else {
+      setConfigError(out.error); // e.g. invalid range or empty category selection — the raw tab shows the same error on submit
+    }
+  };
+
+  /** Reset applies the *server* preset: deliberately a different document from the untouched workhorse seed. */
+  const resetToPreset = () => {
+    const json = configJsonForPreset(preset);
+    setConfigJson(json);
+    setConfigTouched(false);
+    // Re-derive synchronously so the visual pane reflects the reset without a tab flip.
+    const res = spaceToModel(json, componentsQ.data?.components ?? []);
+    if (!("error" in res)) setSpaceModel(res);
+  };
   // The typed partition belongs to the task it was typed for.
   useEffect(() => {
     setTrainPartition("");
@@ -439,34 +495,6 @@ export default function ExperimentsPage() {
     }
     setConfigError(null);
     runMut.mutate();
-  };
-
-  /** Merge the pre-filled stacking directive (schema for the StackingEstimator wrappers). */
-  const insertStackingComponent = () => {
-    if ("error" in parsed) return;
-    const { config } = parsed;
-    if (config[STACKING_KEY]) return;
-    const next = { ...config, ...STACKING_COMPONENT };
-    setConfigJson(JSON.stringify(next, null, 2));
-    setConfigTouched(true);
-    setConfigError(null);
-  };
-
-  /** Append a placeholder forbidden rule the user can edit in place. */
-  const insertForbiddenRule = () => {
-    if ("error" in parsed) return;
-    const rules = parsed.forbidden ?? [];
-    const firstParam = Object.keys(parsed.paramsByEstimator)[0];
-    const candidate = firstParam ? Object.keys(parsed.config[firstParam])[0] : "paramA";
-    setConfigJson(
-      JSON.stringify(
-        { ...parsed.config, [FORBIDDEN_KEY]: [...rules, [candidate ?? "paramA", "value"]] },
-        null,
-        2,
-      ),
-    );
-    setConfigTouched(true);
-    setConfigError(null);
   };
 
   const scoreMetric = result?.score_metric ?? null;
@@ -643,45 +671,41 @@ export default function ExperimentsPage() {
 
       {mode === "advanced" && (<>
       <Card title="Search space" sub="Keys are fully-qualified estimator class names; values map hyperparameters to real / integer / categorical specs. Optional per-param “depends_on” and top-level “forbidden” rules shape the search.">
-        <textarea
-          className="mono"
-          rows={16}
-          value={configJson}
-          onChange={(e) => {
-            setConfigJson(e.target.value);
-            if (!configTouched) setConfigTouched(true);
-          }}
-          spellCheck={false}
-        />
-        {!configTouched && (
-          <span className="hint">
-            Pre-filled with the <b>{preset}</b> default search space — it follows the problem type declared on the
-            Datasets page (or your Quick-start pick), and re-applies when you switch until you edit. “Reset to{" "}
-            {preset} defaults” re-applies it any time.
-          </span>
-        )}
-        <div className="row fixed" style={{ marginTop: 8 }}>
-          <button
-            className="btn"
-            onClick={() => {
-              setConfigJson(configJsonForPreset(preset));
-              setConfigTouched(false);
-            }}
-          >
+        <div className="card-head">
+          <Tabs
+            tabs={[{ id: "visual", label: "Visual" }, { id: "raw", label: "Raw" }]}
+            active={spaceEditorMode}
+            onChange={(id) => setSpaceEditorMode(id as "visual" | "raw")}
+          />
+          <span className="spacer" />
+          <button className="btn" onClick={resetToPreset}>
             Reset to {preset} defaults
           </button>
-          <button className="btn" onClick={insertStackingComponent} disabled={"error" in parsed}>
-            Add stacking component
-          </button>
-          <button className="btn" onClick={insertForbiddenRule} disabled={"error" in parsed}>
-            Add forbidden rule
-          </button>
-          <span className="hint">
-            <code>stacking</code> configures the out-of-fold <code>StackingEstimator</code> wrappers for intermediate
-            components (<code>res</code>/<code>probs</code>/<code>decision</code>/<code>cv</code>/<code>n_jobs</code>);
-            it is a directive, not a pipeline step.
-          </span>
         </div>
+        {!configTouched && (
+          <p className="hint">
+            Pre-filled with the <b>{preset}</b> workhorses — Random Forest, XGBoost and LightGBM (★ in the library).
+            Editing customises it; “Reset to {preset} defaults” re-applies the server preset.
+          </p>
+        )}
+        {spaceEditorMode === "visual" ? (
+          spaceModel ? (
+            <SearchSpaceEditor model={spaceModel} catalog={catalog} activeTask={preset} onChange={handleVisualChange} />
+          ) : (
+            <span className="hint">The search-space JSON has errors — fix them in the Raw tab first.</span>
+          )
+        ) : (
+          <textarea
+            className="mono"
+            rows={16}
+            value={configJson}
+            onChange={(e) => {
+              setConfigJson(e.target.value);
+              if (!configTouched) setConfigTouched(true);
+            }}
+            spellCheck={false}
+          />
+        )}
         {warnings.length > 0 && (
           <div style={{ marginTop: 8 }}>
             {warnings.map((w) => (

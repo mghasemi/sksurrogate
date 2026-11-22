@@ -3058,6 +3058,28 @@ export interface ExperimentPreset {
 
 export const getPresets = () => get<{ presets: ExperimentPreset[] }>("/api/experiments/presets");
 
+/** One entry of the curated component catalog served by /api/experiments/components. */
+export interface CatalogComponent {
+  /** Fully-qualified class name, e.g. "sklearn.linear_model.LogisticRegression". */
+  fqn: string;
+  name: string;
+  role: "estimator" | "transformer" | "sampler";
+  /** Set for estimators and samplers — the web UI filters the library by it (samplers are classification-only). */
+  task?: "classification" | "regression";
+  description: string;
+  /** Default per-hyperparameter specs, exactly as accepted in a search-space config. */
+  params: Record<string, ParamSpec>;
+  /** Rows seeding the editor on first open for their task (D6). */
+  preselected?: boolean;
+}
+
+export interface ComponentsResponse {
+  components: CatalogComponent[];
+}
+
+/** Curated component catalog for the visual search-space editor. */
+export const getExperimentComponents = () => get<ComponentsResponse>("/api/experiments/components");
+
 /* ------------------------------------------------------------------ */
 /* Explanations and prediction intervals                               */
 /* ------------------------------------------------------------------ */

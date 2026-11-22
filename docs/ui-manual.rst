@@ -520,12 +520,43 @@ and it names the columns it is talking about.
    Pre-flight warnings for the selected task; warnings and hints are listed in
    severity order and the run is never blocked.
 
-In **Advanced**, the page starts with a JSON search-space example. Each
-top-level key identifies a fully-qualified scikit-learn estimator class;
-parameter definitions specify real, integer, or categorical ranges. Validate
-the JSON and search-space definitions before starting. The **Add stacking
-component** and **Add forbidden rule** buttons help construct supported
-directives without hand-writing them.
+In **Advanced**, the search space is edited visually — no hand-written JSON
+required. An untouched editor opens on the task's workhorses for its problem
+type (Random Forest, XGBoost and LightGBM, marked ★ in the library), and any
+edit customises it from there; “Reset to <problem type> defaults” re-applies
+the server's classic Random Forest → Extra Trees preset at any time. The card
+has two sub-tabs:
+
+* **Visual** — a component library beside one card per chosen component. The
+  library is server-curated and filtered by the declared problem type: its
+  estimators, resamplers (classification only), and transformers shared by
+  both; each row's Add button flips to *Added ✓*. On a component card, numeric
+  hyperparameters get low/high range inputs, categorical ones get toggleable
+  value chips, and every parameter has a **range ⇄ pinned** switch that fixes
+  it to a single value instead of a range. Below the cards, **Forbidden rules**
+  rows list the ``[parameter, value]`` pairs the search must avoid (**Add
+  forbidden rule** adds one), and the **Stacking (out-of-fold StackingEstimator
+  wrappers)** checkbox inserts the stacking directive — a configuration
+  directive, not a pipeline step. A summary line counts components, free
+  parameters and pins; the maximum number of components per generated pipeline
+  is set in Run settings → Max pipeline length. If the underlying JSON has
+  errors, the Visual tab says so and points to the Raw tab.
+* **Raw** — the same document as editable JSON: keys are fully-qualified
+  estimator class names and values map hyperparameters to real / integer /
+  categorical specs (the card's subtitle states this contract). It is where
+  power users keep control — top-level ``forbidden`` rules, conditional
+  parameters with per-param ``depends_on`` (preserved verbatim through Visual
+  round-trips; edit them here), pinned scalars, and FQNs outside the curated
+  library, which render read-only in Visual mode. Switching sub-tabs is lossless
+  in both directions.
+
+.. figure:: images/experiments-visual-searchspace.png
+   :alt: Experiments page: visual search space with component library, Random Forest / Extra Trees preset cards, and Top pipelines from a classification run and a regression run
+   :width: 100%
+
+   The visual search space and its component library (left panels), the Random
+   Forest / Extra Trees preset after “Reset to defaults”, and Top pipelines
+   from completed classification and regression runs.
 
 Then configure the run:
 
@@ -611,13 +642,6 @@ it empty keeps the generated name (``experiment · <task> · <date time>``). The
 job id stays visible next to the name and remains the identity used by links,
 checkpoints and project artifacts. Rename or clear the name later with
 **Rename** on any job tracker.
-
-.. figure:: images/ui-experiments.png
-   :alt: Experiments page with JSON search space and run controls
-   :width: 100%
-
-   Search-space editor and experiment settings. The run controls continue
-   below the visible portion of the screen.
 
 Combine models into an ensemble
 -------------------------------
