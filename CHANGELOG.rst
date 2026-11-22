@@ -230,6 +230,20 @@ Ensembles keep cat_cols members frame-tolerant
   the only route. The weight record now reports the folds the matrix came from
   (``folds``) and flags ``repeated_folds_collapsed``.
 
+Backtesting a tabular task is refused where it is asked
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Fixed:** the Evaluation page offered the **Rolling-origin backtest** panel for
+  every task, so clicking it on a tabular task (live: ``SPRA``) queued a job that died
+  with ``ValueError: task 'SPRA' has no temporal spec; declare one with
+  SetTemporalSpec before backtesting``. A backtest is a forecast protocol — every fold
+  trains on a strictly earlier window and scores the next ``horizon`` steps — so
+  ``POST /api/evaluation/{task}/backtest`` now answers **400 at submit** with the
+  remedy (declare the time column on Datasets, or use Nested CV / Diagnostic curves)
+  and queues nothing; the Evaluation page reads ``temporal.declared`` from
+  ``GET /api/datasets/{task}`` and renders a short explanation card instead of the
+  form. ``mltrack.backtest``'s own guard is unchanged as the library-level check.
+
 Experiments search space follows the task's problem type
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

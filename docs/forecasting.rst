@@ -667,7 +667,9 @@ Endpoint                                                  Purpose
                                                           (``model_version`` or ``alias``, horizon,
                                                           n_splits, refit, features); returns a job id
                                                           whose result holds per-origin records and
-                                                          metrics.
+                                                          metrics. Answers 400 at submit when the
+                                                          task declares no temporal spec — a backtest
+                                                          is a forecast protocol, not a tabular CV.
 ``POST /api/inference/{task}/forecast``                   Serve a multi-step forecast from a format-v2
                                                           temporal bundle: ``{"history": [...],
                                                           "horizon"?: int, "future_exogenous"?: [...]}``

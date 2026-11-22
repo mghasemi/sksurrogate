@@ -488,6 +488,22 @@ def run_backtest(task_name: str, body: BacktestRequest):
     """
     if (body.model_version is None) == (body.alias is None):
         raise bad_request("Exactly one of model_version or alias must be provided")
+    # A rolling-origin backtest is a *forecast* protocol: each fold trains on a strictly
+    # earlier window and scores the next ``horizon`` steps, which only exists once the
+    # task declares a time column. Refusing here keeps the answer at the request instead
+    # of a queued job that fails after the first fit, and the Evaluation page hides the
+    # panel for the same reason (``GET /api/datasets/{task}`` reports ``temporal.declared``).
+    get_registered_target(task_name)  # 404 for an unregistered task, before any job
+    with open_tracker(task_name) as tracker:
+        declares_temporal = tracker.GetTemporalSpec() is not None
+    if not declares_temporal:
+        raise bad_request(
+            "Backtest is a rolling-origin forecast protocol: every fold trains on a strictly "
+            "earlier window and scores the next step, which needs a declared time column. "
+            "Task %r declares no temporal spec — declare one on the Datasets page (time "
+            "column, optional series id) to enable backtesting and multi-step forecasts, or "
+            "use Nested CV and Diagnostic curves to evaluate a tabular task." % task_name
+        )
     scoring_fn = _nested_cv_scorer(body.scoring, None)
     bundle = resolve_bundle(
         task_name,

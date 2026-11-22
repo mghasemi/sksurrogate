@@ -20,6 +20,7 @@ import {
   asNestedCVResult,
   getBundle,
   getBundleCurves,
+  getDatasetMetadata,
   getLearningCurveMetrics,
   getLearningCurves,
   listBundles,
@@ -839,6 +840,16 @@ export default function EvaluationPage() {
 
   const listQ = useQuery({ queryKey: ["bundles-list", task], queryFn: () => listBundles(task), enabled: !!task });
 
+  // A backtest is a rolling-origin *forecast* protocol: it needs a declared time column,
+  // and the control plane refuses a tabular task with 400 at submit. The panel is
+  // therefore only offered where ``temporal.declared`` is true.
+  const datasetQ = useQuery({
+    queryKey: ["dataset-metadata", task],
+    queryFn: () => getDatasetMetadata(task),
+    enabled: !!task,
+    retry: retryUnlessNotFound,
+  });
+
   const bundleQs = useQuery({
     queryKey: ["bundle-details", task, listQ.data?.bundles ?? []],
     queryFn: async (): Promise<BundleSummary[]> => {
@@ -978,7 +989,21 @@ export default function EvaluationPage() {
         <>
           <NestedCVCard task={task} bundles={bundles} labelOf={bundleLabelOf} />
 
-          <BacktestCard task={task} bundles={bundles} labelOf={bundleLabelOf} />
+          {datasetQ.data?.temporal?.declared ? (
+            <BacktestCard task={task} bundles={bundles} labelOf={bundleLabelOf} />
+          ) : datasetQ.data ? (
+            <Card
+              title="Rolling-origin backtest (forecasting only)"
+              sub="Walk origins forward in time and score multi-step forecasts against naive baselines on identical origins."
+            >
+              <p className="muted">
+                Task “{task}” declares no temporal spec, so there is no time order to walk and no
+                horizon to score. Declare the time column (and optional series id) on the Datasets
+                page to enable backtesting and multi-step forecasts; for a tabular task, the nested CV
+                above and the Diagnostic curves below are the evaluation protocols that apply.
+              </p>
+            </Card>
+          ) : null}
 
           <CurvesCard task={task} bundles={bundles} labelOf={bundleLabelOf} />
 

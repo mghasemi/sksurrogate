@@ -113,7 +113,10 @@ splitter picker restricted to order-respecting splitters), a
 baselines scored on the same origins, and a forecast-vs-actual fan chart),
 a temporal summary in Experiments' run settings, and a **Forecast console**
 under Inference that serves multi-step forecasts from pasted history. Nothing
-changes for tabular tasks.
+changes for tabular tasks, except that Evaluation states where the backtest
+card would be that a backtest needs a declared time column — a tabular task is
+evaluated with Nested CV and Diagnostic curves instead (the API answers the
+same request with 400).
 
 1. Open the Dashboard and select a task
 ---------------------------------------
@@ -720,8 +723,9 @@ than a failed computation:
      - pooled rolling-origin backtest over the declared horizon
 
 Any other bundle can be measured on demand: **Nested CV** reports the honest
-outer score (mean and interval) for the model, and the **Rolling-origin
-backtest** reports MAE/RMSE/bias/sMAPE/MASE per model and per horizon together
+outer score (mean and interval) for the model, and — for a task that declares a
+temporal spec — the **Rolling-origin backtest** reports MAE/RMSE/bias/sMAPE/MASE
+per model and per horizon together
 with the naive baselines on identical origins. A backtest's pooled errors are
 written onto the bundle's ``metrics`` (with provenance — horizon, origins,
 strategy, timestamp — shown in the cell tooltip), so they survive a reload and

@@ -587,6 +587,12 @@ class TestBacktestEndpoint(unittest.TestCase):
         self.assertEqual(ctx.exception.status_code, 400)
 
     def test_route_reports_a_task_without_temporal_spec(self):
+        """A tabular task is refused at submit, not queued into a failing job.
+
+        The Evaluation page hides the backtest panel when ``temporal.declared`` is false,
+        but the control plane must not rely on the UI: a direct request answers 400 with
+        the remedy instead of queueing a job that dies inside ``mltrack.backtest``.
+        """
         with open_tracker("no-temporal") as tracker:
             tracker.RegisterData(self.frame, "y", partition="train")
         bundle = ModelBundle(
@@ -597,12 +603,19 @@ class TestBacktestEndpoint(unittest.TestCase):
             dependencies={},
         )
         save_bundle(bundle, settings.task_bundles_dir("no-temporal") / "v1.bundle")
-        response = evaluation_router.run_backtest(
-            "no-temporal", evaluation_router.BacktestRequest(model_version="v1")
-        )
-        record = self._wait(response["job_id"])
-        self.assertEqual(record["status"], "failed")
-        self.assertIn("temporal spec", record["error"])
+
+        before = len(job_manager.list("no-temporal"))
+        with self.assertRaises(HTTPException) as ctx:
+            evaluation_router.run_backtest(
+                "no-temporal", evaluation_router.BacktestRequest(model_version="v1")
+            )
+        self.assertEqual(ctx.exception.status_code, 400)
+        message = str(ctx.exception.detail)
+        self.assertIn("temporal spec", message)
+        self.assertIn("rolling-origin forecast protocol", message)
+        self.assertIn("Nested CV", message)
+        # No job was queued, so nothing appears in the job list.
+        self.assertEqual(len(job_manager.list("no-temporal")), before)
 
 
 if __name__ == "__main__":
