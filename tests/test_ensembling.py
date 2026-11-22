@@ -839,6 +839,87 @@ def test_out_of_fold_outputs_replay_a_walk_forward_splitter():
     assert abs(sum(result["weights"]) - 1.0) < 1e-9
 
 
+def test_a_repeated_splitter_is_refused_instead_of_replayed():
+    """A repeated splitter has no single out-of-fold value per row.
+
+    ``RepeatedKFold``/``RepeatedStratifiedKFold`` cover every sample once *per repeat*.
+    ``cross_val_predict`` refuses them; the walk-forward replay would instead write one
+    value per repeat and let the last repeat win, so the weights would be fitted on a
+    hybrid matrix no member ever produced. The request must be refused with that reason.
+    """
+    from sklearn.model_selection import RepeatedStratifiedKFold
+
+    frame = _weighting_frame(n=240)
+    cv = RepeatedStratifiedKFold(n_splits=3, n_repeats=2, random_state=0)
+    member = [("lr", _member(LogisticRegression(max_iter=500)))]
+
+    with pytest.raises(EnsembleError, match="more than once"):
+        out_of_fold_outputs(member, frame[COLUMNS], frame["y_cls"], cv, None)
+    with pytest.raises(EnsembleError, match="more than once"):
+        optimize_weights(member, frame[COLUMNS], frame["y_cls"], cv=cv)
+
+
+def _cat_cols_member(estimator, *, cat_column="team"):
+    """A member in the shape ``AML``'s ``cat_cols`` path builds: the encoder comes first.
+
+    ``OneHotEncoder(cols=[...])`` resolves its columns *by name*, so it only fits on a
+    DataFrame, and ``return_df`` defaults to ``True`` while the search-space path passes
+    ``return_df=False``, i.e. it emits a matrix for the model behind it.
+    """
+    from category_encoders.one_hot import OneHotEncoder
+    from imblearn.pipeline import Pipeline as ImbPipeline
+
+    return ImbPipeline(
+        [
+            (
+                "categorical_encoder",
+                OneHotEncoder(cols=[cat_column], return_df=False, handle_unknown="value"),
+            ),
+            ("model", estimator),
+        ]
+    )
+
+
+def test_a_cat_cols_member_is_frame_tolerant_under_bagging_and_boosting():
+    """The measured SPRA failure: bagging/boosting validate the frame down to an array.
+
+    ``BaggingClassifier.fit`` and ``AdaBoostClassifier.fit`` call ``validate_data``,
+    which hands their base estimator a positional ndarray — so an encoder that selects
+    columns by name never sees its names and raises ``X does not contain the columns
+    listed in cols ... non-DataFrame input at fit``. The weight search hit it first
+    (inside the fold replay), the aggregator fit hit it again. Both must fit now, and a
+    positional matrix must predict exactly like the frame it came from.
+    """
+    frame = _weighting_frame(n=240)
+    features = frame[COLUMNS]
+
+    def members():
+        return [
+            ("lr", _cat_cols_member(LogisticRegression(max_iter=500))),
+            ("dt", _cat_cols_member(DecisionTreeClassifier(max_depth=3, random_state=0))),
+        ]
+
+    for method in ("bagging", "boosting"):
+        estimator, provenance = fit_ensemble(
+            method,
+            members(),
+            features,
+            frame["y_cls"],
+            params={"n_estimators": 3},
+            weight_optimization={"strategy": "least_squares"},
+            columns=COLUMNS,
+            cv=4,
+            random_state=0,
+            n_jobs=1,
+        )
+        assert len(provenance["weights"]["weights"]) == 2
+        # The frame and the object matrix it exports must be the same model.
+        assert np.array_equal(
+            estimator.predict(features), estimator.predict(features.to_numpy())
+        )
+        assert np.isfinite(estimator.predict_proba(features.to_numpy())).all()
+
+
 def test_least_squares_weights_live_on_the_simplex_and_beat_equal_weights():
     frame = _weighting_frame()
     features = frame[COLUMNS]

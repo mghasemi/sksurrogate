@@ -47,8 +47,11 @@ value matrix, and learning-curve helpers predict from ``X.to_numpy()``.
 ``frame_tolerant(estimator, columns=None)`` (in ``SKSurrogate.DataProcess``)
 therefore prefixes such a pipeline with ``ArrayAsFrame``, which labels an array
 with the training column names in order and passes a DataFrame through
-untouched. The API applies it in ``_new_bundle``, so every bundle it writes
-keeps both contracts:
+untouched. The same is done for a pipeline that starts with a ``category_encoders``
+encoder (the ``cat_cols`` shape): ``OneHotEncoder(cols=[...])`` also needs named
+columns, and ``BaggingClassifier``/``AdaBoostClassifier`` validate a frame down to a
+positional matrix before fitting it. The API applies ``frame_tolerant`` in
+``_new_bundle``, so every bundle it writes keeps both contracts:
 
 .. code:: python
 

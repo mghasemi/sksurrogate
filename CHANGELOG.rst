@@ -203,6 +203,29 @@ Partition defaults, temporal experiments and the Advanced scorer
   (the weight search maximizes), via a shared ``SKSurrogate/scoring.py`` helper used by
   both the surrogate search and ``optimize_weights``.
 
+Ensembles keep cat_cols members frame-tolerant
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Fixed:** combining a task whose experiments were built with ``cat_cols`` failed
+  with ``ValueError: X does not contain the columns listed in cols:
+  ['spr_risk_level'] … The encoder received a non-DataFrame input at fit`` for
+  ``bagging`` and ``boosting`` (live: task ``SPRA``, two bundles, least-squares
+  weights). ``BaggingClassifier.fit``/``AdaBoostClassifier.fit`` call scikit-learn's
+  ``validate_data``, which turns a ``DataFrame`` into a positional array *before*
+  fitting each replica, and ``frame_tolerant`` only installed ``ArrayAsFrame`` in front
+  of the preset path's ``FoldLocalDataPreprocessor``. It now also wraps a pipeline
+  that starts with a ``category_encoders`` encoder, recovering the column order from
+  the fitted step (or the caller's feature list) and refusing a caller order that
+  disagrees with the fitted one — a positional relabelling in a different order would
+  attach the right names to the wrong columns. ``voting``/``averaging`` were never
+  affected (they pass the frame through).
+* **Fixed:** a *repeated* cross-validation splitter (``RepeatedKFold``,
+  ``RepeatedStratifiedKFold``) was treated as a walk-forward splitter by the
+  out-of-fold replay, which wrote one value per repeat per row and kept the last
+  repeat's — fitting weights on a hybrid matrix no member produced. It is now refused
+  with an ``EnsembleError`` naming the splitter, matching ``cross_val_predict``'s own
+  refusal.
+
 Experiments search space follows the task's problem type
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

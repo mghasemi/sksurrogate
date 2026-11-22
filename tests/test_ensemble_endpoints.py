@@ -333,6 +333,78 @@ def test_the_ensemble_bundle_serves_predictions(client):
     assert len(response.json()["predictions"]) == 3
 
 
+def _store_cat_cols_member(task, estimator, *, version):
+    """Store a member in the shape ``AML``'s ``cat_cols`` search builds.
+
+    The encoder comes first and resolves its columns *by name*, which is what the
+    ensemble aggregators break when they validate the frame down to an array.
+    """
+    from category_encoders.one_hot import OneHotEncoder
+    from imblearn.pipeline import Pipeline as ImbPipeline
+
+    frame = load_partition(task, "train")
+    features = frame.drop(columns=["y"])
+    model = ImbPipeline(
+        [
+            (
+                "categorical_encoder",
+                OneHotEncoder(cols=["surname"], return_df=False, handle_unknown="value"),
+            ),
+            ("model", estimator),
+        ]
+    ).fit(features, frame["y"])
+    bundle = ModelBundle(
+        model,
+        task_name=task,
+        schema={column: {"dtype": str(features[column].dtype)} for column in features.columns},
+        metadata={"label": version},
+        metrics={"train_score": 0.5},
+        model_version=version,
+    )
+    save_bundle(bundle, settings.task_bundles_dir(task) / (version + ".bundle"))
+
+
+def test_cat_cols_members_combine_under_bagging(client):
+    """Regression for the measured SPRA job: two ``cat_cols`` bundles, bagging + weights.
+
+    Both members start with ``OneHotEncoder(cols=['surname'])``. ``BaggingClassifier``
+    validates the frame into a positional matrix before fitting its base estimator, so
+    the encoder lost its column names and the job failed with ``X does not contain the
+    columns listed in cols ... non-DataFrame input at fit`` — first inside the weight
+    search, then in the final fit. The combination must complete, and the stored
+    ensemble must still serve predictions for frame rows.
+    """
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.tree import DecisionTreeClassifier
+
+    _register(client, "churn")
+    _store_cat_cols_member("churn", LogisticRegression(max_iter=300), version="cat-lr")
+    _store_cat_cols_member(
+        "churn", DecisionTreeClassifier(max_depth=3, random_state=0), version="cat-dt"
+    )
+
+    record = _fit(
+        client,
+        "churn",
+        members=["cat-lr", "cat-dt"],
+        method="bagging",
+        params={"n_estimators": 4},
+        weight_optimization={"strategy": "least_squares"},
+    )
+    result = record["result"]
+    assert len(result["weight_optimization"]["weights"]) == 2
+
+    rows = json.loads(
+        load_partition("churn", "train").drop(columns=["y"]).head(3).to_json(orient="records")
+    )
+    response = client.post(
+        "/api/inference/churn/predict",
+        json={"model_version": result["model_version"], "rows": rows},
+    )
+    assert response.status_code == 200, response.text
+    assert len(response.json()["predictions"]) == 3
+
+
 # --------------------------------------------------------------------------- #
 # Weight optimization
 # --------------------------------------------------------------------------- #

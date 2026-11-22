@@ -96,6 +96,72 @@ def test_array_as_frame_rejects_the_wrong_width():
         adapter.transform(np.zeros((3, 5)))
 
 
+def test_frame_tolerant_wraps_cat_cols_encoder_first_pipelines():
+    """A ``cat_cols`` bundle starts with a named-column encoder, so it needs the adapter.
+
+    ``BaggingClassifier``/``AdaBoostClassifier`` validate a DataFrame into a positional
+    matrix before fitting their base estimator. A pipeline that starts with
+    ``OneHotEncoder(cols=[...])`` then dies with ``X does not contain the columns listed
+    in cols``; ``frame_tolerant`` must install ``ArrayAsFrame`` in front of it too, not
+    only in front of ``FoldLocalDataPreprocessor``.
+    """
+    from category_encoders.one_hot import OneHotEncoder
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import Pipeline
+
+    frame = pd.DataFrame(
+        {"a": [1.0, 2.0, 3.0, 4.0], "spr": ["l", "h", "l", "m"]}
+    )
+    encoded = Pipeline(
+        [
+            ("categorical_encoder", OneHotEncoder(cols=["spr"], return_df=False)),
+            ("clf", LogisticRegression(max_iter=200)),
+        ]
+    )
+    # An unfitted encoder-first pipeline cannot name its full column order: the encoder
+    # only lists the *encoded* subset. The caller must supply the training order.
+    with pytest.raises(ValueError, match="pass columns="):
+        frame_tolerant(encoded)
+
+    wrapped = frame_tolerant(encoded, columns=list(frame.columns))
+    assert [name for name, _ in wrapped.steps] == ["as_frame", "categorical_encoder", "clf"]
+    assert frame_tolerant(wrapped, columns=list(frame.columns)) is wrapped
+
+    fitted = wrapped.fit(frame, [0, 1, 0, 1])
+    on_frame = fitted.predict_proba(frame)
+    on_array = fitted.predict_proba(frame.to_numpy())
+    assert np.array_equal(on_frame, on_array)
+
+    # A fitted encoder records the full input order, so the names can be recovered
+    # without the caller passing them again.
+    replayed = Pipeline(
+        [
+            ("categorical_encoder", fitted.named_steps["categorical_encoder"]),
+            ("clf", LogisticRegression(max_iter=200)),
+        ]
+    )
+    recovered = frame_tolerant(replayed)
+    assert recovered.steps[0][1].columns == ["a", "spr"]
+
+
+def test_frame_tolerant_refuses_columns_that_disagree_with_the_fitted_order():
+    """Relabelling positionally with a different order would silently misalign columns."""
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import Pipeline
+
+    frame = pd.DataFrame({"a": [1.0, 2.0], "b": [3.0, 4.0]})
+    gated = Pipeline([("preprocess", FoldLocalDataPreprocessor()), ("clf", LogisticRegression())])
+    gated.fit(frame, [0, 1])
+
+    with pytest.raises(ValueError, match="disagree"):
+        frame_tolerant(gated, columns=["b", "a"])
+    # The same check applies to an already-wrapped pipeline, so passing a different
+    # order later cannot silently relabel the adapter it already carries.
+    tolerant = frame_tolerant(gated, columns=["a", "b"])
+    with pytest.raises(ValueError, match="disagree"):
+        frame_tolerant(tolerant, columns=["b", "a"])
+
+
 def test_frame_tolerant_wraps_only_dataframe_first_pipelines():
     from sklearn.linear_model import LogisticRegression
     from sklearn.pipeline import Pipeline

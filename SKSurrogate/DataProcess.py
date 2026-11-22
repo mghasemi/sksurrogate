@@ -472,33 +472,100 @@ class ArrayAsFrame(TransformerMixin, BaseEstimator):
         return frame.infer_objects()
 
 
+def _is_frame_first(first_step):
+    """Whether a pipeline's first step can only consume a named DataFrame.
+
+    Two shapes reach the pipelines this library builds: the preset path starts with
+    :class:`FoldLocalDataPreprocessor`, and the ``cat_cols`` path (``AML``) starts with a
+    ``category_encoders`` encoder whose ``cols`` are *names*. Both refuse a positional
+    matrix, so both need :class:`ArrayAsFrame` in front once a wrapper (bagging, boosting,
+    calibration) has validated the frame down to an array.
+    """
+    if isinstance(first_step, FoldLocalDataPreprocessor):
+        return True
+    try:
+        from category_encoders.utils import BaseEncoder as CategoryEncoder
+    except Exception:  # pragma: no cover - optional dep absent
+        return False
+    return isinstance(first_step, CategoryEncoder)
+
+
+def _check_column_agreement(recorded, columns, owner):
+    """Refuse a positional relabelling whose names disagree with the recorded order.
+
+    ``ArrayAsFrame`` labels rows positionally, so a different name order would attach the
+    right names to the wrong values — a silent wrong model rather than an error.
+    """
+    if recorded is None or columns is None:
+        return
+    if [str(name) for name in recorded] != [str(name) for name in columns]:
+        raise ValueError(
+            "Frame columns %r disagree with the ones %s was fitted on %r: rebuilding the "
+            "matrix positionally would label the wrong columns. Re-fit the pipeline on "
+            "this column order, or pass columns= matching it."
+            % (list(columns), owner, list(recorded))
+        )
+
+
+def _frame_columns(first_step, columns):
+    """Feature names in training order, from the caller or from the fitted first step.
+
+    A fitted :class:`FoldLocalDataPreprocessor` records ``_input_columns``; a fitted
+    ``category_encoders`` encoder records the full input order in ``feature_names_in_``
+    (its ``cols`` lists only the encoded subset, so it cannot rebuild the frame alone).
+    """
+    recorded = getattr(first_step, "_input_columns", None)
+    if recorded is None:
+        feature_names = getattr(first_step, "feature_names_in_", None)
+        recorded = None if feature_names is None else list(feature_names)
+    if columns is None:
+        return None if recorded is None else list(recorded)
+    columns = list(columns)
+    _check_column_agreement(recorded, columns, type(first_step).__name__)
+    return columns
+
+
 def frame_tolerant(estimator, columns=None):
     """Make a DataFrame-first pipeline accept positional arrays as well.
 
-    Returns ``estimator`` unchanged unless its first step is a
-    :class:`FoldLocalDataPreprocessor`, in which case the pipeline is prefixed
-    with :class:`ArrayAsFrame`. Wrapping is idempotent: a pipeline whose first
-    step is already an ``ArrayAsFrame`` is returned as-is.
+    Returns ``estimator`` unchanged unless its first step needs named columns — a
+    :class:`FoldLocalDataPreprocessor`, or the ``cat_cols`` path's
+    ``category_encoders`` encoder — in which case the pipeline is prefixed with
+    :class:`ArrayAsFrame`. Wrapping is idempotent: a pipeline whose first step is
+    already an ``ArrayAsFrame`` is returned as-is.
+
+    This is what makes a member survive a wrapper that validates frames into arrays:
+    ``BaggingClassifier.fit``/``AdaBoostClassifier.fit`` call ``validate_data``, which
+    turns a DataFrame into a positional ndarray *before* fitting the base estimator, so
+    an encoder that selects columns by name never sees its names. The rebuilt frame is
+    dtype-inferred, so numeric columns are not mistaken for categorical ones.
 
     :param estimator: A fitted sklearn pipeline, or anything else (returned
         unchanged).
-    :param columns: Feature names in training order; defaults to the names the
-        preprocessor recorded.
+    :param columns: Feature names in training order; defaults to the names the first
+        step recorded at fit. They must agree with an already-fitted step's names —
+        a positional relabelling with a different order would silently misalign every
+        column. Required when the frame-first step is not fitted yet.
+    :raises ValueError: The first step needs names but none are known, or the supplied
+        names disagree with the ones it was fitted on.
     """
     steps = getattr(estimator, "steps", None)
     if not steps:
         return estimator
     _, first_step = steps[0]
     if isinstance(first_step, ArrayAsFrame):
+        _check_column_agreement(first_step.columns, columns, "ArrayAsFrame")
         return estimator
-    if not isinstance(first_step, FoldLocalDataPreprocessor):
+    if not _is_frame_first(first_step):
         return estimator
-    if columns is None:
-        columns = getattr(first_step, "_input_columns", None)
-        if columns is None:
-            feature_names = getattr(first_step, "feature_names_in_", None)
-            columns = None if feature_names is None else list(feature_names)
-    return Pipeline([("as_frame", ArrayAsFrame(columns)), *steps])
+    names = _frame_columns(first_step, columns)
+    if names is None:
+        raise ValueError(
+            "%s selects columns by name, so it needs a DataFrame, but its feature "
+            "columns are unknown (it is not fitted yet): pass columns= with the names "
+            "in training order." % type(first_step).__name__
+        )
+    return Pipeline([("as_frame", ArrayAsFrame(names)), *steps])
 
 def preprocesses_frames(estimator):
     """Whether ``estimator`` already turns a raw frame into model input.

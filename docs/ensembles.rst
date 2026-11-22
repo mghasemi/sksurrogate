@@ -70,12 +70,22 @@ these silently produces a *wrong* model rather than an error, so each is pinned 
 in ``tests/test_ensembling.py``:
 
 **Members must be array-safe.** ``VotingClassifier``, ``VotingRegressor`` and the
-stacking classes consume a heterogeneous member set only when they are handed a
-``DataFrame``. Bagging goes further and indexes ``X`` *positionally* before fitting each
-replica (``X[indices]``), so a member whose encoder selects columns by name fails with
-``Specifying the columns using strings is only supported for dataframes``. Every member is
-therefore passed through :func:`~SKSurrogate.DataProcess.frame_tolerant`, and
-:class:`~SKSurrogate.DataProcess.ArrayAsFrame` restores the frame from a positional array.
+stacking classes pass a heterogeneous member set through untouched, so a frame reaches
+the member as a frame. Bagging and boosting go further: ``BaggingClassifier.fit`` and
+``AdaBoostClassifier.fit`` call scikit-learn's ``validate_data``, which turns a
+``DataFrame`` into a positional ``ndarray`` *before* fitting each replica. A member whose
+first step resolves columns by name then fails with ``X does not contain the columns
+listed in cols ... The encoder received a non-DataFrame input at fit`` — measured on a
+``cat_cols`` task (``SPRA``), two bundles starting with
+``OneHotEncoder(cols=['spr_risk_level'], return_df=False)``, combined with ``bagging`` and
+least-squares weights. Every member is therefore passed through
+:func:`~SKSurrogate.DataProcess.frame_tolerant`, which prefixes
+:class:`~SKSurrogate.DataProcess.ArrayAsFrame` whenever the first step needs named columns
+— both the preset path's ``FoldLocalDataPreprocessor`` and the ``cat_cols`` path's
+``category_encoders`` encoder. The adapter's column names come from the caller's feature
+list or from the fitted step (``_input_columns`` / ``feature_names_in_``); a caller-supplied
+order that disagrees with the fitted one is refused, because relabelling positionally in a
+different order would attach the right names to the wrong columns.
 
 **Positional arrays must keep their dtypes.** A mixed-type matrix is an *object* array, so
 a rebuilt frame would carry ``object`` for every column. A DataFrame-first preprocessor
@@ -395,7 +405,10 @@ Three consequences are recorded with the model:
   output a weight search needs is replayed fold by fold instead of through
   ``cross_val_predict``, which refuses such a splitter with
   ``only works for partitions``. The rows no fold could predict are reported as
-  ``rows_unscored`` next to the weights, not scored with a placeholder.
+  ``rows_unscored`` next to the weights, not scored with a placeholder. A *repeated*
+  splitter (``RepeatedKFold``, ``RepeatedStratifiedKFold``) is a different case and is
+  refused: it scores each row once per repeat, so the replay would keep the last repeat's
+  value and fit the weights on a hybrid matrix no member produced.
 * The result is still an ordinary forecast bundle:
   ``Pipeline(ForecastFeatureBuilder, ensemble)`` plus the serving geometry
   (``strategy: recursive``), its schema describing the raw history columns. It

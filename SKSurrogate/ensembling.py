@@ -1048,10 +1048,25 @@ def _take_rows(data, index):
 
 
 def _folds_partition(folds, n_samples):
-    """True when the folds' test sets cover every sample exactly once."""
+    """True when the folds' test sets cover every sample exactly once.
+
+    A *repeated* splitter (``RepeatedKFold``, ``RepeatedStratifiedKFold``) covers each
+    sample once per repeat. Replaying those folds would write several out-of-fold values
+    per row — the last repeat silently winning — so the weight search would judge a
+    hybrid matrix that no member ever produced. ``cross_val_predict`` refuses repeated
+    splitters for the same reason, so the request is refused here with a message that
+    names the cause instead of falling through to the walk-forward replay.
+    """
     covered = np.zeros(int(n_samples), dtype=int)
     for _, test_index in folds:
         covered[np.asarray(test_index, dtype=int)] += 1
+    repeated = int((covered > 1).sum())
+    if repeated:
+        raise EnsembleError(
+            "The cross-validation splitter scores %d sample(s) more than once (it repeats "
+            "its folds), so a row has no single out-of-fold prediction; use a splitter "
+            "whose test folds partition the data, such as KFold or StratifiedKFold." % repeated
+        )
     return bool(covered.size and (covered == 1).all())
 
 
