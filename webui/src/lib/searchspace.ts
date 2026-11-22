@@ -218,3 +218,10 @@ export function allParamNames(model: SpaceModel): string[] {
   for (const card of model.cards) if (card.known) for (const pname of Object.keys(card.params)) names.add(pname);
   return [...names].sort();
 }
+
+/** Search-space JSON seeding an *untouched* editor from the catalog's preselected rows for a task. */
+export function preselectedConfigJson(catalog: CatalogComponent[], task: "classification" | "regression"): string {
+  const space: Record<string, unknown> = {};
+  for (const row of catalog) if (row.preselected && row.task === task) space[row.fqn] = { ...row.params };
+  return JSON.stringify(space, null, 2);
+}
