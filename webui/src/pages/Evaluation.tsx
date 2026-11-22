@@ -333,6 +333,15 @@ function CurvesCard({ task, bundles, labelOf }: { task: string; bundles: BundleS
         <NumberField label="Calibration bins" value={bins} onChange={setBins} min={2} max={50} />
       </div>
 
+      {data?.evaluation_protocol?.score_source === "vote_fraction" && (
+        <p className="muted">
+          This bundle is a hard-voting ensemble, so every curve is drawn from the members&apos; vote
+          fractions — the share of members voting for the positive class. That score is coarse and is
+          not a calibrated probability; switch the ensemble to soft voting or stacking for probability
+          curves.
+        </p>
+      )}
+
       <Tabs
         active={tab}
         onChange={setTab}

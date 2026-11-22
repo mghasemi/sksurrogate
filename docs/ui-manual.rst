@@ -751,7 +751,13 @@ control-plane evaluation routes and the tracking/evaluation helpers. Learning
 curves and diagnostic curves are distinct from nested CV: inspect the
 displayed partition, splitter, and curve description before comparing results.
 If a metric is unavailable for a bundle, the page reports the per-bundle
-failure rather than treating it as a score.
+failure rather than treating it as a score. Diagnostic curves need per-class
+scores: a hard-voting ensemble exposes neither probabilities nor a decision
+function, so its ROC / calibration / gain / lift are drawn from the members' vote
+fractions and the card says those scores are coarse and not calibrated
+probabilities (soft voting or stacking gives probability curves instead). A
+model with no per-row score at all is listed as skipped with the reason rather
+than failing the request.
 
 .. figure:: images/ui-evaluation.png
    :alt: Evaluation page for comparing bundles and running nested cross-validation

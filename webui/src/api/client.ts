@@ -2480,6 +2480,17 @@ export interface BundleCurvesResponse {
   };
   /** Per-curve failures (e.g. gain/lift on a multi-class target) — not fatal. */
   errors: Array<{ curve: string; detail: string }>;
+  /** How the scores behind the curves were obtained. */
+  evaluation_protocol?: {
+    pool_partition?: string;
+    pool_fingerprint?: string | null;
+    test_fraction?: number;
+    random_state?: number;
+    /** `predict_proba`, `decision_function` (min-max normalized) or `vote_fraction`. */
+    score_source?: string | null;
+    model_refit?: boolean;
+    note?: string;
+  };
 }
 
 /** Diagnostic curves for one classification bundle (422 for regression bundles). */

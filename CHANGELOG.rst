@@ -244,6 +244,23 @@ Backtesting a tabular task is refused where it is asked
   ``GET /api/datasets/{task}`` and renders a short explanation card instead of the
   form. ``mltrack.backtest``'s own guard is unchanged as the library-level check.
 
+Diagnostic curves draw hard-voting ensembles from member votes
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Fixed:** ``GET /api/evaluation/{task}/{version}/curves`` answered **500** with
+  ``AttributeError: 'VotingClassifier' object has no attribute 'decision_function'``
+  for a hard-voting ensemble bundle (live: task ``SPRA``, ``voting = hard``). The
+  gain/lift block called ``decision_function`` as its unguarded fallback, and
+  ``VotingClassifier(voting="hard")`` exposes neither ``predict_proba`` nor
+  ``decision_function``. A single ``_class_scores`` helper now resolves the per-row
+  score in order — probabilities, decision function, then the members' **vote
+  fractions** (whose argmax *is* the hard prediction) — and reports which one it used
+  as ``evaluation_protocol.score_source``. A two-member vote score is ``{0, 0.5, 1}``,
+  so the Evaluation panel says the curves are coarse and not calibrated probabilities.
+  A model with none of the three is refused with a message naming the remedy instead of
+  raising; the endpoint stays 200 and records per-curve errors as before.
+  Measured on the real ``SPRA`` bundle: AUC 0.702, four ROC thresholds, no errors.
+
 Experiments search space follows the task's problem type
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

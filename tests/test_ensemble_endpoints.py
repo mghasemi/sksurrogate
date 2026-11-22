@@ -405,6 +405,83 @@ def test_cat_cols_members_combine_under_bagging(client):
     assert len(response.json()["predictions"]) == 3
 
 
+def test_diagnostic_curves_use_vote_fractions_of_a_hard_voting_ensemble(client):
+    """A hard-voting ensemble has no probabilities; its vote share is the score.
+
+    Measured live on task SPRA: ``GET /api/evaluation/SPRA/<version>/curves?bins=10``
+    answered 500 with ``AttributeError: 'VotingClassifier' object has no attribute
+    'decision_function'`` — the gain/lift fallback called the method unguarded, and
+    ``VotingClassifier(voting="hard")`` exposes neither ``predict_proba`` nor
+    ``decision_function``. The curves are now drawn from the members' vote fractions
+    (their argmax *is* the hard prediction) and the provenance says so, because a
+    two-member vote score is coarse and is not a calibrated probability.
+    """
+    from sklearn.ensemble import VotingClassifier
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import Pipeline
+    from sklearn.tree import DecisionTreeClassifier
+
+    _register(client, "churn")
+    frame = load_partition("churn", "train")
+    features = frame.drop(columns=["y"])
+    columns = list(features.columns)
+
+    def member(estimator):
+        return frame_tolerant(
+            Pipeline([("preprocess", FoldLocalDataPreprocessor()), ("model", estimator)]),
+            columns=columns,
+        )
+
+    hard = VotingClassifier(
+        [
+            ("lr", member(LogisticRegression(max_iter=400))),
+            ("dt", member(DecisionTreeClassifier(max_depth=3, random_state=0))),
+        ],
+        voting="hard",
+    )
+    hard.fit(features, frame["y"])
+    # The two methods the endpoint used to assume are both absent.
+    assert not hasattr(hard, "decision_function")
+    assert not hasattr(hard, "predict_proba")
+    save_bundle(
+        ModelBundle(
+            hard,
+            task_name="churn",
+            model_version="hard-vote",
+            schema={column: str(features[column].dtype) for column in features.columns},
+            metadata={},
+            metrics={"train_score": 0.5},
+        ),
+        settings.task_bundles_dir("churn") / "hard-vote.bundle",
+    )
+
+    response = client.get("/api/evaluation/churn/hard-vote/curves?bins=10")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["errors"] == [], payload["errors"]
+    assert payload["evaluation_protocol"]["score_source"] == "vote_fraction"
+    assert payload["roc"]["auc"] is not None
+    assert set(payload) >= {"roc", "calibration", "cumulative_gain", "lift"}
+    # A two-member vote fraction takes 0, 0.5 or 1 — the ROC has only those thresholds.
+    assert len(payload["roc"]["fpr"]) <= 4
+    assert payload["n_test_samples"] > 0
+
+
+def test_a_model_with_no_scores_at_all_is_refused_with_a_remedy():
+    """No probabilities, no decision function, no members: say why, don't crash."""
+    from api.routers import evaluation as evaluation_router
+
+    class _VoteOnly:
+        def predict(self, X):  # noqa: ANN001, N802 - sklearn-shaped stub
+            raise AssertionError("no per-row score exists, so nothing should be predicted")
+
+    with pytest.raises(ValueError) as ctx:
+        evaluation_router._class_scores(_VoteOnly(), np.zeros((4, 2)), [0, 1])
+    message = str(ctx.value)
+    assert "_VoteOnly" in message
+    assert "predict_proba" in message and "soft voting" in message
+
+
 # --------------------------------------------------------------------------- #
 # Weight optimization
 # --------------------------------------------------------------------------- #

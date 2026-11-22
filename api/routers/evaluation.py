@@ -652,19 +652,92 @@ def run_backtest(task_name: str, body: BacktestRequest):
     )
     return {"job_id": job_id, "status": "queued"}
 
-def _positive_scores(model, X_test):
-    """Probability (or normalized decision value) of the positive class for ROC/calibration."""
+def _vote_fractions(model, X_test, classes):
+    """Per-class vote fractions of a hard-voting ensemble — its only per-row score.
+
+    ``VotingClassifier(voting="hard")`` exposes neither ``predict_proba`` nor
+    ``decision_function``; what it does have is the share of members voting for each
+    class, and the argmax of that share *is* its prediction. With two members the scores
+    are ``{0, 0.5, 1}``, so a ROC or calibration curve drawn from them is coarse — the
+    caller records ``score_source="vote_fraction"`` so the panel can say so.
+    """
+    estimators = getattr(model, "estimators_", None)
+    if not estimators or classes is None:
+        return None
+    labels = np.asarray(classes)
+    votes = np.zeros((len(X_test), len(labels)), dtype=float)
+    for estimator in estimators:
+        predicted = np.asarray(estimator.predict(X_test))
+        for index, label in enumerate(labels):
+            votes[:, index] += predicted == label
+    return votes / float(len(estimators))
+
+
+def _class_scores(model, X_test, classes=None, protocol=None):
+    """Per-class scores and where they came from: proba, decision function, or votes.
+
+    Returns ``(matrix, source)``; the endpoint reports ``source`` in the evaluation
+    protocol so a coarse vote-fraction curve is never read as a calibrated probability.
+    """
+    proba_error = None
     if hasattr(model, "predict_proba"):
         try:
-            proba = model.predict_proba(X_test)
-            return np.asarray(proba[:, 1], dtype=float)
-        except Exception:
-            pass
-    scores = np.asarray(model.decision_function(X_test), dtype=float)
-    span = float(scores.max() - scores.min())
-    if span <= 0.0:
-        raise ValueError("decision function is constant; cannot derive class probabilities")
-    return (scores - scores.min()) / span
+            proba = np.asarray(model.predict_proba(X_test), dtype=float)
+            if proba.ndim == 2 and proba.shape[1] >= 2:
+                return proba, "predict_proba"
+        except Exception as exc:
+            # Keep the reason: a model that *has* predict_proba but failed is a
+            # different story from one that exposes no scores at all.
+            proba_error = exc
+    if hasattr(model, "decision_function"):
+        scores = np.asarray(model.decision_function(X_test), dtype=float)
+        span = float(scores.max() - scores.min())
+        if span <= 0.0:
+            raise ValueError("decision function is constant; cannot derive class probabilities")
+        return np.column_stack([(scores.max() - scores) / span, (scores - scores.min()) / span]), "decision_function"
+    votes = _vote_fractions(model, X_test, classes)
+    if votes is not None:
+        return votes, "vote_fraction"
+    raise ValueError(_no_scores_message(model, proba_error))
+
+
+def _positive_scores(model, X_test, classes=None):
+    """Score of the positive class for ROC/calibration, plus what it came from."""
+    matrix, source = _class_scores(model, X_test, classes)
+    return np.asarray(matrix[:, 1], dtype=float), source
+
+
+#: Why a diagnostic curve cannot be drawn, worded so the remedy is in the message.
+_NO_CLASS_SCORES = (
+    "%s exposes neither predict_proba nor decision_function nor member votes, so "
+    "per-class scores cannot be derived from it. Use soft voting, stacking, or a member "
+    "with probabilities (e.g. LogisticRegression) to draw ROC, calibration, gain and "
+    "lift curves."
+)
+
+
+def _no_scores_message(model, proba_error):
+    """The refusal for a scoreless model, including why ``predict_proba`` failed."""
+    message = _NO_CLASS_SCORES % type(model).__name__
+    if proba_error is not None:
+        message += " Its predict_proba failed with %s: %s" % (
+            type(proba_error).__name__,
+            proba_error,
+        )
+    return message
+
+
+def _binary_probabilities(model, X_test, classes=None):
+    """Per-class scores of the two classes, for gain and lift.
+
+    Gain and lift rank the test rows by score, so both classes need a per-row value.
+    ``VotingClassifier(voting="hard")`` has neither probability nor decision function —
+    an unguarded ``decision_function`` call here turned the whole request into a 500 —
+    so its member vote fractions are used, and a model with none of the three is refused
+    with a message the caller records per curve.
+    """
+    matrix, _source = _class_scores(model, X_test, classes)
+    return np.asarray(matrix[:, 0], dtype=float), np.asarray(matrix[:, 1], dtype=float)
 
 
 @router.get("/{task_name}/{model_version}/curves")
@@ -731,37 +804,52 @@ def bundle_curves(task_name: str, model_version: str, bins: int = Query(default=
 
         curves = {}
         errors = []
+        # Where the per-row scores came from: probabilities, a decision function, or a
+        # hard-voting ensemble's member vote fractions.
+        score_source = None
 
-        # ROC — any classifier with predict_proba or a decision function.
+        # One score vector serves ROC and calibration, so a model that cannot produce one
+        # fails both with a single reason instead of two copies of the same message.
+        positive = None
         try:
-            from sklearn.metrics import auc, roc_curve
-
-            fpr, tpr, _ = roc_curve(y_true, _positive_scores(model, X_test))
-            curves["roc"] = {
-                "fpr": [finite_or_none(v) for v in fpr.tolist()],
-                "tpr": [finite_or_none(v) for v in tpr.tolist()],
-                "auc": finite_or_none(auc(fpr, tpr)),
-            }
+            positive, score_source = _positive_scores(model, X_test, classes)
         except Exception as exc:
-            errors.append({"curve": "roc", "detail": "%s: %s" % (type(exc).__name__, exc)})
+            detail = "%s: %s" % (type(exc).__name__, exc)
+            errors.append({"curve": "roc", "detail": detail})
+            errors.append({"curve": "calibration", "detail": detail})
 
-        # Calibration — reliability curve plus the histogram of predicted probabilities.
-        try:
-            from sklearn.calibration import calibration_curve
+        if positive is not None:
+            # ROC — any classifier with probabilities, a decision function or votes.
+            try:
+                from sklearn.metrics import auc, roc_curve
 
-            prob_pos = _positive_scores(model, X_test)
-            fraction_of_positives, mean_predicted_value = calibration_curve(
-                y_true, prob_pos, n_bins=bins
-            )
-            counts, edges = np.histogram(prob_pos, bins=bins, range=(0.0, 1.0))
-            curves["calibration"] = {
-                "mean_predicted_value": [finite_or_none(v) for v in mean_predicted_value.tolist()],
-                "fraction_of_positives": [finite_or_none(v) for v in fraction_of_positives.tolist()],
-                "histogram_counts": [int(count) for count in counts],
-                "histogram_edges": [finite_or_none(float(edge)) for edge in edges.tolist()],
-            }
-        except Exception as exc:
-            errors.append({"curve": "calibration", "detail": "%s: %s" % (type(exc).__name__, exc)})
+                fpr, tpr, _ = roc_curve(y_true, positive)
+                curves["roc"] = {
+                    "fpr": [finite_or_none(v) for v in fpr.tolist()],
+                    "tpr": [finite_or_none(v) for v in tpr.tolist()],
+                    "auc": finite_or_none(auc(fpr, tpr)),
+                }
+            except Exception as exc:
+                errors.append({"curve": "roc", "detail": "%s: %s" % (type(exc).__name__, exc)})
+
+            # Calibration — reliability curve plus the histogram of predicted scores.
+            try:
+                from sklearn.calibration import calibration_curve
+
+                fraction_of_positives, mean_predicted_value = calibration_curve(
+                    y_true, positive, n_bins=bins
+                )
+                counts, edges = np.histogram(positive, bins=bins, range=(0.0, 1.0))
+                curves["calibration"] = {
+                    "mean_predicted_value": [finite_or_none(v) for v in mean_predicted_value.tolist()],
+                    "fraction_of_positives": [finite_or_none(v) for v in fraction_of_positives.tolist()],
+                    "histogram_counts": [int(count) for count in counts],
+                    "histogram_edges": [finite_or_none(float(edge)) for edge in edges.tolist()],
+                }
+            except Exception as exc:
+                errors.append(
+                    {"curve": "calibration", "detail": "%s: %s" % (type(exc).__name__, exc)}
+                )
 
         # Cumulative gain and lift — binary classification only.
         if len(classes) != 2:
@@ -779,51 +867,50 @@ def bundle_curves(task_name: str, model_version: str, bins: int = Query(default=
             )
         else:
             try:
-                proba = np.asarray(model.predict_proba(X_test))
-                prob_pos0, prob_pos1 = proba[:, 0], proba[:, 1]
-            except Exception:
-                decision = np.asarray(model.decision_function(X_test), dtype=float)
-                span = float(decision.max() - decision.min())
-                if span <= 0.0:
-                    raise unprocessable("decision function is constant; cannot derive class probabilities")
-                prob_pos1 = (decision - decision.min()) / span
-                prob_pos0 = (decision.max() - decision) / span
-
-            gain_ok = False
-            try:
-                percentages, gains_class0 = mltrack.cumulative_gain_curve(
-                    y_true, prob_pos0, pos_label=classes[0]
-                )
-                _, gains_class1 = mltrack.cumulative_gain_curve(
-                    y_true, prob_pos1, pos_label=classes[1]
-                )
-                curves["cumulative_gain"] = {
-                    "percentages": [finite_or_none(v) for v in percentages.tolist()],
-                    "gains_class0": [finite_or_none(v) for v in gains_class0.tolist()],
-                    "gains_class1": [finite_or_none(v) for v in gains_class1.tolist()],
-                    "class0": str(classes[0]),
-                    "class1": str(classes[1]),
-                }
-                gain_ok = True
+                prob_pos0, prob_pos1 = _binary_probabilities(model, X_test, classes)
             except Exception as exc:
-                errors.append(
-                    {"curve": "cumulative_gain", "detail": "%s: %s" % (type(exc).__name__, exc)}
-                )
-
-            if gain_ok:
+                detail = "%s: %s" % (type(exc).__name__, exc)
+                errors.append({"curve": "cumulative_gain", "detail": detail})
+                errors.append({"curve": "lift", "detail": detail})
+            else:
+                gain_ok = False
+                percentages = gains_class0 = gains_class1 = np.asarray([])
                 try:
-                    lift_percentages = percentages[1:]
-                    lift_class0 = gains_class0[1:] / lift_percentages
-                    lift_class1 = gains_class1[1:] / lift_percentages
-                    curves["lift"] = {
-                        "percentages": [finite_or_none(v) for v in lift_percentages.tolist()],
-                        "lifts_class0": [finite_or_none(v) for v in lift_class0.tolist()],
-                        "lifts_class1": [finite_or_none(v) for v in lift_class1.tolist()],
+                    percentages, gains_class0 = mltrack.cumulative_gain_curve(
+                        y_true, prob_pos0, pos_label=classes[0]
+                    )
+                    _, gains_class1 = mltrack.cumulative_gain_curve(
+                        y_true, prob_pos1, pos_label=classes[1]
+                    )
+                    curves["cumulative_gain"] = {
+                        "percentages": [finite_or_none(v) for v in percentages.tolist()],
+                        "gains_class0": [finite_or_none(v) for v in gains_class0.tolist()],
+                        "gains_class1": [finite_or_none(v) for v in gains_class1.tolist()],
                         "class0": str(classes[0]),
                         "class1": str(classes[1]),
                     }
+                    gain_ok = True
                 except Exception as exc:
-                    errors.append({"curve": "lift", "detail": "%s: %s" % (type(exc).__name__, exc)})
+                    errors.append(
+                        {"curve": "cumulative_gain", "detail": "%s: %s" % (type(exc).__name__, exc)}
+                    )
+
+                if gain_ok:
+                    try:
+                        lift_percentages = percentages[1:]
+                        lift_class0 = gains_class0[1:] / lift_percentages
+                        lift_class1 = gains_class1[1:] / lift_percentages
+                        curves["lift"] = {
+                            "percentages": [finite_or_none(v) for v in lift_percentages.tolist()],
+                            "lifts_class0": [finite_or_none(v) for v in lift_class0.tolist()],
+                            "lifts_class1": [finite_or_none(v) for v in lift_class1.tolist()],
+                            "class0": str(classes[0]),
+                            "class1": str(classes[1]),
+                        }
+                    except Exception as exc:
+                        errors.append(
+                            {"curve": "lift", "detail": "%s: %s" % (type(exc).__name__, exc)}
+                        )
 
     return {
         "task_name": task_name,
@@ -833,6 +920,10 @@ def bundle_curves(task_name: str, model_version: str, bins: int = Query(default=
             "pool_fingerprint": (splits.get(pool_partition) or {}).get("fingerprint"),
             "test_fraction": 0.25,
             "random_state": 0,
+            # ``predict_proba``, ``decision_function`` (min-max normalized), or
+            # ``vote_fraction`` for a hard-voting ensemble — a coarse score that is not a
+            # calibrated probability and has no threshold between the member votes.
+            "score_source": score_source,
             "model_refit": False,
             "note": (
                 "The fitted bundle is evaluated on a deterministic slice of the selected partition. "

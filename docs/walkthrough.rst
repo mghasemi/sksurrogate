@@ -251,7 +251,9 @@ plotting learning curves — held-out score (solid) versus training score
    means neither is badly overfitting.
 
 Diagnostic curves (ROC / PR) are shown for classification bundles only; for a
-regression task the card says so.
+regression task the card says so. A hard-voting ensemble has no probabilities, so
+its curves use the members' vote fractions and the card notes that the score is
+coarse.
 
 REST::
 
