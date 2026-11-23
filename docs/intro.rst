@@ -47,14 +47,31 @@ The typical workflow is:
 Dependencies
 =============================
 
+Required (installed by ``pip install sksurrogate``):
+
     - `NumPy <http://www.numpy.org/>`_,
     - `scipy <https://www.scipy.org/>`_,
     - `pandas <https://pandas.pydata.org/>`_,
-    - `matplotlib <https://matplotlib.org/>`_,
     - `scikit-learn <https://scikit-learn.org/stable/>`_,
-    - `ELI5 <https://github.com/TeamHG-Memex/eli5>`_,
-    - `SALib <https://github.com/SALib/SALib>`_,
-    - `peewee <https://github.com/coleifer/peewee>`_.
+    - `joblib <https://joblib.readthedocs.io/>`_,
+    - `peewee <https://github.com/coleifer/peewee>`_ (run-tracker ORM),
+    - `tqdm <https://github.com/tqdm/tqdm>`_.
+
+Optional, imported lazily and installed through an extra:
+
+    - ``[lightgbm]``, ``[xgboost]``, ``[rgf]``, ``[gbm]``, ``[estimators]`` —
+      gradient-boosting backends (``[estimators]`` adds category-encoders too),
+    - ``[sensitivity]`` — `SALib <https://github.com/SALib/SALib>`_,
+    - ``[explain]`` — `ELI5 <https://github.com/TeamHG-Memex/eli5>`_ and skrebate,
+    - ``[imbalance]`` — imbalanced-learn, ``[categorical]`` — category-encoders,
+    - ``[plots]`` — `matplotlib <https://matplotlib.org/>`_,
+    - ``[api]`` / ``[ui]`` — FastAPI + uvicorn stack, ``[dask]`` — distributed backend,
+    - ``[all]`` — everything above.
+
+A missing optional package raises an error naming the extra, for example::
+
+    SKSurrogate needs the optional package 'xgboost' for the XGBoost estimator, but it is not installed.
+    Install it with: pip install "sksurrogate[xgboost]"
 
 Download
 =============================
@@ -65,6 +82,9 @@ Installation
 To install `SKSurrogate`, run the following in terminal::
 
     python -m pip install .
+
+Add the extras you need, e.g. ``python -m pip install ".[estimators]"`` or
+``python -m pip install ".[ui]"``.
 
 The optional FastAPI control plane and React web UI are run from a source
 checkout and have additional dependencies. See :doc:`controlplane` for setup

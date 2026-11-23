@@ -1,6 +1,44 @@
 Changelog
 =========
 
+[0.4.0] - 2026-11-23
+--------------------
+
+Optional extras: the base install is now seven packages
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Changed (breaking for catalog users):** ``install_requires`` is reduced to
+  ``numpy``, ``scipy``, ``pandas``, ``scikit-learn``, ``joblib``, ``peewee`` and
+  ``tqdm``. Verified with ``python -X importtime -c "import SKSurrogate"``: these
+  are the only third-party modules imported at module scope. ``matplotlib``,
+  ``lightgbm``, ``xgboost``, ``rgf-python``, ``SALib``, ``imbalanced-learn``,
+  ``eli5``, ``skrebate`` and ``category-encoders`` are now extras
+  (``[lightgbm]``, ``[xgboost]``, ``[rgf]``, ``[gbm]``, ``[estimators]``,
+  ``[sensitivity]``, ``[explain]``, ``[imbalance]``, ``[categorical]``,
+  ``[plots]``, ``[api]``/``[ui]``, plus ``[all]``). A cold install drops from
+  ~39 s / 633 MB to ~7 s / 250 MB of site-packages on Python 3.12
+  (``benchmarks/packaging_0_4_0.json``). Users who search over XGBoost,
+  LightGBM or RGF components must add ``pip install "sksurrogate[estimators]"``.
+* **Added:** ``SKSurrogate.deps`` — a lazy-import helper that converts a missing
+  optional package into ``MissingOptionalDependency`` naming the exact extra
+  (``pip install "sksurrogate[xgboost]"``), while letting a broken install
+  surface its own error. All lazy import sites (``AML.types``,
+  ``AML._get_class``, ``mltrack.LoadModel``, ``SensAprx.fit``,
+  ``FeatureWeights``, the ``cat_cols``/imbalance/eli5 pipeline paths) use it.
+* **Added:** ``GET /api/experiments/components`` rows carry ``available`` and
+  ``install_extra``, probed per request, so the visual search-space editor greys
+  out rows whose backend is missing and prints the install command instead of
+  letting a job fail at fit time.
+* **Changed:** ``requirements.txt`` is now an umbrella over
+  ``requirements-core.txt``, ``requirements-extras.txt`` and
+  ``requirements-api.txt`` (``requirements-dev.txt`` is the flat equivalent).
+  CI gains a ``core-only`` job and the wheel smoke job asserts that the base
+  install pulls no optional backend and that the guidance message fires.
+  ``six`` was dropped: nothing imports it.
+* **Docs:** the readme and ``docs/intro.rst`` document the extras, the measured
+  base-install footprint, and the missing-extra message; the word "lightweight"
+  in the package description is replaced by that measured claim.
+
 [0.3.1] - 2026-11-23
 --------------------
 

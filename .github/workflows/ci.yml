@@ -67,6 +67,67 @@ jobs:
           python -m venv smoke-venv
           ./smoke-venv/bin/pip install --quiet dist/*.whl
           ./smoke-venv/bin/python -c "import SKSurrogate; assert SKSurrogate.__version__; print('OK', SKSurrogate.__version__)"
+      # The base wheel must stay small: optional backends are extras, so none of
+      # them may be pulled in by install_requires. If this step fails, something
+      # reintroduced a heavy dependency into the core install.
+      - name: Assert base install carries no optional backends
+        run: |
+          ./smoke-venv/bin/python - <<'PY'
+          import importlib.util
+          heavy = ["xgboost", "lightgbm", "rgf", "SALib", "eli5", "skrebate",
+                   "imblearn", "category_encoders", "matplotlib", "dask",
+                   "fastapi", "uvicorn"]
+          present = [m for m in heavy if importlib.util.find_spec(m) is not None]
+          assert not present, f"core install pulled optional backends: {present}"
+          print("core install is lean")
+          PY
+      # A user who names an optional estimator must get an actionable message,
+      # not a bare ModuleNotFoundError.
+      - name: Assert missing-extra guidance
+        run: |
+          ./smoke-venv/bin/python - <<'PY'
+          from SKSurrogate.deps import MissingOptionalDependency, require
+          try:
+              require("xgboost", purpose="the XGBoost estimator")
+          except MissingOptionalDependency as exc:
+              text = str(exc)
+              assert 'sksurrogate[xgboost]' in text, text
+              print(text.splitlines()[0])
+          else:
+              raise SystemExit("xgboost is installed in the core-only venv")
+          PY
+
+  # The library must be usable with only requirements-core.txt installed:
+  # `import SKSurrogate` works, and naming an optional backend yields an
+  # actionable message. Guards against a heavy dependency creeping back into
+  # install_requires.
+  core-only:
+    name: "Core-only install (py3.12, no extras)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install core requirements only
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements-core.txt pytest pygments
+          pip install .
+      - name: Optional backends must be absent
+        run: |
+          python - <<'PY'
+          import importlib.util
+          heavy = ["xgboost", "lightgbm", "rgf", "SALib", "eli5", "skrebate",
+                   "imblearn", "category_encoders", "matplotlib", "dask",
+                   "fastapi", "uvicorn"]
+          present = [m for m in heavy if importlib.util.find_spec(m) is not None]
+          assert not present, f"core install pulled optional backends: {present}"
+          print("core install is lean")
+          PY
+      - name: Guidance + catalog annotation tests
+        run: python -m pytest tests/test_optional_deps.py -q
 
   tests:
     name: "Tests + smoke (py3.12, current deps)"
