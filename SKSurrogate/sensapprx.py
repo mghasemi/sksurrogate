@@ -87,17 +87,35 @@ class SensAprx(BaseEstimator, TransformerMixin):
 
         self.n_features_to_select = min(self.n_features_to_select, X.shape[1])
 
-        N = len(X[0])
-        if (self.domain is None) or (self.probs is None):
+        # The sensitivity analysis runs over the current feature set, so a
+        # configured ``domain``/``probs`` pair is usable only when its width
+        # matches X's; otherwise (or when either is absent) recompute both from
+        # (X, y). This keeps the bounds walk inside the domain's columns — a
+        # stale pre-set domain with fewer columns than X used to raise
+        # ``IndexError: index 1 is out of bounds for axis 1 with size 1``.
+        domain = getattr(self, "domain", None)
+        probs = getattr(self, "probs", None)
+        if (
+            domain is None
+            or probs is None
+            or getattr(domain, "ndim", 0) != 2
+            or domain.shape[1] != X.shape[1]
+        ):
             self._avg_fucn(X, y)
+            domain, probs = self.domain, self.probs
+        N = 0 if domain is None else int(domain.shape[1])
+        if N == 0:
+            # Nothing to analyze: keep every (degenerate empty) feature set.
+            self.top_features_ = list(range(X.shape[1]))
+            return self
         if self.regressor is None:
             from sklearn.svm import SVR
             self.regressor = SVR()
-        self.regressor.fit(self.domain, self.probs)
+        self.regressor.fit(domain, probs)
         bounds = [
             [
-                min(self.domain[:, idx]) - self.margin,
-                max(self.domain[:, idx]) + self.margin,
+                min(domain[:, idx]) - self.margin,
+                max(domain[:, idx]) + self.margin,
             ]
             for idx in range(N)
         ]

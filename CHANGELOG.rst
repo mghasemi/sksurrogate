@@ -7,6 +7,66 @@ Changelog
 Partition defaults, temporal experiments and the Advanced scorer
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
+* **Fixed:** a search candidate with no tunable hyperparameters was scored by
+  ``AML.optimize_pipeline``'s no-config branch, which returned the raw
+  ``cross_val_score`` mean (higher-is-better) instead of the minimized loss the
+  surrogate branch returns. The two branches now agree, so a no-config candidate
+  ranks correctly in ``get_top`` and the EOA fitness instead of inverting the
+  direction — classification no longer favours the lowest accuracy and regression
+  no longer selects the highest error. ``AML`` also exposes ``best_score_`` (the
+  higher-is-better value) alongside ``best_estimator_score`` (the loss), and the
+  audit's ``best_candidate`` carries both.
+* **Fixed:** an experiment or single-pipeline optimization whose scorer
+  contradicts the search's estimators (e.g. ``accuracy`` on a regression
+  preset/config) silently ran the whole search and then failed with "All
+  candidate pipelines failed to produce a finite CV score:
+  ValueError('continuous is not supported')". ``fit_experiment_bundle`` and
+  ``fit_pipeline_bundle`` now validate the scorer's family against the search
+  family before the search launches and return a clear 400 naming the scorer,
+  the task type and suggested metrics. The search family comes from the
+  request's preset or estimator names — an explicit classification preset is
+  authoritative, so integer-coded multiclass labels inferred as "regression"
+  are not wrongly blocked — and the task's declared ``problem_type`` is used
+  only when the search family is mixed or unknown; custom metrics and legacy
+  tasks pass through unchanged.
+* **Fixed:** the live experiment feed showed the wrong "best" during a run: the
+  trial log carried the search *loss* (+RMSE for regression, -accuracy for
+  classification) and the UI summary took the maximum, so a regression run
+  crowned the *highest* error and classification the *lowest* accuracy as
+  "best". ``trial_callback`` now flips each trial score into the scorer's own
+  higher-is-better units — exactly as the final ``evaluation_history`` payload
+  already did — so the live summary's maximum is the true best.
+* **Fixed:** an ``rgf`` (Regularized Greedy Forest) candidate could crash the
+  whole experiment with ``ValueError: reg_depth must be no smaller than 1.0``.
+  The component catalog declared ``reg_depth`` with a lower bound of ``0`` (rgf
+  requires ``>= 1``), and — defensively — a surrogate trial whose estimator
+  rejects a searched parameter value reported objective ``-0.0`` instead of
+  ``+inf``, which for a regression loss (+RMSE) is the global minimum and made
+  the search converge to the unfittable config and crash the best-estimator
+  refit. The catalog bound is now ``1..5`` and a trial with no finite fold score
+  returns ``+inf`` (matching the forbidden/zero-feature branches), so the search
+  converges to a feasible point.
+* **Fixed:** a nested-CV (or any re-fit) of a pipeline containing ``SensAprx``
+  crashed with ``IndexError: index 1 is out of bounds for axis 1 with size 1``
+  when a pre-set ``domain``/``probs`` pair was narrower than the current
+  ``X`` — ``fit`` walked the bounds over the *input* column count while indexing
+  the narrower ``domain``. ``SensAprx.fit`` now recomputes ``domain``/``probs``
+  from ``(X, y)`` whenever they are absent, non-2D, or their width does not
+  match ``X``'s, and derives the analysis dimension from the domain itself, so a
+  stale pre-set domain can no longer drive the walk out of bounds.
+* **Fixed:** ``EOA.__call__`` always adopted a compatible ``.eoa`` checkpoint,
+  even for a fresh run (``resume=False``), so a leftover checkpoint from a
+  different search space silently truncated the run. ``EOA`` now takes a
+  ``resume`` flag (forwarded from ``AML.resume`` by ``eoa_fit``) and only loads a
+  checkpoint when it is ``True``, matching ``SurrogateSearch``'s ``Continue``
+  behaviour.
+* **Fixed:** ``/api/evaluation/{task}/{version}/explain`` and ``.../ale`` returned
+  400 "Reference-sample stability needs more source rows than max_rows" on any
+  partition smaller than the requested ``max_rows``, even though ``max_rows`` is
+  an upper bound. Both endpoints now clamp ``max_rows`` strictly below the source
+  size so distinct without-replacement reference subsets can be drawn, and only
+  refuse when the partition cannot support the requested number of subsets at
+  all (fewer rows than ``stability_samples``).
 * **Fixed:** the web UI's train-partition field started as the literal ``train``
   and always sent it, so a task whose data lives in another partition (a single
   ``main``, or one named after the task) failed with ``404: No dataset partition

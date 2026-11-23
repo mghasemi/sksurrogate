@@ -1617,7 +1617,16 @@ class SurrogateRandomCV(BaseSearchCV):
             }
             self.evaluation_history_.append(record)
             _notify_trial(record)
-            return -score
+            if n_test:
+                return -score
+            # No fold produced a finite score (every fit/scoring raised — e.g. a
+            # searched parameter compiling to a value the estimator rejects, like
+            # rgf's reg_depth=0). Report +inf, not -0.0, so the minimizing search
+            # and the best-estimator fallback below never treat a failed trial as
+            # a zero-error optimum: for a regression loss (+RMSE) 0.0 is the
+            # global minimum and would make the search converge to an infeasible
+            # region, crashing the refit (see the forbidden/zero-feature returns).
+            return float("inf")
 
         self.OPTIM = SurrogateSearch(
             obj,

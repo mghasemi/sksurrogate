@@ -86,6 +86,13 @@ Consequently ``best_estimator_score`` is a loss (lower is better), while
 ``best_score_`` and ``cv_results_["mean_test_score"]`` are reported back in the
 scorer's own units (higher is better), matching ``GridSearchCV``.
 
+``AML`` mirrors the same split: ``AML.best_estimator_score`` is the minimized
+loss and ``AML.best_score_`` is the higher-is-better value. Both of
+``AML.optimize_pipeline``'s branches return a loss — the surrogate branch returns
+``SurrogateRandomCV.best_estimator_score``, and the no-config branch (a candidate
+with no tunable parameters, scored by a plain ``cross_val_score``) negates its
+mean so the two rank identically in ``get_top`` and the EOA fitness.
+
 A *bare* callable is refused with a ``TypeError``: ``check_scoring`` passes it
 through unchanged, so a plain lower-is-better function such as
 ``lambda est, X, y: mean_absolute_error(y, est.predict(X))`` would be negated into

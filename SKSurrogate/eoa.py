@@ -55,6 +55,7 @@ class EOA(object):
         population,
         fitness,
         *,
+        resume=False,
         parents_prop=None,
         elites_prop=None,
         max_generations=None,
@@ -118,6 +119,7 @@ class EOA(object):
         self.term_genes = kwargs.pop("term_genes", [])
         self.task_name = kwargs.pop("task_name", "EOA")
         self.check_point = kwargs.pop("check_point", "./")
+        self.resume = resume
         if not self.genes:
             self.find_genes()
         self.evals = OrderedDict([(_, None) for _ in self.population])
@@ -233,7 +235,13 @@ class EOA(object):
         ``children`` after the run to retrieve results.
         """
         self.parents = self.init_pop(self)
-        self.__load()
+        # Only adopt a compatible checkpoint when the caller asked to resume. A
+        # fresh run (resume=False) must NOT replay a stale .eoa — a leftover
+        # checkpoint from a different search space (or another machine) would
+        # silently truncate or corrupt the run, as happens to SurrogateSearch
+        # only under its explicit Continue flag.
+        if self.resume:
+            self.__load()
         #tqdm = None
         #pbar = None
         #try:

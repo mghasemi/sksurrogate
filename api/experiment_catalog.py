@@ -129,7 +129,7 @@ EXPERIMENT_COMPONENTS: list[dict[str, object]] = [
             "max_leaf": {"type": "categorical", "items": [8, 16, 32, 64]},
             "n_tree_search": {"type": "integer", "low": 1, "high": 10},
             "learning_rate": {"type": "real", "low": 0.05, "high": 0.3},
-            "reg_depth": {"type": "integer", "low": 0, "high": 5},
+            "reg_depth": {"type": "integer", "low": 1, "high": 5},
         },
     },
     # --- regression estimators ------------------------------------------
@@ -231,7 +231,7 @@ EXPERIMENT_COMPONENTS: list[dict[str, object]] = [
             "max_leaf": {"type": "categorical", "items": [8, 16, 32, 64]},
             "n_tree_search": {"type": "integer", "low": 1, "high": 10},
             "learning_rate": {"type": "real", "low": 0.05, "high": 0.3},
-            "reg_depth": {"type": "integer", "low": 0, "high": 5},
+            "reg_depth": {"type": "integer", "low": 1, "high": 5},
         },
     },
     # --- resamplers (classification only; AML places samplers first) ----

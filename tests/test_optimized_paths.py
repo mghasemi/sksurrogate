@@ -63,7 +63,13 @@ from SKSurrogate.inference import main as batch_main
 from SKSurrogate.inference import create_app
 from SKSurrogate.eoa import UniformRand
 from SKSurrogate.sensapprx import SensAprx
-from SKSurrogate.structsearch import Categorical, Real, SurrogateRandomCV, SurrogateSearch
+from SKSurrogate.structsearch import (
+    Categorical,
+    Integer,
+    Real,
+    SurrogateRandomCV,
+    SurrogateSearch,
+)
 
 
 class MeanRecordingRegressor(RegressorMixin, BaseEstimator):
@@ -2719,6 +2725,104 @@ class TestOptimizedPaths(unittest.TestCase):
         self.assertTrue(np.allclose(losses, -scores))
         self.assertTrue(np.all(losses > 0.0))          # -(-MAE) = +MAE
         self.assertAlmostEqual(-search.best_score_, losses.min(), places=12)
+
+    def test_aml_no_config_candidate_stores_a_loss(self):
+        """A no-config candidate must store a loss, not a raw higher-is-better score.
+
+        ``optimize_pipeline`` has two branches: the surrogate branch returns the
+        minimized loss (negated scorer value), while the no-config branch used to
+        return ``cross_val_score(...).mean()`` directly. That sign mismatch made a
+        candidate with no tunable parameters rank backwards in ``get_top`` (and
+        invert its EOA fitness), so classification picked the lowest accuracy and
+        regression the highest error.
+        """
+        X, y = make_classification(n_samples=120, n_features=5, n_informative=3, random_state=0)
+        aml = AML(
+            config={
+                "sklearn.ensemble.ExtraTreesClassifier": {"min_samples_leaf": Categorical([1, 4])},
+                "sklearn.ensemble.RandomForestClassifier": {},  # no-config branch
+            },
+            scoring="accuracy",
+            length=1,
+            cv=2,
+            n_jobs=1,
+            verbose=0,
+            max_evals=4,
+            min_random_evals=2,
+            random_state=0,
+        )
+        aml.add_surrogate(LinearRegression(), 2)
+        aml.fit(X, y, strategy="exhaustive")
+        # accuracy is higher-is-better, so every stored loss is <= 0; a raw
+        # +accuracy from the no-config branch would violate this.
+        for seq, (mdl, scr) in aml.models.items():
+            self.assertLessEqual(scr, 0.0, f"{seq} stored a non-loss score {scr}")
+        self.assertEqual(aml.best_score_, -aml.best_estimator_score)
+
+    def test_aml_no_config_candidate_regression_stores_a_loss(self):
+        """neg_root_mean_squared_error: a no-config candidate stores +RMSE (loss)."""
+        X, y = make_regression(n_samples=120, n_features=5, noise=20.0, random_state=0)
+        aml = AML(
+            config={
+                "sklearn.ensemble.RandomForestRegressor": {"min_samples_leaf": Categorical([1, 4])},
+                "sklearn.linear_model.LinearRegression": {},  # no-config branch
+            },
+            scoring="neg_root_mean_squared_error",
+            length=1,
+            cv=2,
+            n_jobs=1,
+            verbose=0,
+            max_evals=4,
+            min_random_evals=2,
+            random_state=0,
+        )
+        aml.add_surrogate(LinearRegression(), 2)
+        aml.fit(X, y, strategy="exhaustive")
+        # The scorer returns -RMSE, so the loss is +RMSE (>= 0); a raw -RMSE from
+        # the no-config branch would rank the highest error first in get_top.
+        for seq, (mdl, scr) in aml.models.items():
+            self.assertGreaterEqual(scr, 0.0, f"{seq} stored a non-loss score {scr}")
+        self.assertEqual(aml.best_score_, -aml.best_estimator_score)
+
+    def test_a_trial_whose_estimator_rejects_a_searched_value_does_not_crash(self):
+        """A config the estimator rejects is a failed trial (+inf objective), not
+        a zero-error optimum, so the search converges to a feasible point and the
+        refit never crashes (a regression loss of -0.0 would be the global minimum
+        for +RMSE, making the search target an unfittable config like rgf's
+        reg_depth=0 and crash the best-estimator refit)."""
+        from sklearn.base import BaseEstimator, RegressorMixin
+
+        class DepthRegressor(RegressorMixin, BaseEstimator):
+            def __init__(self, depth=1):
+                self.depth = depth
+
+            def fit(self, X, y):
+                if self.depth < 1:
+                    raise ValueError("depth must be >= 1, not %s" % self.depth)
+                self.n_features_in_ = np.asarray(X).shape[1]
+                return self
+
+            def predict(self, X):
+                return np.full(len(X), float(self.depth))
+
+        X, y = make_regression(n_samples=60, n_features=3, noise=10.0, random_state=0)
+        search = SurrogateRandomCV(
+            DepthRegressor(),
+            {"depth": Integer(0, 1)},  # 0 is invalid for DepthRegressor
+            scoring="neg_root_mean_squared_error",
+            cv=2,
+            n_jobs=1,
+            max_iter=8,
+            min_evals=5,
+            refit=True,
+            random_state=0,
+        ).fit(X, y)
+        # The invalid depth=0 config (the only other value) was sampled and
+        # recorded as a failed trial, not a zero-error optimum.
+        self.assertIn("failed", {record["status"] for record in search.evaluation_history_})
+        # The best came from a feasible config and the refit did not crash.
+        self.assertGreaterEqual(search.best_params_["depth"], 1)
+        self.assertTrue(np.isfinite(search.best_estimator_score))
 
     def test_surrogate_cv_never_refits_a_forbidden_combination(self):
         # In sklearn >= 1.8 the 'penalty' axis is gone: L1 (l1_ratio=1) with

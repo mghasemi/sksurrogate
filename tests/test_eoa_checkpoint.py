@@ -92,3 +92,27 @@ def test_valid_checkpoint_restores_state(tmp_path):
     assert eoa.check_point == str(other) + "/"
     assert eoa.generation_num == 2
     assert eoa.parents == {("a",): 1.0}
+
+
+def test_fresh_run_does_not_load_a_checkpoint(tmp_path, monkeypatch):
+    """resume=False (the default) must NOT replay a stale checkpoint — a leftover
+    .eoa from a different search space would silently truncate a fresh run."""
+    _write_checkpoint(tmp_path, genes=["a", "b"], parents={("a",): 1.0})
+    loaded = []
+    monkeypatch.setattr(EOA, "_EOA__load", lambda self: loaded.append(self))
+    eoa = _optimizer(tmp_path)  # resume defaults to False
+    eoa.termination = lambda ref: True  # return after the load gate
+    eoa()
+    assert loaded == []
+
+
+def test_resume_loads_a_checkpoint(tmp_path, monkeypatch):
+    """resume=True adopts a compatible checkpoint (the load hook runs)."""
+    _write_checkpoint(tmp_path, genes=["a", "b"], parents={("a",): 1.0})
+    loaded = []
+    monkeypatch.setattr(EOA, "_EOA__load", lambda self: loaded.append(self))
+    eoa = _optimizer(tmp_path)
+    eoa.resume = True
+    eoa.termination = lambda ref: True
+    eoa()
+    assert len(loaded) == 1

@@ -276,6 +276,7 @@ def test_aml_to_audit_dict_is_json_serialisable_and_complete(tmp_path):
     # The best candidate matches the fitted result.
     assert aml._best_sequence_ is not None
     assert audit["best_candidate"]["score"] == aml.best_estimator_score
+    assert audit["best_candidate"]["best_score"] == aml.best_score_
     assert audit["best_candidate"]["pipeline"] == list(aml._best_sequence_)
 
 

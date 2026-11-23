@@ -227,6 +227,35 @@ def test_delta_analysis_runs_on_the_installed_salib():
     assert 0 in selected
 
 
+def test_a_stale_domain_narrower_than_x_is_recomputed():
+    """A pre-set domain with fewer columns than X is recomputed from (X, y)."""
+    rng = np.random.RandomState(0)
+    X = rng.normal(size=(200, 4))
+    y = 2 * X[:, 0] + X[:, 1] + 0.1 * rng.normal(size=200)
+    analyzer = SensAprx(
+        n_features_to_select=2,
+        method="delta-mmnt",
+        domain=np.arange(100.0).reshape(-1, 1),  # 1 column; X has 4
+        probs=np.linspace(0.0, 1.0, 100),
+    )
+    # Before the fix this raised IndexError: the bounds walk iterated over the
+    # *input* columns while indexing a narrower pre-set domain[:, idx].
+    analyzer.fit(X, y)
+    assert analyzer.domain.shape[1] == 4
+    assert analyzer.weights_ is not None and len(analyzer.weights_) == 4
+
+    # A pre-set domain that already matches X is honoured unchanged.
+    matching = np.random.RandomState(1).normal(size=(80, 4))
+    matching_probs = np.random.RandomState(2).normal(size=80)
+    preserved = SensAprx(
+        n_features_to_select=2,
+        method="delta-mmnt",
+        domain=matching,
+        probs=matching_probs,
+    ).fit(X, y)
+    assert preserved.domain is matching
+
+
 # --------------------------------------------------------------------------- #
 # Stored weightings feed "Consensus top features"
 # --------------------------------------------------------------------------- #

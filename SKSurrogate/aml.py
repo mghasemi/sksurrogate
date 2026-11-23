@@ -650,6 +650,7 @@ class AML(BaseEstimator):
         self.best_estimator_ = None
         self._best_sequence_ = None
         self.best_estimator_score = 0.0
+        self.best_score_ = None
         self.termination_reason = None
         self.summary_ = {}
 
@@ -819,7 +820,7 @@ class AML(BaseEstimator):
             self.evaluation_history_.append(result)
             self.stage_audits_history_.append(list(self._last_candidate_stage_audits_))
             if self.verbose > 0:
-                emit(logging.INFO, "score:%f" % best_scr)
+                emit(logging.INFO, "score:%f" % -best_scr)
                 emit(logging.INFO, best_mdl)
 
     def fit(self, X: Any, y: Any, strategy="exhaustive", **kwargs):
@@ -888,6 +889,9 @@ class AML(BaseEstimator):
             raise ValueError(message)
         self.best_estimator_ = best_estimator
         self.best_estimator_score = best_score
+        # best_estimator_score is the minimized loss; best_score_ follows the
+        # scikit-learn convention (higher is better), mirroring SurrogateRandomCV.
+        self.best_score_ = -best_score
         self._best_sequence_ = best_sequence
         return best_estimator
 
@@ -978,7 +982,7 @@ class AML(BaseEstimator):
                     self.evaluation_history_.append(result)
                     self.stage_audits_history_.append(list(self._last_candidate_stage_audits_))
                 if self.verbose > 0:
-                    emit(logging.INFO, "score:%f" % best_scr)
+                    emit(logging.INFO, "score:%f" % -best_scr)
                     emit(logging.INFO, best_mdl)
                 fitted[seq] = -best_scr
             return fitted
@@ -990,6 +994,8 @@ class AML(BaseEstimator):
         elif not parent_prop_names.intersection(kwargs):
             kwargs["num_parents"] = 30
         mutation_prob = kwargs.pop("mutation_prob", 0.1)
+        # Allow an explicit fit-level override; otherwise use the AML-level flag.
+        resume = kwargs.pop("resume", self.resume)
         _eoa = EOA(
             population=Pop,
             fitness=_eval,
@@ -997,6 +1003,7 @@ class AML(BaseEstimator):
             term_genes=self.couldBlast,
             init_genes=self.couldBfirst,
             check_point=self.check_point,
+            resume=resume,
             random_state=self.random_state,
             **kwargs
         )
@@ -1105,6 +1112,7 @@ class AML(BaseEstimator):
             best_candidate = {
                 "pipeline": safe(list(best_sequence)),
                 "score": safe(self.best_estimator_score),
+                "best_score": safe(self.best_score_),
             }
         else:
             best_candidate = None
@@ -1522,7 +1530,12 @@ class AML(BaseEstimator):
                 "current_value": None,
             }
             self.last_candidate_duration_ = perf_counter() - started
-            return ppln, score
+            # The surrogate branch below returns the *minimized loss* (the negated
+            # scorer value); this no-config branch must match, or a candidate with
+            # no tunable parameters would store the raw higher-is-better score and
+            # rank backwards in get_top / EOA fitness (see the sign contract in
+            # docs/surrogate.rst).
+            return ppln, -score
         # Rewrite API-level rules (bare parameter names) into this pipeline's
         # step-prefixed search-space keys so forbidden/conditional matching can
         # actually see the candidates it is meant to constrain.
