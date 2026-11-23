@@ -1,0 +1,761 @@
+{
+  "generated_from_version": "0.3.1",
+  "operation_count": 151,
+  "operations": [
+    {
+      "method": "POST",
+      "path": "/api/access/adopt",
+      "summary": "Adopt Orphans"
+    },
+    {
+      "method": "GET",
+      "path": "/api/access/projects",
+      "summary": "List My Projects"
+    },
+    {
+      "method": "GET",
+      "path": "/api/access/projects/{project_id}",
+      "summary": "Project Share List"
+    },
+    {
+      "method": "POST",
+      "path": "/api/access/projects/{project_id}/shares",
+      "summary": "Share Project"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/access/projects/{project_id}/shares/{user_id}",
+      "summary": "Unshare Project"
+    },
+    {
+      "method": "GET",
+      "path": "/api/access/tasks",
+      "summary": "List My Tasks"
+    },
+    {
+      "method": "GET",
+      "path": "/api/access/tasks/{task_name}",
+      "summary": "Task Shares"
+    },
+    {
+      "method": "POST",
+      "path": "/api/access/tasks/{task_name}/shares",
+      "summary": "Share Task"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/access/tasks/{task_name}/shares/{user_id}",
+      "summary": "Unshare Task"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/audit",
+      "summary": "Auth Audit"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/keys",
+      "summary": "List Keys"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/keys",
+      "summary": "Create Key"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/auth/keys/{key_id}",
+      "summary": "Revoke Key"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/login",
+      "summary": "Login"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/logout",
+      "summary": "Logout"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/me",
+      "summary": "Me"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/password",
+      "summary": "Change Password"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/status",
+      "summary": "Status"
+    },
+    {
+      "method": "GET",
+      "path": "/api/auth/users",
+      "summary": "List Users"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/users",
+      "summary": "Create User"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/auth/users/{user_id}",
+      "summary": "Update User"
+    },
+    {
+      "method": "POST",
+      "path": "/api/auth/users/{user_id}/logout",
+      "summary": "Logout User"
+    },
+    {
+      "method": "GET",
+      "path": "/api/bundles/{task_name}",
+      "summary": "List Bundles"
+    },
+    {
+      "method": "GET",
+      "path": "/api/bundles/{task_name}/best",
+      "summary": "Best Bundle"
+    },
+    {
+      "method": "GET",
+      "path": "/api/bundles/{task_name}/preserved",
+      "summary": "List Preserved"
+    },
+    {
+      "method": "POST",
+      "path": "/api/bundles/{task_name}/recover",
+      "summary": "Recover Model"
+    },
+    {
+      "method": "POST",
+      "path": "/api/bundles/{task_name}/train-baseline",
+      "summary": "Train Baseline"
+    },
+    {
+      "method": "GET",
+      "path": "/api/bundles/{task_name}/{model_version}",
+      "summary": "Get Bundle"
+    },
+    {
+      "method": "GET",
+      "path": "/api/bundles/{task_name}/{model_version}/download",
+      "summary": "Download Bundle"
+    },
+    {
+      "method": "POST",
+      "path": "/api/bundles/{task_name}/{model_version}/export-mlflow",
+      "summary": "Export Mlflow Bundle"
+    },
+    {
+      "method": "GET",
+      "path": "/api/bundles/{task_name}/{model_version}/pipeline",
+      "summary": "Bundle Pipeline"
+    },
+    {
+      "method": "POST",
+      "path": "/api/bundles/{task_name}/{model_version}/preserve",
+      "summary": "Preserve Bundle"
+    },
+    {
+      "method": "GET",
+      "path": "/api/bundles/{task_name}/{model_version}/report.md",
+      "summary": "Export Run Report"
+    },
+    {
+      "method": "GET",
+      "path": "/api/bundles/{task_name}/{model_version}/run-config",
+      "summary": "Export Run Configuration"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/{task_name}",
+      "summary": "Get Dataset Metadata"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/{task_name}/clip",
+      "summary": "Clip Dataset"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/{task_name}/cv",
+      "summary": "Get Cv"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/datasets/{task_name}/cv",
+      "summary": "Set Cv"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/{task_name}/deduplicate",
+      "summary": "Deduplicate Dataset"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/datasets/{task_name}/ignored-columns",
+      "summary": "Set Ignored Columns"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/{task_name}/impute",
+      "summary": "Impute Dataset"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/{task_name}/inspect",
+      "summary": "Inspect Dataset"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/{task_name}/preflight",
+      "summary": "Dataset Preflight"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/datasets/{task_name}/problem-type",
+      "summary": "Set Problem Type"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/datasets/{task_name}/problem-type",
+      "summary": "Clear Problem Type"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/{task_name}/profile",
+      "summary": "Profile Registered Dataset"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/{task_name}/register",
+      "summary": "Register Dataset"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/{task_name}/synthetic",
+      "summary": "Generate Synthetic"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/{task_name}/synthetic",
+      "summary": "List Synthetic"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/{task_name}/synthetic/{filename}",
+      "summary": "Download Synthetic"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/datasets/{task_name}/target",
+      "summary": "Set Dataset Target"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/{task_name}/target-stats",
+      "summary": "Target Stats"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/{task_name}/temporal",
+      "summary": "Get Temporal"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/datasets/{task_name}/temporal",
+      "summary": "Set Temporal"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/datasets/{task_name}/temporal",
+      "summary": "Clear Temporal"
+    },
+    {
+      "method": "POST",
+      "path": "/api/datasets/{task_name}/validate",
+      "summary": "Validate Dataset"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/{task_name}/{partition}/duplicates",
+      "summary": "Duplicate Rows"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/{task_name}/{partition}/eda-report",
+      "summary": "Eda Report"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/{task_name}/{partition}/eda-report/{format}",
+      "summary": "Download Eda Report"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/{task_name}/{partition}/encoding-preview",
+      "summary": "Encoding Preview Route"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/{task_name}/{partition}/partition-drift",
+      "summary": "Partition Drift Report"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/{task_name}/{partition}/preprocessing",
+      "summary": "Preprocessing Overview"
+    },
+    {
+      "method": "GET",
+      "path": "/api/datasets/{task_name}/{partition}/preview",
+      "summary": "Preview Dataset"
+    },
+    {
+      "method": "POST",
+      "path": "/api/design/latin-hypercube",
+      "summary": "Lhs"
+    },
+    {
+      "method": "POST",
+      "path": "/api/design/suggest-next",
+      "summary": "Suggest Next"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ensembles/{task_name}",
+      "summary": "List Ensembles"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ensembles/{task_name}/candidates",
+      "summary": "Ensemble Candidates"
+    },
+    {
+      "method": "POST",
+      "path": "/api/ensembles/{task_name}/fit",
+      "summary": "Fit Ensemble"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ensembles/{task_name}/methods",
+      "summary": "Ensemble Methods"
+    },
+    {
+      "method": "GET",
+      "path": "/api/ensembles/{task_name}/{model_version}",
+      "summary": "Ensemble Detail"
+    },
+    {
+      "method": "POST",
+      "path": "/api/evaluation/{task_name}/backtest",
+      "summary": "Run Backtest"
+    },
+    {
+      "method": "GET",
+      "path": "/api/evaluation/{task_name}/learning-curves",
+      "summary": "Evaluation Learning Curves"
+    },
+    {
+      "method": "GET",
+      "path": "/api/evaluation/{task_name}/metrics",
+      "summary": "Evaluation Metrics"
+    },
+    {
+      "method": "POST",
+      "path": "/api/evaluation/{task_name}/nested-cv",
+      "summary": "Run Nested Cv"
+    },
+    {
+      "method": "POST",
+      "path": "/api/evaluation/{task_name}/{model_version}/ale",
+      "summary": "Accumulated Local Effects Bundle"
+    },
+    {
+      "method": "GET",
+      "path": "/api/evaluation/{task_name}/{model_version}/curves",
+      "summary": "Bundle Curves"
+    },
+    {
+      "method": "POST",
+      "path": "/api/evaluation/{task_name}/{model_version}/explain",
+      "summary": "Explain Bundle"
+    },
+    {
+      "method": "POST",
+      "path": "/api/evaluation/{task_name}/{model_version}/explain/row",
+      "summary": "Explain Row"
+    },
+    {
+      "method": "POST",
+      "path": "/api/evaluation/{task_name}/{model_version}/intervals",
+      "summary": "Prediction Intervals"
+    },
+    {
+      "method": "GET",
+      "path": "/api/experiments/components",
+      "summary": "Components"
+    },
+    {
+      "method": "GET",
+      "path": "/api/experiments/presets",
+      "summary": "Presets"
+    },
+    {
+      "method": "GET",
+      "path": "/api/experiments/scoring-options",
+      "summary": "Scoring Options"
+    },
+    {
+      "method": "POST",
+      "path": "/api/experiments/{task_name}/optimize-pipeline",
+      "summary": "Optimize Pipeline"
+    },
+    {
+      "method": "POST",
+      "path": "/api/experiments/{task_name}/run",
+      "summary": "Run Experiment"
+    },
+    {
+      "method": "GET",
+      "path": "/api/health",
+      "summary": "Health"
+    },
+    {
+      "method": "POST",
+      "path": "/api/inference/{task_name}/forecast",
+      "summary": "Forecast"
+    },
+    {
+      "method": "POST",
+      "path": "/api/inference/{task_name}/predict",
+      "summary": "Predict"
+    },
+    {
+      "method": "POST",
+      "path": "/api/inference/{task_name}/predict-batch",
+      "summary": "Predict Batch Endpoint"
+    },
+    {
+      "method": "GET",
+      "path": "/api/inference/{task_name}/predictions/{model_version}/{filename}",
+      "summary": "Download Prediction"
+    },
+    {
+      "method": "GET",
+      "path": "/api/jobs",
+      "summary": "List Jobs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/jobs/active",
+      "summary": "List Active Jobs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/jobs/{job_id}",
+      "summary": "Get Job"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/jobs/{job_id}",
+      "summary": "Rename Job"
+    },
+    {
+      "method": "POST",
+      "path": "/api/jobs/{job_id}/resume",
+      "summary": "Resume Job"
+    },
+    {
+      "method": "POST",
+      "path": "/api/jobs/{job_id}/stop",
+      "summary": "Stop Job"
+    },
+    {
+      "method": "GET",
+      "path": "/api/lineage/{task_name}/{model_version}",
+      "summary": "Get Lineage"
+    },
+    {
+      "method": "GET",
+      "path": "/api/logs",
+      "summary": "List Logs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/logs/{job_id}",
+      "summary": "Job Logs"
+    },
+    {
+      "method": "GET",
+      "path": "/api/monitoring/alerts",
+      "summary": "Monitoring Alerts"
+    },
+    {
+      "method": "POST",
+      "path": "/api/monitoring/{task_name}/delayed-label-performance",
+      "summary": "Check Delayed Label Performance"
+    },
+    {
+      "method": "POST",
+      "path": "/api/monitoring/{task_name}/drift",
+      "summary": "Check Drift"
+    },
+    {
+      "method": "POST",
+      "path": "/api/monitoring/{task_name}/fairness",
+      "summary": "Check Fairness"
+    },
+    {
+      "method": "POST",
+      "path": "/api/monitoring/{task_name}/sensitive-scan",
+      "summary": "Scan Sensitive"
+    },
+    {
+      "method": "POST",
+      "path": "/api/monitoring/{task_name}/{model_version}/prediction-drift",
+      "summary": "Check Prediction Drift"
+    },
+    {
+      "method": "POST",
+      "path": "/api/monitoring/{task_name}/{model_version}/subgroup-performance",
+      "summary": "Check Subgroup Performance"
+    },
+    {
+      "method": "GET",
+      "path": "/api/monitoring/{task_name}/{model_version}/summary",
+      "summary": "Monitor Summary"
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects",
+      "summary": "List Projects"
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects",
+      "summary": "Create Project"
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects/{project_id}",
+      "summary": "Get Project"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/projects/{project_id}",
+      "summary": "Update Project"
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects/{project_id}/artifacts",
+      "summary": "Add Project Artifact"
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects/{project_id}/notes",
+      "summary": "Add Project Note"
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects/{project_id}/records",
+      "summary": "Add Project Record"
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects/{project_id}/records/{record_id}/evidence",
+      "summary": "Add Project Record Evidence"
+    },
+    {
+      "method": "POST",
+      "path": "/api/projects/{project_id}/records/{record_id}/status",
+      "summary": "Update Project Hypothesis Status"
+    },
+    {
+      "method": "GET",
+      "path": "/api/projects/{project_id}/summary",
+      "summary": "Project Summary"
+    },
+    {
+      "method": "POST",
+      "path": "/api/quality-gates/{task_name}/{model_version}/check",
+      "summary": "Check Quality"
+    },
+    {
+      "method": "GET",
+      "path": "/api/registry/{task_name}/aliases",
+      "summary": "List Aliases"
+    },
+    {
+      "method": "POST",
+      "path": "/api/registry/{task_name}/aliases",
+      "summary": "Set Alias"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/registry/{task_name}/aliases/{name}",
+      "summary": "Delete Alias"
+    },
+    {
+      "method": "GET",
+      "path": "/api/registry/{task_name}/artifacts",
+      "summary": "Registry Artifacts"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/registry/{task_name}/artifacts",
+      "summary": "Delete Registry Artifacts"
+    },
+    {
+      "method": "GET",
+      "path": "/api/registry/{task_name}/audit",
+      "summary": "Registry Audit"
+    },
+    {
+      "method": "GET",
+      "path": "/api/registry/{task_name}/history",
+      "summary": "Registry History"
+    },
+    {
+      "method": "GET",
+      "path": "/api/registry/{task_name}/load",
+      "summary": "Load Registered Bundle"
+    },
+    {
+      "method": "POST",
+      "path": "/api/registry/{task_name}/promote",
+      "summary": "Promote Bundle"
+    },
+    {
+      "method": "POST",
+      "path": "/api/registry/{task_name}/register",
+      "summary": "Register Bundle"
+    },
+    {
+      "method": "POST",
+      "path": "/api/registry/{task_name}/rollback",
+      "summary": "Rollback Bundle"
+    },
+    {
+      "method": "GET",
+      "path": "/api/registry/{task_name}/summary",
+      "summary": "Registry Summary"
+    },
+    {
+      "method": "POST",
+      "path": "/api/reports/{task_name}/explain",
+      "summary": "Submit Explain Report"
+    },
+    {
+      "method": "GET",
+      "path": "/api/reports/{task_name}/{job_id}/{format}",
+      "summary": "Download Explain Report"
+    },
+    {
+      "method": "POST",
+      "path": "/api/retraining/{task_name}/run",
+      "summary": "Run Retraining"
+    },
+    {
+      "method": "POST",
+      "path": "/api/retraining/{task_name}/trigger",
+      "summary": "Trigger Retraining"
+    },
+    {
+      "method": "POST",
+      "path": "/api/sensitivity/{task_name}/base-weights",
+      "summary": "Compute Base Weights"
+    },
+    {
+      "method": "GET",
+      "path": "/api/sensitivity/{task_name}/correlation-matrix",
+      "summary": "Get Correlation Matrix"
+    },
+    {
+      "method": "POST",
+      "path": "/api/sensitivity/{task_name}/correlation-threshold",
+      "summary": "Run Correlation Threshold"
+    },
+    {
+      "method": "POST",
+      "path": "/api/sensitivity/{task_name}/run",
+      "summary": "Run Sensitivity"
+    },
+    {
+      "method": "GET",
+      "path": "/api/sensitivity/{task_name}/top-features",
+      "summary": "Get Top Features"
+    },
+    {
+      "method": "GET",
+      "path": "/api/sensitivity/{task_name}/weights-heatmap",
+      "summary": "Get Weights Heatmap"
+    },
+    {
+      "method": "GET",
+      "path": "/api/serving",
+      "summary": "List Serving"
+    },
+    {
+      "method": "GET",
+      "path": "/api/serving/{task_name}",
+      "summary": "Serving Status"
+    },
+    {
+      "method": "POST",
+      "path": "/api/serving/{task_name}",
+      "summary": "Start Serving"
+    },
+    {
+      "method": "DELETE",
+      "path": "/api/serving/{task_name}",
+      "summary": "Stop Serving"
+    },
+    {
+      "method": "POST",
+      "path": "/api/serving/{task_name}/forecast",
+      "summary": "Forecast Served"
+    },
+    {
+      "method": "POST",
+      "path": "/api/serving/{task_name}/predict",
+      "summary": "Predict Served"
+    },
+    {
+      "method": "GET",
+      "path": "/api/settings/compute",
+      "summary": "Get Compute Settings"
+    },
+    {
+      "method": "PUT",
+      "path": "/api/settings/compute",
+      "summary": "Put Compute Settings"
+    },
+    {
+      "method": "POST",
+      "path": "/api/settings/reset",
+      "summary": "Reset My Data"
+    },
+    {
+      "method": "POST",
+      "path": "/api/synthesis/projects/{project_id}",
+      "summary": "Submit Synthesis"
+    },
+    {
+      "method": "GET",
+      "path": "/api/synthesis/status",
+      "summary": "Synthesis Status"
+    },
+    {
+      "method": "GET",
+      "path": "/api/tasks",
+      "summary": "List Tasks"
+    }
+  ]
+}
