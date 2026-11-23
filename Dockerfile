@@ -36,11 +36,13 @@ ENV PATH="/opt/venv/bin:$PATH" \
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/*
-# requirements.txt is the *dev/CI umbrella* (core + optional extras + API stack).
+# requirements.txt is the *dev/CI umbrella* (core + optional extras + API stack)
+# and references its sibling tier files with -r, so copy them all into /tmp —
+# pip resolves -r paths relative to the referencing file's directory.
 # It is deliberately NOT what `pip install sksurrogate` pulls in: the wheel's
 # install_requires is requirements-core.txt only, and every backend the image
-# needs here is an extra in setup.py. See requirements-core.txt for the split.
-COPY requirements.txt /tmp/requirements.txt
+# needs here is an extra in setup.py.
+COPY requirements*.txt /tmp/
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 # Optional extras, e.g. --build-arg EXTRAS="jupyter nbformat"
 ARG EXTRAS=""
