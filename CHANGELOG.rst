@@ -1,8 +1,8 @@
 Changelog
 =========
 
-[Unreleased]
-------------
+[0.3.1] - 2026-11-23
+--------------------
 
 Partition defaults, temporal experiments and the Advanced scorer
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
