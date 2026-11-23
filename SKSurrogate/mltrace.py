@@ -2922,8 +2922,9 @@ class mltrack(object):
         :param mid: the model id
         :return: an unfitted model
         """
-        from importlib import import_module
         from pickle import loads
+
+        from .deps import require
 
         res = MLModel.select().where(MLModel.model_id == mid)
         if len(res) == 0:
@@ -2931,7 +2932,7 @@ class mltrack(object):
         detail = res[0].model_type.split(".")
         module_str = ".".join(detail[:-1])
         clss = detail[-1]
-        module = import_module(module_str)
+        module = require(module_str, purpose=f"the stored model {res[0].model_type!r}")
         params = loads(res[0].parameters)
         mdl = module.__getattribute__(clss)()
         mdl.set_params(**params)
@@ -4149,6 +4150,8 @@ class mltrack(object):
         """
         from pandas import DataFrame, read_sql, to_numeric
 
+        from .deps import require
+
         self.data = read_sql("SELECT * FROM data", self.conn)
         features = list(self.data.columns)
         features.remove(self.target)
@@ -4172,7 +4175,7 @@ class mltrack(object):
                 Res = dict(self.data.var())
                 W["variance"] = [Res[v] for v in features]
             elif factor == "relieff":
-                from skrebate import ReliefF
+                ReliefF = require("skrebate", purpose="ReliefF feature weights").ReliefF
 
                 n_neighbors = kwargs.get("n_neighbors", 80)
                 RF = ReliefF(n_features_to_select=n_features, n_neighbors=n_neighbors)
@@ -4181,7 +4184,7 @@ class mltrack(object):
                     RF.feature_importances_[features.index(v)] for v in features
                 ]
             elif factor == "surf":
-                from skrebate import SURF
+                SURF = require("skrebate", purpose="SURF feature weights").SURF
 
                 RF = SURF(n_features_to_select=n_features)
                 RF.fit(X, y)

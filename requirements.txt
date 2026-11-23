@@ -1,25 +1,22 @@
-# Development / API-stack requirements (CI `tests` job). Lower bounds exclude all
-# historically vulnerable ranges per the GitHub Advisory Database (Dependabot triage,
-# 2026-10-24: unpinned manifests allowed pre-fix versions of several packages);
-# no upper pins -- CI intentionally tracks current releases.
-category-encoders
-dask[distributed]>=2024.1
-eli5
-fastapi>0.109
-imbalanced-learn
-joblib>=1.2
-matplotlib
-numpy>=1.22
-pandas
-peewee
-python-multipart>=0.0.31
-SALib
-scikit-learn>=1.5
-scipy>=1.10
-six
-skrebate
-tqdm>=4.66.3
-lightgbm>=4.6
-xgboost>=2.1
-rgf-python>=3.12.0
-uvicorn[standard]>=0.11.7
+# Umbrella dev/CI manifest. This is *not* what `pip install sksurrogate` installs:
+# the wheel's install_requires is requirements-core.txt only, and every optional
+# backend is an extra (`pip install "sksurrogate[estimators]"`,
+# `"sksurrogate[ui]"`, `"sksurrogate[all]"`, ...).
+#
+# Tiered manifests, lowest to highest weight:
+#
+#   requirements-core.txt     numpy, scipy, pandas, scikit-learn, joblib, peewee, tqdm
+#   requirements-extras.txt   gradient-boosting backends, SALib, eli5, skrebate,
+#                             imbalanced-learn, matplotlib, category-encoders
+#   requirements-api.txt      FastAPI/uvicorn stack + dask (control plane, web UI)
+#   requirements-dev.txt      all of the above + pytest/pygments/httpx (CI, Docker)
+#
+# Lower bounds exclude all historically vulnerable ranges per the GitHub Advisory
+# Database (Dependabot triage, 2026-10-24); no upper pins -- CI intentionally
+# tracks current releases.
+-r requirements-core.txt
+-r requirements-extras.txt
+-r requirements-api.txt
+pytest
+pygments
+httpx

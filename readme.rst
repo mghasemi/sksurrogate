@@ -241,24 +241,75 @@ or from source (development)::
 
     pip install git+https://github.com/mghasemi/sksurrogate.git
 
+The base install is intentionally small: it pulls seven packages
+(``numpy``, ``scipy``, ``pandas``, ``scikit-learn``, ``joblib``, ``peewee``,
+``tqdm``) and nothing compiled beyond scikit-learn. Measured on Python 3.12,
+a cold resolveless install takes ~7 s / 250 MB of site-packages, and
+``import SKSurrogate`` takes ~0.55 s.
+
 Optional extras
 ---------------
-The package also ships a web UI, a control-plane API, and a run tracker. These are optional
-add-ons — the optimizer above is the primary deliverable, and the extras are kept deliberately
-out of the headline.
+Every other backend is imported lazily and installed through an extra. Naming a
+component whose backend is absent raises an error that names the extra::
 
-- **Web UI and control-plane API**: documented in the
-  `Web UI and Control-Plane API guide <https://sksurrogate.readthedocs.io/en/latest/controlplane.html>`_.
-- **Step-by-step UI manual**: `screenshots and example CSV files <https://sksurrogate.readthedocs.io/en/latest/ui-manual.html>`_.
+    SKSurrogate needs the optional package 'xgboost' for the XGBoost estimator, but it is not installed.
+    Install it with: pip install "sksurrogate[xgboost]"
+
+.. list-table::
+   :header-rows: 1
+
+   * - Extra
+     - Adds
+     - Needed for
+   * - ``[lightgbm]`` / ``[xgboost]`` / ``[rgf]``
+     - one boosting backend each
+     - the corresponding catalog rows
+   * - ``[gbm]``
+     - lightgbm + xgboost
+     - both tree-boosting families
+   * - ``[estimators]``
+     - gbm + rgf + category-encoders
+     - the full estimator library
+   * - ``[sensitivity]``
+     - SALib
+     - ``SensAprx`` (Sobol / Morris / delta)
+   * - ``[explain]``
+     - eli5, skrebate
+     - permutation-importance and ReliefF/SURF feature weights
+   * - ``[imbalance]``
+     - imbalanced-learn
+     - sampler steps in a pipeline
+   * - ``[categorical]``
+     - category-encoders
+     - ``cat_cols`` encoding
+   * - ``[plots]``
+     - matplotlib
+     - diagnostic plots
+   * - ``[api]`` / ``[ui]``
+     - FastAPI, uvicorn, python-multipart
+     - the control-plane API and web UI (see the
+       `guide <https://sksurrogate.readthedocs.io/en/latest/controlplane.html>`_)
+   * - ``[dask]``
+     - dask[distributed]
+     - the distributed execution backend
+   * - ``[all]``
+     - every extra above
+     - CI, Docker, "just make everything work" (~938 MB)
+
+``[automl]`` (AutoGluon + PyTorch) is kept separate on purpose: it is multi-GB
+and only used by the benchmark studies.
 
 Dependencies
 ----------------
-``SKSurrogate`` heavily depends on `NumPy <http://www.numpy.org/>`_,
+``SKSurrogate`` depends on `NumPy <http://www.numpy.org/>`_,
 `scipy <https://www.scipy.org/>`_, and `scikit-learn <https://scikit-learn.org/stable/>`_,
-for its main functionalities. Other dependencies include `pandas <https://pandas.pydata.org/>`_,
-`matplotlib <https://matplotlib.org/>`_, `SALib <https://github.com/SALib/SALib>`_,
-`peewee <https://github.com/coleifer/peewee>`_, and
-`tqdm <https://github.com/tqdm/tqdm>`_.
+for its main functionalities, plus `pandas <https://pandas.pydata.org/>`_,
+`joblib <https://joblib.readthedocs.io/>`_, `peewee <https://github.com/coleifer/peewee>`_
+(the run tracker's SQLite ORM) and `tqdm <https://github.com/tqdm/tqdm>`_.
+Everything else — `matplotlib <https://matplotlib.org/>`_,
+`SALib <https://github.com/SALib/SALib>`_, LightGBM, XGBoost, RGF, eli5,
+skrebate, imbalanced-learn, category-encoders — is an optional extra, imported
+only by the code path that uses it.
 
 Documentation
 ----------------

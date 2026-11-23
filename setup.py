@@ -14,9 +14,53 @@ def _read_version():
 
 
 Description = (
-    "Lightweight, maintained, scikit-learn-native surrogate tuner for hyperparameter and "
-    "AutoML pipeline search; a drop-in replacement for BayesSearchCV."
+    "scikit-learn-native surrogate tuner for hyperparameter and AutoML pipeline search; "
+    "a drop-in replacement for BayesSearchCV, with a small core install and opt-in extras."
 )
+
+# --------------------------------------------------------------------------
+# Dependency tiers
+# --------------------------------------------------------------------------
+# CORE is exactly what ``import SKSurrogate`` needs. Verified with
+# ``python -X importtime -c "import SKSurrogate"``: the only third-party
+# modules imported at module scope anywhere in SKSurrogate/ are numpy, scipy,
+# pandas, joblib, scikit-learn and peewee. Everything else the library can use
+# (gradient-boosting backends, SALib, eli5, skrebate, matplotlib, dask,
+# category_encoders, imbalanced-learn) is imported lazily inside functions, so
+# it belongs in an extra.
+#
+# Rule when adding a dependency: a module-scope import goes in CORE; a lazy
+# import goes in an extra below *and* its call site is wrapped with
+# ``SKSurrogate.deps.require`` so that a missing package raises an error naming
+# the extra that provides it.
+_CORE = [
+    "numpy>=1.22",
+    "scipy>=1.10",
+    "pandas",
+    "scikit-learn>=1.5",
+    "joblib>=1.2",
+    "peewee",
+    "tqdm>=4.66.3",
+]
+
+# Estimator backends. Catalog rows such as ``lightgbm.LGBMClassifier`` are
+# resolved through importlib when a search space is built, so these are optional
+# until a user actually names one of them.
+_LIGHTGBM = ["lightgbm>=4.6"]
+_XGBOOST = ["xgboost>=2.1"]
+# rgf-python ships wheels only for manylinux1/macOS x86_64 and win_amd64 (last
+# release 3.12.0, 2022). On Linux/aarch64 and Apple Silicon pip falls back to
+# the sdist, which needs a C++ toolchain — keep it an explicit opt-in.
+_RGF = ["rgf-python>=3.12.0"]
+
+_ESTIMATORS = _LIGHTGBM + _XGBOOST + _RGF + ["category-encoders"]
+_SENSITIVITY = ["SALib"]
+_EXPLAIN = ["eli5", "skrebate"]
+_IMBALANCE = ["imbalanced-learn"]
+_PLOTS = ["matplotlib"]
+_DASK = ["dask[distributed]>=2024.1"]
+_API = ["fastapi>0.109", "uvicorn[standard]>=0.11.7", "python-multipart>=0.0.31"]
+_BENCHMARK = ["openml>=0.15,<0.16", "optuna", "scikit-posthocs>=0.9"]
 
 setup(
     name="SKSurrogate",
@@ -56,31 +100,31 @@ setup(
         "Zenodo (software)": "https://doi.org/10.5281/zenodo.23631823",
         "Zenodo (benchmark data)": "https://doi.org/10.5281/zenodo.23629024",
     },
-    install_requires=[
-        "numpy>=1.22",
-        "scipy>=1.10",
-        "pandas",
-        "matplotlib",
-        "scikit-learn>=1.5",
-        "lightgbm>=4.6",
-        "xgboost>=2.1",
-        "rgf-python>=3.12.0",
-        "SALib",
-        "imbalanced-learn",
-        "joblib>=1.2",
-        "eli5",
-        "skrebate",
-        "tqdm>=4.66.3",
-        "peewee",
-        "category_encoders",
-    ],
+    install_requires=list(_CORE),
     extras_require={
-        "test": ["pytest", "pygments"],
+        # ---- estimator backends ------------------------------------------
+        "lightgbm": list(_LIGHTGBM),
+        "xgboost": list(_XGBOOST),
+        "rgf": list(_RGF),
+        "gbm": _LIGHTGBM + _XGBOOST,
+        "estimators": list(_ESTIMATORS),
+        # ---- feature support ---------------------------------------------
+        "sensitivity": list(_SENSITIVITY),
+        "explain": list(_EXPLAIN),
+        "imbalance": list(_IMBALANCE),
+        "categorical": ["category-encoders"],
+        "plots": list(_PLOTS),
+        # ---- serving / operations ----------------------------------------
         # The API's optional distributed execution backend (api/jobs.py and
         # SKSurrogate.execution). The control plane degrades gracefully to the
         # local backend when it is absent.
-        "dask": ["dask[distributed]>=2024.1"],
-        "benchmark": ["openml>=0.15,<0.16", "optuna", "scikit-posthocs>=0.9"],
+        "dask": list(_DASK),
+        "api": list(_API),
+        # The web UI is a static bundle served by the API, so this extra only
+        # needs the API stack.
+        "ui": list(_API),
+        # ---- studies -----------------------------------------------------
+        "benchmark": list(_BENCHMARK),
         # Wall-clock AutoML arm (benchmarks/automl_arm.py). Separate extra: these
         # are large and irrelevant to the tuner itself.
         "automl": ["autogluon.tabular", "flaml[automl]"],
@@ -92,6 +136,20 @@ setup(
         # home without changing what the base install pulls in. `import sksurrogate`
         # works identically with and without it.
         "forecasting": [],
+        # ---- developer / CI ----------------------------------------------
+        "test": ["pytest", "pygments"],
+        # Everything CI and the Docker image run, minus the deliberately
+        # enormous `automl` arm (AutoGluon + PyTorch).
+        "all": (
+            _ESTIMATORS
+            + _SENSITIVITY
+            + _EXPLAIN
+            + _IMBALANCE
+            + _PLOTS
+            + _DASK
+            + _API
+            + _BENCHMARK
+        ),
     },
     python_requires=">=3.10",
     classifiers=[

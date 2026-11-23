@@ -120,22 +120,32 @@ export default function SearchSpaceEditor(props: SearchSpaceEditorProps) {
                 <h4>{sec.title}</h4>
                 {sec.rows.map((row) => {
                   const added = addedFqns.has(row.fqn);
+                  const unavailable = row.available === false;
+                  const extraHint = row.install_extra
+                    ? `pip install "sksurrogate[${row.install_extra}]"`
+                    : "";
                   return (
-                    <div className="ss-lib-row" key={row.fqn}>
+                    <div
+                      className={`ss-lib-row${unavailable ? " ss-lib-row-unavailable" : ""}`}
+                      key={row.fqn}
+                      title={unavailable ? `Not installed — ${extraHint}` : undefined}
+                    >
                       <span className="ss-lib-text">
                         <span className="ss-lib-name">
                           {row.name}
                           {row.preselected && <span title="Preselected for this problem type"> ★</span>}
+                          {unavailable && <span className="ss-lib-badge"> needs install</span>}
                         </span>
                         {row.description && <span className="ss-lib-desc">{row.description}</span>}
+                        {unavailable && <span className="ss-lib-desc">{extraHint}</span>}
                       </span>
                       <button
                         className="btn ss-add-btn"
-                        disabled={added}
+                        disabled={added || unavailable}
                         onClick={() => addCard(row)}
                         type="button"
                       >
-                        {added ? "Added ✓" : "Add"}
+                        {added ? "Added ✓" : unavailable ? "Unavailable" : "Add"}
                       </button>
                     </div>
                   );

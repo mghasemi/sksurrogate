@@ -1,0 +1,10 @@
+# Control-plane API and web-UI serving stack — `pip install "sksurrogate[api]"`.
+#
+# None of this is imported by the library itself; the `api` package is a host
+# application in this repository, not part of the installed wheel.
+fastapi>0.109
+uvicorn[standard]>=0.11.7
+python-multipart>=0.0.31
+# Distributed execution backend for the job runner; the control plane falls back
+# to the local backend when it is absent.
+dask[distributed]>=2024.1

@@ -1,0 +1,22 @@
+# Optional feature extras — lazily imported, never needed by `import SKSurrogate`.
+#
+# Each line is the development-side equivalent of one `pip install
+# "sksurrogate[extra]"` entry; `setup.py` extras_require is the single source of
+# truth for what an end user installs. Missing any of these degrades a feature
+# with an actionable error (see SKSurrogate/deps.py), never a broken import.
+#
+#   lightgbm, xgboost, rgf-python   -> [lightgbm] / [xgboost] / [rgf] / [gbm] / [estimators]
+#   category-encoders               -> [categorical] / [estimators]
+#   SALib                           -> [sensitivity]
+#   eli5, skrebate                  -> [explain]
+#   imbalanced-learn                -> [imbalance]
+#   matplotlib                      -> [plots]
+lightgbm>=4.6
+xgboost>=2.1
+rgf-python>=3.12.0
+category-encoders
+SALib
+eli5
+skrebate
+imbalanced-learn
+matplotlib

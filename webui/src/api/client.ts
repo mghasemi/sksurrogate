@@ -3071,6 +3071,13 @@ export interface CatalogComponent {
   params: Record<string, ParamSpec>;
   /** Rows seeding the editor on first open for their task (D6). */
   preselected?: boolean;
+  /**
+   * False when the row's optional backend (xgboost, lightgbm, rgf, ...) is not
+   * installed in this environment; the editor disables "Add" for such rows.
+   */
+  available?: boolean;
+  /** The `pip install "sksurrogate[…]"` extra that provides the row, if any. */
+  install_extra?: string | null;
 }
 
 export interface ComponentsResponse {

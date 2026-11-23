@@ -23,6 +23,7 @@ pinning scalars in Raw mode.
 from __future__ import annotations
 
 from SKSurrogate.aml import PRESET_PARAM_SPECS
+from SKSurrogate.deps import extra_for, is_available
 
 # One row per library entry. ``task`` is set for estimators and samplers only;
 # transformers appear under both problem types.
@@ -333,6 +334,37 @@ def components_for_task(task: str | None) -> list[dict[str, object]]:
     for row in EXPERIMENT_COMPONENTS:
         if row.get("role") == "transformer" or row.get("task") == task:
             out.append(row)
+    return out
+
+
+def annotate_availability(rows: list[dict[str, object]] | None = None) -> list[dict[str, object]]:
+    """Return catalog rows annotated with whether their backend is installed.
+
+    Estimator rows name a class by FQN (``xgboost.XGBClassifier``) and are
+    resolved lazily at search-space build time. Optional backends are no longer
+    hard dependencies of the package, so the UI must be able to show which rows
+    the current environment can actually run — otherwise a user builds a search
+    space and only learns about the missing package when the job fails.
+
+    Each returned row is a copy carrying:
+
+    ``available``
+        ``True`` when the row's top-level module can be imported.
+    ``install_extra``
+        The ``sksurrogate[...]`` extra that provides it (``None`` for core
+        modules such as ``sklearn``), so the UI can print the exact command.
+
+    Probing happens per request rather than at import time, so installing an
+    extra takes effect without restarting the API.
+    """
+    source = EXPERIMENT_COMPONENTS if rows is None else rows
+    out: list[dict[str, object]] = []
+    cache: dict[str, bool] = {}
+    for row in source:
+        module = str(row["fqn"]).split(".")[0]
+        if module not in cache:
+            cache[module] = is_available(module)
+        out.append({**row, "available": cache[module], "install_extra": extra_for(module)})
     return out
 
 

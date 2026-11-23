@@ -12,6 +12,8 @@ except ModuleNotFoundError:
     BaseEstimator = type("BaseEstimator", (object,), dict())
     TransformerMixin = type("TransformerMixin", (object,), dict())
 
+from .deps import require
+
 
 class SensAprx(BaseEstimator, TransformerMixin):
     """
@@ -124,16 +126,16 @@ class SensAprx(BaseEstimator, TransformerMixin):
         )
         res = []
         if self.method == "sobol":
-            from SALib.sample import saltelli
-            from SALib.analyze import sobol
+            saltelli = require("SALib.sample.saltelli", purpose="Sobol sensitivity indices")
+            sobol = require("SALib.analyze.sobol", purpose="Sobol sensitivity indices")
 
             param_values = saltelli.sample(problem, self.num_smpl)
             y_ = self.regressor.predict(param_values)
             res = sobol.analyze(problem, y_)["ST"]
             self.weights_ = res
         elif self.method == "morris":
-            from SALib.sample import morris as mrs
-            from SALib.analyze import morris
+            mrs = require("SALib.sample.morris", purpose="Morris sensitivity indices")
+            morris = require("SALib.analyze.morris", purpose="Morris sensitivity indices")
 
             param_values = mrs.sample(
                 problem, self.num_smpl, num_levels=self.num_levels
@@ -144,8 +146,8 @@ class SensAprx(BaseEstimator, TransformerMixin):
             ]
             self.weights_ = res
         elif self.method == "delta-mmnt":
-            from SALib.sample import latin
-            from SALib.analyze import delta
+            latin = require("SALib.sample.latin", purpose="the delta sensitivity index")
+            delta = require("SALib.analyze.delta", purpose="the delta sensitivity index")
 
             param_values = latin.sample(problem, self.num_smpl)
             y_ = self.regressor.predict(param_values)

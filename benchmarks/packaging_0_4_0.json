@@ -1,0 +1,50 @@
+{
+  "study": "optional-extras packaging split",
+  "release": "0.4.0",
+  "claim": "The published wheel requires only numpy, scipy, pandas, scikit-learn, joblib, peewee and tqdm; every other backend is an opt-in extra.",
+  "measured_on": "2026-11-23",
+  "method": {
+    "python": "3.12.3 (/usr/bin/python3)",
+    "installer": "uv pip install --no-cache into a fresh venv (cold download cache)",
+    "size": "du -sm <venv>/lib/python3.12/site-packages",
+    "import_time": "python -X importtime -c 'import SKSurrogate', last cumulative line",
+    "before_tree": "master 991f8c2 install_requires (16 packages, listed in the wheel METADATA)",
+    "after_tree": "feat/optional-extras built wheel sksurrogate-0.3.1-py3-none-any.whl (0.4.0 metadata)"
+  },
+  "before": {
+    "install_requires": [
+      "numpy>=1.22", "scipy>=1.10", "pandas", "matplotlib", "scikit-learn>=1.5",
+      "lightgbm>=4.6", "xgboost>=2.1", "rgf-python>=3.12.0", "SALib",
+      "imbalanced-learn", "joblib>=1.2", "eli5", "skrebate", "tqdm>=4.66.3",
+      "peewee", "category_encoders"
+    ],
+    "install_seconds": 39,
+    "site_packages_mb": 633,
+    "import_seconds": 0.485,
+    "xgb_on_disk_mb": 333,
+    "note": "Only peewee (5.4 ms) of the ten non-core packages is imported at import time; xgboost/lightgbm/rgf-python are referenced only as class FQN strings."
+  },
+  "after_core": {
+    "install_requires": [
+      "numpy>=1.22", "scipy>=1.10", "pandas", "scikit-learn>=1.5",
+      "joblib>=1.2", "peewee", "tqdm>=4.66.3"
+    ],
+    "install_seconds": 7,
+    "site_packages_mb": 250,
+    "import_seconds": 0.550,
+    "optional_backends_present": [],
+    "functional_smoke": "SurrogateRandomCV(RandomForestRegressor) on 150x3 synthetic regression: best r2 = 0.958",
+    "missing_extra_message": "SKSurrogate needs the optional package 'xgboost' for the XGBoost estimator, but it is not installed. Install it with: pip install \"sksurrogate[xgboost]\""
+  },
+  "after_all_extra": {
+    "extra": "all",
+    "install_seconds": 49,
+    "site_packages_mb": 938,
+    "note": "Includes the API/uvicorn/dask stack and benchmark tools; the deliberately enormous automl extra (AutoGluon + PyTorch) is excluded."
+  },
+  "deltas": {
+    "install_time_reduction": "39 s -> 7 s (-82%)",
+    "disk_footprint_reduction": "633 MB -> 250 MB (-383 MB, -60%)",
+    "import_time": "0.485 s -> 0.550 s (+13%, unchanged in composition: sklearn dominates both)"
+  }
+}
