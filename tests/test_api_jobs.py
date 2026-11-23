@@ -102,6 +102,10 @@ def test_trial_callback_keeps_score_and_params_fields(client):
                     "trial": 4,
                     "phase": "explore",
                     "status": "completed",
+                    # The trial event carries the search *loss* (e.g. +RMSE for a
+                    # regression scorer); the log feed stores the scorer's own
+                    # higher-is-better units so the live "best" summary (which
+                    # takes the maximum over feed scores) picks the best trial.
                     "score": 0.8123,
                     "params": {"max_depth": 3, "criterion": "gini"},
                 }
@@ -118,7 +122,7 @@ def test_trial_callback_keeps_score_and_params_fields(client):
     assert len(trial_entries) == 1
     entry = trial_entries[0]
     assert entry["status"] == "completed"
-    assert entry["score"] == pytest.approx(0.8123)
+    assert entry["score"] == pytest.approx(-0.8123)
     assert entry["params"] == {"max_depth": 3, "criterion": "gini"}
     # The human-readable message stays the same one the Logs page renders.
-    assert "trial 4 (explore) completed score=0.8123" in entry["message"]
+    assert "trial 4 (explore) completed score=-0.8123" in entry["message"]

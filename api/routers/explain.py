@@ -214,11 +214,22 @@ def explain_bundle(task_name: str, model_version: str, body: ExplainRequest):
     partition = resolve_partition(task_name, body.partition)
     X, y, feature_source = _explain_frame(task_name, partition)
     source_rows = len(X)
-    if body.stability_samples > 1 and source_rows <= body.max_rows:
-        raise bad_request(
-            "Reference-sample stability needs more source rows than max_rows; "
-            "use a smaller max_rows or a partition with more rows."
-        )
+    if body.stability_samples > 1:
+        # Stability needs DISTINCT reference subsets of max_rows rows drawn
+        # without replacement; with as many source rows only one distinct subset
+        # would exist and reference_subsets would redraw forever. bail only when
+        # the partition cannot support the requested number of subsets at all;
+        # otherwise clamp max_rows (an upper bound) strictly below the source so
+        # the request succeeds instead of 400-ing on a small partition.
+        if source_rows < 2 or source_rows < body.stability_samples:
+            raise bad_request(
+                "Reference-sample stability needs %d distinct reference subsets, "
+                "but the source partition has only %d row(s); use fewer stability "
+                "samples or a partition with more rows."
+                % (body.stability_samples, source_rows)
+            )
+        if body.max_rows >= source_rows:
+            body.max_rows = source_rows - 1
     X_source, y_source = X, y
     sampled = source_rows > body.max_rows
     sample_rng = np.random.RandomState(body.random_state)
@@ -422,11 +433,22 @@ def accumulated_local_effects_bundle(task_name: str, model_version: str, body: A
     partition = resolve_partition(task_name, body.partition)
     X, y, feature_source = _explain_frame(task_name, partition)
     source_rows = len(X)
-    if body.stability_samples > 1 and source_rows <= body.max_rows:
-        raise bad_request(
-            "Reference-sample stability needs more source rows than max_rows; "
-            "use a smaller max_rows or a partition with more rows."
-        )
+    if body.stability_samples > 1:
+        # Stability needs DISTINCT reference subsets of max_rows rows drawn
+        # without replacement; with as many source rows only one distinct subset
+        # would exist and reference_subsets would redraw forever. bail only when
+        # the partition cannot support the requested number of subsets at all;
+        # otherwise clamp max_rows (an upper bound) strictly below the source so
+        # the request succeeds instead of 400-ing on a small partition.
+        if source_rows < 2 or source_rows < body.stability_samples:
+            raise bad_request(
+                "Reference-sample stability needs %d distinct reference subsets, "
+                "but the source partition has only %d row(s); use fewer stability "
+                "samples or a partition with more rows."
+                % (body.stability_samples, source_rows)
+            )
+        if body.max_rows >= source_rows:
+            body.max_rows = source_rows - 1
     names = list(X.columns)
     if body.features is not None:
         unknown = [feature for feature in body.features if feature not in names]

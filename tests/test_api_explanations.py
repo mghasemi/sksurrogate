@@ -299,6 +299,29 @@ def test_ale_stability_block_is_deterministic_and_descriptive(client, regression
     assert repeated["curves"][0]["stability"] == stability
 
 
+def test_stability_clamps_max_rows_on_a_small_partition(client, regression_bundle):
+    """The ale-reg partition has 160 rows; requesting stability with max_rows=500
+    used to 400 ("needs more source rows than max_rows"). max_rows is an upper
+    bound, so both endpoints clamp it strictly below the source and proceed with
+    distinct reference subsets instead of rejecting the request."""
+    explain = client.post(
+        "/api/evaluation/ale-reg/%s/explain" % regression_bundle,
+        json={"max_rows": 500, "n_repeats": 2, "stability_samples": 3, "random_state": 0},
+    )
+    assert explain.status_code == 200, explain.text
+    assert explain.json()["partial_dependence_stability"]["sample_size"] == 159
+
+    ale = client.post(
+        "/api/evaluation/ale-reg/%s/ale" % regression_bundle,
+        json={"features": ["a"], "n_bins": 8, "max_rows": 500, "stability_samples": 3,
+              "random_state": 0},
+    )
+    assert ale.status_code == 200, ale.text
+    stability = ale.json()["curves"][0]["stability"]
+    assert stability["sample_count"] == 3
+    assert stability["sample_size"] == 159
+
+
 def test_ale_merges_sparse_bins_on_tied_values():
     rng = np.random.RandomState(11)
     column = np.concatenate([np.zeros(300), rng.normal(scale=0.05, size=20), np.ones(5) * 3.0])

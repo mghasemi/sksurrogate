@@ -308,6 +308,65 @@ def test_experiment_bundle_uses_the_same_fold_width(client, small_host, tmp_path
     assert recorded["n_jobs"] == 2
 
 
+def test_experiment_refuses_a_mismatched_scorer_before_the_search(
+    client, small_host, tmp_path, monkeypatch
+):
+    """A regression task scored with a classification metric is refused upfront.
+
+    ``fit_experiment_bundle`` validates the scorer against the task's declared
+    problem type before the search runs, so a scoring mismatch returns a clear
+    error instead of every candidate's CV score coming back non-finite after a
+    long EOA/search pass.
+    """
+    import numpy as np
+    import pandas as pd
+    from fastapi import HTTPException
+
+    # Register a REGRESSION task (continuous target -> inferred "regression").
+    rng = np.random.RandomState(0)
+    frame = pd.DataFrame(rng.normal(size=(60, 3)), columns=["a", "b", "c"])
+    frame["y"] = frame["a"] * 2.0 + 0.3 * rng.normal(size=60)
+    resp = client.post(
+        "/api/datasets/reg-task/register",
+        data={"target": "y", "partition": "train"},
+        files={"file": ("t.csv", frame.to_csv(index=False), "text/csv")},
+    )
+    assert resp.status_code == 200, resp.text
+
+    constructed = {"count": 0}
+
+    class StubAML:
+        def __init__(self, **kwargs):
+            constructed["count"] += 1
+            raise AssertionError("the search must not launch for a mismatched scorer")
+
+    monkeypatch.setattr(training, "AML", StubAML)
+
+    with pytest.raises(Exception) as exc:
+        training.fit_experiment_bundle(
+            "reg-task",
+            config={"sklearn.ensemble.RandomForestRegressor": {}},
+            checkpoint_dir=tmp_path / "ckpt",
+            scoring="accuracy",
+        )
+    assert isinstance(exc.value, HTTPException)
+    assert exc.value.status_code == 400
+    assert "accuracy" in exc.value.detail
+    assert "does not match this regression task" in exc.value.detail
+    assert constructed["count"] == 0
+
+    # A matching regression scorer proceeds to the search (the stub is reached).
+    with pytest.raises(Exception) as exc:
+        training.fit_experiment_bundle(
+            "reg-task",
+            config={"sklearn.ensemble.RandomForestRegressor": {}},
+            checkpoint_dir=tmp_path / "ckpt",
+            scoring="neg_root_mean_squared_error",
+        )
+    assert constructed["count"] == 1
+    assert "does not match" not in str(exc.value)
+
+
 def test_job_pool_never_exceeds_the_configured_width(client, small_host):
     """One slot means one job at a time, no matter how many are submitted."""
     import threading

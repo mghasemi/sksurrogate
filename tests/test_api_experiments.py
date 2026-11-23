@@ -234,8 +234,13 @@ def test_explain_intervals_and_project_summary(client):
         "/api/evaluation/reg/%s/explain" % version,
         json={"max_rows": 500, "n_repeats": 2, "stability_samples": 2},
     )
-    assert insufficient_reference_rows.status_code == 400
-    assert "smaller max_rows" in insufficient_reference_rows.json()["detail"]
+    # max_rows is an upper bound: on a 120-row source it is clamped to
+    # source_rows - 1 (119) so distinct without-replacement reference subsets
+    # can still be drawn instead of returning 400.
+    assert insufficient_reference_rows.status_code == 200, insufficient_reference_rows.text
+    assert (
+        insufficient_reference_rows.json()["partial_dependence_stability"]["sample_size"] == 119
+    )
     assert any(
         "not estimated by default" in limitation
         for limitation in data["interpretation"]["limitations"]
@@ -479,7 +484,7 @@ def test_optimize_pipeline_names_the_scorer_when_nothing_can_be_scored(client):
     record = _wait(client, response.json()["job_id"])
     assert record["status"] == "failed"
     assert "scoring 'accuracy'" in record["error"]
-    assert "problem type" in record["error"]
+    assert "does not match this regression task" in record["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -564,6 +569,12 @@ def test_rgf_catalog_entries(client):
     assert clf["algorithm"]["items"] == ["RGF", "RGF_Opt", "RGF_Sib"]
     reg = by_fqn["rgf.sklearn.RGFRegressor"]["params"]
     assert set(reg) >= {"algorithm", "reg_depth"}
+    # rgf rejects reg_depth < 1 at fit time ("reg_depth must be no smaller than
+    # 1.0"); a bound that allows 0 lets the search sample an unfittable config
+    # and crash the best-estimator refit.
+    for params in (clf, reg):
+        assert params["reg_depth"]["low"] == 1, params["reg_depth"]
+        assert params["reg_depth"]["high"] >= 1
 
 
 def test_rf_et_specs_match_preset_table(client):
@@ -596,3 +607,38 @@ def test_preselected_sets(client):
     ):
         got = {r["fqn"] for r in rows if r.get("task") == task and r.get("preselected")}
         assert got == expected, f"preselected set for {task} drifted: {got}"
+
+
+def test_validate_experiment_scoring_rejects_a_family_mismatch():
+    """A scorer whose family contradicts what the search fits fails fast."""
+    from fastapi import HTTPException
+
+    from api.training import validate_experiment_scoring
+
+    # Regression search (preset/config estimators) + a classification scorer.
+    with pytest.raises(HTTPException) as exc:
+        validate_experiment_scoring("accuracy", "regression")
+    assert exc.value.status_code == 400
+    assert "does not match this regression task" in exc.value.detail
+    assert "neg_root_mean_squared_error" in exc.value.detail
+
+    # Classification search + a regression scorer.
+    with pytest.raises(HTTPException) as exc:
+        validate_experiment_scoring("neg_mean_squared_error", "classification")
+    assert "does not match this classification task" in exc.value.detail
+
+    # The declared problem type is only a fallback for a mixed/unknown search
+    # family: an explicit classification preset wins over an inferred
+    # "regression" (integer-coded multiclass labels, e.g. 3-class 0/1/2).
+    validate_experiment_scoring("accuracy", "classification", "regression")
+    with pytest.raises(HTTPException) as exc:
+        validate_experiment_scoring("accuracy", None, "regression")
+    assert "does not match this regression task" in exc.value.detail
+
+    # Matching family, unknown family, and a legacy task all pass through.
+    validate_experiment_scoring("accuracy", "classification")
+    validate_experiment_scoring("neg_root_mean_squared_error", "regression")
+    validate_experiment_scoring("r2", "regression")
+    validate_experiment_scoring("neg_smape", "regression")  # custom/unknown family
+    validate_experiment_scoring("accuracy", None)            # no search family, no declaration
+    validate_experiment_scoring("accuracy", "0.25")          # not a search-family string

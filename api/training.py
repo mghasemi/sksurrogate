@@ -40,6 +40,7 @@ from SKSurrogate.DataProcess import FoldLocalDataPreprocessor, frame_tolerant
 from . import compute, control, logs
 from .columns import coerce_declared_datetimes, drop_ignored, read_ignored_columns
 from .config import settings
+from .problem_type import declared_problem_type
 from .safety import safe_segment
 from .deps import bad_request, finite_or_none, not_found, open_tracker, resolve_bundle
 
@@ -120,6 +121,72 @@ def _scoring_family(name):
     if module.endswith(("_classification", "_ranking")):
         return "Classification"
     return "Other"
+
+
+def _experiment_search_family(preset, estimator_names):
+    """The problem family of the estimators the search will actually fit.
+
+    A preset pins it directly; an explicit config (or a single pipeline's
+    ``seq``) is classified by estimator class-name suffix. Returns ``None`` when
+    the estimators are mixed or unrecognized, so the caller can fall back to the
+    task's declared problem type.
+    """
+    if preset in ("classification", "regression"):
+        return preset
+    families = set()
+    for name in estimator_names or ():
+        base = str(name).rsplit(".", 1)[-1]
+        if base.endswith("Classifier"):
+            families.add("classification")
+        elif base.endswith("Regressor"):
+            families.add("regression")
+    return families.pop() if len(families) == 1 else None
+
+
+def validate_experiment_scoring(scoring, search_family, problem_type=None):
+    """Refuse a scorer whose family contradicts what the search will fit.
+
+    Runs before the search launches so a scorer/task mismatch (e.g. ``accuracy``
+    on a regression search, whose continuous predictions fail ``accuracy_score``
+    with "continuous is not supported") fails fast with an actionable message
+    instead of after every candidate's CV score comes back non-finite. The
+    *search family* — the preset, or the estimator suffixes in the
+    config/sequence — is authoritative, because it is what the user explicitly
+    asked to fit: a classification preset overrides a conservative inference
+    that calls integer-coded labels regression. ``problem_type`` (the task's
+    declared problem type) is used only when the search family is mixed or
+    unknown. Scorers with an unknown family (custom metrics,
+    ``"Other"``/``"Clustering"``) and non-string scoring pass through.
+    """
+    if not isinstance(scoring, str):
+        return
+    try:
+        family = _scoring_family(scoring)
+    except Exception:
+        # Unknown scoring name: let the search surface it with its own error.
+        return
+    if family == "Other":
+        return
+    effective = (
+        search_family if search_family in ("classification", "regression") else problem_type
+    )
+    if effective not in ("classification", "regression"):
+        return
+    mismatch = (effective == "classification" and family == "Regression") or (
+        effective == "regression" and family == "Classification"
+    )
+    if not mismatch:
+        return
+    suggestion = (
+        "accuracy, f1, precision, recall, or roc_auc"
+        if effective == "classification"
+        else "neg_root_mean_squared_error, neg_mean_absolute_error, r2, or neg_mean_squared_error"
+    )
+    raise bad_request(
+        "scoring %r (%s) does not match this %s task; use a %s metric such as %s. "
+        "The search would otherwise reject every candidate for a non-finite CV score."
+        % (scoring, family, effective, effective, suggestion)
+    )
 
 
 def standard_scoring_options():
@@ -1229,6 +1296,14 @@ def fit_experiment_bundle(
     otherwise scikit-learn's default fold convention applies.
     """
     target, metadata = get_registered_target(task_name)
+    # Refuse a scorer whose family contradicts the search's estimators before the
+    # expensive search runs, so a regression search scored with `accuracy` returns
+    # a clear 400 instead of every candidate's CV score coming back non-finite.
+    validate_experiment_scoring(
+        scoring,
+        _experiment_search_family(preset, list((config or {}).keys())),
+        declared_problem_type(metadata),
+    )
     # A temporal task's partition has no raw feature column of its own (the time
     # column is excluded by contract), so the search runs on the generated
     # one-step forecast design instead — the same design sensitivity, baselines
@@ -1514,6 +1589,11 @@ def fit_pipeline_bundle(
         raise bad_request("seq must be a non-empty list of estimator class names")
 
     target, metadata = get_registered_target(task_name)
+    validate_experiment_scoring(
+        scoring,
+        _experiment_search_family(None, seq),
+        declared_problem_type(metadata),
+    )
     # A temporal task's partition has no raw feature column of its own (time and
     # series columns are excluded by contract), so — exactly like
     # fit_experiment_bundle — the optimization runs on the generated one-step

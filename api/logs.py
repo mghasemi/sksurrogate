@@ -26,6 +26,7 @@ an explicit subset (``levels``).
 import contextvars
 import json
 import logging
+import math
 import threading
 import traceback
 from collections import deque
@@ -376,6 +377,15 @@ def trial_callback(event):
     phase = event.get("phase")
     status = event.get("status")
     score = event.get("score")
+    # The trial event carries the search *loss* — the negated higher-is-better
+    # objective (docs/surrogate.rst: "every value is negated once before it
+    # reaches f"). The log feed mirrors the final result payload, which
+    # api/training.py flips back into the scorer's own units, so the live "best"
+    # summary (webui takes the maximum over feed scores) does not crown the worst
+    # trial: a +RMSE loss would otherwise be read as the best, and -accuracy
+    # would pick the lowest accuracy.
+    if isinstance(score, (int, float)) and math.isfinite(score):
+        score = -score
     params = event.get("params")
     level = "INFO"
     if status in ("failed", "invalid"):
