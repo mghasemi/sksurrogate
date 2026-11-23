@@ -1,0 +1,17 @@
+# Core runtime requirements — exactly what `import SKSurrogate` needs.
+#
+# These are the only third-party modules imported at module scope anywhere in
+# SKSurrogate/ (verified with `python -X importtime -c "import SKSurrogate"`).
+# Everything else is an optional extra: see requirements-extras.txt,
+# requirements-api.txt, or `pip install "sksurrogate[...]"`.
+#
+# No upper pins: lower bounds exclude all historically vulnerable ranges per the
+# GitHub Advisory Database (Dependabot triage, 2026-10-24); CI intentionally
+# tracks current releases.
+numpy>=1.22
+scipy>=1.10
+pandas
+scikit-learn>=1.5
+joblib>=1.2
+peewee
+tqdm>=4.66.3

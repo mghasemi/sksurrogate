@@ -1,0 +1,11 @@
+# Development / CI requirements: core + optional extras + API stack + test tools.
+#
+# This is what a contributor or the Docker image needs, not what
+# `pip install sksurrogate` pulls in. The library installs only
+# requirements-core.txt; every other tier is an opt-in extra.
+-r requirements-core.txt
+-r requirements-extras.txt
+-r requirements-api.txt
+pytest
+pygments
+httpx
