@@ -69,7 +69,7 @@ setup(
     version=_read_version(),
     author="Mehdi Ghasemi",
     author_email="mehdi.ghasemi@gmail.com",
-    packages=["SKSurrogate"],
+    packages=["SKSurrogate", "sksurrogate_mcp"],
     url="https://github.com/mghasemi/sksurrogate",
     license="MIT",
     # Ship the single authoritative licence file explicitly (setuptools also
@@ -136,6 +136,12 @@ setup(
         # home without changing what the base install pulls in. `import sksurrogate`
         # works identically with and without it.
         "forecasting": [],
+        # ---- agent integration ---------------------------------------------
+        # Agent-facing MCP server (sksurrogate_mcp): an external wrapper over
+        # the running HTTP control plane — no core dependencies, stdio
+        # transport, and shipped inside this distribution (no extra install
+        # beyond this extra's dependencies).
+        "mcp": ["httpx>=0.27", "mcp>=2.3"],
         # ---- developer / CI ----------------------------------------------
         "test": ["pytest", "pygments"],
         # Everything CI and the Docker image run, minus the deliberately
@@ -166,6 +172,8 @@ setup(
     entry_points={
         "console_scripts": [
             "sksurrogate-batch-predict=SKSurrogate.inference:main",
+            # MCP server for agents (stdio transport); needs the "mcp" extra.
+            "sksurrogate-mcp=sksurrogate_mcp.server:main",
         ],
     },
 )
