@@ -145,7 +145,7 @@ An additional analysis-only comparison of acquisition rules — shipped LCB
 against expected improvement, probability of improvement, and a
 fixed-length-scale noise-aware GP under equal budgets — is reproducible with
 ``python -m benchmarks.design_readiness --out DIR`` and recorded in
-``AI_LAYER02_D4_READINESS_ASSESSMENT.md``. It ships no production acquisition
+``dev-notes/AI_LAYER02_D4_READINESS_ASSESSMENT.md``. It ships no production acquisition
 code and does not establish a general advantage; it exists to decide whether
 such extensions are worth building.
 

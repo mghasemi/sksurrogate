@@ -1,4 +1,4 @@
-"""Archive-reader tolerance tests (Stage A, AI_LAYER02_REMAINING_PLAN.md).
+"""Archive-reader tolerance tests (Stage A, dev-notes/AI_LAYER02_REMAINING_PLAN.md).
 
 Since record schema v2 every per-evaluation ``records[]`` entry carries the full
 candidate configuration under ``params``, and each run JSON is stamped with a

@@ -1,4 +1,4 @@
-"""Tests for the Phase 4 experiment enhancements (docs/ui-gap-implementation-plan.md).
+"""Tests for the Phase 4 experiment enhancements (dev-notes/ui-gap-implementation-plan.md).
 
 Covers the new search plumbing behind ``POST /api/experiments/{task}/run`` and the
 new single-structure endpoint:

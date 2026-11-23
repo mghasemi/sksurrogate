@@ -5,8 +5,8 @@ Nothing here is asserted from prose: every number printed is computed by
 SKSurrogate's own functions on scikit-learn's diabetes dataset (442 rows,
 10 features, public, no download).
 
-    python concepts_evidence.py                 # human-readable
-    python concepts_evidence.py --json          # machine-readable for the page build
+    python scripts/concepts_evidence.py                 # human-readable
+    python scripts/concepts_evidence.py --json          # machine-readable for the page build
 """
 import json
 import sys

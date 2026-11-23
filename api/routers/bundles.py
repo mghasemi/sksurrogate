@@ -2,10 +2,10 @@
 
 Phase A ships a synchronous "train baseline" convenience endpoint so bundles
 can be produced end-to-end without the async AutoML job infrastructure
-(Phase C, see docs/ui-plan.md section 8). Fitting logic is shared with the
+(Phase C, see dev-notes/ui-plan.md section 8). Fitting logic is shared with the
 Experiments and Retraining routers via ``api.training``.
 
-Phase 3 (docs/ui-gap-implementation-plan.md) adds model preservation
+Phase 3 (dev-notes/ui-gap-implementation-plan.md) adds model preservation
 (``PreserveModel`` / ``RecoverModel``), a best-model shortcut, MLflow export,
 and raw bundle download.
 """

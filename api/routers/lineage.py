@@ -1,7 +1,7 @@
 """Cross-stage lineage: dataset -> bundle -> registry -> monitoring.
 
 A single endpoint that walks the metadata already recorded by the other
-routers (see docs/ui-plan.md section 3, "traceability rail") so the UI can
+routers (see dev-notes/ui-plan.md section 3, "traceability rail") so the UI can
 render one breadcrumb per model version without stitching multiple calls.
 """
 

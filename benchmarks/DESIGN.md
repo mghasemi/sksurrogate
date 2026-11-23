@@ -224,7 +224,7 @@ v1.12 (2026-11-05; corrected response-surface selection):
   added. The reproducible component profiler narrows the legacy Hilbert overhead source, but P1.2
   remains open pending evidence that optimizing it improves time-to-result for a supported workload.
 
-v1.14 (2026-11-08; per-evaluation candidate configs and record schema v2 — Stage A of `AI_LAYER02_REMAINING_PLAN.md`):
+v1.14 (2026-11-08; per-evaluation candidate configs and record schema v2 — Stage A of `dev-notes/AI_LAYER02_REMAINING_PLAN.md`):
 - **Per-eval records gain `params`.** Every arm (SRS family, random, optuna-tpe, skopt) now logs the full
   candidate configuration — all keys of `SPACE` — in each per-evaluation entry (`(k, cv_score, wall_s, params)`),
   so archived runs can be re-plotted and used for acquisition-function comparisons without re-running.
@@ -602,7 +602,7 @@ outer evaluation, and bundle provenance requirements established.
 
 `benchmarks/dgps.py` provides a seeded set of parametric data-generating processes
 with exactly known ground truth, for validating methods against known values — the
-D1 foundation from `AI_LAYER02_REMAINING_PLAN.md` (R6). This is *not* part of the
+D1 foundation from `dev-notes/AI_LAYER02_REMAINING_PLAN.md` (R6). This is *not* part of the
 fixed-dataset comparison suite: its "datasets" are process-defined, so §§3–7 pinning
 does not apply; it inherits only the cross-cutting rules — seeded reproducibility,
 descriptive-only summaries (no significance claims), and versioned JSON records
@@ -680,7 +680,7 @@ acquisition code.
 
 **Status:** built 2026-11-08; 9 tests in
 `tests/test_benchmark_design_readiness.py`. Decision record and results:
-`AI_LAYER02_D4_READINESS_ASSESSMENT.md` (mean final regret at 20 evaluations:
+`dev-notes/AI_LAYER02_D4_READINESS_ASSESSMENT.md` (mean final regret at 20 evaluations:
 LCB 0.0044 clean / 0.0154 noisy; EI 0.0039 / 0.0084; PI 0.0036 / 0.0205;
 noise-aware 0.0537 / 0.0567; random 0.1106). The read: acquisitions are
 second-order on this evidence; EI is the only plausible direction under noise

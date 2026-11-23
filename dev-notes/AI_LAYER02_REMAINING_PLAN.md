@@ -5,7 +5,7 @@
 ## Purpose and status
 
 This document re-baselines the unfinished work from
-[`AI_LAYER02_FOLLOWUP_PLAN.md`](./AI_LAYER02_FOLLOWUP_PLAN.md) after a fresh
+[`dev-notes/AI_LAYER02_FOLLOWUP_PLAN.md`](./AI_LAYER02_FOLLOWUP_PLAN.md) after a fresh
 verification pass against the current source on branch `ailayer` (2026-11-08).
 Where the follow-up plan tracked review recommendations as they were being
 implemented, this document tracks only what is *actually still missing*, why
@@ -40,7 +40,7 @@ deferred or rejected with rationale.
 | Phase 4 evidence snapshots | Fingerprint-based snapshots (`sha256` of the serialized artifact reference, schema `sksurrogate.project-artifact-snapshot.v1`, `api/routers/projects.py`); statuses `current` / `changed` / `missing` / `unverified`; idempotent `POST /api/projects/{id}/artifacts`; automatic links for registered partitions and completed sensitivity/experiment/pipeline jobs (failed/unfinished not linked); Inspect-job navigation from projects and research records | Stage B |
 | Phase 5 explanations | Interpretation categories + non-causal caveats in API/UI/docs; Feature Analysis ↔ Explain cross-linking with "not directly comparable" warnings; opt-in permutation-importance sample sensitivity over 2–5 distinct reference subsets (descriptive, not CIs); seeded repeatability tests; deterministic perfect-correlation fixture showing marginal PDP leaves observed support; Stage C ships ALE (`POST .../ale`) and reference-subset PDP/ALE stability blocks; **Stage D3 adds exact ordered-occlusion row explanations (`POST .../explain/row`) with disclosed order-dependence** | Stage C/D |
 | ALE status | Implemented 2026-11-08 in `api/explanations.py` + `POST /api/evaluation/{task}/{version}/ale`, with the typed contract in `docs/mltrace.rst` (numeric-only bins, duplicate-edge collapse, sparse-bin merging, labelled scalar response, subset stability) | Stage C (C2) — closed |
-| Stage D synthesis | Opt-in LLM-assisted cited-note drafts (`api/synthesis.py`, `api/synthesis_facts.py`, `POST /api/synthesis/projects/{id}`), aggregate-only facts `S1–S5`, enforced `[S#]` citations, generated-note provenance in `api/routers/projects.py`, Projects UI card; contract in `AI_LAYER02_D2_LLM_SYNTHESIS_SCOPE.md`; `tests/test_api_synthesis.py` (7 tests, stub provider) | Stage D — closed |
+| Stage D synthesis | Opt-in LLM-assisted cited-note drafts (`api/synthesis.py`, `api/synthesis_facts.py`, `POST /api/synthesis/projects/{id}`), aggregate-only facts `S1–S5`, enforced `[S#]` citations, generated-note provenance in `api/routers/projects.py`, Projects UI card; contract in `dev-notes/AI_LAYER02_D2_LLM_SYNTHESIS_SCOPE.md`; `tests/test_api_synthesis.py` (7 tests, stub provider) | Stage D — closed |
 | Phase 7 research bets | D1 harness (`benchmarks/dgps.py`), D2 synthesis, and D3 row-level explanations are shipped; D4 acquisition extensions and D5 document extraction have no implementation | Stage D (D4/D5) |
 
 ## What actually remains
@@ -54,22 +54,22 @@ public launch (v0.3)") under **Phase 4** tasks P4.1–P4.9.
 | R1 | Broader research-artifact ingestion beyond dataset partitions, bundles, and jobs | Phase 4 `[~]` | Scope (no bounded user need defined) | **Tier-1 `reference` implemented 2026-11-08** (API/UI/tests/docs; gate waived); `file_artifact` remains gated on post-launch adopter feedback naming a file kind |
 | R2 | Research-workspace orchestration beyond the current stage checklist | Phase 4 `[~]` | Scope + design | Guided workflow demonstrated by real usage (B3) |
 | R3 | Artifact recovery/versioning semantics for evidence snapshots | Phase 4 `[x]` | Storage decision | **Closed 2026-11-08** — detect-and-report only accepted; per-status contract in `docs/research-projects.rst`, pinning tests landed (B2 done); upgrade path recorded, re-open on real adopter demand |
-| R4 | SHAP revisit as optional integration | Phase 5 `[x]` | **Closed 2026-11-08** — formally deferred for this cycle (no dependency); decision + measured runtime + gate in `AI_LAYER02_C1_SHAP_DECISION.md` | D3's row-level contract now exists (2026-11-08); re-open only when an adopter names the need and a bounded request shape (row cap, background provenance, seed, tree/kernel selection) is specified |
+| R4 | SHAP revisit as optional integration | Phase 5 `[x]` | **Closed 2026-11-08** — formally deferred for this cycle (no dependency); decision + measured runtime + gate in `dev-notes/AI_LAYER02_C1_SHAP_DECISION.md` | D3's row-level contract now exists (2026-11-08); re-open only when an adopter names the need and a bounded request shape (row cap, background provenance, seed, tree/kernel selection) is specified |
 | R5 | ALE contract + bounded implementation; PDP/ICE stability diagnostics | Phase 5 `[x]` | **Closed 2026-11-08** — ALE shipped in the API/UI layer with the contract in `docs/mltrace.rst`; PDP stability summaries shipped; ICE stability scoped out explicitly (ICE is not part of the API explanation contract) | Seeded tests pass (`tests/test_api_explanations.py`); ALE validated against exact DGP truth in `benchmarks/dgps.py` |
 | R6 | Controlled synthetic DGPs with known ground truth | Phase 7 `[x]` | **Closed 2026-11-08 (D1)** — ALE and average PDP/subset-stability validated against exact known responses at floating-point precision; the harness stays the validation slot for future methods | Future Stage B/C methods are validated there first as they land |
-| R7 | Experiment-design acquisition extensions (EI/PI, noise-aware models, batch/multi-objective, …) | Phase 7 `[~]` | **Analysis-only readiness assessment complete 2026-11-08** (`benchmarks/design_readiness.py`, `AI_LAYER02_D4_READINESS_ASSESSMENT.md`); only the real-user gate remains for any implementation | At least one real expensive-experiment user; reproducible equal-budget benchmark in that regime with an honest read (D4 exit) |
-| R8 | LLM-assisted project synthesis | Phase 7 `[x]` | **Closed 2026-11-08 (D2)** — bounded opt-in cited-note synthesis implemented in the API/UI layer; contract + data-handling review in `AI_LAYER02_D2_LLM_SYNTHESIS_SCOPE.md`; post-launch gate explicitly waived by Mehdi | Broad LLM assistance remains a separate spike with its own entry gate |
+| R7 | Experiment-design acquisition extensions (EI/PI, noise-aware models, batch/multi-objective, …) | Phase 7 `[~]` | **Analysis-only readiness assessment complete 2026-11-08** (`benchmarks/design_readiness.py`, `dev-notes/AI_LAYER02_D4_READINESS_ASSESSMENT.md`); only the real-user gate remains for any implementation | At least one real expensive-experiment user; reproducible equal-budget benchmark in that regime with an honest read (D4 exit) |
+| R8 | LLM-assisted project synthesis | Phase 7 `[x]` | **Closed 2026-11-08 (D2)** — bounded opt-in cited-note synthesis implemented in the API/UI layer; contract + data-handling review in `dev-notes/AI_LAYER02_D2_LLM_SYNTHESIS_SCOPE.md`; post-launch gate explicitly waived by Mehdi | Broad LLM assistance remains a separate spike with its own entry gate |
 | R9 | Row-level explanations; document-to-tabular extraction | Phase 7 `[~]` | **Row-level (R9a/D3) closed 2026-11-08** with an exact ordered-occlusion contract + API/UI; extraction (R9b/D5) stays gated on a concrete document set | Extraction: schema-driven provenance + human-validation design once demand exists |
 
 ## Blockers: why these items were not implemented yet
 
 1. ~~**Decision blockers, by design.**~~ **Resolved 2026-11-08.** SHAP (R4) was
    decided — formal deferral for this cycle, no dependency, with measured
-   runtime and a named reconsideration gate (`AI_LAYER02_C1_SHAP_DECISION.md`).
+   runtime and a named reconsideration gate (`dev-notes/AI_LAYER02_C1_SHAP_DECISION.md`).
    The LLM layer (R8) was decided and implemented as a bounded opt-in cited-note
    synthesis layer, with the post-launch stability gate explicitly waived by
    Mehdi and a data-handling review recorded in
-   `AI_LAYER02_D2_LLM_SYNTHESIS_SCOPE.md`. The working principle held: optional
+   `dev-notes/AI_LAYER02_D2_LLM_SYNTHESIS_SCOPE.md`. The working principle held: optional
    integrations stayed optional and the core path stayed dependency-light.
    LAUNCH_PLAN §6 still states that announcement scope must not wait on
    Phase 4/5 completion.
@@ -139,7 +139,7 @@ public launch (v0.3)") under **Phase 4** tasks P4.1–P4.9.
 
 - [~] **B1** Artifact-ingestion scoping — **scoping/decision accepted and
   tier-1 implemented 2026-11-08.**
-  [`AI_LAYER02_B1_ARTIFACT_INGESTION_SCOPE.md`](./AI_LAYER02_B1_ARTIFACT_INGESTION_SCOPE.md)
+  [`dev-notes/AI_LAYER02_B1_ARTIFACT_INGESTION_SCOPE.md`](./AI_LAYER02_B1_ARTIFACT_INGESTION_SCOPE.md)
   adopts the bounded typed superset `{dataset_partition, model_bundle, job} ∪
   {reference, file_artifact}`. **Tier-1 `reference` shipped:** `{kind, url,
   title?, doi?, label?}` with absolute-http(s) validation (≤2,048 chars, never
@@ -151,7 +151,7 @@ public launch (v0.3)") under **Phase 4** tasks P4.1–P4.9.
   feedback naming a specific in-root file kind (its B2 dependency is settled:
   detect-only `{size_bytes, sha256}`, no embedded bytes). *(R1)*
 - [x] **B2** Artifact-recovery decision + bounded implementation — drafted 2026-11-08 in
-  [`AI_LAYER02_B2_ARTIFACT_RECOVERY.md`](./AI_LAYER02_B2_ARTIFACT_RECOVERY.md) and **decision accepted by Mehdi the same day**: commit to "detect and report only" (no content embedding; v1 behavior unchanged). §3 landed 2026-11-08: per-status behavior contract in `docs/research-projects.rst` + pinning tests for `unverified` legacy records and no-rebaseline-on-edit (`tests/test_projects_endpoints.py`). Verified: full suite 302 passed / 32 subtests in a clean environment; Sphinx HTML build clean. Legacy v1 records remain readable by construction; the recorded upgrade path (per-kind `content` under snapshot schema v2 with cap + accounting) stays open pending real adopter demand. Tracked-file changes left uncommitted for review. *(R3)*
+  [`dev-notes/AI_LAYER02_B2_ARTIFACT_RECOVERY.md`](./AI_LAYER02_B2_ARTIFACT_RECOVERY.md) and **decision accepted by Mehdi the same day**: commit to "detect and report only" (no content embedding; v1 behavior unchanged). §3 landed 2026-11-08: per-status behavior contract in `docs/research-projects.rst` + pinning tests for `unverified` legacy records and no-rebaseline-on-edit (`tests/test_projects_endpoints.py`). Verified: full suite 302 passed / 32 subtests in a clean environment; Sphinx HTML build clean. Legacy v1 records remain readable by construction; the recorded upgrade path (per-kind `content` under snapshot schema v2 with cap + accounting) stays open pending real adopter demand. Tracked-file changes left uncommitted for review. *(R3)*
 - [ ] **B3** Orchestration design from launch feedback: guided stage
   transitions (Question → … → Conclusion) vs the current checklist; bounded UI
   work only against demonstrated needs, reusing existing pages rather than a
@@ -164,7 +164,7 @@ public launch (v0.3)") under **Phase 4** tasks P4.1–P4.9.
 
 - [x] **C1** SHAP decision gate — **done 2026-11-08**, decision accepted:
   formal deferral for the v0.3 cycle, no dependency. One-page record
-  [`AI_LAYER02_C1_SHAP_DECISION.md`](./AI_LAYER02_C1_SHAP_DECISION.md) covers
+  [`dev-notes/AI_LAYER02_C1_SHAP_DECISION.md`](./AI_LAYER02_C1_SHAP_DECISION.md) covers
   preset/legacy estimator coverage (presets are RF/ExtraTrees only), the
   local-attribution use case (which no shipped endpoint serves — it is D3/R9a),
   measured runtime (scratch-venv `shap` 0.54.1: TreeExplainer 0.38 s / 200 rows;
@@ -213,7 +213,7 @@ public launch (v0.3)") under **Phase 4** tasks P4.1–P4.9.
 - [x] **D2** LLM-assisted project synthesis — **done 2026-11-08**, with the
   post-launch stability gate explicitly waived by Mehdi. Contract and
   data-handling review in
-  [`AI_LAYER02_D2_LLM_SYNTHESIS_SCOPE.md`](./AI_LAYER02_D2_LLM_SYNTHESIS_SCOPE.md):
+  [`dev-notes/AI_LAYER02_D2_LLM_SYNTHESIS_SCOPE.md`](./AI_LAYER02_D2_LLM_SYNTHESIS_SCOPE.md):
   a bounded, opt-in draft of one cited project note from computed artifacts.
   Provider is a user-supplied OpenAI-compatible chat-completions endpoint over
   stdlib HTTP (`SKSURROGATE_LLM_BASE_URL` / `_MODEL` / optional `_API_KEY`,
@@ -236,7 +236,7 @@ public launch (v0.3)") under **Phase 4** tasks P4.1–P4.9.
   provenance. *(R8)*
 - [x] **D3** Row-level explanations — **done 2026-11-08**, contract approved and
   implemented. Contract in
-  [`AI_LAYER02_D3_ROW_LEVEL_CONTRACT.md`](./AI_LAYER02_D3_ROW_LEVEL_CONTRACT.md):
+  [`dev-notes/AI_LAYER02_D3_ROW_LEVEL_CONTRACT.md`](./AI_LAYER02_D3_ROW_LEVEL_CONTRACT.md):
   ordered-occlusion chain decomposition only; single-feature occlusion deltas,
   ICE-as-attribution, LIME-style surrogates, SHAP (deferred), and counterfactual
   search are recorded as rejected for this layer. `POST
@@ -258,7 +258,7 @@ public launch (v0.3)") under **Phase 4** tasks P4.1–P4.9.
   noise-aware GP at equal budgets on the three synthetic DOE objectives (5
   seeds, 6 + 14 evaluations, 256 candidates, noise 0/0.05; 150 runs, 3,000
   per-evaluation records). Findings in
-  [`AI_LAYER02_D4_READINESS_ASSESSMENT.md`](./AI_LAYER02_D4_READINESS_ASSESSMENT.md):
+  [`dev-notes/AI_LAYER02_D4_READINESS_ASSESSMENT.md`](./AI_LAYER02_D4_READINESS_ASSESSMENT.md):
   all GP policies beat random by ~an order of magnitude; EI/PI are neutral
   without noise; EI has a weak, non-significant edge under synthetic noise
   (6 wins / 4 losses / 5 ties; mean final regret 0.0084 vs 0.0154); PI is worse
@@ -308,7 +308,7 @@ algorithm collections — unless a concrete demand and validation plan emerge.
 
 ## Progress log
 
-- 2026-11-08: Audited every open item in `AI_LAYER02_FOLLOWUP_PLAN.md` against
+- 2026-11-08: Audited every open item in `dev-notes/AI_LAYER02_FOLLOWUP_PLAN.md` against
   current `ailayer` source (branch is 17 commits ahead of master; full suite
   passed with 290 tests + 32 subtests in a clean environment,
   `env -u PYTHONPATH ./.venv/bin/python -m pytest tests`). Confirmed Phases 0–3
@@ -319,15 +319,15 @@ algorithm collections — unless a concrete demand and validation plan emerge.
   fingerprint-only (`sha256`, schema v1) in `api/routers/projects.py`, so
   recovery is not currently possible.
 - 2026-11-08: **Stage A complete.** *A1:* `_download_openml` now checks the warm CSV cache before importing `openml` — cached datasets load in slim environments without the `[benchmark]` extra; regression-tested (`tests/test_benchmark_datasets.py`) and verified end-to-end with the import blocked. *A2:* benchmark run records are schema v2 — every per-evaluation entry carries the full candidate configuration (all `SPACE` keys), each run JSON is stamped `schema_version`, and `run_manifest.json` records `record_schema_version`; `plot.py`/`analyze_surrogates.py` readers treat both as optional. Verified live: a smoke run wrote a v2 archive with full per-eval configs across all available arms × 2 seeds, and the real legacy v1 archive (`results/20261018T051214Z`, 84 ok-runs) re-read cleanly through `_load_records`, best-so-far curves, target tables, and `analyze_surrogates.py`. Reader tolerance is pinned by new tests in `tests/test_benchmark_archive_readers.py`; design contract updated to v1.14 (`benchmarks/DESIGN.md`). R7's "reproducible evaluation" exit criterion now has its code prerequisite; the remaining gate for D4 is a real expensive-experiment user.
-- 2026-11-08: **Stage B started — B1 scoping drafted.** `AI_LAYER02_B1_ARTIFACT_INGESTION_SCOPE.md` (≤2 pages) scopes artifact ingestion from in-repo evidence only (pre-launch, so no first-adopter feedback yet): candidate-kind table with verified locations, decision for a bounded typed superset `{reference, file_artifact}` over open URIs or a permanently closed set, endpoint-free API design extending the existing project endpoints with snapshot schema v2 and per-kind validation/dedup, and a five-part test plan mirroring `tests/test_projects_endpoints.py`. No code started; B1 marked `[~]` gated on post-launch feedback acceptance.
-- 2026-11-08: **Stage B continued — B2 decision drafted.** `AI_LAYER02_B2_ARTIFACT_RECOVERY.md` answers R3's storage question from in-repo evidence only: v1 snapshots already embed all small structured per-kind details (partition schema metadata, bundle reproducibility record, job configuration/result fingerprints), so content embedding would add only partition row data, job-result payloads, and model weights — at the cost of whole-file project reads on every list/summary (`api/routers/projects.py` :326–338), a second write path breaking single-file atomicity (:169–175), new restore APIs into upstream stores, and a provenance hazard (one-shot captures re-materialized as "current" would make the drift check self-fulfilling). Recommends committing to detect-and-report only: the bounded work is a per-status behavior contract in `docs/research-projects.rst` (replacing its one-line no-recovery sentence) plus tests pinning `unverified` legacy records and snapshot preservation; no schema change (v2 arrives via B1's new kinds without content fields). Recorded upgrade path: a per-kind optional `content` field under the existing v2 schema with size cap + stored-bytes accounting, gated on at least one real adopter request. No code started; B2 marked `[~]` gated on decision acceptance (post-launch per stage design; docs/tests-only work may land pre-cut if preferred).
-- 2026-11-08: **B2 decision accepted.** Mehdi accepted the detect-and-report-only recommendation in `AI_LAYER02_B2_ARTIFACT_RECOVERY.md` §4. B2 stays `[~]`: remaining work is its §3 bounded docs + tests (behavior-neutral; may land pre-cut or post-launch per stage design). Deliverables left untracked alongside the other plan docs, by user choice.
-- 2026-11-08: **Stage B continued — B2 §3 landed; R3 closed.** Per the accepted detect-and-report-only decision: (i) `docs/research-projects.rst` now carries a per-status behavior contract replacing the one-line no-recovery sentence — which upstream events produce `current` / `changed` / `missing` / `unverified` for each of the partition, bundle, and job kinds; snapshots are captured once at link time and never re-baselined (no supported way to reset drift on an existing reference); evidence-referenced artifacts cannot be removed via `PUT`; durability is a property of the upstream stores (`mltrace/<task>.db`, `bundles/` + `registry/`, `jobs/*.json` under the configured root) with backup guidance. (ii) Two pinning tests added to `tests/test_projects_endpoints.py`: legacy records without a stored snapshot report `unverified` (partition + bundle, following the existing on-disk-legacy pattern), and project edits after an upstream change preserve the stored snapshots byte-for-byte while the summary still reports `changed`/`current`. Verified in clean env: full suite 302 passed / 32 subtests (`env -u PYTHONPATH ./.venv/bin/python -m pytest tests`; +2 vs pre-change collection), Sphinx HTML build exit 0 with the new section rendered. B2 marked `[x]`; R3 closed with rationale recorded in `AI_LAYER02_B2_ARTIFACT_RECOVERY.md` §4 — upgrade path (per-kind optional `content` under snapshot schema v2, size cap + accounting) stays open pending at least one real adopter request naming the kind. Tracked-file changes (`docs/research-projects.rst`, `tests/test_projects_endpoints.py`) left uncommitted for user review; plan docs remain untracked by choice.
+- 2026-11-08: **Stage B started — B1 scoping drafted.** `dev-notes/AI_LAYER02_B1_ARTIFACT_INGESTION_SCOPE.md` (≤2 pages) scopes artifact ingestion from in-repo evidence only (pre-launch, so no first-adopter feedback yet): candidate-kind table with verified locations, decision for a bounded typed superset `{reference, file_artifact}` over open URIs or a permanently closed set, endpoint-free API design extending the existing project endpoints with snapshot schema v2 and per-kind validation/dedup, and a five-part test plan mirroring `tests/test_projects_endpoints.py`. No code started; B1 marked `[~]` gated on post-launch feedback acceptance.
+- 2026-11-08: **Stage B continued — B2 decision drafted.** `dev-notes/AI_LAYER02_B2_ARTIFACT_RECOVERY.md` answers R3's storage question from in-repo evidence only: v1 snapshots already embed all small structured per-kind details (partition schema metadata, bundle reproducibility record, job configuration/result fingerprints), so content embedding would add only partition row data, job-result payloads, and model weights — at the cost of whole-file project reads on every list/summary (`api/routers/projects.py` :326–338), a second write path breaking single-file atomicity (:169–175), new restore APIs into upstream stores, and a provenance hazard (one-shot captures re-materialized as "current" would make the drift check self-fulfilling). Recommends committing to detect-and-report only: the bounded work is a per-status behavior contract in `docs/research-projects.rst` (replacing its one-line no-recovery sentence) plus tests pinning `unverified` legacy records and snapshot preservation; no schema change (v2 arrives via B1's new kinds without content fields). Recorded upgrade path: a per-kind optional `content` field under the existing v2 schema with size cap + stored-bytes accounting, gated on at least one real adopter request. No code started; B2 marked `[~]` gated on decision acceptance (post-launch per stage design; docs/tests-only work may land pre-cut if preferred).
+- 2026-11-08: **B2 decision accepted.** Mehdi accepted the detect-and-report-only recommendation in `dev-notes/AI_LAYER02_B2_ARTIFACT_RECOVERY.md` §4. B2 stays `[~]`: remaining work is its §3 bounded docs + tests (behavior-neutral; may land pre-cut or post-launch per stage design). Deliverables left untracked alongside the other plan docs, by user choice.
+- 2026-11-08: **Stage B continued — B2 §3 landed; R3 closed.** Per the accepted detect-and-report-only decision: (i) `docs/research-projects.rst` now carries a per-status behavior contract replacing the one-line no-recovery sentence — which upstream events produce `current` / `changed` / `missing` / `unverified` for each of the partition, bundle, and job kinds; snapshots are captured once at link time and never re-baselined (no supported way to reset drift on an existing reference); evidence-referenced artifacts cannot be removed via `PUT`; durability is a property of the upstream stores (`mltrace/<task>.db`, `bundles/` + `registry/`, `jobs/*.json` under the configured root) with backup guidance. (ii) Two pinning tests added to `tests/test_projects_endpoints.py`: legacy records without a stored snapshot report `unverified` (partition + bundle, following the existing on-disk-legacy pattern), and project edits after an upstream change preserve the stored snapshots byte-for-byte while the summary still reports `changed`/`current`. Verified in clean env: full suite 302 passed / 32 subtests (`env -u PYTHONPATH ./.venv/bin/python -m pytest tests`; +2 vs pre-change collection), Sphinx HTML build exit 0 with the new section rendered. B2 marked `[x]`; R3 closed with rationale recorded in `dev-notes/AI_LAYER02_B2_ARTIFACT_RECOVERY.md` §4 — upgrade path (per-kind optional `content` under snapshot schema v2, size cap + accounting) stays open pending at least one real adopter request naming the kind. Tracked-file changes (`docs/research-projects.rst`, `tests/test_projects_endpoints.py`) left uncommitted for user review; plan docs remain untracked by choice.
 - 2026-11-08: **B2 tracked changes committed; Stage D started — D1 foundation built.** The B2 §3 deliverables were committed as `e486b75` ("docs(projects): pin evidence-snapshot behavior contract (Stage B2, R3)"); plan docs remain untracked by choice. D1: new `benchmarks/dgps.py` — four seeded parametric DGPs with exact known ground truth (`interactions`: x0·x1 term; `correlated`: block correlations 0.9 on two feature pairs; `heteroscedastic`: σ(x) ∝ (1+2|x2|); `shift`: quadratic x2² term plus mean shift +2 at test), a method panel (ridge / random-forest / kernel-ridge, fresh per seed), and `validate()` reporting per-method rmse/r² on the test split vs an iid reference split with degradation ratios, plus per-DGP ground-truth probes; writes versioned `dgp_validation.json` (`sksurrogate.dgp-validation.v1`). Contract documented in `benchmarks/DESIGN.md` §14 (v1.15), including the deliberate relationship to `SKSurrogate/synthdat.py` (dataset-like resampling vs known-process generation — both coexist, not merged). Verified: 14 new tests green (`tests/test_benchmark_dgps.py`) and a full default CLI run with sane descriptive numbers (linear models visibly miss the interaction; shift degrades every method ~3.2–3.5×, RF least). D1 stays `[~]`: its exit criterion (Stages B/C methods validated against known values) is open until those methods exist — they will be validated here first when C2/C3 land.
 
 - 2026-11-08: **Stage C complete (C1, C2, C3), C-method D1 hook landed.** Direct user
   direction: implement the explanation features in the API/UI layer, not in the
-  `SKSurrogate` core unless necessary. *C1:* `AI_LAYER02_C1_SHAP_DECISION.md` records the
+  `SKSurrogate` core unless necessary. *C1:* `dev-notes/AI_LAYER02_C1_SHAP_DECISION.md` records the
   accepted decision "formally defer SHAP this cycle, no dependency", with verified preset
   estimator coverage (RF/ExtraTrees only), the missing-consumer argument (row-level
   explanations are D3/R9a), measured runtime in a throwaway scratch venv (shap 0.54.1:
@@ -367,7 +367,7 @@ algorithm collections — unless a concrete demand and validation plan emerge.
   reference means legitimately shift an additive curve. DESIGN.md v1.17, 17
   tests in `tests/test_benchmark_dgps.py`. D1 flipped to `[x]`: its exit
   criterion is met for the landed Stage C methods (ALE + PDP/stability).
-  *D3:* contract `AI_LAYER02_D3_ROW_LEVEL_CONTRACT.md` (approved) and bounded
+  *D3:* contract `dev-notes/AI_LAYER02_D3_ROW_LEVEL_CONTRACT.md` (approved) and bounded
   implementation — pure-NumPy ordered-occlusion chain decomposition in
   `api/explanations.py` (`chain_contributions`, `row_contribution_summary`,
   `distinct_permutations`) plus `POST /api/evaluation/{task}/{version}/explain/row`.
@@ -390,7 +390,7 @@ algorithm collections — unless a concrete demand and validation plan emerge.
   warnings. Tracked changes committed path-scoped; plan docs and the D3 contract
   remain untracked by choice.
 - 2026-11-08: **Stage D continued — D2 contract + bounded opt-in implementation
-  landed (post-launch gate waived).** `AI_LAYER02_D2_LLM_SYNTHESIS_SCOPE.md`
+  landed (post-launch gate waived).** `dev-notes/AI_LAYER02_D2_LLM_SYNTHESIS_SCOPE.md`
   records the bounded use case, OpenAI-compatible provider contract, aggregate
   fact list (S1 profile, S2 run, S3 bundle, S4 explanations, S5 alerts),
   citation enforcement, persistence/provenance rules, data-handling review
@@ -464,7 +464,7 @@ algorithm collections — unless a concrete demand and validation plan emerge.
   acquisitions are second-order on this evidence; EI is the only plausible
   direction under noise and remains unproven at five seeds; the
   fixed-length-scale noise-aware GP is a regression (it absorbs signal as
-  noise). Decision record `AI_LAYER02_D4_READINESS_ASSESSMENT.md`, contract
+  noise). Decision record `dev-notes/AI_LAYER02_D4_READINESS_ASSESSMENT.md`, contract
   `benchmarks/DESIGN.md` §15 (v1.18), pointer in `docs/experiment-design.rst`,
   CHANGELOG, roadmap P2.4 status. **D4 stays `[~]`/gated**: no acquisition
   code, endpoint, or UI change shipped; the exit criterion still needs a real

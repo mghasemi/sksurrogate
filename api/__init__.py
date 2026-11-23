@@ -1,1 +1,1 @@
-"""FastAPI control-plane service for SKSurrogate (see docs/ui-plan.md)."""
+"""FastAPI control-plane service for SKSurrogate (see dev-notes/ui-plan.md)."""

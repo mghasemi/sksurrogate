@@ -1,0 +1,292 @@
+0.3.1 — Experiments, auth, fixes and registry
+=============================================
+
+Experiments on mixed-type partitions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Starting an experiment on a dataset with a free-text column (a surname, an
+  address) failed with ``All candidate pipelines failed to produce a finite CV
+  score: ValueError: could not convert string to float: 'MacDonald'``. The API
+  handed ``AML`` an object array (``X.values``), and AML installs its
+  fold-local preprocessor only for a ``DataFrame``, so every candidate met raw
+  strings. ``fit_experiment_bundle`` and ``optimize_pipeline`` now pass the
+  frame, keeping the encoder inside each CV fold.
+* The *Advanced* tab (a caller-supplied search space) failed the same way: AML
+  installs an encoder only when ``cat_cols`` names the categorical columns.
+  ``fit_experiment_bundle`` and ``optimize_pipeline`` now detect them (still a
+  pipeline step, so fold-local) and record the choice as
+  ``configuration.cat_cols``.
+* Nested CV failed on any bundle trained from a preset
+  (``ArrayAsFrame expected 13 feature column(s); got shape ()``): the routine
+  wrapped its own fold-local preprocessor around an estimator that already
+  carried one, so the candidate was fitted on an encoded matrix. It now checks
+  ``DataProcess.preprocesses_frames`` and leaves such estimators alone — the
+  bundle's own preprocessor is still fitted per fold, so nothing leaks.
+* Reproducibility records named every pipeline step ``builtins.tuple``, because
+  ``Pipeline.steps`` yields ``(name, estimator)`` pairs and the recorder
+  stringified the pair. Experiments now record the step classes they actually
+  fitted.
+* New ``SKSurrogate.DataProcess.ArrayAsFrame`` and ``frame_tolerant``: a
+  DataFrame-first pipeline is prefixed with an adapter so partial dependence,
+  accumulated local effects, learning curves and legacy trackers can still
+  predict from positional arrays. ``_new_bundle`` applies it, so bundles accept
+  frames and arrays alike (both verified against the served model).
+
+Experiment design: suggest-next validation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* "Suggest the next experiment" answered HTTP 422 when the pasted results held a
+  single run (``samples``/``values`` need two observations) and could also send
+  ``null`` bounds when a numeric field was mid-edit, whose error surfaced as a
+  raw pydantic detail array. The page now validates the population of runs,
+  variable names and bounds itself and names the offending variable; the API
+  contract (422 below two observations, 400 for count/arity/bound problems) is
+  pinned in ``tests/test_design_endpoints.py``.
+* The web client renders FastAPI validation errors as ``field: message`` pairs
+  instead of a JSON dump, which applies to every endpoint, not just this one.
+
+Stored weightings and the consensus ranking
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* A completed sensitivity run now merges its weights into the task's tracking
+  database under a method column (``sobol`` / ``morris`` / ``delta_mmnt``), so
+  ``mltrack.RetrieveWeights``, ``mltrack.heatmap`` and ``mltrack.TopFeatures``
+  see it and the **Consensus top features** card actually updates. The job
+  result reports ``weights_column`` and ``weights_stored``; storing is auxiliary
+  and never invalidates a completed analysis.
+* New ``mltrack.PersistWeights`` (alias ``persist_weights``) merges externally
+  computed weights into the ``weights`` table — the API path needs it because
+  ``FeatureWeights`` reads an unpartitioned ``data`` table that registered tasks
+  do not have.
+* Registration seeds the table with feature-target Pearson and feature variance
+  for the numeric columns (reported as ``weights_stored``), and
+  ``POST /api/sensitivity/{task}/base-weights`` back-fills tasks registered
+  before that existed. The consensus card offers that action when it finds no
+  stored weighting.
+* The consensus card refetches when a run stores weights, and names the columns
+  it ranked over.
+
+Sensitivity analysis on mixed-type datasets
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Sensitivity runs (Sobol, Morris, delta) and correlation pruning no longer
+  crash on registered partitions with text columns — a churn CSV produced
+  ``ValueError: could not convert string to float: 'Hargrave'`` from the SVR
+  inside ``SensAprx``, and the equivalent numpy error from ``corrcoef`` for
+  pruning. ``api.features.numeric_train_xy`` projects a partition onto its
+  numeric columns, drops rows with non-finite values (reporting
+  ``rows_dropped``), and the results list the excluded columns; a partition with
+  no numeric feature answers HTTP 400 instead of failing as a background job.
+* ``SensAprx`` resolves the delta index across SALib versions: 1.6 replaced
+  ``delta`` with ``delta_balanced`` / ``delta_raw`` / ``delta_step``, so
+  docker-built containers raised ``KeyError: 'delta'`` while a 1.5 dev venv
+  worked. The estimator used is reported as ``estimator`` in the job result.
+* The Feature Analysis page labels the ranking as numeric-only, names the
+  excluded columns, and shows the same note under correlation pruning.
+
+Users, sessions and sharing
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **User accounts** (``api/auth.py``): username + password with scrypt digests,
+  server-side sessions in an ``HttpOnly; SameSite=Strict`` cookie (only token
+  digests are stored, so sessions are revocable), and per-user API keys shown
+  once at creation. Login is throttled per username and client address, unknown
+  usernames cost the same scrypt work, and failures never log the supplied
+  secret.
+* **Ownership and sharing** (``api/acl.py``): the task is the ACL unit with
+  ordered roles ``viewer`` < ``editor`` < ``owner``; projects own themselves.
+  Every task-scoped router enforces access through one router-level dependency,
+  list endpoints (``/api/tasks``, ``/api/projects``, ``/api/jobs``) are filtered,
+  strangers get 404 rather than 403, and ``POST /api/access/adopt`` lets an
+  administrator take ownership of pre-auth material.
+* **Endpoints**: ``/api/auth/{status,login,logout,me,password,keys,users}`` and
+  ``/api/access/{tasks,projects,adopt}``.
+* **First administrator**: ``python -m api.auth_cli create-admin`` or the
+  idempotent ``SKSURROGATE_ADMIN_USERNAME``/``SKSURROGATE_ADMIN_PASSWORD``
+  bootstrap; the Compose prod service forwards both plus
+  ``SKSURROGATE_SESSION_TTL`` and ``SKSURROGATE_SESSION_COOKIE_SECURE``.
+* **Web UI**: login gate above every route, an identity badge with sign-out in
+  the top bar, and Settings cards for account password, API keys, sharing of the
+  selected task (with adoption for admins) and user management.
+* **Compatibility**: with neither ``SKSURROGATE_API_KEY`` nor
+  ``SKSURROGATE_REQUIRE_AUTH`` the API stays open and single-user; the shared key
+  keeps working as an admin-equivalent break-glass principal.
+* **Audit trail** (``api/audit.py``): identity events (logins including denied and
+  throttled attempts, logouts, password changes, API-key creation/revocation,
+  account changes) are appended to ``logs/auth.jsonl`` and exposed to
+  administrators at ``GET /api/auth/audit``. Entries carry the key prefix and
+  username, never a password, session token or full key.
+* **Docs**: new :doc:`/auth-and-sharing` chapter (toctree + control-plane
+  cross-link) and a Docker/readme paragraph on the new variables.
+
+API authentication
+~~~~~~~~~~~~~~~~~~
+
+* Startup validation for the shared-key API: when ``SKSURROGATE_API_KEY`` is
+  unset, the API logs a warning at startup; setting
+  ``SKSURROGATE_REQUIRE_AUTH=1|true|yes`` makes it refuse to start without a
+  key — for deployments that expose the port beyond a trusted network (the
+  Docker entrypoint binds all interfaces). The Compose file forwards the
+  variable into the prod container.
+* The web UI's **Settings / Audit** page now reports the server's
+  authentication state: a warning when the server requires an API key this
+  browser has not stored, an error note when the stored key is rejected (401),
+  and — when no key is stored at all — a reminder that the server runs without
+  key enforcement.
+* Regression tests for the shared-key middleware (HTTP header styles,
+  WebSocket handshake policy, ``/api/health`` exemption, SPA fallback) and the
+  startup validation, including fresh-interpreter import pins.
+
+Security
+~~~~~~~~
+
+* Caller-supplied task names, model versions, dataset partitions, request IDs
+  and job IDs are validated before use as filesystem path segments: values
+  containing path separators, control characters or ``..`` are rejected with
+  HTTP 400, and bundle and partition joins are resolved and proven to stay
+  inside the storage root. Previously a keyed caller could read arbitrary
+  ``*.csv`` files through a traversal ``partition`` and load any ``*.bundle``
+  file on the host (``joblib``) through a traversal ``model_version``.
+* With ``SKSURROGATE_API_KEY`` configured, ``/openapi.json``, ``/docs`` and
+  ``/redoc`` now require the key as well; previously the full API schema was
+  public even on a keyed server.
+* The shared key is compared in constant time (``hmac.compare_digest``), and
+  rejected requests are logged at ``WARNING`` with method, path and client
+  host — never the supplied value.
+
+Fixes
+~~~~~
+
+* EOA checkpoints are resumed only when compatible: a checkpoint written for a
+  different gene set is ignored instead of replaying incompatible parents, and
+  a recorded checkpoint directory that no longer exists no longer replaces the
+  caller's directory. Previously a stale checkpoint could crash the next save
+  or the first evaluation — e.g. after a Docker run had recorded an absolute
+  ``/src/...`` path.
+
+Logging and telemetry
+~~~~~~~~~~~~~~~~~~~~~
+
+* New ``AML.to_audit_dict()``: a JSON-safe audit bundle (schema version 2) for
+  pipeline searches, mirroring ``SurrogateRandomCV.to_audit_dict()`` — one
+  entry per evaluated candidate with the schema-version-1 bundles of each of
+  its surrogate stages embedded, plus AML-level settings, budget aggregates,
+  and an aggregated sampling-source tag list. ``json.dumps`` succeeds without
+  a custom encoder; works before ``fit`` as well.
+* ``AML`` now records the per-candidate stage audit trail (new
+  ``stage_audits_history_``, parallel to ``evaluation_history_``) backing that
+  export, and forwards its ``callbacks`` parameter to every surrogate stage —
+  one callback list receives trial events from all searches of a run. No
+  existing result key changes.
+
+Evaluation page shows registry aliases
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The Evaluation page now displays the named model aliases set on the Registry
+  & Deployment page: the Bundle metrics table gains an **Alias** column beside
+  the Model version (a muted dash when no alias has been set), and the Metric
+  comparison charts — overview bars and per-metric learning-curve lines — label
+  their series with the alias(es) instead of the raw version hash. Versions
+  without a named alias are labelled exactly as before, so existing views are
+  unchanged; lifecycle pointers (``latest``, ``production``, …) are not used
+  here because they move between versions on promotion/rollback.
+* The **Nested CV** and **Diagnostic curves** bundle selectors now label each
+  option *alias - version* when the bundle has a named alias (several aliases
+  joined by ", ") and show the plain full version otherwise — the same
+  convention as the Explain page's model dropdown. Picking an aliased option
+  still submits its exact version id, so runs resolve identically no matter how
+  the bundle is displayed.
+
+Model alias form validates names before submission
+==================================================
+
+* The **Model aliases** card on Registry & Deployment now checks the name
+  against the registry grammar as you type — lowercase letters/digits with '.',
+  '_' or '-' after the first character, max 64 characters — and flags reserved
+  lifecycle pointer names (``latest``, ``candidate``, …), disabling Save until
+  the name is legal. An invalid name no longer round-trips to a raw API 400; an
+  inline hint under the input states the rule either way. The 400 message itself
+  now includes examples (e.g. ``rf-v1`` or ``baseline-2026-11``) so any remaining
+  backend rejection is actionable.
+
+Explain page model dropdown shows registry aliases
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The **Model** card on Explain now lists each bundle in its version dropdown
+  as *alias - version* when a named alias has been set (several aliases joined
+  by ", ") and the plain full version otherwise. Selecting an option still
+  submits the exact version id, so explanation, interval and ALE calls resolve
+  identically; lifecycle pointers are not used for labels.
+
+Model Bundles list shows registry aliases
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The **Bundles** table on the Model Bundles page gains an **Alias** column
+  beside the model version, showing the named alias(es) set on the Registry &
+  Deployment page (a muted dash when none has been set). The version cell still
+  holds the exact version id, so Inspect and every other action resolve that
+  id as-is.
+
+Registry, Quality Gates and audit tables show registry aliases
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The bundle/version selectors on the Quality Gates page (**Bundle (model
+  version)**) and the Registry & Deployment page (**Register a bundle**,
+  **Promote**, **Rollback**, and **Artifact cleanup**'s "Model version
+  (predictions)") now label each option *alias - version* when a named alias
+  has been set and show the plain version otherwise; the selected ``value`` is
+  still the exact version id, so checks, registration, promotion, rollback and
+  artifact deletion resolve identically, and the " — register first" flag on
+  unregistered versions is preserved after the label.
+* The **Audit log** table — on Registry & Deployment and under **Settings /
+  Audit** — gains an **Alias** column that shows the named alias(es) for each
+  event's model version (a muted dash when none is set).
+
+Inference model pickers show registry aliases
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The **Model version** dropdowns on the Inference page — in **Predict
+  console**, **Batch run**, and the **Serving** card — label each option
+  *alias - version* when a named alias has been set and show the plain version
+  otherwise. The selected ``value`` is still the exact version id, so a
+  per-request prediction or batch run resolves that id exactly as before.
+
+Pre-flight prediction validation checks the model's feature schema
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* ``preflight: true`` on the inference/serving prediction endpoints previously
+  validated the input frame against the task's full registered *dataset*
+  schema. That over-strictly rejected any model trained on a curated or
+  downstream feature subset of the raw table — e.g. an SPRA model consuming 18
+  ``spr_*`` features was refused for lacking the other 47 unrelated columns of
+  the original schema. Pre-flight now validates the frame against the *model
+  bundle's* feature schema (the columns the estimator actually consumes), so a
+  frame holding exactly those features passes and a genuinely missing feature
+  is still reported as ``Prediction schema mismatch``. ``predict_batch``
+  remains the strict gate for feature presence, ordering and dtypes. The
+  "Validate before run" checkbox (Predict console, Batch run, Serving) works
+  for subset-trained models as documented.
+
+Serving card shows the reachable endpoint; aliases label every version on Inference
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* When a model is being served, the **Serving** card now shows the **reachable
+  endpoint** — the absolute ``POST /api/serving/{task}/predict`` URL (built
+  from the effective API base) that a deployment client points at, so an
+  operator can see exactly where the served model answers without hunting for
+  it.
+* Alias-aware labels now apply everywhere the Inference page names a model, not
+  just the Model version dropdown: the Serving badge, the "frozen at / follows
+  alias" hint, the model-version details, the Predict-console and Batch-run
+  results, the "Answered by" line and the pin history. Each shows
+  *alias - version* when a named alias is set and the plain version otherwise;
+  option values and resolution keep the exact version id.
+
+Inference dropdowns align whether or not the best-bundle chip shows
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* The model-picker row bottom-aligned its fields, so the **Model version**
+  dropdown that carries the "★ best" chip sat higher than the **Resolve by**
+  dropdown beside it (in Predict console, Batch run and Serving). The picker
+  row now top-aligns its fields, keeping **Resolve by** / **Model version** /
+  **Alias** controls level in all three cards with or without the chip.

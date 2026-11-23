@@ -6,7 +6,7 @@ against expected improvement (EI), probability of improvement (PI), and a
 noise-aware LCB variant on the synthetic objectives used by the existing
 active-learning benchmark.
 
-Design rules (see ``AI_LAYER02_D4_READINESS_ASSESSMENT.md``):
+Design rules (see ``dev-notes/AI_LAYER02_D4_READINESS_ASSESSMENT.md``):
 
 - **Equal evaluation budgets.** Every strategy starts from the same seeded Latin
   hypercube design and receives the same number of sequential objective

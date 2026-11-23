@@ -4,7 +4,7 @@ Run locally with:
 
     uvicorn api.main:app --reload
 
-See docs/ui-plan.md for the overall architecture and phased delivery plan.
+See dev-notes/ui-plan.md for the overall architecture and phased delivery plan.
 SQLite-only storage is an intentional v1 decision.
 
 Authentication is opt-in and has two layers (see :mod:`api.auth`):
@@ -312,7 +312,7 @@ async def _unsafe_name_handler(request, exc):
 # Middleware added first ends up innermost; CORSMiddleware is added last so it
 # stays outermost and can decorate the 401 responses with CORS headers.
 app.add_middleware(ApiKeyMiddleware)
-# The UI is a separate SPA client (see docs/ui-plan.md) and normally calls the API
+# The UI is a separate SPA client (see dev-notes/ui-plan.md) and normally calls the API
 # *same-origin*, through the dev server's /api proxy — see webui/vite.config.ts —
 # so it needs no CORS entry at all. The regex keeps direct localhost/127.0.0.1
 # calls working; SKSURROGATE_API_CORS_ORIGINS adds extra origins for non-local

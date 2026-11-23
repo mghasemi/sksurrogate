@@ -31,24 +31,26 @@ Welcome to SKSurrogate's documentation!
    auth-and-sharing
    ui-manual
    walkthrough
-   phase9
-   phase10
    release
+   changelog/index
    code
    blog-honest-benchmark
 
 .. toctree::
    :maxdepth: 2
-   :caption: Benchmark studies & plans:
+   :caption: Benchmark studies:
 
    benchmarks
    dtrack-study
-   ui-plan
 
 See also the :doc:`benchmark results <benchmarks>`, the
-:doc:`pipeline-space (C-space) benchmark results <benchmarks-cspace>`, the
-:doc:`Hilbert-space (D-track) study <dtrack-study>` and the
-:doc:`Web UI & API design plan <ui-plan>`.
+:doc:`pipeline-space (C-space) benchmark results <benchmarks-cspace>` and the
+:doc:`Hilbert-space (D-track) study <dtrack-study>`.
+
+Design notes and implementation plans live in ``dev-notes/`` in the source
+tree (for example ``dev-notes/ui-plan.md`` for the web UI and API
+architecture); they are written for contributors, not for users, and are not
+part of this documentation.
 
 Indices and tables
 ==================

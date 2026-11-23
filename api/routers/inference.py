@@ -6,7 +6,7 @@ without naming it, see :mod:`api.routers.serving` (``/api/serving/{task}/predict
 
 Every call also appends a persisted ``InferenceMonitor`` observation so the
 Monitoring router can report latency/throughput history for the model
-version used (see docs/ui-plan.md section 4). The prediction core itself —
+version used (see dev-notes/ui-plan.md section 4). The prediction core itself —
 input-frame resolution, pre-flight validation, prediction and monitoring — is
 shared with the serving router in :mod:`api.inference_service`.
 """

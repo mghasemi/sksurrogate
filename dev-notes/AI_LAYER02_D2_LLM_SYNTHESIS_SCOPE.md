@@ -8,7 +8,7 @@ opt-in implementation landed the same day in `api/synthesis.py`,
 `api/synthesis_facts.py`, `api/routers/synthesis.py`, the project-note schema,
 and the Projects UI. D4/D5 remain gated and untouched.
 
-**Item:** `AI_LAYER02_REMAINING_PLAN.md` Stage D2 / R8 — "bounded workflow
+**Item:** `dev-notes/AI_LAYER02_REMAINING_PLAN.md` Stage D2 / R8 — "bounded workflow
 combining dataset profile + run configuration + explanation summaries (+ drift
 report) into cited project notes via a user-supplied model endpoint; generated
 interpretation clearly separated from computed results; core stays

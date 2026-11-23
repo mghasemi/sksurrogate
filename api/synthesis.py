@@ -5,7 +5,7 @@ user-supplied OpenAI-compatible chat-completions endpoint over the standard
 library (no SDK, no new dependency), builds a bounded prompt from *computed,
 aggregated* facts, and validates that the draft cites only the provided sources.
 
-Design rules (see ``AI_LAYER02_D2_LLM_SYNTHESIS_SCOPE.md``):
+Design rules (see ``dev-notes/AI_LAYER02_D2_LLM_SYNTHESIS_SCOPE.md``):
 
 - **Disabled by default.** Synthesis works only when
   ``SKSURROGATE_LLM_BASE_URL`` and ``SKSURROGATE_LLM_MODEL`` are set. A missing

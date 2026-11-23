@@ -653,7 +653,7 @@ For example, explaining row 12 of a stored partition against the reference mean:
      "baseline_partition": "train", "random_state": 0}
 
 The stage contract — method alternatives, baseline semantics, error surface,
-and test plan — is recorded in ``AI_LAYER02_D3_ROW_LEVEL_CONTRACT.md`` at the
+and test plan — is recorded in ``dev-notes/AI_LAYER02_D3_ROW_LEVEL_CONTRACT.md`` at the
 repository root.
 
 ``plot_roc_curve`` supports multiclass classifiers with one-vs-rest curves for

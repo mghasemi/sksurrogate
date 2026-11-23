@@ -8,7 +8,7 @@ ships from it. Mehdi waived the "at least one real expensive-experiment user"
 entry gate for the assessment only — the D4 exit criterion still requires a real
 user and a representative equal-budget benchmark.
 
-**Item:** `AI_LAYER02_REMAINING_PLAN.md` Stage D4 / R7 — expected/probability
+**Item:** `dev-notes/AI_LAYER02_REMAINING_PLAN.md` Stage D4 / R7 — expected/probability
 improvement, confidence-bound and noise-aware models, kernel selection,
 replication, constraints, batch/multi-objective and multi-fidelity design,
 assessed against the current bounded GP-LCB implementation.

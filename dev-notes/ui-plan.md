@@ -242,4 +242,4 @@ exist yet).
 The sidebar is grouped by stage (Data, Model, Release, Operate). Added pages:
 Projects, Explain, Experiment Design; Experiments gained a Quick start tab.
 The production Docker image serves the UI and API from one port. See
-`UI_DOCKER_UPGRADE_PLAN.md` and `docs/ui-manual.rst`.
+`dev-notes/UI_DOCKER_UPGRADE_PLAN.md` and `docs/ui-manual.rst`.

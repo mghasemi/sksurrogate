@@ -1,7 +1,7 @@
 """A minimal persisted background-job manager.
 
 Long-running work (AML/EOA searches, sensitivity analysis) is submitted here
-instead of running inline in the request/response cycle (see docs/ui-plan.md
+instead of running inline in the request/response cycle (see dev-notes/ui-plan.md
 section 5). Jobs run on a thread pool in this process and their status is
 persisted as JSON so ``GET /api/jobs/{id}`` keeps working across restarts;
 this intentionally stays file-based rather than pulling in Celery/Redis.

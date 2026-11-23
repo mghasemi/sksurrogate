@@ -1,7 +1,15 @@
 include readme.rst
 include LICENSE
 include requirements.txt
+# requirements.txt is an umbrella that -r's these; pip resolves the paths
+# relative to it, so an sdist without them cannot be installed from
+# requirements.txt.
+include requirements-core.txt
+include requirements-extras.txt
+include requirements-api.txt
+include requirements-dev.txt
 include docs/*.rst
+recursive-include docs/changelog *.rst
 include docs/conf.py
 include docs/Makefile
 include docs/make.bat

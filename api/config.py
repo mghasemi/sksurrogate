@@ -1,6 +1,6 @@
 """Storage layout configuration for the SKSurrogate API.
 
-Everything is filesystem + SQLite based (see docs/ui-plan.md, section 9):
+Everything is filesystem + SQLite based (see dev-notes/ui-plan.md, section 9):
 auth is opt-in via environment variables (documented below), and no external
 database or object storage is required for v1.
 """

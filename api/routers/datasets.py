@@ -3,8 +3,8 @@
 Wraps ``DataProcess.DataPreprocess`` (type preview),
 ``mltrace.mltrack.RegisterData`` (schema fingerprinting), and
 ``mltrack.validate_data`` (pre-flight schema validation) behind plain
-file-upload + JSON endpoints, per docs/ui-plan.md section 4 and
-docs/ui-gap-implementation-plan.md Phase 5.1/5.2.
+file-upload + JSON endpoints, per dev-notes/ui-plan.md section 4 and
+dev-notes/ui-gap-implementation-plan.md Phase 5.1/5.2.
 """
 
 import json

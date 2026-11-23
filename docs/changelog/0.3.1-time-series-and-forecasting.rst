@@ -1,0 +1,458 @@
+0.3.1 — Time series and forecasting
+===================================
+
+Period labels, ambiguous formats, and partition defaults
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Fixed:** the error raised for timestamp values that parse outside the
+  nanosecond range did not mention ``period_start`` — the option that actually fixes
+  period labels — so the message told the caller to rewrite data that the library can
+  read fine once anchored. Both the overflow and the unparseable-value branches now
+  name the anchor (``period_start`` + ``freq``) first.
+* **Fixed:** the **Time column** and **Series id** pickers offered the task's
+  *target* column. The server refuses it (a target is what you forecast, not when),
+  but the dropdown made the mistake one click away and the resulting
+  ``column 'X' is both the target and a temporal column`` read like a form bug. The
+  pickers now exclude the target, and the refusal explains the distinction instead of
+  repeating the name: ``time_column`` must name *when* the observation happened
+  and ``series_id`` *which series*, while the target is the value being predicted.
+* **Clarified:** the declared temporal summary shows ``anchor=<period_start>`` and
+  ``format=<time_format>`` when they are set, so a declaration built from a period
+  label is visible in the card rather than implied.
+* **Added:** ``TemporalSpec.period_start`` — the timestamp of each series' first row,
+  for a time column that is a *period label* (``1-Jan``/``2-Jan``/``3-Dec``, ``Q1``,
+  ``period 1``) rather than a date. It requires ``freq``; the axis is built from the
+  anchor stepped by ``freq`` per row within each series, so ``1-Jan`` no longer has
+  to be read as year 1 (which is outside the int64-nanosecond range and made such
+  datasets impossible to declare). The validation report records
+  ``time_source: "period_start"`` so nobody mistakes labels for validated
+  timestamps. The feature builder now takes its calendar/Fourier axis from the same
+  derivation, so ``cal__month`` works on such data.
+* **Added:** ``TemporalSpec.time_format`` — an explicit ``strptime`` format for text
+  that parses ambiguously (``03/01/2026`` as ``"%d/%m/%Y"``). A bad directive string
+  is refused when the spec is constructed, not at validation time.
+* **Fixed:** ``nested_cv_evaluation(validation_partition=None)`` read the
+  unpartitioned ``data`` stub instead of treating ``None`` as "no validation
+  partition", then died with a bare ``KeyError: <target>``. ``None`` now skips
+  validation scoring, which is what the control plane means when a task has
+  registered only a training partition.
+* **Fixed:** the request models for ``train-baseline``, ``nested-cv``, ``backtest``,
+  ``learning-curves`` and experiment submission defaulted ``train_partition`` to the
+  literal ``"train"``, so a task registered with a single ``main`` partition answered
+  ``404 No dataset partition 'train' stored`` for a request that never named one. An
+  omitted partition now resolves to ``train`` when it exists, otherwise to the task's
+  only/first registered partition (``api.partitions``); an explicit name is passed
+  through, and a wrong explicit name still 404s. The resolved name is echoed in the
+  response.
+
+"Time series" is not a learning-problem option — and the card now says so
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Clarified:** the **Task definition** card labels the field **Learning problem**
+  (it previously read “Problem type”, which invited the reading that time series
+  should be a third option). The card now states the rule at the point of
+  confusion: time structure is a separate axis; a temporal task shows its
+  ``regression`` badge with a ``temporal`` chip and a note that it is scored by a
+  rolling-origin backtest with MAE/RMSE/MASE; a tabular task explains that there is
+  no “time series” choice and offers a **Declare time structure** button that jumps
+  to the temporal card. No behaviour change.
+
+Synthetic sampling no longer assumes a partition called ``train``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Fixed:** ``POST /api/datasets/{task}/synthetic`` defaulted the source
+  partition to the literal ``"train"`` and answered
+  ``404 No dataset partition 'train' stored`` for any task whose data is
+  registered under another name (e.g. a task whose single partition is called like
+  the task). An omitted ``partition`` now resolves to ``train`` when it exists,
+  otherwise to the first registered partition. An explicit unknown name still
+  404s, but the message lists the partitions that do exist.
+* **Fixed:** the Datasets **Synthetic data** card initialised its partition select
+  to ``"train"``; when that name was not registered the browser displayed the first
+  real option while still sending ``"train"``. The control now binds to the
+  resolved partition (and disables generation when the task has none).
+* **Fixed:** resolving the partition could create an empty task database as a side
+  effect, which masked ``No dataset registered for task`` behind a
+  partition-not-found message.
+
+Declared problem type: one decision instead of five inferences
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Added:** a task now stores its **problem type** (``regression`` or
+  ``classification``) at registration, inferred conservatively from the target
+  (boolean, non-numeric, or an integer 0/1 column → classification; other numeric
+  columns → regression) and overridable. Metadata carries ``problem_type``,
+  ``problem_type_source`` (``inferred``/``user``), ``problem_type_reason`` and the
+  raw ``problem_type_inferred``. New API: ``PUT``/``DELETE
+  /api/datasets/{task}/problem-type``; the value is echoed by ``GET
+  /api/datasets/{task}``, the temporal payload and the preprocessing payload.
+* **Fixed:** Quick start defaulted to the *classification* preset regardless of the
+  task, so the first experiment on a regression dataset could be a classification
+  search. The preset now defaults to the declared problem type (server-side too, when
+  the request carries neither a config nor a preset), the Experiments page follows it,
+  and a mismatch between the declared type and the chosen preset is shown as a hint.
+* **Fixed:** ``POST /api/bundles/{task}/train-baseline`` always defaulted to
+  ``linear_regression``; it now picks ``logistic_regression`` for a classification
+  task and refuses an estimator that contradicts the declaration.
+* **Fixed:** delayed-label monitoring defaulted to ``task_type="classification"``; it
+  now follows the declared problem type, so a regression task is scored with MAE/RMSE
+  rather than accuracy.
+* **Added:** a temporal task is pinned to regression — the forecast feature builder
+  and backtest are regression-shaped. Declaring a temporal spec on a task whose stored
+  type is classification (or requesting ``problem_type="classification"`` alongside a
+  temporal spec) is refused with an explicit 400 instead of silently scoring labels as
+  forecasts.
+* **UI:** the Datasets metadata card is now **Task definition** — target, problem
+  type (with its source and reason, ``Change`` / ``Reset to inferred``) and time
+  structure in one place. The Data Preprocessing page opens with a task-context
+  banner stating the problem type and, for temporal tasks, that the stored partition
+  is only the time axis plus the label while the model's inputs are generated.
+  ``docs/forecasting.rst`` and ``docs/ui-manual.rst`` document the three axes.
+
+Numeric analyses and data-quality views on temporal tasks
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Fixed:** ``POST /api/sensitivity/{task}/run`` (and the Pearson
+  ``/correlation-threshold`` / ``/correlation-matrix`` endpoints) answered
+  ``400 Sensitivity and correlation analysis need numeric feature columns ... (non-numeric:
+  all columns). Encode or drop those columns`` for any time-series task. A temporal
+  partition has no raw feature column to encode: ``time``/``series_id`` are excluded by the
+  temporal contract and the target is the label. These analyses now project onto the
+  **generated design** (``make_supervised``: lags, rollings, diffs, pct-changes, calendar
+  fields), report ``feature_source: "temporal_design"`` with per-column provenance, and
+  accept a ``features`` configuration (default: one lag at the declared horizon).
+* **Fixed:** an empty projection caused by the ignore list now says the partition has no
+  feature column left instead of blaming non-numeric columns that do not exist.
+* **Fixed:** ``ForecastFeatureBuilder.fit`` rejected calendar features whenever the time
+  column's *stored* dtype was not datetime, so an ISO date read from CSV (``object``
+  dtype) failed even though ``transform`` and ``validate_temporal_frame`` both parse it.
+  The gate now uses the contract's parser.
+* **Fixed:** ``CorrelationThreshold.fit`` raised ``IndexError`` on a single feature
+  (``numpy.corrcoef`` returns a scalar); it now keeps every feature — nothing to prune.
+* **UI:** the Feature Analysis page labels a generated-design run and states that the
+  ranking explains history windows, not measured inputs.
+* **Fixed:** ``GET /datasets/{task}/{partition}/duplicates`` answered "No feature columns
+  available to define duplicate rows" for a temporal task (nothing is left after the
+  time/series exclusions and the target). Duplicates are now judged on the row identity
+  (``series + time`` or ``time``), reported as ``key_kind: "temporal_identity"`` with a
+  warning that registration enforces that key; extra raw feature columns still define the
+  key, and ``columns=`` overrides it.
+* **Fixed:** ``GET /datasets/{task}/{partition}/encoding-preview`` showed the generated
+  forecast design instead of failing with "No active feature columns to encode": every
+  generated feature is numeric (``kind: "generated"`` with its op/shift), so the preview
+  no longer invents a categorical encoding plan for a temporal partition.
+* **Encoding preview detail:** each preview row now carries its origin timestamp
+  (``preview_label_name``/``preview_labels``) — the time axis is consumed by the
+  feature builder, not hidden — and the endpoint accepts the same ``features`` JSON as
+  the backtest, so a preview can reproduce the model's actual design instead of always
+  showing the one-lag default. A tabular task is refused with a clear message if
+  ``features`` is supplied.
+* **UI:** the Preprocessing page labels the duplicate key, shows the origin column in
+  the encoded rows, and exposes a "Design features (JSON)" control with an
+  apply/reset action.
+
+Temporal data contract (time-series support, phase 1)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Opt-in temporal declaration for datasets. Nothing changes for tabular tasks: a task with
+no ``TemporalSpec`` keeps its current behaviour exactly.
+
+* **`SKSurrogate/temporal.py`** — ``TemporalSpec`` (time column, optional series id,
+  frequency, horizon, row order, gap tolerance), ``infer_freq``, and
+  ``validate_temporal_frame``, which returns a structured report and raises
+  ``TemporalValidationError`` for unordered rows, duplicate timestamps, unparseable or
+  missing times, missing series identifiers, and gaps beyond the declared tolerance.
+  Datetime axes are compared as integer nanoseconds (never floats); numeric columns are
+  treated as an index axis rather than 1970 timestamps.
+* **`mltrack`** — ``RegisterData(..., temporal=...)`` validates before writing and
+  persists the spec plus a per-partition report; ``GetTemporalSpec`` /
+  ``SetTemporalSpec`` / ``ClearTemporalSpec`` and ``available_partitions`` are new. The
+  time and series columns are excluded from ``X``/``get_data``. A temporal task may only
+  use ``TEMPORAL_CV_SPLITTERS`` (``TimeSeriesSplit``): ``SetCV`` rejects ``KFold``,
+  ``ShuffleSplit``, integer fold counts and the default splitter. New exports:
+  ``TemporalSpec``, ``TemporalValidationError``, ``validate_temporal_frame``,
+  ``infer_freq``, ``temporal_columns``, ``TEMPORAL_CV_SPLITTERS``,
+  ``cv_is_temporal_safe``.
+* **API** — ``POST /api/datasets/{task}/register`` accepts a ``temporal`` JSON form field;
+  new ``GET``/``PUT``/``DELETE /api/datasets/{task}/temporal``. ``PUT`` validates every
+  registered partition and answers 422 (``X-Reason: temporal-validation``) with the
+  report; declaring a spec adds the time/series columns to the dataset's ignored columns,
+  and ``DELETE`` removes only those entries.
+* **Fix** — a brand-new task now sets ``mltrack.task`` in ``__init__`` (it was only set
+  when reopening an existing task, which broke error messages and payloads that read it).
+* **Docs** — new :doc:`/forecasting` chapter; ``docs/mltrace.rst`` points to it at the
+  time-series paragraph.
+* **Tests** — ``tests/test_temporal_contract.py`` (32 tests).
+
+Leakage-safe forecast feature builder (time-series phase 2)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``ForecastFeatureBuilder`` / ``make_supervised`` construct lag, rolling, difference,
+calendar and Fourier features for a temporal task, with the shift rule enforced in
+code rather than documented and hoped for.
+
+* **Shift $\ge$ horizon, per series** — ``lag_k`` reads $y_{t-k}$ for $k \ge h$; a
+  rolling window of width $w$ covers $y_{t-h-w+1..t-h}$; a lag shorter than the
+  horizon is rejected at ``fit``. On a panel every operation is computed inside its
+  own series, so one series' history never enters another's features.
+* **No silent degradation** — no ``center=True`` path exists, ``min_periods``
+  defaults to the window width (no partial windows), and a zero denominator in
+  ``pct_change`` yields ``NaN`` rather than ``inf``.
+* **Supervised designs** — ``make_supervised(..., strategy="direct")`` labels
+  $y_{t+h}$; ``"recursive"`` labels $y_{t+1}$ while the declared horizon still
+  constrains the features. ``ForecastDesign`` carries ``X``, ``y``, per-row
+  ``meta`` (series, origin/target time, horizon, target step), feature provenance
+  with each column's minimum shift, and a JSON-safe ``describe()``.
+* **Verifiable invariant** — ``assert_no_leakage`` masks every post-cut observation
+  and requires pre-cut features to be unchanged, catching future-reading and centred
+  windows with ``LeakageError``.
+* **Exports** — ``ForecastFeatureBuilder``, ``ForecastDesign``, ``FeatureSpec``,
+  ``make_supervised``, ``assert_no_leakage``, ``LeakageError``, ``ROLL_STATS``,
+  ``CALENDAR_FEATURES``.
+* **Docs** — ``docs/forecasting.rst`` gains the builder, direct/recursive and
+  leakage-verification sections.
+* **Tests** — ``tests/test_forecast_features.py`` (22 tests).
+
+Rolling-origin backtesting (time-series phase 3)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Forecast-quality evaluation is now a rolling-origin walk-forward, not a fixed-window
+CV approximation.
+
+* **`RollingOriginSplit`** (``SKSurrogate/temporal.py``) states the horizon directly:
+  each test window is exactly ``horizon`` steps, origins advance by ``step``, and the
+  training window either expands or slides a fixed ``min_train``. Registered in
+  ``TEMPORAL_CV_SPLITTERS``, serializes through ``cv_to_spec``/``build_cv`` and renders
+  in ``cv_param_defs`` (including the optional ``min_train``).
+* **`rolling_origin_indices`** is the single geometry source; short series raise a
+  message naming the geometry instead of silently shrinking.
+* **`mltrack.backtest`** builds the design matrix with the feature builder, walks
+  origins, and returns per-origin records (series, origin/target time, y_true, y_pred),
+  per-fold scores and MAE/RMSE/bias, pooled and per-series/per-horizon aggregates, and
+  the features used. Refit policies are enforced by counting fits: ``"every_fold"``,
+  ``"first"``, ``"every:k"``. ``cost_limit`` turns an oversized run into a clear error,
+  and the result is persisted under ``backtest:<config hash>``.
+* **Panel semantics** — with a ``series_id`` each series gets its own origins, the model
+  is fitted on the union of the series' training windows, and series too short for the
+  geometry are listed in ``skipped_series``.
+* **API** — ``POST /api/evaluation/{task}/backtest`` queues the backtest for a bundle
+  (``model_version`` or ``alias``, horizon, n_splits, step, refit, features) and appends
+  a ``rolling_origin_backtest`` entry to the bundle's ``evaluations`` metadata.
+* **`seasonal_lags`** — readability alias for a lag at the season period: column
+  ``<target>__seasonal_lag_<p>``, ``op="seasonal_lag"`` in the provenance, same horizon
+  validation as any other lag.
+* **Known limit** — only the ``direct`` strategy is evaluated; ``strategy="recursive"``
+  raises until multi-step inference lands (phase 6), rather than reporting one-step
+  numbers as multi-step.
+* **Docs** — ``docs/forecasting.rst`` gains the backtesting section and the backtest
+  endpoint row.
+* **Tests** — ``tests/test_backtest.py`` (14 tests) plus 2 seasonal-lag tests in
+  ``tests/test_forecast_features.py``.
+
+Forecast metrics and naive baselines (time-series phase 4)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``SKSurrogate/forecast_metrics.py`` adds the metrics that make a forecast score
+interpretable, and scores the naive baselines on the same origins as the model.
+
+* **Point metrics** — ``mae``, ``rmse``, ``bias``, ``smape`` (percent, zero-safe),
+  ``mase`` and ``rmse_scaled``. MASE is scaled by the in-sample mean absolute
+  ``seasonality``-step difference, so a seasonal-naive forecast scores exactly 1.0;
+  a constant series has no scale and yields ``nan`` rather than a fabricated number.
+* **Quantile/interval metrics** — ``pinball_loss`` (0.5 quantile equals half the MAE),
+  ``winkler_score`` (width plus ``2/alpha`` per miss), ``interval_coverage`` and
+  ``interval_width``; ``summarize`` bundles them with optional ``per_series`` and
+  ``per_horizon`` blocks and a ``pooled`` / ``macro`` aggregation choice.
+* **Baselines** — ``baseline_prediction`` implements ``naive``, ``seasonal_naive``
+  (phase-correct for any horizon, not just ``h == m``), ``drift`` and ``mean``.
+  ``mltrack.backtest`` scores them on the identical origins and returns
+  ``result["baselines"]`` with the same MAE/RMSE/bias/sMAPE/MASE block as the model.
+* **Ranking guard** — ``forecast_ranking`` orders candidates by MASE and distinguishes
+  parity (MASE == 1, ``beats_baseline: false``, ``worse_than_baseline: false``) from
+  failure (> 1), and lists non-finite entries as ``unranked`` instead of sorting them
+  to the bottom. Every backtest result carries ``result["ranking"]``.
+* **Per-origin provenance** — each origin record now carries ``mase_scale`` (its
+  in-sample denominator) and ``baselines`` (the baseline predictions), so a reported
+  MASE can be audited from the record itself.
+* **Scoring options** — ``neg_smape`` is available as a learning-curve and nested-CV
+  scorer and appears in a new "Forecast" group of ``standard_scoring_options``.
+  MASE is deliberately **not** a scorer: it needs the in-sample history, which a
+  ``(y_true, y_pred)`` scorer never sees — it is a backtest metric.
+* **API** — ``POST /api/evaluation/{task}/backtest`` accepts ``seasonality`` and
+  ``baselines``.
+* **Docs** — new "Forecast metrics and baselines" section in ``docs/forecasting.rst``,
+  including why MASE is not a scikit-learn scorer.
+* **Tests** — ``tests/test_forecast_metrics.py`` (31 tests).
+
+Horizon-aware prediction intervals (time-series phase 5)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``SKSurrogate/forecast_intervals.py`` calibrates prediction intervals from the
+held-out residuals of a rolling-origin backtest, so a served model can put a width on
+its point forecast without recomputing anything.
+
+* **Split-conformal calibration** — ``calibrate_from_residuals`` / ``calibrate_backtest``
+  produce ``lower_offset``/``upper_offset`` from the conformal order statistics.
+  ``method="absolute"`` uses the ``ceil((n+1)(1-alpha))/n`` quantile of ``|residual|``;
+  ``method="asymmetric"`` uses the empirical ``alpha/2`` and ``1-alpha/2`` order
+  statistics for skewed errors.
+* **Refuses rather than fudges** — below ``min_residuals`` (default 10) the backtest
+  result reports ``intervals.available = false`` with the reason instead of computing a
+  quantile from three points.
+* **Diagnostics, not assertions** — ``interval_diagnostics`` reports empirical coverage
+  with a Wilson interval, mean/median width and the Winkler score, and passes the
+  horizon step as the grouping key so a horizon-1 and a horizon-12 interval are
+  reported separately. The docs state that walk-forward residuals are ordered, so the
+  exchangeability assumption behind nominal coverage is approximate.
+* **Bundles carry the calibration** — ``ModelBundle(interval_calibration=...)``
+  persists it through save/load (a legacy record without the key still loads), and
+  ``bundle.interval_bounds(predictions)`` applies it. An uncalibrated bundle raises
+  instead of returning a zero-width interval.
+* **Backtest wiring** — ``mltrack.backtest(alpha=, interval_method=, min_residuals=)``
+  adds ``result["intervals"]``; the backtest route persists a usable calibration onto
+  the bundle and records it in the bundle's ``evaluations`` entry.
+* **Fix** — the per-fold ``score`` is now ``None`` instead of calling ``R^2`` on a
+  one-row test window (which is undefined and emitted an ``UndefinedMetricWarning``),
+  and ``mean_fold_score`` averages the folds that have a score.
+* **Docs** — new "Prediction intervals" section in ``docs/forecasting.rst``.
+* **Tests** — ``tests/test_forecast_intervals.py`` (19 tests), including a Monte-Carlo
+  coverage check and width monotonicity across horizons 1–4.
+
+Bundled multi-step inference (time-series phase 6)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A trained forecasting bundle can now be *served*: one call with trailing history returns the
+full-horizon forecast — point predictions and, when the bundle carries an interval calibration,
+calibrated bounds — without re-fitting or rebuilding features. Tabular bundles are unaffected;
+v1 records load as before.
+
+* **Bundle format v2** — ``BUNDLE_FORMAT_VERSION`` is now 2; the record carries an optional
+  ``temporal`` block (spec, target column, feature configuration, strategy) written by
+  :class:`TemporalServeState`. The state persists geometry only: a fitted builder is defined
+  behaviourally by its constructor arguments, so no fit artifacts are stored. A v1 bundle loads
+  as a plain tabular bundle; corrupted temporal blocks fail at load time when they are rebuilt
+  and re-validated against the spec.
+* **predict_forecast** — ``bundle.predict_forecast(history, horizon=None, future_exogenous=...)``
+  returns one row per forecast step (times, means, bounds only if calibrated). Direct bundles
+  answer exactly their design horizon; recursive bundles accept any positive horizon and feed
+  each prediction back in as the next observation. Results match the offline rolling-origin
+  reference to $10^{-9}$ on identical origins — including a state-feedback check confirming that
+  from step $H$ onward the lag window contains earlier *predictions*, not true values.
+* **Serving API** — top-level ``serve_forecast(...)`` / ``predict_batch_forecast(...)``, with
+  ``predict_batch`` dispatching temporal bundles to the forecast path; plus control-plane routes
+  ``POST /api/inference/{task}/forecast`` and the serving pin's
+  ``POST /api/serving/{task}/forecast``, which validate payloads against the recorded spec
+  before touching the model. Insufficient or invalid history is rejected with an actionable
+  message (400), tabular bundles get "no temporal design" (400) rather than a fabricated
+  forecast, and missing payload fields surface as pydantic's 422.
+* **Docs** — new "Bundled multi-step inference" section in ``docs/forecasting.rst`` plus an
+  endpoint-table row; format-v2 fields in ``docs/modelbundles.rst``; the batch forecast contract
+  in ``docs/inference.rst``. The minimum-history contract (per-term bounds, direct vs recursive)
+  is now stated consistently across docs and docstrings.
+* **Tests** — ``tests/test_forecast_inference.py``: 21 tests covering bundle round-trips, the
+  serve-state contract, batch-frame shape/metrics/request-id, interval wiring, a two-series panel
+  serving per-series 12-step forecasts with calibrated intervals, and HTTP round-trips through
+  the FastAPI test client.
+
+Forecasting panels in the web UI (time-series phase 7)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The control plane now exposes the whole forecasting workflow; every surface is opt-in and a
+tabular task's pages are unchanged.
+
+* **Datasets — Temporal structure card** — declares the time column, optional series id,
+  frequency, horizon, order and gap tolerance; renders the server's per-partition validation
+  report (rows, series count, inferred frequency, missing periods, status), a regular/irregular
+  badge, a temporal-safety badge for the stored CV splitter, and a "Use inferred" shortcut when
+  the data's inferred frequency differs from the declared one. Clearing the declaration restores
+  the columns as features.
+* **Splitters, decision D2** — once a declaration exists, the splitter picker offers only
+  order-respecting splitters and the server rejects the rest. ``GET /api/datasets/{task}/cv``
+  gained ``temporal_options`` and now returns ``param_defs`` for temporal-only splitters too
+  (``RollingOriginSplit`` was previously unreachable from the UI: it is not in
+  ``STANDARD_CV_SPLITTERS``).
+* **Evaluation — Rolling-origin backtest card** — submits the backtest as a job and renders
+  pooled MAE/RMSE/MASE with interval provenance, a per-horizon error table, a candidate-vs-naive
+  leaderboard scored on the identical origins, and a forecast-vs-actual fan chart per panel
+  series using the stored conformal calibration. The feature configuration is an editable JSON
+  field because the backtest builds its own design; ``POST /api/evaluation/{task}/backtest`` now
+  unwraps a temporal bundle's ``ForecastFeatureBuilder`` and refits the bare estimator (fitting
+  the whole pipeline failed on the already-materialized design).
+* **Experiments — run-settings summary** — a temporal task states its horizon, frequency and
+  panel column, and points multi-step scoring at the backtest instead of implying the search
+  scores it.
+* **Inference — Forecast console** — paste a history series, pick a bundle or the serving pin,
+  and read/download the multi-step forecast (``time,prediction,lower,upper``). Refusals are the
+  server's actionable messages (missing series column, history shorter than the design's
+  required tail).
+* **Docs** — "In the web UI" section with two figures in ``docs/forecasting.rst``; a
+  time-series paragraph in ``docs/ui-manual.rst``.
+* **Tests** — ``tests/test_temporal_contract.py`` (+1: temporal splitters and their parameter
+  defs are exposed) and ``tests/test_backtest.py`` (+1: the route unwraps a temporal bundle).
+
+Monitoring windows, benchmark DGPs and release hygiene (time-series phase 8)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Windowed drift** — ``drift_report`` gains ``reference_window`` / ``current_window``:
+  each frame is trimmed to its trailing window (ordered by ``time_column`` when given) and
+  ``drift_report(None, history, ...)`` compares the last :math:`m` observations against the
+  :math:`n` before them. The report records ``windows`` (mode and sizes) and the row counts
+  are post-trim; the ordering column is excluded from the statistics because a timeline
+  marker necessarily differs between adjacent windows. ``POST /api/monitoring/{task}/drift``
+  accepts the three fields and treats a missing ``reference_partition`` as the single-frame
+  form; impossible windows are 400s with the count that failed.
+* **Label maturity** — ``delayed_label_performance`` accepts per-row ``horizons`` (scoring
+  per step in ``by_horizon``) and a ``maturity`` cap: rows whose horizon exceeds the cap are
+  counted in ``pending_rows`` instead of being scored. ``maturity`` without ``horizons`` is
+  refused, because the step of each row is the quantity under check. Wired through
+  ``POST /api/monitoring/{task}/delayed-label-performance``.
+* **Forecast DGPs** — ``benchmarks/forecast_dgps.py`` adds five seeded processes (random
+  walk with drift, weekly and daily seasonality, a five-series panel, and a driftless walk
+  whose role is the *must-lose* check: naive is Bayes-optimal there) and writes a versioned
+  ``forecast_dgp_validation.json`` with the full MAE ranking per DGP. Measured defaults: 40
+  rolling origins (four origins leave naive MASE at ~2.2 from sampling noise alone), naive
+  wins on ``easy_naive`` with MASE 1.25, and — honestly recorded rather than tuned away —
+  naive also beats a levels-regression on the drifted walk at horizon 1.
+* **Docs** — ``docs/forecasting.rst`` gains "Monitoring a forecast", an opt-in-vs-default
+  table and a benchmark section; the MASE/sMAPE/Winkler docstrings now carry their
+  formulas.
+* **Packaging** — a ``forecasting`` extra exists in ``setup.py`` and is deliberately empty:
+  the feature needs only the core numpy/pandas/scikit-learn dependencies, so the extra
+  documents the supported install and reserves a home for a future adapter. ``import
+  SKSurrogate`` is identical with and without it.
+* **Tests** — ``tests/test_temporal_monitoring.py`` (10) and
+  ``tests/test_forecast_dgps.py`` (6).
+
+Forecasting review pass (P1--P8 gap closure)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Recursive backtesting** — ``mltrack.backtest(strategy="recursive")`` now evaluates a
+  recursive design: it trains on :math:`y_{t+1}`, replays the horizon from each cutoff by
+  feeding predictions back, and records one origin plus ``horizon`` step records. The
+  replay shares ``temporal.recursive_steps`` with serving, so offline and served forecasts
+  agree by construction. ``POST /api/evaluation/{task}/backtest`` accepts ``strategy`` and
+  the Evaluation card exposes it.
+* **Defect fixed by that refactor** — recursive serving predicted from an *appended empty
+  row*, so its first step was really :math:`y_{T+2}` (and it over-extended by one step).
+  Serving now reads features at the current last origin before appending; the oracle in
+  ``tests/test_forecast_inference.py`` encoded the old error and is corrected.
+* **Temporal baseline bundles (P4.2)** — ``fit_baseline_bundle`` gains the branch it was
+  missing: on a task with a declared temporal spec it builds a
+  ``ForecastFeatureBuilder`` pipeline, stores the serving geometry on the bundle, and
+  records ``baseline_scores`` from a rolling-origin backtest (``refit="first"``, seasonal
+  naive always scored). Previously the route produced a tabular bundle that could not
+  answer ``predict_forecast`` at all. Tests:
+  ``tests/test_temporal_baseline_bundle.py``.
+* **Baselines** — ``historical_mean_by_series`` joins ``BASELINE_METHODS`` as the explicit
+  per-series mean (identical to ``mean`` because every call conditions on one series'
+  history; documented and tested rather than silently duplicated).
+* **Timings (P3.2)** — fold and origin records carry ``fit_time`` (0 when a fit was
+  reused) and ``predict_time``.
+* **Baselines on the bundle record** — the backtest route persists ``baselines`` in the
+  bundle's evaluation entry and ``baseline_scores`` at bundle level.
+* **Docs accuracy** — ``dev-notes/mlops-roadmap.md`` no longer claims time-series split support
+  is pending; ``docs/forecasting.rst`` documents recursive evaluation, the baseline-bundle
+  route, the five baselines, and why ``rmse_scaled``/``winkler_score``/``mase`` are not
+  scikit-learn scorers. The Evaluation leaderboard pins the naive rows above the candidate.
+* **Packaging** — ``TIME_SERIES_PLAN.md`` is now listed in ``.gitignore``; the plan doc was
+  untracked but not ignored, so it was one ``git add`` away from publication.
