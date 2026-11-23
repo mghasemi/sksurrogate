@@ -421,7 +421,7 @@ Dependencies: all prior phases.
 
 ### 2026-09-22 — Control-plane API and Web UI (branch `ui`)
 
-- Built the FastAPI control plane under `api/` per `docs/ui-plan.md`: routers for datasets, bundles, quality gates, registry/deployment, inference, monitoring, sensitivity, experiments, jobs (background + WebSocket progress stream), retraining, and a `/api/lineage/{task}/{model_version}` traceability endpoint; storage root via `SKSURROGATE_API_HOME`.
+- Built the FastAPI control plane under `api/` per `dev-notes/ui-plan.md`: routers for datasets, bundles, quality gates, registry/deployment, inference, monitoring, sensitivity, experiments, jobs (background + WebSocket progress stream), retraining, and a `/api/lineage/{task}/{model_version}` traceability endpoint; storage root via `SKSURROGATE_API_HOME`.
 - Built the React/Vite SPA under `webui/` consuming that API: sidebar shell with responsive off-canvas navigation, task selector, typed client (TanStack Query v5), live job tracking, and pages for all pipeline stages plus a lineage rail.
 - Fixed the `AML.best_estimator_` refit behavior upstream (`SurrogateRandomCV.fit`) so scoring and serving work after `eoa_fit`; removed the duplicate explicit fit from `api/training.py`.
 - Added opt-in shared-key auth: `SKSURROGATE_API_KEY` enables enforcement via a pure-ASGI middleware covering HTTP and WebSocket scopes (key via `X-API-Key`, Bearer token, or WS `api_key` query param); unset keeps the API fully open. `/api/health` stays open for the UI connectivity indicator.

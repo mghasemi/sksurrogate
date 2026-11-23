@@ -700,7 +700,7 @@ policy on the normal promotion endpoint. Automated retraining promotion is a
 separate workflow: it
 requires at least one finite metric threshold and can promote automatically
 only to ``staging``. Production promotion remains approval-gated. See
-:doc:`phase9` for the retraining trigger and promotion contract.
+``dev-notes/phase9.rst`` for the retraining trigger and promotion contract.
 
 Experiment and retraining search requests use ``max_generations`` for the
 generation budget. Existing clients may continue sending ``max_generation``

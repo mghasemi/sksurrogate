@@ -1,6 +1,6 @@
 """Retraining endpoints, wrapping ``SKSurrogate.RetrainingJob``.
 
-Triggers must stay constrained JSON, not arbitrary code (see docs/ui-plan.md
+Triggers must stay constrained JSON, not arbitrary code (see dev-notes/ui-plan.md
 section 4): "always" runs unconditionally, "scheduled"/"on_data" evaluate a
 plain boolean (``due``) supplied by the caller (e.g. an external scheduler or
 data-watcher) instead of executing a callback from the request body.

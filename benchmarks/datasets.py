@@ -57,7 +57,7 @@ def _download_openml(name: str, did: int) -> pd.DataFrame:
     The warm cache is checked *before* ``openml`` is imported, so a cached CSV
     loads in slim environments that do not install the ``[benchmark]`` extra;
     only a genuine download requires the dependency (Stage A of
-    ``AI_LAYER02_REMAINING_PLAN.md``).
+    ``dev-notes/AI_LAYER02_REMAINING_PLAN.md``).
     """
     csv_path = cache_dir() / f"{name}.csv"
     if csv_path.exists():

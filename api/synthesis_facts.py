@@ -6,7 +6,7 @@ alerts — and reduces it to small, aggregated JSON. No raw dataset rows leave
 this module: profiles carry summaries, never records; runs carry configuration
 and scalar metrics; explanations carry curve ranges and importance means.
 
-The stage contract is ``AI_LAYER02_D2_LLM_SYNTHESIS_SCOPE.md``; the prompt and
+The stage contract is ``dev-notes/AI_LAYER02_D2_LLM_SYNTHESIS_SCOPE.md``; the prompt and
 citation validation live in :mod:`api.synthesis`.
 """
 

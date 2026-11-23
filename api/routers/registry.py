@@ -1,7 +1,7 @@
 """Model registry & deployment lifecycle endpoints.
 
 Wraps ``SKSurrogate.ModelRegistry`` and ``SKSurrogate.DeploymentApprovalGate``.
-No authentication in v1 (see docs/ui-plan.md section 9): ``approvers`` are
+No authentication in v1 (see dev-notes/ui-plan.md section 9): ``approvers`` are
 free-text names, not verified identities.
 """
 

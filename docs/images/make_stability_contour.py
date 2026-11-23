@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stability-contour figure for launch materials (HANDOFF-explainability-visibility.md, T3).
+"""Stability-contour figure for launch materials (dev-notes/HANDOFF-explainability-visibility.md, T3).
 
 What this does
 --------------

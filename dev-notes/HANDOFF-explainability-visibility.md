@@ -110,7 +110,7 @@ surface makes the neighbourhood of the optimum inspectable."
 **Not allowed without further evidence:** any claim about robustness to data drift/shift;
 "proves/guarantees model stability"; compliance, audit-report, or Model-Card language.
 Sensitivity indices describe association structure of the fitted surrogate — not causation
-(working principle in `AI_LAYER02_FOLLOWUP_PLAN.md`). No LLM-feature claims at all: Phase 7
+(working principle in `dev-notes/AI_LAYER02_FOLLOWUP_PLAN.md`). No LLM-feature claims at all: Phase 7
 is post-launch and LAUNCH_PLAN §7 forbids implying otherwise.
 
 ## 4. Out of scope — do NOT touch
@@ -150,7 +150,7 @@ is post-launch and LAUNCH_PLAN §7 forbids implying otherwise.
 | What | Where |
 | --- | --- |
 | Launch plan of record | `LAUNCH_PLAN.md` (§1, §2.4–§2.5, §3.2, §7) |
-| Phase 7 definition (post-launch LLM scope) | `AI_LAYER02_FOLLOWUP_PLAN.md`, "Phase 7" section + working principles |
+| Phase 7 definition (post-launch LLM scope) | `dev-notes/AI_LAYER02_FOLLOWUP_PLAN.md`, "Phase 7" section + working principles |
 | README to edit | `readme.rst` |
 | Sensitivity docs page (already on branch) | `docs/sensitivity.rst` |
 | Explanations API / engine | `api/routers/explain.py`; `SKSurrogate/mltrace.py` (~L2201–2500) |

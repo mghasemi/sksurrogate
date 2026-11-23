@@ -1,6 +1,6 @@
 """Controlled synthetic data-generating processes with known ground truth (Stage D1).
 
-This module is the Stage D1 deliverable of ``AI_LAYER02_REMAINING_PLAN.md``
+This module is the Stage D1 deliverable of ``dev-notes/AI_LAYER02_REMAINING_PLAN.md``
 (item R6): a small seeded set of *parametric* data-generating processes whose
 structure, coefficients, and noise model are exactly known, plus a validation
 harness that scores a method panel against them and writes a versioned JSON
@@ -24,7 +24,7 @@ Design rules (inherited from the suite):
   reproducible across processes within a fixed NumPy version.
 - The harness is *descriptive*: repeated draws produce point estimates of
   error; nothing here makes significance or generalization claims (see the
-  cross-cutting rules in ``AI_LAYER02_REMAINING_PLAN.md``).
+  cross-cutting rules in ``dev-notes/AI_LAYER02_REMAINING_PLAN.md``).
 - Report records carry an explicit schema version so future readers can be
   tolerant, mirroring the benchmark run-record convention.
 

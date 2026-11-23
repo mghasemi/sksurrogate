@@ -27,7 +27,7 @@ score (invalid/pruned/failed trials) keep their position in the curve with
 ``cv_score=None`` so evaluation counting stays honest. ``total_wall_s`` records
 the search duration, excluding the final held-out evaluation.
 
-Schema contract (v2, Stage A of ``AI_LAYER02_REMAINING_PLAN.md``): legacy v1
+Schema contract (v2, Stage A of ``dev-notes/AI_LAYER02_REMAINING_PLAN.md``): legacy v1
 archives carry no top-level ``schema_version`` and no per-evaluation ``params``;
 readers must treat both as optional (see :func:`eval_params`). New writers
 always emit ``schema_version = RECORD_SCHEMA_VERSION``.
@@ -60,7 +60,7 @@ SPACE: dict[str, list[Any]] = {
 N_CONFIGS = int(np.prod([len(v) for v in SPACE.values()]))
 
 #: Version of the per-run JSON record schema written by :meth:`RunRecord.to_json`.
-#: v2 (Stage A, AI_LAYER02_REMAINING_PLAN.md): every per-evaluation ``records[]``
+#: v2 (Stage A, dev-notes/AI_LAYER02_REMAINING_PLAN.md): every per-evaluation ``records[]``
 #: entry carries the full candidate configuration under ``params``, and this top-level
 #: field is present. Legacy v1 archives carry neither; readers must stay tolerant —
 #: use :func:`eval_params` instead of indexing ``rec["params"]`` directly.

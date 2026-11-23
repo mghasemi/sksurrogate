@@ -1,4 +1,4 @@
-"""Tests for the Phase 1 UI-gap endpoints (docs/ui-gap-implementation-plan.md).
+"""Tests for the Phase 1 UI-gap endpoints (dev-notes/ui-gap-implementation-plan.md).
 
 Covers the four new API surfaces with one happy path and one error path each:
 

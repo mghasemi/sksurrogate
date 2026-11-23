@@ -1187,7 +1187,7 @@ timestamp. Data-trigger events must reference the registered training
 partition and its current fingerprint; repeated delivery of the same
 partition/fingerprint is deduplicated. Automated promotion requires metric
 thresholds and is limited to **staging**; use the approval workflow for
-production. See :doc:`phase9` for the event contract and operational limits.
+production. See ``dev-notes/phase9.rst`` for the event contract and operational limits.
 
 .. figure:: images/ui-retraining.png
    :alt: Retraining page with trainer and trigger controls

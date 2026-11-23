@@ -4,9 +4,9 @@ Wraps ``SKSurrogate.monitoring``. ``InferenceMonitor`` is normally an
 in-memory accumulator; here it is rehydrated from the JSON log persisted by
 the inference router (see ``deps.append_monitor_record``) so summaries
 survive process restarts, staying consistent with the SQLite/file-only
-storage decision in docs/ui-plan.md.
+storage decision in dev-notes/ui-plan.md.
 
-Phase 2 additions (docs/ui-gap-implementation-plan.md): prediction-distribution
+Phase 2 additions (dev-notes/ui-gap-implementation-plan.md): prediction-distribution
 drift, subgroup performance / loss reports, and the sensitive-feature / PII
 scan. Prediction sources resolve to stored partitions or persisted inference
 artifacts (``predictions/{task}/{version}/{request_id}.csv``, written by

@@ -8,7 +8,7 @@ tests landed the same day in `api/explanations.py`,
 is the method/API contract the implementation follows; any change to the
 semantics below requires a new decision here first.
 
-**Item:** `AI_LAYER02_REMAINING_PLAN.md` Stage D3 / R9a — "faithful
+**Item:** `dev-notes/AI_LAYER02_REMAINING_PLAN.md` Stage D3 / R9a — "faithful
 local-explanation method and its API contract first; do not label an ICE
 difference as a feature attribution; optional LLM summary only after the
 deterministic layer exists."
@@ -29,7 +29,7 @@ mixed into this layer, and no language-model summary is generated.
 | Single-feature occlusion deltas ("drop feature j, take the difference") | Not additive when features interact: the leftover residual gets silently attributed to "everything else", which reads like an attribution but is a modelling artifact |
 | ICE slope or ICE range at the row | A response profile, not a contribution; the plan explicitly forbids labelling an ICE difference as a feature attribution |
 | LIME-style local surrogate | Sampling-based, unstable across seeds, and offers no exactness property for the fitted model |
-| SHAP | Deferred by the Stage C1 decision (`AI_LAYER02_C1_SHAP_DECISION.md`); also needs the row-level contract this document creates |
+| SHAP | Deferred by the Stage C1 decision (`dev-notes/AI_LAYER02_C1_SHAP_DECISION.md`); also needs the row-level contract this document creates |
 | Counterfactual optimisation | A different question (what change would flip the prediction), and unbounded without constraints |
 
 ## Method

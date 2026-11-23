@@ -54,7 +54,7 @@ Legend: `[ ]` open, `[~]` in progress, `[x]` done.
 - [x] Result payload names unchanged by the simplification plan (old names are
       aliases), so no UI break. Provenance/notebook export has no UI and is
       deferred (not essential to the workflow).
-- [x] Coverage table added to `docs/ui-gap-implementation-plan.md`.
+- [x] Coverage table added to `dev-notes/ui-gap-implementation-plan.md`.
 
 ### Phase 1: Docker
 - [x] `Dockerfile`: `dev` and `prod` targets (Node stage with `npm ci` builds
@@ -107,7 +107,7 @@ Legend: `[ ]` open, `[~]` in progress, `[x]` done.
       unchanged).
 - [x] Updated `docs/ui-manual.rst` and `CHANGELOG.rst`.
 - [x] Updated `docs/controlplane.rst` (Docker section).
-- [x] `docs/ui-plan.md` updated. Source-plan status lines left untouched (they track library work, not UI).
+- [x] `dev-notes/ui-plan.md` updated. Source-plan status lines left untouched (they track library work, not UI).
 
 Suggested order: Phase 0, Phase 1 (independent), Phase 2, then UI in the order
 Experiments quick start, Projects, Explain/Intervals, Design, navigation

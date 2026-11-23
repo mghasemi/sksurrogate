@@ -1,0 +1,29 @@
+0.2.0 — 2026-10-24
+==================
+
+Response-surface default change
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* ``SurrogateSearch`` now defaults its response surface to a stock, un-tuned RBF
+  Gaussian process (`sklearn.gaussian_process.GaussianProcessRegressor`) instead of the
+  legacy cubic Hilbert polynomial (`HilbertRegressor(deg=3)`). Evidence: equal-budget
+  benchmark suite -- the RBF-GP surface attains top mean CV on all six datasets at both
+  B=30 and B=60, with seed-level win rates of 20W/17T/5L (B=30) and 25W/13T/4L (B=60)
+  against Hilbert (two-sided exact binomial p approx. 4e-3 / 1e-4); the un-tuned RBF-KRR
+  alternative never wins a seed at either budget. See ``benchmarks/DESIGN.md`` sec. 12;
+  raw per-run records are archived at DOI 10.5281/zenodo.23629024 (software:
+  DOI 10.5281/zenodo.23631823). The surrogate-firing floor (`MinEvals`) is unchanged, so
+  the firing behavior matches that benchmark configuration exactly.
+* Restore the v0.1 behaviour with `regressor=HilbertRegressor(deg=...)`; no new dependency
+  (scikit-learn was already required).
+
+Dependencies and packaging
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* Lower-bound dependency pins in ``setup.py``/``requirements.txt`` exclude the
+  vulnerable ranges flagged by Dependabot (numpy <1.22, scipy <1.10,
+  scikit-learn <1.5, joblib <1.2, tqdm <4.66.3, fastapi <=0.109.0, lightgbm
+  <4.6, uvicorn <0.11.7, python-multipart <0.0.31); bounds sit far below the
+  versions CI currently installs and no upper pins were added.
+* WebUI lockfile: source-map-js pinned to a non-vulnerable version
+  (CVE-2026-93749).

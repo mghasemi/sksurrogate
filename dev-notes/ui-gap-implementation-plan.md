@@ -27,7 +27,7 @@ follows this chain; nothing in the UI may call the library directly.
 
 ---
 
-## Phase 1 — Evaluation deep-dive (highest value; promised by `docs/ui-plan.md` §4)
+## Phase 1 — Evaluation deep-dive (highest value; promised by `dev-notes/ui-plan.md` §4)
 
 **UI home: `webui/src/pages/Evaluation.tsx`** (new cards/tabs below the existing learning-curve
 section), plus one card on FeatureAnalysis.
@@ -449,7 +449,7 @@ path + one error path); for nested CV and curves use the small Galaxy3 dataset a
 
 ## Addendum: AI-layer / API-simplification UI coverage (Docker + UI upgrade)
 
-Tracked in `UI_DOCKER_UPGRADE_PLAN.md`. Coverage of the newer library/API features:
+Tracked in `dev-notes/UI_DOCKER_UPGRADE_PLAN.md`. Coverage of the newer library/API features:
 
 | Feature | API | UI page |
 |---|---|---|

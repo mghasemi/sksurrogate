@@ -1,0 +1,437 @@
+0.3.1 — Scoring, search space and partitions
+============================================
+
+Partition defaults, temporal experiments and the Advanced scorer
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Fixed:** a search candidate with no tunable hyperparameters was scored by
+  ``AML.optimize_pipeline``'s no-config branch, which returned the raw
+  ``cross_val_score`` mean (higher-is-better) instead of the minimized loss the
+  surrogate branch returns. The two branches now agree, so a no-config candidate
+  ranks correctly in ``get_top`` and the EOA fitness instead of inverting the
+  direction — classification no longer favours the lowest accuracy and regression
+  no longer selects the highest error. ``AML`` also exposes ``best_score_`` (the
+  higher-is-better value) alongside ``best_estimator_score`` (the loss), and the
+  audit's ``best_candidate`` carries both.
+* **Fixed:** an experiment or single-pipeline optimization whose scorer
+  contradicts the search's estimators (e.g. ``accuracy`` on a regression
+  preset/config) silently ran the whole search and then failed with "All
+  candidate pipelines failed to produce a finite CV score:
+  ValueError('continuous is not supported')". ``fit_experiment_bundle`` and
+  ``fit_pipeline_bundle`` now validate the scorer's family against the search
+  family before the search launches and return a clear 400 naming the scorer,
+  the task type and suggested metrics. The search family comes from the
+  request's preset or estimator names — an explicit classification preset is
+  authoritative, so integer-coded multiclass labels inferred as "regression"
+  are not wrongly blocked — and the task's declared ``problem_type`` is used
+  only when the search family is mixed or unknown; custom metrics and legacy
+  tasks pass through unchanged.
+* **Fixed:** the live experiment feed showed the wrong "best" during a run: the
+  trial log carried the search *loss* (+RMSE for regression, -accuracy for
+  classification) and the UI summary took the maximum, so a regression run
+  crowned the *highest* error and classification the *lowest* accuracy as
+  "best". ``trial_callback`` now flips each trial score into the scorer's own
+  higher-is-better units — exactly as the final ``evaluation_history`` payload
+  already did — so the live summary's maximum is the true best.
+* **Fixed:** an ``rgf`` (Regularized Greedy Forest) candidate could crash the
+  whole experiment with ``ValueError: reg_depth must be no smaller than 1.0``.
+  The component catalog declared ``reg_depth`` with a lower bound of ``0`` (rgf
+  requires ``>= 1``), and — defensively — a surrogate trial whose estimator
+  rejects a searched parameter value reported objective ``-0.0`` instead of
+  ``+inf``, which for a regression loss (+RMSE) is the global minimum and made
+  the search converge to the unfittable config and crash the best-estimator
+  refit. The catalog bound is now ``1..5`` and a trial with no finite fold score
+  returns ``+inf`` (matching the forbidden/zero-feature branches), so the search
+  converges to a feasible point.
+* **Fixed:** a nested-CV (or any re-fit) of a pipeline containing ``SensAprx``
+  crashed with ``IndexError: index 1 is out of bounds for axis 1 with size 1``
+  when a pre-set ``domain``/``probs`` pair was narrower than the current
+  ``X`` — ``fit`` walked the bounds over the *input* column count while indexing
+  the narrower ``domain``. ``SensAprx.fit`` now recomputes ``domain``/``probs``
+  from ``(X, y)`` whenever they are absent, non-2D, or their width does not
+  match ``X``'s, and derives the analysis dimension from the domain itself, so a
+  stale pre-set domain can no longer drive the walk out of bounds.
+* **Fixed:** ``EOA.__call__`` always adopted a compatible ``.eoa`` checkpoint,
+  even for a fresh run (``resume=False``), so a leftover checkpoint from a
+  different search space silently truncated the run. ``EOA`` now takes a
+  ``resume`` flag (forwarded from ``AML.resume`` by ``eoa_fit``) and only loads a
+  checkpoint when it is ``True``, matching ``SurrogateSearch``'s ``Continue``
+  behaviour.
+* **Fixed:** ``/api/evaluation/{task}/{version}/explain`` and ``.../ale`` returned
+  400 "Reference-sample stability needs more source rows than max_rows" on any
+  partition smaller than the requested ``max_rows``, even though ``max_rows`` is
+  an upper bound. Both endpoints now clamp ``max_rows`` strictly below the source
+  size so distinct without-replacement reference subsets can be drawn, and only
+  refuse when the partition cannot support the requested number of subsets at
+  all (fewer rows than ``stability_samples``).
+* **Fixed:** the web UI's train-partition field started as the literal ``train``
+  and always sent it, so a task whose data lives in another partition (a single
+  ``main``, or one named after the task) failed with ``404: No dataset partition
+  'train' stored``. Experiments, Bundles, Evaluation, Feature Analysis and
+  Retraining now derive the default from the dataset metadata (``train`` when it
+  exists, else the first registered partition) and omit the field while it is
+  unknown. Every API request model that defaulted to ``"train"`` now defaults to
+  ``None`` and resolves through ``api/partitions.py``, so a stale frontend cannot
+  reintroduce the 404.
+* **Fixed:** the explainability report was the last caller that hard-coded the
+  literal partition ``train``. ``POST /api/reports/{task}/explain`` called
+  ``explain._features_and_target(task, "train")`` before any diagnostic ran, so a
+  task stored as ``main`` failed the whole job with ``404: No dataset partition
+  'train' stored``. The report now resolves the task's partition once and uses it
+  for the row-order clamp, the learning-curve fits, the recorded train fingerprint
+  and the PDF title; the row-order clamp also counts the *explainable* feature
+  space (``explain._explain_frame``: raw feature columns, or a temporal task's
+  generated forecast design) instead of the raw partition columns, so a temporal
+  report no longer clamps from a zero-feature frame.
+* **Fixed:** the Evaluation page reported every bundle of a temporal task as
+  ``Skipped N bundle(s): … expects feature columns absent from partition 'main':
+  Month``. ``compute_learning_curve`` sliced the raw partition by the bundle's
+  recorded schema, but a temporal bundle's schema names the *raw history* frame
+  (time/series columns included) while ``load_partition`` drops exactly those
+  columns; and even with the columns present it refitted the whole
+  ``Pipeline(ForecastFeatureBuilder, …)`` on a feature matrix. Temporal curves now
+  run on the generated one-step forecast design through the bare estimator
+  (``feature_source: temporal_design``) under the task's walk-forward splitter,
+  never a shuffled fold count. Each reported size is a *training length* up to the
+  longest window the splitter offers, computed by replaying the folds:
+  ``sklearn.model_selection.learning_curve`` anchors its sizes on the smallest
+  fold's training window, which is the first origin — on a 33-row design with
+  ``TimeSeriesSplit(5)`` that curve stopped at 8 training rows and hid what more
+  history buys (it now reaches 24). The explainability report's learning curves
+  benefit from the same path, and each curve echoes the ``cv`` it used.
+* **Fixed:** serving a forecast for a task registered with ``period_start`` rejected
+  the dataset's own history. ``TemporalServeState.validate_history`` parsed the time
+  column with ``pd.to_datetime`` even when the spec declares an anchor, so a period
+  label like ``1-Jan`` (*year 1, January*) produced an axis that was either outside
+  pandas' nanosecond range or — for these labels — running backwards
+  (``3-Oct`` → 2026-10-03, then ``2-Jan`` → 2026-01-02), and the request failed with
+  ``history time values must be strictly increasing``. The axis is now the registered
+  grid (anchor stepped by ``freq``, row order as time order — the rule
+  ``_time_axis`` already applies at registration), so labels are accepted unparsed
+  and forecast times continue the grid. A declared ``time_format`` is applied to
+  timestamp text, and the unparseable-column error names the ``period_start`` remedy.
+  The one-series check also moved before the axis check, so a panel frame now answers
+  ``history must contain exactly one <series> value`` instead of a misleading
+  "sort the frame" message.
+* **Fixed:** combining models on a **temporal** task crashed the background job with
+  ``ValueError: at least one array or dtype is required``. The ensemble routes built
+  their feature matrix from the raw partition, which for a temporal task has no
+  feature column (time/series excluded, target is the label), so the aggregator's
+  member reached scikit-learn's ``check_X_y`` with an ``(n, 0)`` matrix. Members are
+  now refit on the generated one-step forecast design through their bare
+  estimators, scored under an order-respecting splitter (the task's stored one,
+  else ``TimeSeriesSplit``; never a shuffled integer fold count), and the combined
+  bundle is composed as ``Pipeline(ForecastFeatureBuilder, ensemble)`` with the
+  serving geometry — so it forecasts recursively through the normal inference path.
+  The ensemble record carries ``feature_source: temporal_design``, the builder/spec
+  and a caveat that ``cv_score`` is a one-step design score.
+* **Fixed:** combining temporal bundles with ``weight_optimization`` failed with
+  ``ValueError: cross_val_predict only works for partitions``. The weight search
+  computes out-of-fold member output with ``cross_val_predict``, which refuses a
+  walk-forward splitter because its test blocks leave the initial training window
+  (and any gap) uncovered. ``SKSurrogate.ensembling.out_of_fold_outputs`` now
+  replays such folds fold by fold — clone, fit on the fold's training rows, predict
+  its test rows — and drops the never-predictable rows from every member through
+  one shared mask, so the weights are still fitted on identical, never-trained-on
+  rows. The fitted vector reports ``rows_scored``/``rows_unscored`` beside the
+  weights; on a 90-row temporal fixture five walk-forward folds score 70 design
+  rows and leave the 17-row initial window unscored.
+* **Fixed:** the Experiments “Advanced” tab sent the regression search space with
+  a hard-coded ``accuracy`` scorer for a regression-declared task, and AML then
+  rejected every candidate with ``ValueError: continuous is not supported``. The
+  scorer now follows the effective problem type until the user picks one.
+* **Added:** an experiment on a **temporal** task now searches the generated
+  one-step forecast design (``ForecastFeatureBuilder`` with the declared horizon
+  as the minimum lag) under the task's order-respecting splitter, and the bundle
+  it produces carries that builder plus the serving geometry, so it forecasts
+  recursively through the normal inference/serving path. Before this, a temporal
+  partition's only non-target column is its excluded time column, so every
+  candidate died with ``ValueError: at least one array or dtype is required``.
+* **Fixed:** a partition with no feature columns left (target plus ignored
+  columns only) now answers an actionable **400** naming the columns instead of
+  the same opaque sklearn message.
+* **Fixed:** **Optimize this structure** on a temporal task failed with ``400: Task
+  'TS01' is temporal: pipeline optimization searches the partition's own feature
+  columns`` — the very button the experiment result offers. ``fit_pipeline_bundle``
+  now builds the same generated one-step forecast design the experiment search uses,
+  optimizes the structure there and composes the bundle as
+  ``Pipeline(ForecastFeatureBuilder, …)`` with the recursive serving geometry, so
+  the result forecasts through ``/api/inference`` like any temporal bundle. It also
+  reports ``train_score`` as the estimator's own score (R² / accuracy) instead of
+  the negated search objective, which had put a positive RMSE, or a negative
+  accuracy, into a field every other entry point fills higher-is-better; the search
+  loss is kept in the evaluation protocol as ``search_loss``.
+* **Fixed:** **Optimize this structure** on a regression task failed with ``400: No
+  parameter configuration for this structure scored finitely: every candidate was
+  rejected``. ``OptimizePipelineRequest.scoring`` defaulted to ``accuracy``, so every
+  fold of a continuous target raised ("continuous is not supported") before any
+  structure could be compared; the button itself sent no scorer. The field now
+  defaults to ``None`` and resolves from the task's declared problem type (negative
+  RMSE for regression, accuracy for classification), the Experiments page sends its
+  current scorer, and the rejection message names the scorer plus the candidates'
+  first errors instead of leaving the cause implicit.
+* **Changed:** aliasing a bundle is easier to find. **Model Bundles** now says in
+  its card subtitle that aliases are assigned on **Registry & Deployment → Model
+  aliases**, and carries an **Assign alias…** button that opens that page; the
+  manual states that only registered versions can carry an alias (unregistered
+  ones are greyed out as "— register first").
+* **Fixed:** ``SurrogateSearch``/``SurrogateRandomCV`` accepted ``L-BFGS-B`` as a
+  solver for a *constrained* local subproblem, although
+  ``scipy.optimize.minimize`` accepts ``constraints=`` for that method and silently
+  ignores it — the search then returned infeasible candidates as if they had been
+  optimized under the constraints. Constraint support is now a capability check
+  (``COBYLA``, ``SLSQP``, ``trust-constr``, ``COBYQA``) applied at configuration
+  time and again before each round, including the trust region added by
+  ``search_sphere=True``; bounds-only methods stay valid for unconstrained searches.
+  The same audit found that ``ineqs=`` (the spelling ``SurrogateRandomCV`` forwards)
+  was silently dropped by ``SurrogateSearch``, which only read ``ineq`` — user
+  constraints never reached the sampler or the optimizer at all. Both spellings are
+  now read, so a constrained search is actually constrained (regression test:
+  minimising $(x-3)^2$ subject to $x\le1$ returns $x\approx1$, not $3$).
+* **Fixed:** the **★ best** badge on Model Bundles ranked every metric as
+  higher-is-better. It now ranks error metrics (``mae``, ``rmse``, ``mase``,
+  ``smape``) by the smallest value, labels the winner with the population it was
+  measured on (``refit training rows (in-sample)``, ``held-out validation
+  partition``, ``ensemble out-of-fold folds``, ``rolling-origin backtest``) and
+  gains a **Rank by** selector, so a model that only won an in-sample comparison is
+  no longer read as the best forecaster.
+* **Changed:** the **Bundle metrics** table now says which producer records each
+  metric, and every blank cell carries a tooltip naming the reason, so a missing
+  ``cv_score``/``mae`` reads as "training never measured this" rather than a broken
+  run. Tabular baselines also record a ``train_score`` now (they used to record
+  nothing without a validation partition, leaving the row empty).
+* **Fixed:** a rolling-origin backtest's pooled MAE/RMSE/MASE/sMAPE were only kept
+  in the bundle's ``evaluations`` metadata, so the **Bundle metrics** table still
+  looked as if those numbers had never been computed — every backtest had to be
+  re-run to see them. They are now written onto the bundle's ``metrics`` with a
+  ``metrics_provenance`` entry per metric (source, horizon, origins, strategy,
+  timestamp), exposed by ``GET /api/bundles/{task}/{version}`` and shown in the
+  table's cell tooltips; the per-origin record stays in ``evaluations``.
+* **Fixed:** the rolling-origin backtest of a temporal experiment bundle fitted
+  the bundle's whole pipeline on its own design matrix and failed with
+  ``ForecastFeatureBuilder is missing required column(s): Month, Sales …``. The
+  route now finds the builder by type (not by the ``features`` step name, which a
+  ``make_pipeline`` bundle does not use) and refits the bare estimator, and an
+  omitted ``strategy`` defaults to the bundle's own (``recursive`` for a one-step
+  experiment model) instead of always scoring it as ``direct``. Temporal
+  experiment bundles are now also composed as ``features``/``model`` explicitly,
+  matching the baseline bundle contract.
+* **Fixed:** explanations, ALE, row attribution and prediction intervals on a
+  temporal bundle read the raw partition and failed with
+  ``Found array with 0 feature(s)`` (the time column is excluded and the target is
+  the label). They now run on the generated forecast design — the same one-step
+  matrix the search and the backtest see — with the bare estimator behind the
+  feature builder (frame-tolerant for preset pipelines), and echo
+  ``feature_source: "temporal_design"``.
+* **Fixed:** nested cross-validation of a temporal bundle handed the bundle's whole
+  pipeline to the tracker, which built folds from the partition's raw columns, and
+  failed with ``ForecastFeatureBuilder works on pandas DataFrames``. It now scores
+  the generated one-step design via ``mltrack.nested_cv_evaluation(..., design=...)``
+  (new parameter: prebuilt ``(X_train, y_train, X_valid, y_valid)``) with the bare
+  estimator, turns an integer fold count into ``TimeSeriesSplit`` and refuses a
+  shuffled splitter on a temporal task. ``StackingEstimator.fit_transform`` also
+  clamps its internal fold count to the rows it receives, so a small
+  outer/inner block no longer fails with "Cannot have number of splits ...".
+* **Fixed:** the explainability report counted every `unavailable` diagnostic as a
+  failure, so a healthy regression task reported "15 unavailable diagnostics"
+  made up of "classification curves require a classifier" and "no completed
+  nested-CV job". Those are now marked `by_design` and reported separately as
+  `diagnostics_not_applicable`; `diagnostic_failures` counts only diagnostics that
+  ran and failed.
+* **Fixed:** the surrogate search accepted a *bare* callable scorer, which
+  ``check_scoring`` passes through without a direction. Trial scores are negated
+  into a loss before ``scipy.optimize.minimize``, so a plain lower-is-better
+  function (e.g. ``lambda est, X, y: mean_absolute_error(y, est.predict(X))``) was
+  negated into ``-MAE`` and the search *maximized* the error — verified selecting
+  the worst trial (MAE 62.25 over a 43.56 best) while reporting a finite,
+  plausible score. ``SurrogateRandomCV``/``AML`` now reject a raw callable at
+  construction/fit with a ``TypeError`` naming ``make_scorer(fn,
+  greater_is_better=False)``; scorer names and ``make_scorer``/``get_scorer``
+  objects are unchanged. The sign contract and the ``best_estimator_score``
+  (loss) vs ``best_score_``/``mean_test_score`` (scorer units) split are now
+  documented in ``docs/surrogate.rst``.
+* **Fixed:** a **regression** ensemble with ``weight_optimization.strategy`` ``greedy`` or
+  ``dirichlet`` crashed with ``ValueError: matmul: Input operand 1 has a mismatch in its
+  core dimension 0``. The blend adapter applied member weights to the stacked out-of-fold
+  output without transposing it, so it needed ``members == rows``; the least-squares path
+  already used ``.T``. Every candidate vector now shapes as one value per row, and the
+  metric-driven search works for regression (live: TS01 greedy, weights ``[0.5, 0.5]``).
+  A directionless callable passed as ``scoring`` is now refused with ``EnsembleError``
+  (the weight search maximizes), via a shared ``SKSurrogate/scoring.py`` helper used by
+  both the surrogate search and ``optimize_weights``.
+
+Trained-pipeline diagram on the Bundles page
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Added:** selecting a bundle now shows a **Trained pipeline** card above its
+  schema — scikit-learn's own estimator diagram, so the stored pipeline's nesting and
+  (expanded) parameters are visible instead of inferred from the schema. New endpoint
+  ``GET /api/bundles/{task_name}/{model_version}/pipeline`` returns
+  ``sklearn.utils.estimator_html_repr(bundle.model)`` rendered inside
+  ``config_context(print_changed_only=False)``; the UI displays it in a sandboxed
+  ``<iframe srcDoc sandbox="">`` (CSP ``default-src 'none'``, scripts and navigation
+  disabled, no access to the application document) with a dark-theme override of
+  sklearn's ``--sklearn-color-*`` variables. The endpoint sits behind the same
+  ``task_access`` check as the rest of the bundle routes.
+
+Ensembles keep cat_cols members frame-tolerant
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Fixed:** combining a task whose experiments were built with ``cat_cols`` failed
+  with ``ValueError: X does not contain the columns listed in cols:
+  ['spr_risk_level'] … The encoder received a non-DataFrame input at fit`` for
+  ``bagging`` and ``boosting`` (live: task ``SPRA``, two bundles, least-squares
+  weights). ``BaggingClassifier.fit``/``AdaBoostClassifier.fit`` call scikit-learn's
+  ``validate_data``, which turns a ``DataFrame`` into a positional array *before*
+  fitting each replica, and ``frame_tolerant`` only installed ``ArrayAsFrame`` in front
+  of the preset path's ``FoldLocalDataPreprocessor``. It now also wraps a pipeline
+  that starts with a ``category_encoders`` encoder, recovering the column order from
+  the fitted step (or the caller's feature list) and refusing a caller order that
+  disagrees with the fitted one — a positional relabelling in a different order would
+  attach the right names to the wrong columns. ``voting``/``averaging`` were never
+  affected (they pass the frame through).
+* **Fixed:** a *repeated* cross-validation splitter (``RepeatedKFold``,
+  ``RepeatedStratifiedKFold``, or a stored task CV with repeats — live: task ``SPRA``)
+  is now replayed on its **first pass only**. Each repeat is a complete partition, so
+  the earlier version of the out-of-fold replay wrote one value per repeat per row and
+  kept the last repeat's, fitting weights on a hybrid matrix no member produced;
+  refusing the request instead (the first guard) broke a legitimate stored CV with
+  ``400: The cross-validation splitter scores N sample(s) more than once``.
+  ``cross_val_predict`` refuses repeated splitters outright, which is why the replay is
+  the only route. The weight record now reports the folds the matrix came from
+  (``folds``) and flags ``repeated_folds_collapsed``.
+
+Backtesting a tabular task is refused where it is asked
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Fixed:** the Evaluation page offered the **Rolling-origin backtest** panel for
+  every task, so clicking it on a tabular task (live: ``SPRA``) queued a job that died
+  with ``ValueError: task 'SPRA' has no temporal spec; declare one with
+  SetTemporalSpec before backtesting``. A backtest is a forecast protocol — every fold
+  trains on a strictly earlier window and scores the next ``horizon`` steps — so
+  ``POST /api/evaluation/{task}/backtest`` now answers **400 at submit** with the
+  remedy (declare the time column on Datasets, or use Nested CV / Diagnostic curves)
+  and queues nothing; the Evaluation page reads ``temporal.declared`` from
+  ``GET /api/datasets/{task}`` and renders a short explanation card instead of the
+  form. ``mltrack.backtest``'s own guard is unchanged as the library-level check.
+
+Diagnostic curves draw hard-voting ensembles from member votes
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Fixed:** ``GET /api/evaluation/{task}/{version}/curves`` answered **500** with
+  ``AttributeError: 'VotingClassifier' object has no attribute 'decision_function'``
+  for a hard-voting ensemble bundle (live: task ``SPRA``, ``voting = hard``). The
+  gain/lift block called ``decision_function`` as its unguarded fallback, and
+  ``VotingClassifier(voting="hard")`` exposes neither ``predict_proba`` nor
+  ``decision_function``. A single ``_class_scores`` helper now resolves the per-row
+  score in order — probabilities, decision function, then the members' **vote
+  fractions** (whose argmax *is* the hard prediction) — and reports which one it used
+  as ``evaluation_protocol.score_source``. A two-member vote score is ``{0, 0.5, 1}``,
+  so the Evaluation panel says the curves are coarse and not calibrated probabilities.
+  A model with none of the three is refused with a message naming the remedy instead of
+  raising; the endpoint stays 200 and records per-curve errors as before.
+  Measured on the real ``SPRA`` bundle: AUC 0.702, four ROC thresholds, no errors.
+
+Experiments search space follows the task's problem type
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Fixed:** the Experiments page's Advanced “Search space” editor opened with the
+  classification default even for regression tasks — a regression search was
+  pre-filled with ``LogisticRegression`` and classifier estimators. It now
+  pre-fills from the task's effective problem type (declared on the Datasets page,
+  or picked in Quick start): regression opens on the library preset space
+  (RandomForest/ExtraTrees regressors); classification keeps its classic editor
+  default. An edited space is never clobbered — the pre-fill re-applies on a type
+  switch only until you edit it, and “Reset to <type> defaults” re-applies it
+  explicitly any time.
+* **Added:** ``GET /api/experiments/presets`` returns a ``default_config`` per
+  preset, derived from the same table that
+  :class:`~SKSurrogate.aml.AML`'s ``preset=...`` uses (``PRESET_PARAM_SPECS`` in
+  ``SKSurrogate.aml``), so the editor pre-fill and the library presets cannot
+  drift apart.
+
+Visual search-space editor
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Added:** a visual search-space editor on Experiments → Advanced — the raw
+  JSON textarea is now a **Raw** sub-tab beside a new **Visual** tab with a
+  server-curated component library (eight classifiers / eight regressors,
+  including XGBoost and LightGBM; three imbalanced-learn resamplers for
+  classification only; eight transformers shared by both, including SKSurrogate's
+  ``SensAprx`` and ``CorrelationThreshold``), per-hyperparameter range inputs
+  and value chips with *range ⇄ pinned* toggles, forbidden-rule rows and a
+  stacking checkbox. An untouched editor preselects the task's workhorses —
+  Random Forest, XGBoost, LightGBM (★ in the library) — for its problem type;
+  “Reset to <type> defaults” re-applies the server preset any time.
+* **Added:** ``GET /api/experiments/components`` serving that catalog with each
+  row's role and hyperparameter specs. Switching between the sub-tabs is lossless
+  in both directions: unknown FQNs round-trip verbatim (rendered read-only in
+  Visual mode) and conditional parameters keep their ``depends_on``, so raw-JSON
+  behavior is unchanged.
+
+Temporal declaration no longer 500s on timestamps outside the nanosecond range
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Fixed:** ``PUT /api/datasets/{task}/temporal`` answered ``500 Internal Server
+  Error`` (``OverflowError: Overflow when converting between datetime64 units``) for
+  any time column whose parsed values fall outside pandas' int64-nanosecond range
+  (1677-09-21 .. 2262-04-11). The reported case is a ``Month`` column of
+  ``1-Jan``/``1-Feb``/... labels: pandas 3 parses those to **year 1** (and keeps
+  ``datetime64[us]`` resolution), so the axis cast into nanoseconds overflowed deep
+  inside pandas. The declaration now answers **422** with the per-partition report and
+  an actionable message naming the parsed range and the fix ("values without a year
+  parse to year 1 — supply full dates or a numeric step index").
+* **Fixed:** timezone-aware timestamps are normalised to UTC before building the
+  int64 axis, so ``2026-01-01T00:00:00+02:00`` validates instead of failing on the
+  cast (the axis is UTC-based by definition).
+* **Fixed:** the temporal route also converts a residual ``OverflowError`` into a 400
+  rather than letting it escape as a server fault.
+* **Fixed:** registering an **empty CSV** crashed type deduction with
+  ``ZeroDivisionError`` (``DataPreprocess.is_categorical/is_bin`` divided by a
+  population of zero); a header-only upload now answers 400, and the library guards
+  the division so an all-missing *feature* column is typed instead of crashing.
+* **Fixed:** a **target column with no observed values** was accepted at
+  registration, leaving a task nothing can be modelled on; it now answers 400.
+
+Datetime columns: the declared type is real, and the feature is centred
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Fixed:** a column typed ``datetime64`` was only *labelled* datetime — the stored
+  CSV has no dtype, `load_partition` returned ``object``, and
+  ``FoldLocalDataPreprocessor`` fell through to one-hot encoding (one column per
+  distinct timestamp). The declaration is now stored with the dataset
+  (``dataset_deduced_types``) and the column is re-cast on load in every consumer
+  (training/baselines, preprocessing profiles and the encoding preview, sensitivity,
+  synthetic data, inference). A datetime64 override whose values do not parse is
+  refused at registration with the offending values.
+* **Changed:** datetime features are converted to **seconds relative to a fitted
+  anchor** (``DatetimeCentering``) instead of raw seconds since 1970. Raw epoch
+  seconds made an intercept-plus-slope design ill-conditioned
+  ($\operatorname{cond}\approx 6\times10^{11}$ versus $\approx 1$ centred), which
+  inflates coefficient variance and neutralises L2 penalties. The anchor is a
+  per-column ``min`` recorded in the fitted transformer (so it travels in the
+  bundle); subtraction happens in the column's own resolution, so year-1/year-1000
+  timestamps give a large finite value instead of an ``OverflowError``.
+* **Changed:** the AML search path now uses
+  ``FoldLocalDataPreprocessor(scale_numeric=True)`` like the baseline path, so
+  scale-sensitive candidates (ridge/SVR/kernel) no longer receive raw magnitudes.
+  Tree presets are invariant to it.
+* **Fixed:** ``DataPreprocess.encode()`` (and ``mltrack(encode=True)``) raised
+  ``UFuncTypeError`` for every datetime column on numpy >= 2 — ``DateTime2Num``
+  divided float seconds by a ``timedelta64``. ``DateTime2Num`` now accepts datetimes
+  *or* numeric seconds, uses the column's unit, and maps a constant column to the
+  lower bound instead of dividing by a zero span.
+
+Dead code removed from the AML search path
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Removed:** `AML._uses_preset_surrogates` — assigned in three places and read
+  nowhere (verified across the repo, including dynamic ``getattr`` lookups). The
+  behaviour it was meant to record is already available from
+  `_uses_implicit_surrogates` and `preset`.
+* **Removed:** an unused `from .structsearch import BoxSample, CompactSample` inside
+  `AML.eoa_fit`; sampling is resolved inside ``structsearch``, and neither name was
+  used in that method body (both remain public API).
+
+No behaviour change; the removal was verified against the AML, experiment and
+surrogate-diagnostic suites.
