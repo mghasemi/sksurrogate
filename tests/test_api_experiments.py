@@ -500,7 +500,17 @@ def test_components_endpoint_shape(client):
     rows = body["components"]
     assert isinstance(rows, list) and len(rows) >= 25
     for row in rows:
-        assert set(row) <= {"fqn", "name", "role", "task", "description", "params", "preselected"}
+        assert set(row) <= {
+            "fqn",
+            "name",
+            "role",
+            "task",
+            "description",
+            "params",
+            "preselected",
+            "available",
+            "install_extra",
+        }
         assert row["role"] in ("estimator", "transformer", "sampler")
         if row["role"] == "transformer":
             assert "task" not in row
@@ -508,6 +518,41 @@ def test_components_endpoint_shape(client):
             assert row.get("task") in ("classification", "regression")
         for spec in row["params"].values():
             assert spec["type"] in ("real", "integer", "categorical")
+
+
+def test_components_endpoint_reports_backend_availability(client, monkeypatch):
+    """Optional backends are flagged so the editor can disable the row.
+
+    ``available`` must track what is actually importable, and ``install_extra``
+    must name the pip extra — that pairing is what turns a failed job into an
+    actionable message in the UI.
+    """
+    rows = client.get("/api/experiments/components").json()["components"]
+    by_fqn = {r["fqn"]: r for r in rows}
+
+    # Core scikit-learn rows are always available and need no extra.
+    lr = by_fqn["sklearn.linear_model.LogisticRegression"]
+    assert lr["available"] is True and lr["install_extra"] is None
+
+    # An optional backend row carries the extra that provides it.
+    xgb = by_fqn["xgboost.XGBClassifier"]
+    assert xgb["install_extra"] == "xgboost"
+    assert isinstance(xgb["available"], bool)
+
+    # Simulate the backend being absent: the row stays in the catalog (so the
+    # UI can explain itself) but flips to unavailable.
+    import api.experiment_catalog as catalog
+    import SKSurrogate.deps as deps
+
+    real = deps.is_available
+    monkeypatch.setattr(
+        catalog, "is_available", lambda module: False if module == "xgboost" else real(module)
+    )
+    rows = client.get("/api/experiments/components").json()["components"]
+    by_fqn = {r["fqn"]: r for r in rows}
+    assert by_fqn["xgboost.XGBClassifier"]["available"] is False
+    assert by_fqn["xgboost.XGBRegressor"]["available"] is False
+    assert by_fqn["lightgbm.LGBMClassifier"]["available"] is real("lightgbm")
 
 
 def test_components_split_by_task(client):

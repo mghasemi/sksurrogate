@@ -10,6 +10,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from typing import Any
 
 from ._logutil import emit, get_logger
+from .deps import require
 
 logger = get_logger(__name__)
 
@@ -697,7 +698,6 @@ class AML(BaseEstimator):
 
         :return: None
         """
-        from importlib import import_module
         from sklearn.base import is_classifier, is_regressor
         from sklearn.feature_selection import SelectorMixin
 
@@ -705,7 +705,10 @@ class AML(BaseEstimator):
             if alg != "sklearn.pipeline.FeatureUnion":
                 detail = alg.split(".")
                 module_str = ".".join(detail[:-1])
-                module = import_module(module_str)
+                # Optional backends (xgboost, lightgbm, rgf, ...) are resolved
+                # here; a missing one raises MissingOptionalDependency naming
+                # the extra that installs it instead of a bare ImportError.
+                module = require(module_str, purpose=f"the pipeline component {alg!r}")
                 clss = module.__getattribute__(detail[-1])
                 mdl = self._new_estimator(clss)
                 if is_classifier(mdl):
@@ -903,11 +906,9 @@ class AML(BaseEstimator):
         :param library: string referring to a class
         :return: the actual class
         """
-        from importlib import import_module
-
         detail = library.split(".")
         module_str = ".".join(detail[:-1])
-        module = import_module(module_str)
+        module = require(module_str, purpose=f"the estimator {library!r}")
         clss = module.__getattribute__(detail[-1])
         return clss
 
@@ -1392,7 +1393,9 @@ class AML(BaseEstimator):
         if self.couldBfirst == []:
             from sklearn.pipeline import Pipeline
         else:
-            from imblearn.pipeline import Pipeline
+            Pipeline = require(
+                "imblearn.pipeline", purpose="an imbalanced-learn sampler in the pipeline"
+            ).Pipeline
         OPTIM = None
         n = len(seq)
         idx = 0
@@ -1411,7 +1414,9 @@ class AML(BaseEstimator):
                 # Trees are invariant to it, so presets are unaffected.
                 steps.append(("preprocess", FoldLocalDataPreprocessor(scale_numeric=True)))
         elif self.cat_cols is not None:
-            from category_encoders.one_hot import OneHotEncoder
+            OneHotEncoder = require(
+                "category_encoders.one_hot", purpose="encoding the cat_cols columns"
+            ).OneHotEncoder
 
             steps.append(
                 (
@@ -1463,7 +1468,9 @@ class AML(BaseEstimator):
                                 next_est
                             ][kw]
                     else:
-                        from eli5.sklearn import PermutationImportance
+                        PermutationImportance = require(
+                            "eli5.sklearn", purpose="the permutation-importance selector"
+                        ).PermutationImportance
                         from sklearn.feature_selection import SelectFromModel
                         from numpy import inf
 

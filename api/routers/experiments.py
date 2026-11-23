@@ -16,7 +16,7 @@ from SKSurrogate import save_bundle
 from SKSurrogate.aml import PRESET_ESTIMATOR_NAMES, PRESET_PARAM_SPECS
 
 from ..config import settings
-from ..experiment_catalog import EXPERIMENT_COMPONENTS
+from ..experiment_catalog import EXPERIMENT_COMPONENTS, annotate_availability
 from ..safety import safe_segment
 from ..deps import bad_request, open_tracker, task_access
 from ..partitions import resolve_partition
@@ -168,9 +168,12 @@ def components():
     One row per library entry (estimators tagged with their task type, plus
     shared transformers and classification-only resamplers); ``params`` are
     ready-to-submit search-space specs, so the UI renders exactly what it sends.
+    Rows also carry ``available`` / ``install_extra``: optional backends
+    (xgboost, lightgbm, rgf, ...) are not hard dependencies, so the editor greys
+    out rows the current environment cannot run and says which extra fixes it.
     Read-only: no ``task_name`` in the path, hence outside ACL scope like presets.
     """
-    return {"components": EXPERIMENT_COMPONENTS}
+    return {"components": annotate_availability()}
 
 
 @router.get("/scoring-options")

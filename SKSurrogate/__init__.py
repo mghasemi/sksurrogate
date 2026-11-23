@@ -131,7 +131,9 @@ from .ensembling import (
     validate_weight_optimization,
 )
 
-__version__ = "0.3.1"
+from .deps import MissingOptionalDependency, require
+
+__version__ = "0.4.0"
 
 __all__ = [
     "AML",
@@ -162,8 +164,10 @@ __all__ = [
     "Integer",
     "MaxGenTermination",
     "Measure",
+    "MissingOptionalDependency",
     "Mutation",
     "Real",
+    "require",
     "Regression",
     "RetrainingJob",
     "STANDARD_CV_SPLITTERS",
