@@ -177,7 +177,15 @@ def main():
     print("::notice::archived %s as %s" % (version, pub["doi"]))
     print("concept DOI: https://doi.org/%s" % pub["conceptdoi"])
     print("version DOI: https://doi.org/%s" % pub["doi"])
-    print("files: %s" % [f["filename"] for f in pub["files"]])
+    # The public record is InvenioRDM-shaped: file entries are `key`/`size`
+    # (`filename`/`filesize` on the legacy deposit endpoint) and may be wrapped
+    # under `files.entries`. A wrong shape here must not fail a job whose publish
+    # already succeeded.
+    entries = pub.get("files", [])
+    if isinstance(entries, dict):
+        entries = list(entries.get("entries", {}).values())
+    print("files: %s" % [(e.get("key") or e.get("filename"),
+                          e.get("size") or e.get("filesize")) for e in entries])
 
 
 if __name__ == "__main__":

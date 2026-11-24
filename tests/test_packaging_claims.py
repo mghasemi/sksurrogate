@@ -54,3 +54,21 @@ def test_setup_packages_exclude_the_control_plane():
         "install wording in readme.rst, docs/architecture.rst and "
         "requirements-api.txt and delete these guards"
     )
+
+
+def test_citation_records_the_shipped_version():
+    """CITATION.cff is what Zenodo and the site's /cite page mirror.
+
+    It drifted once already: the v0.8.0 tag shipped a citation file for 0.2.0,
+    which made a correct citation impossible to produce from the repository.
+    The DOI is deliberately not checked — it changes only when a release is
+    archived, which happens after the version bump.
+    """
+    init_py = (ROOT / "SKSurrogate" / "__init__.py").read_text(encoding="utf-8")
+    version = re.search(r'^__version__\s*=\s*"([^"]+)"', init_py, re.M).group(1)
+    cff = (ROOT / "CITATION.cff").read_text(encoding="utf-8")
+    cited = re.search(r'^version:\s*"?([^"\n]+)"?\s*$', cff, re.M).group(1).strip()
+    assert cited == version, (
+        f"CITATION.cff says version {cited}, the package says {version} — "
+        "bump CITATION.cff in the same commit as the version bump"
+    )
