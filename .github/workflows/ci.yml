@@ -253,7 +253,7 @@ jobs:
         run: python -m pytest tests/test_layer_boundaries.py -q
 
   bench-smoke:
-    name: "Benchmark smoke (ionosphere)"
+    name: "Benchmark smoke (galaxy3)"
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -266,7 +266,7 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt pytest pygments
           pip install .[benchmark]
-      - name: Run benchmark smoke subset (ionosphere, budget 8, 2 seeds)
+      - name: Run benchmark smoke subset (galaxy3, budget 8, 2 seeds)
         run: python -m benchmarks.run --smoke
       - name: Verify outputs exist
         run: |

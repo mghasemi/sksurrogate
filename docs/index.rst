@@ -46,6 +46,7 @@ Welcome to SKSurrogate's documentation!
    :caption: Benchmark studies:
 
    benchmarks
+   benchmarks-v2
    dtrack-study
 
 See also the :doc:`benchmark results <benchmarks>`, the
