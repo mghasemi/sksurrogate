@@ -11,6 +11,7 @@ Welcome to SKSurrogate's documentation!
    :caption: Contents:
 
    intro
+   workflow
    architecture
    surrogate
    search-contract
@@ -25,6 +26,7 @@ Welcome to SKSurrogate's documentation!
    mltrace
    forecasting
    modelbundles
+   model-comparison
    ensembles
    notebooks
    inference

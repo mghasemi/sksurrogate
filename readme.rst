@@ -50,10 +50,17 @@ Once a run has finished, ``SKSurrogate`` explains *what* the fitted model depend
 - **Model explanations**: permutation importance, partial dependence, and accumulated local
   effects for a stored model bundle show which features drive its predictions globally, while
   an exact row-level explanation reconstructs one prediction from its baseline as ordered
-  feature contributions. Available through the control plane (``explain``, ``ale`` and
-  ``explain/row`` endpoints) and in the web UI; see the
-  `control-plane guide <https://sksurrogate.readthedocs.io/en/latest/controlplane.html>`_ and the
-  `scientific workflow guide <https://sksurrogate.readthedocs.io/en/latest/mltrace.html>`_.
+  feature contributions. Every response carries the explained quantity, the model's
+  provenance, a checked reconstruction status, an out-of-distribution flag for rows, and
+  grouped/stability-checked importance for correlated features. Available through the
+  control plane (``explain``, ``ale`` and ``explain/row`` endpoints) and in the web UI; see
+  the `control-plane guide <https://sksurrogate.readthedocs.io/en/latest/controlplane.html>`_
+  and the `scientific workflow guide <https://sksurrogate.readthedocs.io/en/latest/mltrace.html>`_.
+- **Paired model comparison**: refits stored bundles on one shared fold list and reports
+  oriented deltas with percentile bootstrap intervals, Holm-adjusted Wilcoxon p-values,
+  Cliff's ordinal effect size, a score/complexity/cost Pareto front and calibration — with
+  the exploratory-selection caveat stated in the payload. See the
+  `model-comparison guide <https://sksurrogate.readthedocs.io/en/latest/model-comparison.html>`_.
 - **Sensitivity analysis**: Sobol, Morris, and moment-independent δ indices quantify which
   inputs dominate output variance — useful for pruning expensive models or diagnosing a tuned
   pipeline. See the `sensitivity analysis guide <https://sksurrogate.readthedocs.io/en/latest/sensitivity.html>`_.
