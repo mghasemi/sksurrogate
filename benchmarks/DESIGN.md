@@ -426,8 +426,11 @@ benchmarks/
 - Full suite estimate: ~30 evals × 3 active methods × 7 seeds × 6 datasets ≈ 3,800 candidate
   fits; largest dataset n=5,620 with RF(n_estimators=50) → **order 1–3 h on a laptop** (single
   command: `python -m benchmarks.run --dataset all`). Documented as an overnight/laptop run.
-- CI (`--smoke` job, added in B2): ionosphere only, budget 8, seeds 2, RF n_estimators=10 →
-  < ~3 min on ubuntu-latest (2 vCPU). Keeps "reproducible" honest without bloating PR feedback.
+- CI (`--smoke` job, added in B2): the bundled **galaxy3** set only (no OpenML download and no
+  API credential), budget 8, seeds 2, RF n_estimators=10 → < ~3 min on ubuntu-latest (2 vCPU).
+  Keeps "reproducible" honest without bloating PR feedback; the OpenML loader has hermetic unit
+  tests. Full runs need `OPENML_API_KEY` in the environment (openml 0.15 masks it; the downloader
+  restores the real value).
 - Full suite: manual dispatch + weekly schedule (public repo ⇒ free GitHub runners); results are
   re-run and diffed against the committed aggregates for drift detection.
 
