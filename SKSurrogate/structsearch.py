@@ -93,18 +93,20 @@ class BaseSample(object):
     :param contraction: **optional** (default=.0); the contraction factor which must be a positive real less than 1.
     :param ineq: **optional**; a list of functions whose positivity region will be the acceptable condition.
     :param bounds: **optional**; the list of (ordered) tuples determining the bound of each component.
+    :param rng: **optional**; a ``numpy.random.Generator``. A private generator is created when it is
+        omitted, so a sampler never draws from the global ``random``/``numpy.random`` state.
     """
 
     def __init__(self, **kwargs):
-        import random
+        from numpy.random import default_rng
 
         self.init_radius = kwargs.get("init_radius", 2.0)
         self.contraction = kwargs.get("contraction", 0.9)
         if self.contraction >= 1:
-            raise "`contraction` factor must be between 0. and 1."
+            raise ValueError("`contraction` factor must be between 0. and 1.")
         self.ineqs = kwargs.pop("ineq", [])
         self.bounds = kwargs.pop("bounds", None)
-        self.rng = kwargs.get("rng", random)
+        self.rng = kwargs.get("rng") or default_rng()
 
     def check_constraints(self, point):
         """
@@ -239,6 +241,55 @@ def _resolve_continue_flag(legacy, canonical):
     return legacy if canonical is None else canonical
 
 
+#: Random streams a search derives from one ``random_state``. Kept separate so that
+#: changing how the starting point is drawn cannot silently reroute the sampling
+#: path (and vice versa) of an otherwise identical experiment.
+RNG_STREAM_NAMES = ("init_candidate", "sampling")
+
+
+def make_rng_streams(random_state, names=RNG_STREAM_NAMES):
+    """Derive independent ``numpy.random.Generator`` streams from ``random_state``.
+
+    :param random_state: ``None`` (fresh entropy), an ``int``, a
+        ``numpy.random.Generator`` or a ``numpy.random.RandomState`` — the same
+        values scikit-learn accepts on its estimators.
+    :param names: stream names; the last one receives the caller's generator when a
+        ``Generator`` is supplied, so an external generator keeps driving the search.
+    :return: ``dict`` mapping each name to a ``numpy.random.Generator``.
+
+    The streams are children of one :class:`numpy.random.SeedSequence`, so a single
+    seed reproduces all of them, and no stream can perturb another. Nothing here
+    touches the global ``random`` / ``numpy.random`` state.
+    """
+    from numbers import Integral
+
+    from numpy.random import Generator, RandomState, SeedSequence, default_rng
+
+    names = tuple(names)
+    caller_generator = None
+    if isinstance(random_state, Generator):
+        caller_generator = random_state
+        seed_sequence = SeedSequence(int(caller_generator.integers(0, 2 ** 63 - 1)))
+    elif isinstance(random_state, RandomState):
+        seed_sequence = SeedSequence(int(random_state.randint(0, 2 ** 31 - 1)))
+    elif random_state is None:
+        seed_sequence = SeedSequence()
+    elif isinstance(random_state, Integral):
+        seed_sequence = SeedSequence(int(random_state))
+    else:
+        raise TypeError(
+            "random_state must be None, an int, a numpy.random.Generator or a "
+            "numpy.random.RandomState; got %r" % (random_state,)
+        )
+    streams = {
+        name: default_rng(child)
+        for name, child in zip(names, seed_sequence.spawn(len(names)))
+    }
+    if caller_generator is not None:
+        streams[names[-1]] = caller_generator
+    return streams
+
+
 def resolve_sampling(sampling):
     """Return a sampler class from a class or one of ``"box"``, ``"sphere"``, ``"compact"``."""
     if isinstance(sampling, str):
@@ -259,10 +310,19 @@ class SurrogateSearch(object):
 
     :param objective: a `callable`, the function to be minimized
     :param ineq: a list of callables which represent the constraints (default: [])
-    :param task_name: `str` a name to refer to the optimization task, store & restore previously acquired
-        (default: 'optim_task')
+    :param task_name: `str` optional name used to checkpoint and resume this search. When it is
+        omitted (default) nothing is written to disk, so a library user's working directory stays
+        untouched; pass ``checkpoint_dir`` to choose where the checkpoint lives.
+    :param checkpoint_dir: `str` optional directory for the checkpoint written when ``task_name`` is given.
+    :param rng: optional ``numpy.random.Generator`` used for sampling. When omitted, one is derived from
+        ``random_state`` together with the starting-point stream (see :func:`make_rng_streams`).
+    :param surrogate_fit_error: ``"degrade"`` (default) records a surrogate fit/prediction/optimizer
+        failure and falls back to exploration for that round; ``"raise"`` aborts the search on the
+        first such failure (the pre-0.6 behaviour).
     :param bounds: a list of tuples of real numbers representing the bounds on each variable; default: None
-    :param max_iter: `int` the maximum number of iterations (default: 50)
+    :param max_iter: `int` the evaluation budget: the number of objective evaluations to spend,
+        counting the initial candidate (default: 50). Rounds are not evaluations - a round whose
+        surrogate fit or acquisition fails spends none and is charged to the no-progress counter.
     :param radius: `float` the initial radius of sampling region (default: 2.)
     :param contraction: `float` the rate of radius contraction (default: .9)
     :param sampling: the sampling method either `BoxSample` or `SphereSample` (default `SphereSample`)
@@ -290,11 +350,12 @@ class SurrogateSearch(object):
     def __init__(self, objective, **kwargs):
         from numpy import inf
         from scipy.special import binom
-        import random
 
         self.objective = objective
         self.random_state = kwargs.pop("random_state", None)
-        self.rng = random.Random(self.random_state)
+        # A caller that already derived streams passes the sampling one in; otherwise
+        # derive both here so a standalone SurrogateSearch is reproducible too.
+        self.rng = kwargs.pop("rng", None) or make_rng_streams(self.random_state)["sampling"]
         # Both spellings are accepted: ``ineq`` is the documented name on the sampler
         # and ``ineqs`` is what SurrogateRandomCV forwards, which used to be dropped
         # silently here (no constraints ever reached the sampler or the optimizer).
@@ -321,16 +382,28 @@ class SurrogateSearch(object):
             rng=self.rng,
         )
         self.iteration = 0
+        self.n_rounds = 0
         self.verbose = kwargs.pop("verbose", False)
         self.MaxIterNoProg = kwargs.pop("max_itr_no_prog", inf)
         self.NumIterNoProg = 0
         self.x0 = kwargs.pop("x0", None)
+        self.x0_pending = self.x0 is not None
         self.evaluated = []
         self.sampling_sources_ = []
         self._next_eval_phase = None
         self.NumFailedLocOptim = 0
         # init data storing protocol
-        self.TaskName = kwargs.pop("task_name", "optim_task")
+        self.TaskName = kwargs.pop("task_name", None)
+        self.checkpoint_dir = kwargs.pop("checkpoint_dir", None)
+        #: ``"degrade"`` (default) records a surrogate failure, falls back to
+        #: exploration for that round and keeps going; ``"raise"`` restores the
+        #: pre-0.6 behaviour of aborting the search on the first failure.
+        self.surrogate_fit_error = kwargs.pop("surrogate_fit_error", "degrade")
+        if self.surrogate_fit_error not in ("degrade", "raise"):
+            raise ValueError(
+                "surrogate_fit_error must be 'degrade' or 'raise'; got %r"
+                % (self.surrogate_fit_error,)
+            )
         legacy_continue = kwargs.pop("Continue", False)
         canonical_continue = kwargs.pop("continue_", None)
         self.Continue = _resolve_continue_flag(legacy_continue, canonical_continue)
@@ -338,18 +411,26 @@ class SurrogateSearch(object):
         self.optimizer = kwargs.get("optimizer", "scipy")
         self.__load()
         if self.x0 is not None:
-            self._next_eval_phase = "init"
-            val = self.objective(self.x0)
-            self.evaluated.append([self.x0, val])
-            self.sampling_sources_.append("init")
-            self.current = self.x0
-            self.current_val = val
             n_ = len(self.x0)
         else:
             n_ = 1
+        # The starting point is evaluated by ``__call__``, not here: one place spends
+        # the evaluation budget, and constructing a search never calls the objective.
+        if self.evaluated:
+            self.current = self.evaluated[-1][0]
+            self.current_val = self.evaluated[-1][1]
+        else:
+            self.current = None
+            self.current_val = inf
         self.search_sphere = kwargs.pop("search_sphere", False)
         poly_deg = kwargs.pop("deg", 3)
-        self.MinEvals = kwargs.pop("min_evals", binom(n_ + poly_deg, n_))
+        requested_min_evals = kwargs.pop("min_evals", None)
+        self.min_evals_source = "user" if requested_min_evals is not None else "default"
+        self.MinEvals = (
+            requested_min_evals
+            if requested_min_evals is not None
+            else binom(n_ + poly_deg, n_)
+        )
         requested_regressor = kwargs.pop("regressor", None)
         self.regressor = requested_regressor
         regressor_source = "user" if requested_regressor is not None else "default"
@@ -374,15 +455,21 @@ class SurrogateSearch(object):
 
             self.regressor = GaussianProcessRegressor()
             new_n_evals = binom(n_ + 3, n_)
-            if self.MinEvals < new_n_evals:
+            # The floor is a *default*: an explicitly requested ``min_evals`` is honoured
+            # exactly, because silently raising it made "fire the surface after k points"
+            # mean something else than the caller asked for.
+            if self.min_evals_source == "default" and self.MinEvals < new_n_evals:
                 self.MinEvals = new_n_evals
         regressor_type = type(self.regressor)
         self.surrogate_info_ = {
             "regressor": "%s.%s" % (regressor_type.__module__, regressor_type.__qualname__),
             "source": regressor_source,
             "min_evals": int(self.MinEvals),
+            "min_evals_source": self.min_evals_source,
+            "fit_error_policy": self.surrogate_fit_error,
             "automatic_fallback": None,
             "fit_attempts": 0,
+            "acquisition_attempts": 0,
             "fit_failures": 0,
             "prediction_failures": 0,
             "local_optimization_failures": 0,
@@ -391,23 +478,52 @@ class SurrogateSearch(object):
         self.surrogate_fit_history_ = self.surrogate_info_["fit_history"]
         self.other = kwargs
 
+    def __checkpoint_path(self):
+        """Path of this run's checkpoint, or ``None`` when persistence is off."""
+        from os.path import join
+
+        if not self.TaskName:
+            return None
+        if self.checkpoint_dir:
+            return join(self.checkpoint_dir, self.TaskName + ".pkl")
+        return self.TaskName + ".pkl"
+
     def __save(self):
         """
         Logs state of the optimization progress at each iteration
         :return: None
         """
+        import os
         from pickle import dumps
+        from tempfile import mkstemp
 
-        fl = open(self.TaskName + ".pkl", "wb")
+        path = self.__checkpoint_path()
+        if path is None:
+            # No task name: a library user's working directory stays untouched.
+            return
         data2store = dict(
             iteration=self.iteration,
+            n_rounds=self.n_rounds,
             evaluated=self.evaluated,
             current=self.current,
             current_val=self.current_val,
             sampling_sources=self.sampling_sources_,
         )
-        fl.write(dumps(data2store))
-        fl.close()
+        directory = os.path.dirname(os.path.abspath(path))
+        os.makedirs(directory, exist_ok=True)
+        # Atomic replace: a crash or a parallel reader must never see a half-written
+        # checkpoint (the previous version truncated the real file in place).
+        handle, temp_path = mkstemp(dir=directory, prefix=".checkpoint-", suffix=".tmp")
+        try:
+            with os.fdopen(handle, "wb") as stream:
+                stream.write(dumps(data2store))
+            os.replace(temp_path, path)
+        except BaseException:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+            raise
 
     def __load(self):
         """
@@ -417,12 +533,14 @@ class SurrogateSearch(object):
         from pickle import loads
 
         restored_data = {}
-        try:
-            fl = open(self.TaskName + ".pkl", "rb")
-            restored_data = loads(fl.read())
-            fl.close()
-        except FileNotFoundError:
-            pass
+        path = self.__checkpoint_path()
+        if path is not None:
+            try:
+                fl = open(path, "rb")
+                restored_data = loads(fl.read())
+                fl.close()
+            except FileNotFoundError:
+                pass
         expected_dimension = len(self.bounds) if self.bounds is not None else None
         restored_current = restored_data.get("current")
         if expected_dimension is not None and restored_current is not None:
@@ -487,249 +605,251 @@ class SurrogateSearch(object):
         self.optimizer = self.other.pop("optimizer", "scipy")
         self.scipy_solver = self.other.pop("scipy_solver", "COBYLA")
 
+    def __record_evaluation(self, point, phase, value):
+        """Append one objective evaluation and update the incumbent.
+
+        The single place where an evaluation enters the run: it keeps the four
+        counters consistent (``evaluated`` and ``sampling_sources_`` grow together,
+        which the checkpoint format and the audit bundle both rely on) and it owns
+        the no-progress bookkeeping, so no path can evaluate without being counted.
+        """
+        self.evaluated.append([point, value])
+        self.sampling_sources_.append(phase)
+        if self.current is None:
+            # First incumbent: neither progress nor a failure to improve. Without this
+            # branch a run whose every evaluation is +inf (all folds failing) would
+            # keep ``current`` at None and crash while sampling around it.
+            self.current = point
+            self.current_val = value
+            return
+        if value < self.current_val:
+            self.NumIterNoProg = 0
+            if self.verbose > 0:
+                emit(logging.INFO, "NEW CANDIDATE")
+            self.current = point
+            self.current_val = value
+        else:
+            self.NumIterNoProg += 1
+
+    def __evaluate(self, point, phase):
+        """Evaluate ``point`` as the round's candidate."""
+        self._next_eval_phase = phase
+        value = self.objective(point)
+        self.__record_evaluation(point, phase, value)
+
     def __iterate(self, x0):
         """
-        Repeat a round of optimization.
-        :param x0: init point for the iteration
-        :return: None
+        Runs one round of the search: explore, or fit the surface and exploit it.
+
+        :param x0: the round's sampled point
+        :return: ``str`` the phase that was evaluated, or ``"acquisition_failed"``
+            when the round produced no evaluation (surrogate fit, prediction or the
+            local optimizer failed and the failure policy is not ``"raise"``).
         """
         from numpy import sqrt, array, isfinite
 
-        close_points = []
         X = []
         y = []
-        n_close_points = 0
         n_ = len(x0)
-        for p in self.evaluated:
-            if not isfinite(p[1]):
+        for point, value in self.evaluated:
+            if not isfinite(value):
                 continue
             if self.search_sphere:
-                cur = p[0] - x0
-                distance = sqrt(sum([t ** 2 for t in cur]))
-                if distance <= self.radius:
-                    close_points.append(tuple(list(p[0]) + [p[1]]))
-                    X.append(p[0])
-                    y.append(p[1])
-                    n_close_points += 1
-            else:
-                close_points.append(tuple(list(p[0]) + [p[1]]))
-                X.append(p[0])
-                y.append(p[1])
-                n_close_points += 1
+                distance = sqrt(sum([(point[i] - x0[i]) ** 2 for i in range(n_)]))
+                if distance > self.radius:
+                    continue
+            X.append(point)
+            y.append(value)
+        n_close_points = len(X)
 
-        if n_close_points >= self.MinEvals:
+        if n_close_points < self.MinEvals:
             if self.verbose > 1:
                 emit(
                     logging.DEBUG,
-                    "Found enough number of points (%d) for approximation."
-                    % n_close_points,
+                    "Not enough points for approximation (%d < %d); exploring."
+                    % (n_close_points, self.MinEvals),
                 )
-            fit_record = {
-                "iteration": int(self.iteration),
-                "training_points": int(n_close_points),
-                "fit_status": "started",
-                "optimization_status": "not_run",
-            }
-            self.surrogate_fit_history_.append(fit_record)
-            self.surrogate_info_["fit_attempts"] += 1
+            self.__evaluate(x0, "explore")
+            self.iteration += 1
+            return "explore"
+
+        if self.verbose > 1:
+            emit(
+                logging.DEBUG,
+                "Found enough number of points (%d) for approximation."
+                % n_close_points,
+            )
+        fit_record = {
+            "iteration": int(self.iteration),
+            "training_points": int(n_close_points),
+            "fit_status": "started",
+            "optimization_status": "not_run",
+        }
+        self.surrogate_fit_history_.append(fit_record)
+        self.surrogate_info_["fit_attempts"] += 1
+
+        def __degrade(stage, exc):
+            """Record a failed round and fall back to plain exploration."""
+            self.surrogate_info_["acquisition_attempts"] += 1
+            self.NumFailedLocOptim += 1
+            if self.surrogate_fit_error == "raise":
+                raise exc
+            emit(
+                logging.WARNING,
+                "Surrogate %s failed at round %d (%s: %s); exploring instead "
+                "(surrogate_fit_error='degrade')."
+                % (stage, self.iteration, type(exc).__name__, exc),
+            )
+            # Same phase as a plain exploration round: the degradation is recorded
+            # in surrogate_fit_history_, and the public phase vocabulary stays the
+            # documented ``init`` / ``explore`` / ``surrogate_exploit``.
+            self.__evaluate(x0, "explore")
+            self.iteration += 1
+            return "explore"
+
+        try:
+            self.regressor.fit(array(X), array(y))
+        except Exception as exc:
+            fit_record.update(
+                fit_status="failed",
+                failure_stage="fit",
+                failure_type=type(exc).__name__,
+            )
+            self.surrogate_info_["fit_failures"] += 1
+            return __degrade("fit", exc)
+        fit_record["fit_status"] = "complete"
+        # In-sample fidelity of the surrogate itself. Records how well the response
+        # surface explains the observed scores so far; a new key only, existing
+        # fit_record keys are left untouched.
+        surrogate_scorer = getattr(self.regressor, "score", None)
+        fit_score = None
+        if callable(surrogate_scorer):
             try:
-                self.regressor.fit(array(X), array(y))
+                candidate_fit_score = float(surrogate_scorer(array(X), array(y)))
+            except Exception:
+                candidate_fit_score = None
+            if candidate_fit_score is not None and isfinite(candidate_fit_score):
+                fit_score = candidate_fit_score
+        fit_record["fit_score"] = fit_score
+
+        def apprx(x):
+            try:
+                prediction = array(self.regressor.predict(array([x])))
+                if prediction.size != 1 or not isfinite(float(prediction.reshape(-1)[0])):
+                    raise ValueError(
+                        "Surrogate predictions must contain exactly one finite value"
+                    )
             except Exception as exc:
                 fit_record.update(
-                    fit_status="failed",
-                    failure_stage="fit",
+                    status="failed",
+                    failure_stage="predict",
                     failure_type=type(exc).__name__,
                 )
-                self.surrogate_info_["fit_failures"] += 1
+                self.surrogate_info_["prediction_failures"] += 1
                 emit(
-                    logging.WARNING,
-                    "Surrogate fit failed at iteration %d: %s: %s"
+                    logging.ERROR,
+                    "Surrogate prediction failed at round %d: %s: %s"
                     % (self.iteration, type(exc).__name__, exc),
                 )
                 raise
-            fit_record["fit_status"] = "complete"
-            # In-sample fidelity of the surrogate itself (Commit B1). Records how
-            # well the response surface explains the observed scores so far; a new
-            # key only, existing fit_record keys are left untouched.
-            surrogate_scorer = getattr(self.regressor, "score", None)
-            fit_score = None
-            if callable(surrogate_scorer):
-                try:
-                    candidate_fit_score = float(surrogate_scorer(array(X), array(y)))
-                except Exception:
-                    candidate_fit_score = None
-                if candidate_fit_score is not None and isfinite(candidate_fit_score):
-                    fit_score = candidate_fit_score
-            fit_record["fit_score"] = fit_score
+            return float(prediction.reshape(-1)[0])
 
-            def apprx(x):
-                try:
-                    prediction = array(self.regressor.predict(array([x])))
-                    if prediction.size != 1 or not isfinite(float(prediction.reshape(-1)[0])):
-                        raise ValueError(
-                            "Surrogate predictions must contain exactly one finite value"
-                        )
-                except Exception as exc:
-                    fit_record.update(
-                        status="failed",
-                        failure_stage="predict",
-                        failure_type=type(exc).__name__,
-                    )
-                    self.surrogate_info_["prediction_failures"] += 1
-                    emit(
-                        logging.ERROR,
-                        "Surrogate prediction failed at iteration %d: %s: %s"
-                        % (self.iteration, type(exc).__name__, exc),
-                    )
-                    raise
-                return float(prediction.reshape(-1)[0])
-
-            cns = []
-            if self.search_sphere:
-                r = self.radius * (self.contraction ** int(self.NumFailedLocOptim / 2))
-                cns_f = lambda x, x_=x0, r_=r: r_ ** 2 - sum(
-                    [(x[i] - x_[i]) ** 2 for i in range(n_)]
+        cns = []
+        if self.search_sphere:
+            r = self.radius * (self.contraction ** int(self.NumFailedLocOptim / 2))
+            cns_f = lambda x, x_=x0, r_=r: r_ ** 2 - sum(
+                [(x[i] - x_[i]) ** 2 for i in range(n_)]
+            )
+            cns = [{"type": "ineq", "fun": cns_f}]
+        for inq in self.ineqs:
+            cns.append({"type": "ineq", "fun": inq})
+        self.surrogate_info_["acquisition_attempts"] += 1
+        try:
+            min_res = self.__round_optim(apprx, x0, cns)
+        except Exception as exc:
+            if "failure_stage" not in fit_record:
+                fit_record.update(
+                    status="failed",
+                    failure_stage="local_optimization",
+                    failure_type=type(exc).__name__,
                 )
-                cns = [{"type": "ineq", "fun": cns_f}]
-            for inq in self.ineqs:
-                cns.append({"type": "ineq", "fun": inq})
-            try:
-                min_res = self.__round_optim(apprx, x0, cns)
-            except Exception as exc:
-                if "failure_stage" not in fit_record:
-                    fit_record.update(
-                        status="failed",
-                        failure_stage="local_optimization",
-                        failure_type=type(exc).__name__,
-                    )
-                raise
-            x_0 = min_res.x
-            if min_res.success:
-                fit_record["optimization_status"] = "success"
-                self.NumFailedLocOptim = 0
-                try:
-                    self._next_eval_phase = "surrogate_exploit"
-                    val = self.objective(x_0)
-                    self.evaluated.append([x_0, val])
-                    self.sampling_sources_.append("surrogate_exploit")
-                    if self.verbose > 1:
-                        emit(
-                            logging.DEBUG,
-                            """Minimum point of the approximation: %s;\nThe objective's value: %f;\nThe surrogate\
-                             value %f"""
-                            % (str(x_0), val, min_res.fun),
-                        )
-                    if val < self.current_val:
-                        self.NumIterNoProg = 0
-                        if self.verbose > 0:
-                            emit(logging.INFO, "NEW CANDIDATE")
-                        self.current = x_0
-                        self.current_val = val
-                    else:
-                        self.NumIterNoProg += 1
-                except ValueError:
-                    self.NumIterNoProg += 1
-                    self.NumFailedLocOptim += 1
-                    if self.verbose > 1:
-                        emit(logging.DEBUG, """Error in function evaluation.""")
-                    return
-            else:
-                fit_record["optimization_status"] = "failed"
-                fit_record["optimizer_status"] = getattr(min_res, "status", None)
                 self.surrogate_info_["local_optimization_failures"] += 1
-                self.NumFailedLocOptim += 1
-                if self.verbose > 1:
-                    emit(logging.DEBUG, "The local optimization was not successful.")
-        else:
-            self._next_eval_phase = "explore"
-            val = self.objective(x0)
-            self.evaluated.append([x0, val])
-            self.sampling_sources_.append("explore")
+            return __degrade("local optimization", exc)
+
+        if not min_res.success:
+            # A round that produced no evaluation still advances the run: it is
+            # charged to the no-progress counter, so a surface that keeps failing
+            # can never consume the budget silently.
+            fit_record["optimization_status"] = "failed"
+            fit_record["optimizer_status"] = getattr(min_res, "status", None)
+            self.surrogate_info_["local_optimization_failures"] += 1
+            self.NumFailedLocOptim += 1
+            self.NumIterNoProg += 1
             if self.verbose > 1:
-                emit(
-                    logging.DEBUG,
-                    """New point sampled: %s;\nThe objective's value: %f"""
-                    % (str(x0), val),
-                )
-            if val < self.current_val:
-                self.NumIterNoProg = 0
-                if self.verbose > 0:
-                    emit(logging.INFO, "NEW CANDIDATE")
-                self.current = x0
-                self.current_val = val
-            else:
-                self.NumIterNoProg += 1
+                emit(logging.DEBUG, "The local optimization was not successful.")
+            self.iteration += 1
+            return "acquisition_failed"
+
+        fit_record["optimization_status"] = "success"
+        self.NumFailedLocOptim = 0
+        x_0 = min_res.x
+        try:
+            self._next_eval_phase = "surrogate_exploit"
+            val = self.objective(x_0)
+        except ValueError as exc:
+            # A candidate the objective refuses (domain error) is not an evaluation;
+            # the round is charged to the no-progress counter instead.
+            self.NumIterNoProg += 1
+            self.NumFailedLocOptim += 1
+            if self.surrogate_fit_error == "raise":
+                raise
+            if self.verbose > 1:
+                emit(logging.DEBUG, "Error in function evaluation: %s" % (exc,))
+            self.iteration += 1
+            return "acquisition_failed"
+        self.__record_evaluation(x_0, "surrogate_exploit", val)
+        if self.verbose > 1:
+            emit(
+                logging.DEBUG,
+                """Minimum point of the approximation: %s;\nThe objective's value: %f;\nThe surrogate
+                 value %f"""
+                % (str(x_0), val, min_res.fun),
+            )
         if self.verbose > 1:
             emit(logging.DEBUG, "==========" * 8)
         self.iteration += 1
+        return "surrogate_exploit"
 
-    def __call__(self, *args, **kwargs):
+    def __budget(self):
+        """Effective evaluation budget: ``min(n_iter, max_evals)``.
+
+        ``n_iter`` is the number of candidate evaluations the caller asked for and
+        ``max_evals`` a hard cap, so a cap below the request binds first and a cap
+        above it does not silently extend the run.
         """
-        Runs the structured random search.
-        :return: the best minimum point and value
-        """
-        pbar = None
-        # try:
-        #    from tqdm import tqdm
-        # except ImportError:
-        #    tqdm = None
-        from math import log
+        if self.max_evals is None:
+            return int(self.MaxIter)
+        return int(min(int(self.MaxIter), int(self.max_evals)))
+
+    def __summarise(self, started):
         from time import monotonic
 
-        started = monotonic()
-        self.termination_reason = None
-        self.summary_ = {}
-        # if tqdm is not None:
-        if self.verbose > 0:
-            # pbar = tqdm(total=self.MaxIter)
-            # pbar.update(self.iteration)
-            emit(
-                logging.INFO, "Iteration {m} / {n}".format(m=self.iteration, n=self.MaxIter)
-            )
-        self.__optim_param()
-        while self.iteration <= self.MaxIter:
-            if self.time_limit is not None and monotonic() - started >= self.time_limit:
-                self.termination_reason = "time_limit"
-                break
-            if self.max_evals is not None and len(self.evaluated) >= self.max_evals:
-                self.termination_reason = "max_evals"
-                break
-            if self.verbose > 1:
-                emit(logging.DEBUG, "Iteration # %d" % self.iteration)
-                emit(logging.DEBUG, "----------" * 8)
-            new_point = self.Sampling.sample(
-                self.current,
-                cntrctn=self.contraction
-                        ** (self.NumFailedLocOptim + log(self.iteration + 1)),
-            )
-            self.__iterate(new_point)
-            if self.NumIterNoProg > self.MaxIterNoProg:
-                emit(
-                    logging.WARNING,
-                    "Search stopped after %d iterations without improvement."
-                    % self.NumIterNoProg,
-                )
-                self.termination_reason = "max_iter_no_progress"
-                break
-            # if tqdm is not None:
-            if self.verbose > 0:
-                emit(logging.INFO, "End of iteration.")
-                # pbar.update(1)  # update the progressbar
-            self.__save()  # save the progress
-        if self.termination_reason is None:
-            self.termination_reason = "max_iter" if self.iteration >= self.MaxIter else "completed"
         elapsed = monotonic() - started
+        self.n_rounds = int(self.iteration)
         self.summary_ = {
             "termination_reason": self.termination_reason,
-            "status": "terminated" if self.termination_reason != "completed" else "completed",
+            "status": "completed" if self.termination_reason in ("n_iter", "max_evals") else "terminated",
             "budget": {
                 "time_limit": self.time_limit,
+                "n_iter": int(self.MaxIter),
                 "max_evals": self.max_evals,
                 "cpu_limit": self.cpu_limit,
                 "memory_limit": self.memory_limit,
                 "elapsed_seconds": elapsed,
-                "iterations": self.iteration,
+                "rounds": int(self.iteration),
                 "evaluations": len(self.evaluated),
+                "acquisition_calls": int(self.surrogate_info_.get("acquisition_attempts", 0)),
+                "surrogate_fits": int(self.surrogate_info_.get("fit_attempts", 0)),
             },
             "current_value": getattr(self, "current_val", None),
             "surrogate": self.surrogate_info_,
@@ -754,6 +874,80 @@ class SurrogateSearch(object):
                     int(self.surrogate_info_.get("fit_attempts", 0)),
                 ),
             )
+
+    def __call__(self, *args, **kwargs):
+        """
+        Runs the structured random search.
+        :return: the best minimum point and value
+        """
+        from math import log
+        from time import monotonic
+
+        started = monotonic()
+        self.termination_reason = None
+        self.summary_ = {}
+        self.__optim_param()
+        budget = self.__budget()
+        if self.verbose > 0:
+            # Kept as "Iteration m / n" for console compatibility; ``m`` is the
+            # number of evaluations already spent and ``n`` the evaluation budget.
+            emit(logging.INFO, "Iteration {m} / {n}".format(m=len(self.evaluated), n=budget))
+        # Rounds are not evaluations: a round whose acquisition fails spends none, so
+        # a permanently failing surface would spin forever without this ceiling.
+        max_rounds = 2 * budget + 10
+        try:
+            if self.x0_pending and not self.evaluated:
+                self.x0_pending = False
+                self.__evaluate(self.x0, "init")
+            while len(self.evaluated) < budget:
+                if self.time_limit is not None and monotonic() - started >= self.time_limit:
+                    self.termination_reason = "time_limit"
+                    break
+                if self.iteration >= max_rounds:
+                    self.termination_reason = "acquisition_failed"
+                    break
+                if self.verbose > 1:
+                    emit(logging.DEBUG, "Round # %d" % self.iteration)
+                    emit(logging.DEBUG, "----------" * 8)
+                new_point = self.Sampling.sample(
+                    self.current,
+                    cntrctn=self.contraction
+                    ** (self.NumFailedLocOptim + log(self.iteration + 1)),
+                )
+                self.__iterate(new_point)
+                if self.verbose > 0:
+                    emit(logging.INFO, "End of iteration.")
+                if self.NumIterNoProg > self.MaxIterNoProg:
+                    emit(
+                        logging.WARNING,
+                        "Search stopped after %d rounds without improvement."
+                        % self.NumIterNoProg,
+                    )
+                    self.termination_reason = "max_iter_no_progress"
+                    break
+                self.__save()
+            if self.termination_reason is None:
+                # Documented precedence: when the budget runs out *and* the clock is
+                # already past the limit at that moment, time was the binding
+                # constraint (a zero or very small time_limit must report itself
+                # rather than being masked by an equally exhausted evaluation budget).
+                if self.time_limit is not None and monotonic() - started >= self.time_limit:
+                    self.termination_reason = "time_limit"
+                else:
+                    budget_is_max_evals = (
+                        self.max_evals is not None
+                        and int(self.max_evals) <= int(self.MaxIter)
+                    )
+                    self.termination_reason = (
+                        "max_evals" if budget_is_max_evals else "n_iter"
+                    )
+        except SearchStopped:
+            # A pause/cancel is not a failure: record where it landed, then let the
+            # caller persist and offer a resume.
+            self.termination_reason = "stopped"
+            self.__summarise(started)
+            raise
+        self.__summarise(started)
         return self.current, self.current_val
 
     def progress(self):
@@ -929,9 +1123,9 @@ class SurrogateRandomCV(BaseSearchCV):
         carries no direction, and the search would minimize its negation —
         maximizing a loss. Wrap it: ``make_scorer(fn, greater_is_better=False)``.
     :param max_iter: int, default=50
-        Number of parameter settings that are sampled. max_iter trades
-        off runtime vs quality of the solution. Consider increasing
-        ``n_points`` if you want to try more parameter settings in parallel.
+        **Number of candidate evaluations** (scikit-learn's ``n_iter``). The initial
+        candidate counts toward it; with ``max_evals`` unset, a search records exactly
+        ``n_iter`` evaluations. ``n_iter`` is an accepted alias.
     :param min_evals: int, default=25; Number of random evaluations before employing an approximation for the
         response surface.
     :param regressor: scikit-learn-style regressor used to fit the surrogate response surface;
@@ -976,6 +1170,18 @@ class SurrogateRandomCV(BaseSearchCV):
         this RandomizedSearchCV instance after fitting.
     :param verbose: int, default=0
         Prints internal information about the progress of each iteration.
+    :param random_state: int, ``numpy.random.Generator``, ``numpy.random.RandomState`` or None, default=None
+        Seeds two independent streams - the starting point (``init_candidate``) and the
+        sampling path (``sampling``) - derived from one :class:`numpy.random.SeedSequence`.
+        Same seed, same data, same budget and same library versions reproduce the same
+        candidate sequence, in one process and across processes. Fitting never touches
+        the global ``random``/``numpy.random`` state. The *estimator's* randomness is not
+        seeded by the search: pass ``estimator__random_state`` if it is stochastic.
+    :param task_name: str, optional; enables checkpoint/resume. When omitted (default)
+        nothing is written to disk.
+    :param checkpoint_dir: str, optional; directory for that checkpoint.
+    :param surrogate_fit_error: ``"degrade"`` (default) or ``"raise"``; see
+        :class:`SurrogateSearch`.
     :param callbacks: callable or iterable of callables, default=None
         Called with one event dictionary per evaluated candidate: the trial record
         plus a zero-based ``trial`` index and the optimizer's ``phase``
@@ -1007,7 +1213,9 @@ class SurrogateRandomCV(BaseSearchCV):
             search_sphere=False,
             optimizer="scipy",
             scipy_solver="SLSQP",
-            task_name="optim_task",
+            task_name=None,
+            checkpoint_dir=None,
+            surrogate_fit_error="degrade",
             warm_start=True,
             Continue=False,
             max_itr_no_prog=10000,
@@ -1064,6 +1272,8 @@ class SurrogateRandomCV(BaseSearchCV):
         self.optimizer = optimizer
         self.scipy_solver = scipy_solver
         self.task_name = task_name
+        self.checkpoint_dir = checkpoint_dir
+        self.surrogate_fit_error = surrogate_fit_error
         self.warm_start = warm_start
         self.Continue = resolved_continue
         self.max_itr_no_prog = max_itr_no_prog
@@ -1145,7 +1355,16 @@ class SurrogateRandomCV(BaseSearchCV):
                 }
                 continue
             if value_type not in {"integer", "real"}:
-                raise ValueError("Unsupported search space type for %r: %r" % (name, value_type))
+                if hasattr(parameter, "rvs"):
+                    raise ValueError(
+                        "Search parameter %r is a scipy.stats distribution, which this "
+                        "search does not sample from. Pass an explicit list, a "
+                        "(low, high) tuple, or Integer/Real/Categorical." % (name,)
+                    )
+                raise ValueError(
+                    "Unsupported search space type for %r: %r"
+                    % (name, getattr(parameter, "VType", type(parameter).__name__))
+                )
             lower = parameter.lower
             upper = parameter.upper
             if lower > upper:
@@ -1245,6 +1464,12 @@ class SurrogateRandomCV(BaseSearchCV):
         pipeline.set_params(**parameters)
         features = X
         for _, transformer in pipeline.steps[:-1]:
+            if hasattr(transformer, "fit_resample") and not hasattr(transformer, "transform"):
+                # A sampler (e.g. imblearn's SMOTE) resamples rows and has no
+                # ``transform``; under ``imblearn.pipeline.Pipeline`` it is routed
+                # through ``fit_resample`` and cannot remove features. Treating it as
+                # broken preprocessing rejected every sampler-first pipeline.
+                continue
             try:
                 if hasattr(transformer, "fit_transform"):
                     features = transformer.fit_transform(features, y)
@@ -1298,6 +1523,56 @@ class SurrogateRandomCV(BaseSearchCV):
             elif transformer is not None and not hasattr(transformer, "fit"):
                 raise ValueError("Pipeline final step %r must implement fit" % name)
 
+    def _format_cv_results(self, test_scores, ranks):
+        """Assemble ``cv_results_`` in scikit-learn's column layout.
+
+        The ``param_*``, ``mean_test_score``, ``std_test_score``,
+        ``split<i>_test_score``, ``rank_test_score`` and ``mean_fit_time`` columns
+        follow the ``BaseSearchCV`` contract, so tooling that reads search results
+        works against this class. The remaining columns (``loss``, ``status``,
+        ``error``, ``duration``, ``failure_records``) are sksurrogate-specific and
+        report the trial-level diagnostics the search records.
+        """
+        from numpy import nan, nanstd
+
+        history = self.evaluation_history_
+        n_trials = len(history)
+        split_columns = {}
+        for position, item in enumerate(history):
+            for fold, fold_score in enumerate(item.get("fold_scores") or []):
+                key = "split%d_test_score" % fold
+                column = split_columns.setdefault(key, [nan] * n_trials)
+                column[position] = fold_score
+        std_test_score = []
+        mean_fit_time = []
+        for item in history:
+            fold_scores = [value for value in (item.get("fold_scores") or []) if value is not None]
+            std_test_score.append(
+                float(nanstd(fold_scores)) if len(fold_scores) > 1 else nan
+            )
+            fold_times = [
+                value for value in (item.get("fold_fit_times") or []) if value is not None
+            ]
+            mean_fit_time.append(
+                float(sum(fold_times)) / len(fold_times) if fold_times else nan
+            )
+        results = {
+            "params": [item["params"] for item in history],
+            "mean_test_score": test_scores,
+            "std_test_score": std_test_score,
+            "rank_test_score": ranks,
+            "mean_fit_time": mean_fit_time,
+            "loss": [item["score"] for item in history],
+            "status": [item["status"] for item in history],
+            "duration": [item["duration"] for item in history],
+            "error": [item["error"] for item in history],
+            "failure_records": [item.get("failure_records", []) for item in history],
+        }
+        for name in self.params_list:
+            results["param_%s" % name] = [item["params"].get(name) for item in history]
+        results.update(split_columns)
+        return results
+
     def fit(self, X, y=None, groups=None, **fit_params):
         """
         Run fit with all sets of parameters.
@@ -1312,7 +1587,6 @@ class SurrogateRandomCV(BaseSearchCV):
             Parameters passed to the fit method of the estimator
         :return: `self`
         """
-        from random import uniform
         from numpy import array, unique, sqrt
         from sklearn.base import clone, is_classifier
         from sklearn.metrics import check_scoring
@@ -1321,6 +1595,19 @@ class SurrogateRandomCV(BaseSearchCV):
 
         self._validate_search_space()
         self._validate_pipeline_structure()
+        if isinstance(self.scoring, dict):
+            raise ValueError(
+                "multi-metric scoring (scoring=dict) is not supported by "
+                "SurrogateRandomCV: pass one scorer name or make_scorer object. A "
+                "multi-metric search needs a `refit=<metric>` contract that this "
+                "searcher does not implement, and silently scoring one metric while "
+                "reporting another is worse than refusing."
+            )
+        # ``fit``'s keyword arguments (``sample_weight`` and friends) were accepted and
+        # then dropped: every fold and the refit received only ``self.fit_params``.
+        # Merge once, use everywhere, and keep the merged mapping for introspection.
+        self.fit_params_ = dict(self.fit_params or {})
+        self.fit_params_.update(fit_params or {})
         callbacks = self.callbacks
         if callbacks is None:
             callbacks = []
@@ -1332,8 +1619,13 @@ class SurrogateRandomCV(BaseSearchCV):
         radius_list = []
         # A bare callable has no sign: negating it would turn a loss into a score
         # to maximize. Fail here, before any fit, with guidance.
-        self.scoring = check_scoring_direction(self.scoring)
-        self.scorer_ = check_scoring(self.estimator, scoring=self.scoring)
+        # Resolved once into fitted attributes: assigning back onto ``self.scoring``
+        # made ``get_params`` differ before and after ``fit`` and broke ``clone``.
+        self.scoring_ = check_scoring_direction(self.scoring)
+        self.scorer_ = check_scoring(self.estimator, scoring=self.scoring_)
+        # Two independent streams: the starting point and the sampling path.
+        self.rng_streams_ = make_rng_streams(self.random_state)
+        init_rng = self.rng_streams_["init_candidate"]
         target_classes = []
         if y is not None:
             target_classes = unique(y)
@@ -1356,7 +1648,7 @@ class SurrogateRandomCV(BaseSearchCV):
                     else:
                         x0_.append(self._encode_value(param_num_range, self.init[param]))
                 else:
-                    x0_.append(uniform(lower, upper))
+                    x0_.append(init_rng.uniform(lower, upper))
                 if param_num_range.VType == "categorical":
                     self.bounds.append(param_num_range.bound_tuple)
                 else:
@@ -1374,17 +1666,35 @@ class SurrogateRandomCV(BaseSearchCV):
                         x0_.append(self.init[param][i])
                     else:
                         x0_.append(
-                            uniform(
+                            init_rng.uniform(
                                 param_num_range.bound_tuple[i][0],
                                 param_num_range.bound_tuple[i][1],
                             )
                         )
                 self.bounds = self.bounds + list(param_num_range.bound_tuple)
-        if self.radius is None:
+        # ``radius`` is an __init__ parameter: resolving it must not overwrite it,
+        # or ``get_params`` changes between two ``clone`` calls around a fit.
+        radius = self.radius
+        if radius is None:
             rds = 0.0
             for r in radius_list:
                 rds += r ** 2
-            self.radius = sqrt(rds)
+            radius = sqrt(rds)
+        self.radius_ = radius
+        if int(self.min_evals) > int(self.max_iter_):
+            from warnings import warn
+
+            warn(
+                "min_evals=%d exceeds the evaluation budget n_iter=%d: the response "
+                "surface can never fire, so this search is a pure random-search "
+                "ablation. Set n_iter > min_evals for a surrogate-assisted search."
+                % (int(self.min_evals), int(self.max_iter_)),
+                UserWarning,
+                stacklevel=2,
+            )
+            self._surface_never_fires = True
+        else:
+            self._surface_never_fires = False
         self.x0 = array(x0_)
         self.bounds = tuple(self.bounds)
         cv_dat = list(cv.split(X, y, groups))
@@ -1505,6 +1815,7 @@ class SurrogateRandomCV(BaseSearchCV):
                         fit_params=fit_params_,  #
                         score_params={},
                         error_score=error_score,  #
+                        return_times=True,
                     )
                     if _score.get("fit_error") is not None:
                         fit_error = _score["fit_error"]
@@ -1521,6 +1832,7 @@ class SurrogateRandomCV(BaseSearchCV):
                         "score": _score["test_scores"],
                         "error": None,
                         "duration": perf_counter() - fold_started,
+                        "fit_time": _score.get("fit_time"),
                         "failure_type": None,
                         "failure_message": None,
                         "failure_traceback": None,
@@ -1554,7 +1866,7 @@ class SurrogateRandomCV(BaseSearchCV):
                                                                 test=test,
                                                                 fold=fold,
                                                                 verbose=self.verbose,
-                                                                fit_params_=self.fit_params,
+                                                                fit_params_=self.fit_params_,
                                                                 error_score=self.error_score
                                                                 )
                                     for fold, (train, test) in enumerate(cv_dat))
@@ -1614,6 +1926,9 @@ class SurrogateRandomCV(BaseSearchCV):
                 "error": "; ".join(errors) if errors else None,
                 "partial_folds": n_test,
                 "failure_records": failure_records,
+                # Per-fold detail: cv_results_ mirrors scikit-learn's split columns.
+                "fold_scores": [result["score"] for result in scores],
+                "fold_fit_times": [result.get("fit_time") for result in scores],
             }
             self.evaluation_history_.append(record)
             _notify_trial(record)
@@ -1636,7 +1951,10 @@ class SurrogateRandomCV(BaseSearchCV):
             ineqs=self.ineqs,
             bounds=self.bounds,
             verbose=self.verbose,
-            radius=self.radius,
+            radius=self.radius_,
+            rng=self.rng_streams_["sampling"],
+            surrogate_fit_error=self.surrogate_fit_error,
+            checkpoint_dir=self.checkpoint_dir,
             regressor=self.regressor,
             sampling=self.sampling,
             search_sphere=self.search_sphere,
@@ -1656,7 +1974,13 @@ class SurrogateRandomCV(BaseSearchCV):
             min_partial_folds=self.min_partial_folds,
         )
         self.surrogate_info_ = self.OPTIM.surrogate_info_
+        # A surface that cannot fire inside the budget is a documented, reported state
+        # (it is a legitimate random-search ablation), not something to infer silently.
+        self.surrogate_info_["surface_never_fires"] = bool(self._surface_never_fires)
         x, scr = self.OPTIM()
+        self.n_evaluations_ = len(self.evaluation_history_)
+        self.n_rounds_ = int(getattr(self.OPTIM, "n_rounds", 0) or 0)
+        self.n_surrogate_fits_ = int(self.surrogate_info_.get("fit_attempts", 0))
         best_params_ = {}
         idx = 0
         for param in self.params_list:
@@ -1696,32 +2020,6 @@ class SurrogateRandomCV(BaseSearchCV):
             for item in self.evaluation_history_
             if item.get("score") is not None and isfinite(item["score"])
         ]
-        if not feasible:
-            self.best_estimator_ = clone(self.estimator)
-            self.best_params_ = {}
-            self.best_estimator_score = float("inf")
-            self.best_score_ = float("-inf")
-        else:
-            if not isfinite(scr) or self._forbidden_reason(best_params_) is not None:
-                best_trial = min(feasible, key=lambda item: item["score"])
-                best_params_ = {
-                    name: value
-                    for name, value in best_trial["params"].items()
-                    if name in self.params_list
-                }
-                scr = best_trial["score"]
-            self.best_estimator_ = clone(self.estimator).set_params(**best_params_)
-            self.best_params_ = dict(best_params_)
-            if self.refit is not False:
-                # Refit the best estimator on the full dataset so it can be used for
-                # prediction/scoring (mirrors sklearn's BaseSearchCV refit behavior;
-                # uses the same fit_params as the CV folds above).
-                refit_kwargs = dict(self.fit_params or {})
-                self.best_estimator_.fit(X, y, **refit_kwargs)
-            # best_estimator_score is the minimized loss; best_score_ follows the
-            # scikit-learn convention (higher is better).
-            self.best_estimator_score = scr
-            self.best_score_ = -scr
         self.termination_reason = getattr(self.OPTIM, "termination_reason", None)
         self.summary_ = getattr(self.OPTIM, "summary_", {})
         losses = [item["score"] for item in self.evaluation_history_]
@@ -1733,16 +2031,49 @@ class SurrogateRandomCV(BaseSearchCV):
         for position, index in enumerate(ranked, start=1):
             ranks[index] = position
         self.best_index_ = ranked[0] if ranked else None
-        self.cv_results_ = {
-            "params": [item["params"] for item in self.evaluation_history_],
-            "mean_test_score": test_scores,
-            "rank_test_score": ranks,
-            "loss": losses,
-            "status": [item["status"] for item in self.evaluation_history_],
-            "duration": [item["duration"] for item in self.evaluation_history_],
-            "error": [item["error"] for item in self.evaluation_history_],
-            "failure_records": [item.get("failure_records", []) for item in self.evaluation_history_],
-        }
+        self.cv_results_ = self._format_cv_results(test_scores, ranks)
+        if not feasible:
+            self.best_params_ = {}
+            self.best_estimator_score = float("inf")
+            self.best_score_ = float("-inf")
+            if self.refit is not False:
+                # Nothing was feasible. Expose an *unfitted* clone so callers can still
+                # inspect the searched pipeline's structure, and flag it: a placeholder
+                # must never be mistaken for a fitted model (``best_score_`` is -inf
+                # and ``best_estimator_is_placeholder`` is True).
+                self.best_estimator_ = clone(self.estimator)
+                self.best_estimator_is_placeholder = True
+        else:
+            if not isfinite(scr) or self._forbidden_reason(best_params_) is not None:
+                best_trial = min(feasible, key=lambda item: item["score"])
+                best_params_ = {
+                    name: value
+                    for name, value in best_trial["params"].items()
+                    if name in self.params_list
+                }
+                scr = best_trial["score"]
+            self.best_params_ = dict(best_params_)
+            # best_estimator_score is the minimized loss; best_score_ follows the
+            # scikit-learn convention (higher is better).
+            self.best_estimator_score = scr
+            self.best_score_ = -scr
+            self.best_estimator_is_placeholder = False
+            refit_kwargs = dict(self.fit_params_)
+            if callable(self.refit):
+                # scikit-learn's callable refit receives ``cv_results_`` and returns
+                # the estimator to store; it was previously treated as ``True``.
+                self.best_estimator_ = self.refit(self.cv_results_)
+            elif self.refit is not False:
+                # Refit the best estimator on the full dataset so it can be used for
+                # prediction/scoring (mirrors sklearn's BaseSearchCV refit behavior;
+                # uses the same fit_params as the CV folds above).
+                best_estimator = clone(self.estimator).set_params(**best_params_)
+                best_estimator.fit(X, y, **refit_kwargs)
+                self.best_estimator_ = best_estimator
+            elif hasattr(self, "best_estimator_"):
+                # ``refit=False`` means "do not fit a final model": no attribute, as
+                # in scikit-learn, so ``predict`` raises instead of running unfitted.
+                del self.best_estimator_
         estimator_name = self.estimator.__class__.__name__
         failed_trials = [item for item in self.evaluation_history_ if item["status"] == "failed"]
         self.failure_summary_ = {

@@ -11,7 +11,9 @@ Welcome to SKSurrogate's documentation!
    :caption: Contents:
 
    intro
+   architecture
    surrogate
+   search-contract
    telemetry
    hilbert
    sensitivity

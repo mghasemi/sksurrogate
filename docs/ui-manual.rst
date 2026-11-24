@@ -631,7 +631,15 @@ error. Use **Optimize this structure** to tune one of the returned component
 sequences; the run uses the page's outgoing scorer (the task's problem type decides
 it when none is picked), so a regression structure is scored by negative RMSE
 rather than by a classification metric no fold can compute. A completed search
-creates a bundle that appears in **Model Bundles**.
+creates a bundle that appears in **Model Bundles**; its result panel also shows a
+**Leakage checks** card. The card reports duplicate rows shared by the training
+and validation partitions, single columns that predict the target almost
+perfectly inside training (a candidate for a target-derived or identifier
+field), and monotone datetime columns that call for a temporal split. These are
+advisory: they qualify the score, they never remove data, and the split remains
+the analyst's decision. A score from a tuned search is exploratory — the
+unbiased estimate is the nested cross-validation on the Evaluation page — and
+the run report states that distinction in its header.
 Use **Jobs** to inspect job status and details; failed experiment jobs may offer a
 resume action when a checkpoint allows it.
 

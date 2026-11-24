@@ -149,7 +149,7 @@ setup(
         # future major rename would need a code change, not a silent upgrade.
         "mcp": ["httpx>=0.27", "mcp>=2.3,<3"],
         # ---- developer / CI ----------------------------------------------
-        "test": ["pytest", "pygments"],
+        "test": ["pytest", "pygments", "hypothesis>=6.100"],
         # Everything CI and the Docker image run, minus the deliberately
         # enormous `automl` arm (AutoGluon + PyTorch).
         "all": (

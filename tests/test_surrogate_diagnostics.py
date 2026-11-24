@@ -62,7 +62,8 @@ def test_surrogate_search_accepts_continue_alias(tmp_path):
         )
 
 
-def test_surrogate_fit_error_is_recorded_and_propagated_without_fallback(tmp_path):
+def test_surrogate_fit_error_degrades_the_round_to_exploration(tmp_path):
+    """A failed fit costs one round, not the whole search (default policy)."""
     search = SurrogateSearch(
         lambda point: point[0] ** 2,
         x0=[0.0],
@@ -75,17 +76,44 @@ def test_surrogate_fit_error_is_recorded_and_propagated_without_fallback(tmp_pat
         random_state=0,
     )
 
+    best_point, best_value = search()
+
+    assert search.surrogate_info_["automatic_fallback"] is None
+    assert search.surrogate_info_["fit_attempts"] >= 1
+    assert search.surrogate_info_["fit_failures"] >= 1
+    assert search.surrogate_fit_history_[0]["failure_stage"] == "fit"
+    assert search.surrogate_fit_history_[0]["failure_type"] == "RuntimeError"
+    # The budget is still spent: a failed fit must not shorten the run.
+    assert len(search.evaluated) == 3
+    assert search.summary_["budget"]["evaluations"] == 3
+    assert search.termination_reason in ("n_iter", "max_evals")
+    # Degradation never invents a surrogate prediction: only sampled points exist.
+    assert set(search.sampling_sources_) <= {"init", "explore"}
+
+
+def test_surrogate_fit_error_raises_when_policy_is_raise(tmp_path):
+    """``surrogate_fit_error="raise"`` keeps the pre-0.6 abort-on-failure behaviour."""
+    search = SurrogateSearch(
+        lambda point: point[0] ** 2,
+        x0=[0.0],
+        bounds=[(-1.0, 1.0)],
+        max_iter=3,
+        min_evals=1,
+        max_evals=3,
+        regressor=FailingRegressor(),
+        surrogate_fit_error="raise",
+        task_name=str(tmp_path / "failed-fit-raise"),
+        random_state=0,
+    )
+
     with pytest.raises(RuntimeError, match="intentional surrogate fit failure"):
         search()
 
-    assert search.surrogate_info_["fit_attempts"] == 1
     assert search.surrogate_info_["fit_failures"] == 1
-    assert search.surrogate_info_["automatic_fallback"] is None
     assert search.surrogate_fit_history_[0]["failure_stage"] == "fit"
-    assert search.surrogate_fit_history_[0]["failure_type"] == "RuntimeError"
 
 
-def test_non_finite_surrogate_prediction_is_recorded_and_propagated(tmp_path):
+def test_non_finite_surrogate_prediction_degrades_the_round(tmp_path):
     search = SurrogateSearch(
         lambda point: point[0] ** 2,
         x0=[0.0],
@@ -98,12 +126,32 @@ def test_non_finite_surrogate_prediction_is_recorded_and_propagated(tmp_path):
         random_state=0,
     )
 
+    search()
+
+    assert search.surrogate_info_["prediction_failures"] >= 1
+    assert search.surrogate_fit_history_[0]["failure_stage"] == "predict"
+    assert search.surrogate_fit_history_[0]["failure_type"] == "ValueError"
+    assert len(search.evaluated) == 3
+
+
+def test_non_finite_surrogate_prediction_raises_when_policy_is_raise(tmp_path):
+    search = SurrogateSearch(
+        lambda point: point[0] ** 2,
+        x0=[0.0],
+        bounds=[(-1.0, 1.0)],
+        max_iter=3,
+        min_evals=1,
+        max_evals=3,
+        regressor=NonFiniteRegressor(),
+        surrogate_fit_error="raise",
+        task_name=str(tmp_path / "non-finite-prediction-raise"),
+        random_state=0,
+    )
+
     with pytest.raises(ValueError, match="exactly one finite value"):
         search()
 
     assert search.surrogate_info_["prediction_failures"] == 1
-    assert search.surrogate_fit_history_[0]["failure_stage"] == "predict"
-    assert search.surrogate_fit_history_[0]["failure_type"] == "ValueError"
 
 
 def test_surrogate_random_cv_exposes_default_regressor_diagnostics(tmp_path):

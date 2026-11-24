@@ -275,6 +275,8 @@ def submit_experiment(task_name, body, *, checkpoint_job_id=None, run_id=None):
             bundles_dir = settings.task_bundles_dir(task_name)
             bundles_dir.mkdir(parents=True, exist_ok=True)
             bundle_path = save_bundle(bundle, bundles_dir / (safe_segment(bundle.model_version, "model version") + ".bundle"))
+            bundle_metadata = getattr(bundle, "metadata", None) or {}
+            bundle_manifest = getattr(bundle, "manifest", None) or {}
             return {
                 "model_version": bundle.model_version,
                 "bundle_path": str(bundle_path),
@@ -282,6 +284,16 @@ def submit_experiment(task_name, body, *, checkpoint_job_id=None, run_id=None):
                 "evaluation_history": evaluation_history,
                 "top_pipelines": top_pipelines,
                 "pareto": pareto,
+                # Advisory leakage diagnostics for this split: duplicate rows
+                # across partitions, single-column target-leakage candidates and
+                # a monotone-datetime hint. Shown next to the score, not instead
+                # of it.
+                "leakage_warnings": (
+                    (bundle_metadata.get("reproducibility") or {}).get(
+                        "leakage_warnings", {}
+                    )
+                ),
+                "manifest_digest": bundle_manifest.get("manifest_digest"),
                 # Scores above follow scikit-learn's higher-is-better convention
                 # (-RMSE for an error metric); this block tells a reader which
                 # quantity that is and which direction wins.

@@ -77,6 +77,8 @@ def _markdown(task_name, generated_at, models, history=None):
         "- Task: %s" % task_name,
         "- Generated: %s (UTC)" % generated_at,
         "- All explanations describe fitted models, not causal effects.",
+        "- Model scores are exploratory unless the run record names an unbiased "
+        "nested-CV protocol: a score from the data used to select the model is optimistic.",
         "- Each diagnostic uses the settings and reference scope recorded below.",
     ]
     for model in models:
@@ -95,6 +97,8 @@ def _summary_markdown(task_name, generated_at, models, history=None):
         "- Task: %s" % task_name,
         "- Generated: %s (UTC)" % generated_at,
         "- Model scores and response scales need not be comparable.",
+        "- Stored scores are exploratory unless the run record names an unbiased "
+        "nested-CV protocol.",
         "- Explain response profiles require at least two finite grid/response pairs; interval plots require finite preview points.",
         "- The appendix previews large collections; complete diagnostic results, settings, sampling information and errors are in results.json in the source ZIP.",
     ]

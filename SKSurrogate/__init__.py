@@ -86,7 +86,16 @@ from .DataProcess import DataPreprocess, FoldLocalDataPreprocessor
 from .ci import BundleQualityGateError, assert_bundle_quality, check_bundle_quality
 from .deployment import DeploymentApprovalGate
 from .execution import DaskExecutionBackend, ExecutionBackend, LocalProcessExecutionBackend
-from .modelbundle import ModelBundle, ModelRegistry, export_mlflow, load_bundle, save_bundle
+from .modelbundle import (
+    BundleIntegrityError,
+    ModelBundle,
+    ModelRegistry,
+    export_mlflow,
+    load_bundle,
+    save_bundle,
+    verify_bundle,
+)
+from .manifest import ExperimentManifest, MANIFEST_SCHEMA_VERSION
 from .inference import SchemaValidationError, create_app, predict_batch, predict_batch_forecast, serve
 from .monitoring import (
     InferenceMonitor,
@@ -251,6 +260,10 @@ __all__ = [
     "np2df",
     "load_bundle",
     "save_bundle",
+    "verify_bundle",
+    "BundleIntegrityError",
+    "ExperimentManifest",
+    "MANIFEST_SCHEMA_VERSION",
     "ENSEMBLE_METHODS",
     "EnsembleError",
     "SampleWeightRouter",

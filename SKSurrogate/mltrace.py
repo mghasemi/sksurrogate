@@ -873,18 +873,40 @@ class mltrack(object):
             pass
 
     def _register_environment_metadata(self):
-        """Record interpreter and core dependency versions for reproducibility."""
+        """Record interpreter, dependency, hardware and git facts for reproducibility.
+
+        The flat ``*_version`` keys are the historical contract and stay in place;
+        the additive keys (``scipy_version`` and the optional backends only when
+        installed, ``git_revision``/``git_dirty``, ``hardware``) let a manifest
+        reader reconstruct the environment without touching the database schema.
+        """
         import importlib.metadata
         import platform
 
+        from .manifest import git_revision, hardware_snapshot
+
+        def version(package):
+            try:
+                return importlib.metadata.version(package)
+            except importlib.metadata.PackageNotFoundError:
+                return None
+
+        hardware = hardware_snapshot()
+        revision = git_revision()
         metadata = {
             "python_version": platform.python_version(),
             "numpy_version": importlib.metadata.version("numpy"),
             "pandas_version": importlib.metadata.version("pandas"),
             "scikit_learn_version": importlib.metadata.version("scikit-learn"),
             "sksurrogate_version": importlib.metadata.version("SKSurrogate"),
+            "scipy_version": version("scipy"),
+            "xgboost_version": version("xgboost"),
+            "lightgbm_version": version("lightgbm"),
+            "git_revision": revision.get("revision"),
+            "git_dirty": revision.get("dirty"),
+            "hardware": hardware,
         }
-        self.UpdateMetadata(metadata)
+        self.UpdateMetadata({key: value for key, value in metadata.items() if value is not None})
 
     def UpdateMetadata(self, metadata):
         """Create or replace JSON-serializable task metadata values."""

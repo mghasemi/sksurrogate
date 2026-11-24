@@ -66,7 +66,9 @@ def test_console_output_is_preserved_when_logging_is_unconfigured(capsys, tmp_pa
     out = capsys.readouterr().out
     lines = out.splitlines()
     assert "Iteration 0 / 4" in lines
-    assert lines.count("End of iteration.") == 5
+    # max_iter=4 is a budget of four *evaluations*: the initial candidate plus three
+    # rounds, so three round-completion lines (it was five before the budget fix).
+    assert lines.count("End of iteration.") == 3
     # Byte-identical fallback: no logging prefix/level is added to the message.
     assert all(not line.startswith("INFO:") for line in lines)
 
@@ -317,7 +319,8 @@ class _BrokenRegressor:
         return np.zeros(len(X))
 
 
-def test_surrogate_fit_failure_is_logged_as_warning_before_raising(tmp_path, caplog):
+def test_surrogate_fit_failure_is_logged_as_warning_and_degrades(tmp_path, caplog):
+    """The default policy warns, then continues by exploring (see search-contract)."""
     X, y = _data()
     search = SurrogateRandomCV(
         Ridge(),
@@ -331,11 +334,29 @@ def test_surrogate_fit_failure_is_logged_as_warning_before_raising(tmp_path, cap
     )
 
     with caplog.at_level(logging.WARNING, logger="SKSurrogate.structsearch"):
-        with pytest.raises(RuntimeError, match="intentional surrogate fit failure"):
-            search.fit(X, y)
+        search.fit(X, y)
 
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert any("Surrogate fit failed" in record.getMessage() for record in warnings)
+    assert len(search.evaluation_history_) == 3
+
+
+def test_surrogate_fit_failure_raises_under_the_strict_policy(tmp_path):
+    X, y = _data()
+    search = SurrogateRandomCV(
+        Ridge(),
+        params={"alpha": (0.1, 10.0)},
+        max_iter=3,
+        min_evals=1,
+        n_jobs=1,
+        random_state=0,
+        regressor=_BrokenRegressor(),
+        surrogate_fit_error="raise",
+        task_name=str(tmp_path / "warning-fit-raise"),
+    )
+
+    with pytest.raises(RuntimeError, match="intentional surrogate fit failure"):
+        search.fit(X, y)
 
 
 def test_no_progress_termination_is_logged_as_warning(tmp_path, caplog):

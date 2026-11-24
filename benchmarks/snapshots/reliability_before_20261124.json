@@ -1,0 +1,47 @@
+{
+  "branch": "fix/reliability-p0",
+  "commit": "424ae9d16324b6d152d98417d9623939e825cd88",
+  "defects_this_snapshot_pins": {
+    "budget_off_by_one": {
+      "evidence": "requested max_iter -> recorded evaluations: 3 -> 5, 5 -> 7 (one init-candidate evaluation + MaxIter+1 loop rounds)",
+      "existing_workaround": "benchmarks/methods.py:241-268 passes max_iter=4*budget, max_evals=budget",
+      "source": "SKSurrogate/structsearch.py:342,690"
+    },
+    "initial_candidate_uses_global_rng": {
+      "evidence": "two SurrogateRandomCV(random_state=0).fit() calls in one process produced different first candidates: {'max_depth': 3, 'min_samples_leaf': 0.1} vs {'max_depth': 7, 'min_samples_leaf': 0.1}",
+      "source": "SKSurrogate/structsearch.py:1315,1359,1377"
+    }
+  },
+  "environment": {
+    "hypothesis": "6.170.17",
+    "numpy": "2.5.3",
+    "pandas": "2.3.3",
+    "platform": "Linux-7.2.15-76070215-generic-x86_64-with-glibc2.39",
+    "pytest": "9.1.1",
+    "python": "3.13.13",
+    "scikit-learn": "1.9.1",
+    "scipy": "1.18.1",
+    "sksurrogate_installed_dist": "0.3.1",
+    "sksurrogate_module_path": "/home/mehdi/Code/Python/sksurrogate-rel-p0/SKSurrogate/__init__.py",
+    "sksurrogate_source_version": "0.4.0"
+  },
+  "snapshot": "reliability_before_fix",
+  "suite": {
+    "collected": 1248,
+    "command": "env -u PYTHONPATH <venv>/bin/python -m pytest tests -q --no-header",
+    "duration_s": 405.43,
+    "failed": 1,
+    "known_failures": [
+      {
+        "cause": "environment drift, not a code defect: the shared .venv still carries the sksurrogate 0.3.1 editable dist-info while the tree declares 0.4.0, so sksurrogate_mcp.__version__ (from installed metadata) != SKSurrogate.__version__ (from source). CI installs a built wheel and passes.",
+        "test": "tests/test_mcp_server.py::test_package_version_tracks_the_core_release",
+        "verified_by": "importlib.metadata.version('sksurrogate') == '0.3.1'; SKSurrogate.__version__ == '0.4.0'"
+      }
+    ],
+    "passed": 1247,
+    "subtests_passed": 32,
+    "summary_line": "1 failed, 1247 passed, 44081 warnings, 32 subtests passed in 405.43s (0:06:45)",
+    "warnings": 44081
+  },
+  "taken_at_utc": "2026-11-24T03:22:06Z"
+}

@@ -38,7 +38,6 @@ from __future__ import annotations
 import dataclasses
 import json
 import time
-from pathlib import Path
 from typing import Any, Callable, Optional
 
 import numpy as np
@@ -238,33 +237,25 @@ def _run_srs(
 
         min_evals = max(min_evals, math.comb(len(SPACE) + 3, len(SPACE)))
         custom_regressor = regressor_factory()
-    # Hard evaluation cap: SRS's `max_iter` counts loop iterations (inclusive
-    # off-by-one) and the x0 initial point is evaluated in __init__, so a naive
-    # max_iter=budget would spend budget+2 evaluations. `max_evals` is checked
-    # before every iteration and caps *total* objective calls exactly.
-    # DESIGN v1.7 errata: when the surrogate engages (k >= 20), each SRS
-    # iteration runs a local optimization of the fitted response surface; if
-    # scipy's minimize fails, that iteration evaluates NOTHING but still
-    # increments the iteration counter (structsearch.py __iterate). With
-    # max_iter == budget such no-op iterations can therefore terminate the run
-    # via `max_iter` before `max_evals` is reached (observed 2026-10-18: two
-    # seed-4 B=60 runs stopped after 50/56 evaluations, zero failures). The
-    # binding constraint must be max_evals, so max_iter is raised to a safe
-    # ceiling (4*budget): no-op iterations then cost wall time only. This is a
-    # library defect to report upstream, not a benchmark workaround — the
-    # number of no-op iterations per run is recorded in RunRecord.extra for
-    # transparency.
-    # warm_start/Continue must be OFF: by default SRS persists state to a .pkl
-    # in the CWD after every iteration and silently restores it, which would
-    # contaminate independent benchmark runs (verified 2026-10-17).
+    # Budget: since the v0.6 search contract, `max_iter`/`n_iter` IS the number of
+    # candidate evaluations (the initial candidate counts), so `max_iter=budget`
+    # spends exactly `budget` evaluations. The pre-v0.6 harness had to raise
+    # max_iter to a 4*budget ceiling and pin `max_evals`, because the loop ran
+    # MaxIter+1 rounds, evaluated x0 in the constructor (budget+2 evaluations) and
+    # let failed acquisition rounds burn iterations without evaluating. Those were
+    # library defects, fixed in v0.6; the workaround is gone and `max_evals` is no
+    # longer needed as a crutch. Published v1.9 numbers were produced with the
+    # workaround and stay frozen (see DESIGN.md errata): do not pool them with runs
+    # from this harness.
     # `min_evals` is passed through verbatim: None -> default request (Arm B), budget ->
     # surrogate never engages within the cap (Arm A; DESIGN.md section 9). The shared
     # 20-point engagement floor is applied above for all benchmark surrogate arms.
-    task_name = f"{task_tag}_bench_s{seed}_{int(time.time())}"
+    # No checkpoint: `task_name` is omitted, so an independent run cannot be
+    # contaminated by restored state from a previous one.
     search = SurrogateRandomCV(
         estimator=make_pipeline(seed, n_estimators),
         params=params,
-        max_iter=4 * budget,  # DESIGN v1.7: safe ceiling; max_evals is the binding cap (see errata above)
+        max_iter=budget,
         max_evals=budget,
         min_evals=min_evals,
         regressor=custom_regressor,  # None selects the library default; benchmark surrogate arms inject a surface.
@@ -276,30 +267,16 @@ def _run_srs(
         n_jobs=1,
         warm_start=False,
         continue_=False,
-        task_name=task_name,
     )
     # SRS draws its initial point x0 from Python's *module-level* `random`
     # state inside SurrogateRandomCV.fit (structsearch.py), which ignores our
-    # per-run random_state — so across processes, and between the two arms of
-    # one process, x0 would differ. Pin it deterministically per seed (same salt
-    # for both arms => identical starting point) and restore the caller's global
-    # state afterwards; everything else in SRS uses the seeded `self.rng`.
-    import random as _pyrandom
-
-    _global_rng_state = _pyrandom.getstate()
-    _pyrandom.seed(1_000_003 + seed)
+    # The initial candidate used to come from Python's global `random`, so the
+    # harness had to seed it per run to get a comparable x0 across arms. Since v0.6
+    # both the starting point and the sampling path come from the seeded
+    # `random_state` streams, and fitting touches no global RNG state at all.
     started = time.perf_counter()
-    try:
-        search.fit(Xtr, ytr)
-    finally:
-        _pyrandom.setstate(_global_rng_state)
+    search.fit(Xtr, ytr)
     total_wall = time.perf_counter() - started
-
-    # SRS writes a state checkpoint to the CWD after every iteration; remove it
-    # so no cross-run state survives (warm_start/Continue are off regardless).
-    _pkl = Path(task_name + ".pkl")
-    if _pkl.exists():
-        _pkl.unlink()
 
     records: list[dict[str, Any]] = []
     for k, item in enumerate(search.evaluation_history_):

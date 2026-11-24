@@ -157,8 +157,12 @@ jobs:
           # (tests/test_mcp_server.py); httpx is its transport dependency.
           # The <3 bound matches setup.py: the server imports the 2.x
           # mcp.server.mcpserver.MCPServer API.
-          pip install -r requirements.txt pytest pygments "httpx>=0.27" "mcp>=2.3,<3"
-          pip install .
+          pip install -r requirements.txt "httpx>=0.27" "mcp>=2.3,<3"
+          # The [test] extra is the single source of truth for what the suite
+          # needs (pytest, pygments, hypothesis). Hand-listing it here is how
+          # tests/test_search_invariants.py came to fail collection with
+          # "No module named 'hypothesis'" while passing locally.
+          pip install ".[test]"
       - name: "Drift guard: MCP OpenAPI snapshot vs live spec"
         # Fails when a control-plane route was added, renamed or removed without
         # regenerating sksurrogate_mcp/openapi_ops.json (see docs/mcp-server.rst).
@@ -174,6 +178,79 @@ jobs:
       - name: "Smoke: bounded AML end-to-end (airfoil subset)"
         timeout-minutes: 10
         run: python examples/smoke_aml.py
+
+  # The public API must keep behaving predictably across the scikit-learn
+  # versions we claim to support. Two ends of the matrix are enough to catch a
+  # contract drift: the oldest supported interpreter/estimator pair and the
+  # current one. The pinning tests are the same file the shipped suite runs.
+  sklearn-matrix:
+    name: "sklearn matrix (py${{ matrix.python-version }}, sklearn ${{ matrix.sklearn }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python-version: "3.10"
+            sklearn: "1.5.*"
+          - python-version: "3.13"
+            sklearn: "current"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements-core.txt
+          if [ "${{ matrix.sklearn }}" = "current" ]; then
+            pip install ".[test]"
+          else
+            # scikit-learn 1.5 predates NumPy 2; pin both ends of that pair.
+            pip install "numpy<2" "scikit-learn==${{ matrix.sklearn }}" ".[test]"
+          fi
+      - name: Contract tests
+        run: python -m pytest tests/test_sklearn_compat.py tests/test_search_invariants.py -q
+
+  # Property-based state-machine tests, bounded and derandomized so a CI run is
+  # fast and reproducible. The contract they encode is docs/search-contract.rst.
+  search-contract:
+    name: "Search invariants (hypothesis)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements-core.txt pytest pygments hypothesis
+          pip install .
+      - name: Run state-machine invariants and determinism
+        run: python -m pytest tests/test_search_invariants.py tests/test_search_determinism.py -q
+
+  # The core must stay usable without the platform; a cyclic import is how a
+  # library silently becomes an application.
+  layer-boundaries:
+    name: "Layer boundaries (core never imports api/webui/mcp)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # The check parses the source tree with `ast`; it needs pytest and nothing
+      # else — deliberately, so it can never be satisfied by an installed wheel.
+      - name: Install pytest
+        run: |
+          pip install --upgrade pip
+          pip install pytest
+      - name: Run import-direction lint
+        run: python -m pytest tests/test_layer_boundaries.py -q
 
   bench-smoke:
     name: "Benchmark smoke (ionosphere)"

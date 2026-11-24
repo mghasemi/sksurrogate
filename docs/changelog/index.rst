@@ -14,6 +14,10 @@ describe behaviour a user can observe; internal churn lives in
      - Date
      - Highlights
 
+   * - ``0.6.0``
+     - unreleased
+     - Search-engine reliability: exact evaluation budget, reproducible ``random_state``, auditable counters and the published search contract
+
    * - ``0.5.0``
      - unreleased
      - MCP server for agents: 30 curated tools over a running control plane, plus an ``api_request`` escape hatch

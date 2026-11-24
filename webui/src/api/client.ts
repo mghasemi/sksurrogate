@@ -2590,6 +2590,35 @@ export interface ScoreMetric {
   higher_is_better: boolean;
 }
 
+export interface LeakageWarnings {
+  checked: boolean;
+  reason?: string;
+  train_partition?: string;
+  validation_partition?: string | null;
+  duplicate_rows?: {
+    checked: boolean;
+    reason?: string;
+    train_rows?: number;
+    validation_rows?: number | null;
+    duplicate_rows?: number | null;
+    duplicate_fraction_of_validation?: number;
+  };
+  target_leakage?: {
+    checked: boolean;
+    method?: string;
+    scanned_columns?: number;
+    candidates?: Array<{
+      column: string;
+      statistic: string;
+      value: number;
+      direction: string;
+      threshold: number;
+    }>;
+  };
+  temporal_split?: { checked: boolean; columns: string[]; suspected: boolean };
+  caveats?: string[];
+}
+
 export interface ExperimentResult {
   model_version: string;
   bundle_path: string;
@@ -2601,6 +2630,10 @@ export interface ExperimentResult {
   /** How to read the scores above; absent on results recorded before this block existed. */
   scoring?: string | null;
   score_metric?: ScoreMetric | null;
+  /** Advisory split/column leakage diagnostics; absent on older results. */
+  leakage_warnings?: LeakageWarnings | null;
+  /** SHA-256 of the run manifest, for correlating a result with its sidecar. */
+  manifest_digest?: string | null;
 }
 
 export const runExperiment = (task: string, body: RunExperimentRequest) =>
