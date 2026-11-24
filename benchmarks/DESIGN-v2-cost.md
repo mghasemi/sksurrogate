@@ -1,57 +1,77 @@
 # Benchmark v2.0 cost model
 
-Status: **measured component costs + explicit extrapolation** (not a benchmark result).
+Status: **measured component costs + pinned timing pilot; full matrix not approved** (not a benchmark result).
 
-Machine: `{"cpus": 32, "platform": "Linux-7.2.15-76070215-generic-x86_64-with-glibc2.39", "python": "3.13.13", "stamp": "2026-11-24T04:46:41.108999+00:00"}`
+Machine: `{"cpus": 32, "platform": "Linux-7.2.15-76070215-generic-x86_64-with-glibc2.39", "python": "3.13.13", "stamp": "2026-11-24T05:09:36.486945+00:00"}`
 
 ## Candidate evaluation (5-fold CV, median of 3)
 
 | dataset | family | seconds / evaluation |
 |---|---|---:|
-| galaxy3 | hgb | 0.6107 |
-| galaxy3 | rf | 0.2086 |
-| ionosphere | logreg | 0.0182 |
-| ionosphere | rf | 0.1452 |
-| ionosphere | svc | 0.0153 |
+| credit-g | hgb | 0.6204 |
+| credit-g | rf | 0.1735 |
+| credit-g | svc | 0.0767 |
+| ionosphere | logreg | 0.0162 |
+| ionosphere | rf | 0.1448 |
+| ionosphere | svc | 0.0149 |
+| optdigits | hgb | 4.9130 |
+| optdigits | svc | 0.6911 |
+| spambase | hgb | 0.7475 |
+| spambase | logreg | 0.0403 |
 
 ## Surrogate overhead (GP fit + one bounded LCB step, median of 3)
 
 | parameter dim | evaluated points | fit (s) | acquisition (s) |
 |---:|---:|---:|---:|
-| 3 | 30 | 0.0032 | 0.0026 |
-| 6 | 30 | 0.0025 | 0.0052 |
-| 10 | 30 | 0.0019 | 0.0127 |
-| 30 | 30 | 0.0034 | 0.0057 |
+| 3 | 30 | 0.0033 | 0.0034 |
+| 6 | 30 | 0.0024 | 0.0052 |
+| 10 | 30 | 0.0022 | 0.0128 |
+| 30 | 30 | 0.0036 | 0.0059 |
 
 ## Per-cell cost (surrogate arm)
 
 | dataset | family | budget | per-eval (s) | one surrogate run (s) |
 |---|---|---:|---:|---:|
-| ionosphere | rf | 30 | 0.1452 | 4.41 |
-| ionosphere | rf | 60 | 0.1452 | 8.94 |
-| ionosphere | rf | 120 | 0.1452 | 18.01 |
-| ionosphere | svc | 30 | 0.0153 | 0.52 |
-| ionosphere | svc | 60 | 0.0153 | 1.15 |
-| ionosphere | svc | 120 | 0.0153 | 2.41 |
-| ionosphere | logreg | 30 | 0.0182 | 0.60 |
-| ionosphere | logreg | 60 | 0.0182 | 1.32 |
-| ionosphere | logreg | 120 | 0.0182 | 2.76 |
-| galaxy3 | rf | 30 | 0.2086 | 6.31 |
-| galaxy3 | rf | 60 | 0.2086 | 12.75 |
-| galaxy3 | rf | 120 | 0.2086 | 25.61 |
-| galaxy3 | hgb | 30 | 0.6107 | 18.38 |
-| galaxy3 | hgb | 60 | 0.6107 | 36.87 |
-| galaxy3 | hgb | 120 | 0.6107 | 73.86 |
+| ionosphere | rf | 30 | 0.1448 | 4.41 |
+| ionosphere | rf | 60 | 0.1448 | 8.96 |
+| ionosphere | rf | 120 | 0.1448 | 18.05 |
+| ionosphere | svc | 30 | 0.0149 | 0.51 |
+| ionosphere | svc | 60 | 0.0149 | 1.16 |
+| ionosphere | svc | 120 | 0.0149 | 2.46 |
+| ionosphere | logreg | 30 | 0.0162 | 0.55 |
+| ionosphere | logreg | 60 | 0.0162 | 1.24 |
+| ionosphere | logreg | 120 | 0.0162 | 2.62 |
+| credit-g | rf | 30 | 0.1735 | 5.27 |
+| credit-g | rf | 60 | 0.1735 | 10.68 |
+| credit-g | rf | 120 | 0.1735 | 21.49 |
+| credit-g | svc | 30 | 0.0767 | 2.37 |
+| credit-g | svc | 60 | 0.0767 | 4.87 |
+| credit-g | svc | 120 | 0.0767 | 9.87 |
+| credit-g | hgb | 30 | 0.6204 | 18.68 |
+| credit-g | hgb | 60 | 0.6204 | 37.49 |
+| credit-g | hgb | 120 | 0.6204 | 75.12 |
+| spambase | hgb | 30 | 0.7475 | 22.49 |
+| spambase | hgb | 60 | 0.7475 | 45.11 |
+| spambase | hgb | 120 | 0.7475 | 90.36 |
+| spambase | logreg | 30 | 0.0403 | 1.27 |
+| spambase | logreg | 60 | 0.0403 | 2.68 |
+| spambase | logreg | 120 | 0.0403 | 5.50 |
+| optdigits | svc | 30 | 0.6911 | 20.80 |
+| optdigits | svc | 60 | 0.6911 | 41.73 |
+| optdigits | svc | 120 | 0.6911 | 83.60 |
+| optdigits | hgb | 30 | 4.9130 | 147.46 |
+| optdigits | hgb | 60 | 4.9130 | 295.04 |
+| optdigits | hgb | 120 | 4.9130 | 590.22 |
 
 ## Extrapolated full matrix
 
 | block | CPU-hours |
 |---|---:|
-| real-data matrix | 12.57 |
-| (of which high-dimensional cells) | 8.87 |
+| real-data matrix | 36.27 |
+| (of which high-dimensional cells) | 8.86 |
 | synthetic functions | 0.65 |
 | expensive-objective arm | 1.40 |
-| **total (serial)** | **14.63** |
+| **total (serial)** | **38.32** |
 
 Assumptions: {"arms": 9, "budgets": [30, 60, 120], "engagement_floor": 20, "expensive_objective_s_per_eval": 1.0, "seeds": 7, "surrogate_arms": 4, "synthetic_functions": 6}
 
@@ -61,39 +81,51 @@ Wall-clock scales with the number of parallel workers; this table is serial CPU 
 
 **No full matrix runs until the owner records a go/no-go decision here.**
 
-Decision: _(pending)_
+Decision: **pilot only — no-go for the full v2.0 matrix in this cycle** (owner, 2026-11-24).
+The pinned pilot is complete (below); the matrix remains unapproved. Revisit after the pilot is
+reviewed and v0.6.1 ships. This file is the record; no claim in `docs/benchmarks-v2.md` depends on
+an unrun matrix.
 
 ## Notes
 
-**Pilot substitution.** The protocol pins *ionosphere* + *credit-g*. This environment has no OpenML API credential, so *credit-g* (did 31) cannot be downloaded; the bundled *galaxy3* set was substituted for the timing probe only. This is a cost instrument, not protocol evidence. **Coverage gap.** spambase and optdigits were not measured for the same reason, so the extrapolated total is a lower bound. Re-run with the pinned datasets once credentials are available.
+**Pinned datasets.** OpenML authentication was restored: openml 0.15 stores a 10-character mask
+when the key comes from `OPENML_API_KEY`, so `benchmarks.datasets` re-assigns the real environment
+value before a download (the key is never written to disk). `credit-g`, `spambase` and `optdigits`
+are now cached and measured.
 
-## Measured timing pilot (proxy datasets)
+**Superseded estimate.** An earlier two-dataset run reported 14.6 serial CPU-hours as a lower
+bound; with all four datasets measured the estimate is **38.32 serial CPU-hours**. The increase is
+dominated by `optdigits`/HistGradientBoosting (4.91 s per candidate evaluation) and the
+high-dimensional block.
 
-Run 2026-11-24, 6 arms × 3 seeds × {B=30, B=60} × {ionosphere, galaxy3}; every one of the
-72 cells completed with **`n_evals == budget`** (0 mismatches), i.e. the exact-budget contract
-holds at the v2.0 budgets.
+## Measured timing pilot (pinned datasets)
+
+Run 2026-11-24 (`benchmarks/results/20261124T050358Z`, `...T050608Z`): 6 arms × 3 seeds ×
+{B=30, B=60} × {ionosphere, credit-g}. Every one of the 72 cells is `ok` with
+**`n_evals == budget`** (0 mismatches), so the v0.6 exact-budget contract holds at both budgets.
 
 | budget | runs | serial wall (s) | candidate time (s) | search overhead (s) |
 |---:|---:|---:|---:|---:|
-| 30 | 36 | 128.4 | 122.7 | 5.6 |
-| 60 | 36 | 284.6 | 245.5 | 39.0 |
+| 30 | 36 | 128.0 | 122.3 | 5.7 |
+| 60 | 36 | 294.9 | 250.0 | 44.9 |
 
 Median search overhead as a fraction of total wall time:
 
 | arm | B=30 | B=60 |
 |---|---:|---:|
-| `sksurrogate-gp` (library default) | 2.1–2.3% | 5.0–6.3% |
-| `sksurrogate-krr` | 2.0% | 3.6–4.4% |
-| `sksurrogate` (Hilbert, explicit) | 18.4–18.8% | 44.5–44.9% |
+| `sksurrogate-gp` (library default) | 2.2–2.3% | 4.7–5.2% |
+| `sksurrogate-krr` | 1.8–1.9% | 3.9–4.0% |
+| `sksurrogate` (Hilbert, explicit) | 18.5–19.0% | 44.5–45.0% |
 | `srs-no-surrogate` | 0.1% | 0.1% |
 | `random` / `optuna-tpe` | ~0% | ~0% |
 
-Reading: at the v1.9 anchor space (d=3) the GP surface costs a few percent of wall time; the
-cubic Hilbert basis is the expensive one. H5 (surrogate cost dominates at d ≥ 20) is **not
-testable** from this pilot: the parameter dimension stays 3, and the component sweep above shows
-the d=10 acquisition step at ~13 ms versus a 0.15–0.6 s candidate evaluation.
+Pilot scores are descriptive only (2 datasets × 3 seeds; no claim is drawn): on `credit-g` the
+median best CV was 0.7400 for both SRS-GP and Hilbert, 0.7362/0.7387 for random and
+0.7263/0.7350 for TPE at B=30/B=60; on `ionosphere` every arm tied at 0.9286.
 
-**Gate status: pending.** Two things are needed before the full matrix: (1) an OpenML API
-credential to run the protocol-pinned pilot and to measure the larger datasets; (2) the owner's
-go/no-go decision recorded below.
+Reading for H5: at the d=3 anchor the GP surface costs a few percent of wall time and Hilbert is
+the expensive surface; the component sweep shows the d=10 acquisition step at ~13 ms against a
+0.15–4.9 s candidate evaluation. H5 (surrogate cost dominates at d ≥ 20) is therefore **not
+supported by this evidence** and needs the d=20+ cells before any statement.
+
 

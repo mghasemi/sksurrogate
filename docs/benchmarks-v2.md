@@ -1,10 +1,11 @@
 # Benchmarks v2.0 — pre-registered protocol
 
-**Status: protocol frozen 2026-11-24; pilot-gated; no v2.0 results yet.** The previous suite is
-published and frozen as **v1.9** in [benchmarks.md](benchmarks.md). The two are not comparable and
-are never pooled: the v0.6 search contract redefined the evaluation currency (`n_iter`/`max_iter`
-now counts candidate evaluations exactly), so v1.9 runs spent a different number of objective
-evaluations for the same nominal budget.
+**Status: protocol frozen 2026-11-24; pinned pilot complete; full matrix not approved (no-go).**
+No v2.0 benchmark results exist yet. The previous suite is published and frozen as **v1.9** in
+[benchmarks.md](benchmarks.md). The two are not comparable and are never pooled: the v0.6 search
+contract redefined the evaluation currency (`n_iter`/`max_iter` now counts candidate evaluations
+exactly), so v1.9 runs spent a different number of objective evaluations for the same nominal
+budget.
 
 The contract lives in `benchmarks/DESIGN.md` §16. This page is the user-facing summary.
 
@@ -55,17 +56,18 @@ explicitly self-referential diagnostic.
 **Power caveat:** with 7 seeds × 6 datasets, a per-dataset paired test has little power. Only the
 aggregate is interpretable; per-dataset rows are descriptive.
 
-## Pilot gate
+## Pilot status
 
-The full matrix does not run until a pilot establishes the cost:
+The pinned pilot is complete (`benchmarks/DESIGN-v2-cost.md`): 6 arms × 3 seeds × {B=30, B=60} ×
+{`ionosphere`, `credit-g`}, 72/72 cells `ok` with `n_evals == budget`. Serial wall time was
+128 s at B=30 and 295 s at B=60 on this machine. Median search overhead was 2.2–2.3% for the GP
+surface at B=30 (4.7–5.2% at B=60) and 18.5–19% (44.5–45%) for the explicit Hilbert surface; the
+no-surrogate arm stayed at 0.1%. All four real datasets are now measured for the component cost
+model, which extrapolates **38.3 serial CPU-hours** for the full matrix.
 
-* 2 datasets (`ionosphere`, `credit-g`) × 3 seeds × {B=30, B=60} × 6 arms, timed;
-* a per-evaluation cost sweep for every v2.0 estimator family and space dimension;
-* `benchmarks/DESIGN-v2-cost.md` with the measured per-cell cost, the extrapolated full-matrix wall
-  time, and an explicit go/no-go decision.
-
-Until that checkpoint is recorded, this page carries no numbers and the README's competitive
-sentence is limited to the v1.9 archive, labelled as v1.9.
+**Owner decision (2026-11-24): pilot only — no-go for the full v2.0 matrix in this cycle.** The
+pilot is descriptive, not evidence for H1–H5; the matrix is not approved and no README competitive
+claim was edited. Revisit after the pilot is reviewed and v0.6.1 ships.
 
 ## Reproducing
 
