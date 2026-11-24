@@ -1,4 +1,5 @@
-# Control-plane API and web-UI serving stack — `pip install "sksurrogate[api]"`.
+# Control-plane API and web-UI serving stack for a source checkout:
+# `pip install ".[api]"` (or `.[ui]`) from the repository root.
 #
 # None of this is imported by the library itself; the `api` package is a host
 # application in this repository, not part of the installed wheel.

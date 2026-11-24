@@ -19,6 +19,10 @@ in the release named in the highlights.
      - Date
      - Highlights
 
+   * - ``0.8.1``
+     - 2026-11-24
+     - Documentation and packaging-claim release: ``[api]``/``[ui]`` described as dependencies for a source checkout, a guard test against the claim returning, and the C-space study added to the benchmark toctree. No behaviour change
+
    * - ``0.8.0``
      - 2026-11-24
      - Cumulative: auditable search engine and provenance, paired model comparison, evidence-grounded explanations and drafts, platform hardening. Folds in the extras restructuring (0.4.0), the MCP server (0.5.0) and the reliability contract (0.6.0)
@@ -55,6 +59,7 @@ in the release named in the highlights.
    :maxdepth: 1
    :caption: Releases
 
+   0.8.1
    0.8.0
    0.6.0
    0.5.0

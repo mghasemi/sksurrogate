@@ -295,8 +295,10 @@ component whose backend is absent raises an error that names the extra::
      - diagnostic plots
    * - ``[api]`` / ``[ui]``
      - FastAPI, uvicorn, python-multipart
-     - the control-plane API and web UI (see the
-       `guide <https://sksurrogate.readthedocs.io/en/latest/controlplane.html>`_)
+     - the control plane's *dependencies*, for a source checkout
+       (``pip install ".[ui]"``). The ``api`` and ``webui`` packages ship in the
+       repository and the Docker image, not in the wheel — see the
+       `guide <https://sksurrogate.readthedocs.io/en/latest/controlplane.html>`_
    * - ``[dask]``
      - dask[distributed]
      - the distributed execution backend

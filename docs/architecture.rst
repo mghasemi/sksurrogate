@@ -47,10 +47,17 @@ Packaging follows the same split
 ================================
 
 The published wheel is the **core**. Heavier capabilities are extras
-(``pip install "sksurrogate[api]"``, ``[benchmark]``, ``[mcp]``, ``[xgboost]``,
-…), and a missing optional backend raises an actionable message naming the extra
-that installs it. The control plane ships as a separate workspace package
-(``requirements-api.txt``) and the web UI is built separately.
+(``pip install "sksurrogate[benchmark]"``, ``[mcp]``, ``[xgboost]``, …), and a
+missing optional backend raises an actionable message naming the extra that
+installs it.
+
+The control plane is **not** in the wheel. ``setup.py`` packages only
+``SKSurrogate`` and ``sksurrogate_mcp``, and neither the wheel nor the sdist ships
+``api/`` or ``webui/`` (the React bundle is a build artifact and is not tracked).
+The ``[api]`` and ``[ui]`` extras therefore install the API stack's *dependencies*
+for a source checkout — ``pip install ".[api]"`` — while the control plane itself
+runs from that checkout or from the Docker image (``mghasemi/sksurrogate``). A
+wheel install carries the dependencies and not the application.
 
 The import-direction test is the guard against the common drift: a core feature
 that reaches for ``api.config.settings`` to find a directory, or an explanation

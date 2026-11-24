@@ -47,6 +47,7 @@ Welcome to SKSurrogate's documentation!
 
    benchmarks
    benchmarks-v2
+   benchmarks-cspace
    dtrack-study
 
 See also the :doc:`benchmark results <benchmarks>`, the

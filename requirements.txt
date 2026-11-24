@@ -1,7 +1,9 @@
 # Umbrella dev/CI manifest. This is *not* what `pip install sksurrogate` installs:
 # the wheel's install_requires is requirements-core.txt only, and every optional
 # backend is an extra (`pip install "sksurrogate[estimators]"`,
-# `"sksurrogate[ui]"`, `"sksurrogate[all]"`, ...).
+# `"sksurrogate[all]"`, ...). The `[api]`/`[ui]` extras are the exception: they
+# install the control plane's dependencies for a source checkout
+# (`pip install ".[api]"`), because api/ and webui/ are not packaged in the wheel.
 #
 # Tiered manifests, lowest to highest weight:
 #

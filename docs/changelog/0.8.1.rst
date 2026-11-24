@@ -1,0 +1,42 @@
+0.8.1 — 2026-11-24
+==================
+
+A documentation and packaging-claim release: no behaviour changes, no new
+dependencies, identical wheel contents apart from the version string.
+
+The ``[api]`` and ``[ui]`` extras install the control plane's *dependencies*,
+not the control plane. ``setup.py`` packages only ``SKSurrogate`` and
+``sksurrogate_mcp``, and neither the wheel nor the sdist contains ``api/`` or
+``webui/`` — the web UI is a build artifact and is not tracked. Copy that read
+as though installing the ``[api]`` extra from the index produced a running API is
+corrected; that form installs dependencies and no application.
+
+Packaging claims
+~~~~~~~~~~~~~~~~
+
+* **Fixed:** ``readme.rst``'s extras table now describes ``[api]`` / ``[ui]`` as
+  the serving stack's dependencies for a source checkout
+  (``pip install ".[api]"``), and states that the ``api`` and ``webui`` packages
+  ship in the repository and the Docker image rather than in the wheel. The same
+  correction is carried by ``docs/architecture.rst``, ``requirements.txt`` and
+  ``requirements-api.txt``.
+* **Added:** ``tests/test_packaging_claims.py`` fails if user-facing copy again
+  tells a reader to install the ``[api]`` / ``[ui]`` extra from the index, or if
+  ``setup.py``'s ``packages`` list gains ``api`` or ``webui``. Both changes are
+  deliberate events that must move the documentation with them.
+
+Documentation
+~~~~~~~~~~~~~
+
+* **Added:** the pipeline-space (C-space) benchmark study is now in the
+  "Benchmark studies" toctree in ``docs/index.rst``. It was reachable through a
+  ``:doc:`` link but absent from the navigation, and it produced the only
+  remaining Sphinx build warning.
+
+Upgrading
+~~~~~~~~~
+
+Nothing to change in code. Anyone who followed the ``[api]`` instruction against
+an installed wheel and found no importable ``api`` module now has the reason in
+the README; run the control plane from the Docker image
+(``mghasemi/sksurrogate``) or from a source checkout instead.
