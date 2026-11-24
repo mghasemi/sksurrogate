@@ -1,0 +1,189 @@
+Search contract
+===============
+
+.. contents:: On this page
+   :local:
+   :depth: 2
+
+Purpose
+-------
+
+This page is the *definition of done* for the optimizer. It states what a search
+guarantees — how its budget is counted, which counter means what, when it stops, and
+what ``random_state`` does and does not promise. It is written to be checkable: every
+statement below is pinned by a test in ``tests/test_search_invariants.py`` or
+``tests/test_search_determinism.py``, and the "Status" column records the current state
+of the code against the contract.
+
+Audience: users who need an auditable experiment, the control plane (which counts
+evaluations for its own budget reporting), and the benchmark harness (which compares
+search strategies under an equal evaluation budget).
+
+The four counters
+-----------------
+
+A search consumes work in four distinct ways. They are counted separately because
+conflating them is how an "equal-budget" comparison silently becomes unequal.
+
+==============================  =====================================================
+Counter                         Meaning
+==============================  =====================================================
+``n_evaluations``               Objective invocations: one candidate configuration
+                                scored by one full cross-validation. A candidate whose
+                                folds all fail, or which is rejected as forbidden/zero-
+                                feature/pruned, **still counts** — it consumed the
+                                caller's time and it is recorded in
+                                ``evaluation_history_`` with ``score=None``.
+``n_rounds``                    Sampling rounds executed by the search loop. A round
+                                normally produces one evaluation; a round whose
+                                surrogate fit or local optimization fails produces none
+                                and is recorded in ``surrogate_fit_history_``.
+``n_surrogate_fits``            Response-surface fits. Reported as
+                                ``surrogate_info_["fit_attempts"]``, with failures
+                                split into ``fit_failures`` / ``prediction_failures``.
+``n_acquisition_calls``         Local optimization problems solved (one per fitted
+                                surface). Reported as ``surrogate_info_["fit_attempts"]``
+                                minus fits that never reached the optimizer.
+==============================  =====================================================
+
+Public accessors: ``summary_["budget"]`` (per-run) and the fitted attributes
+``n_evaluations_`` / ``n_rounds_``.
+
+The state machine
+-----------------
+
+One round, in order::
+
+    sample a point (explore)  ──┐
+                                ├──> objective(x)  ──> record  ──> counters
+    guess a point (exploit)   ──┘
+
+    before MinEvals points:            every round evaluates a sampled point
+    after  MinEvals points:            fit surface on all points so far;
+                                       solve min over the surface; evaluate the
+                                       minimizer (one evaluation, phase
+                                       ``surrogate_exploit``); on failure, the round
+                                       records ``acquisition_failed`` and consumes
+                                       **no** evaluation
+
+Phases are visible per trial: ``phase ∈ {"init", "explore", "surrogate_exploit"}`` in
+the callback event (see :doc:`telemetry`), and as ``sampling_sources_`` on the search.
+
+Invariants
+----------
+
+Each row is a test. "Failing" means the current implementation does not satisfy it and
+the test is therefore marked ``xfail`` until the corresponding fix lands.
+
+=====  ====================================================================  =========
+Id     Invariant                                                              Status
+=====  ====================================================================  =========
+I1     ``n_evaluations == len(evaluation_history_) == len(sampling_sources_)``  holds
+I2     Every recorded evaluation corresponds to exactly one objective call    holds
+I3     ``n_evaluations <= max_evals`` whenever ``max_evals`` is set           holds
+I4     With ``max_evals=None``, ``n_evaluations == n_iter`` exactly           failing
+I5     A round that consumes no evaluation increments the no-progress         failing
+       counter (so it can never outlive its budget silently)
+I6     ``termination_reason`` names the constraint that actually bound the     failing
+       run, drawn from the documented vocabulary below
+I7     Identical ``random_state`` ⇒ identical ``(params, score)`` sequence,     failing
+       in one process and across processes
+I8     Fitting never consumes or reseeds the global ``random``/``numpy.random``  holds
+       state
+I9     ``clone(search)`` before and after ``fit`` returns equal                failing
+       ``get_params(deep=True)``
+I10    A surrogate fit or prediction failure degrades that round to            failing
+       exploration; it never aborts the search
+=====  ====================================================================  =========
+
+I4, I5, I6, I7, I9 and I10 are the release-blocking fixes tracked as Phase 1 of
+``.hermes/plans/2026-11-24_031000-review-remediation-plan.md``.
+
+Budget semantics
+----------------
+
+=============================  ======================================================
+Parameter                      Meaning
+=============================  ======================================================
+``n_iter`` / ``max_iter``      Number of **candidate evaluations** to spend. The two
+                               names are aliases (``n_iter`` is scikit-learn's
+                               spelling); giving both with different values is an
+                               error. The initial candidate counts toward it.
+``max_evals``                  Hard cap on candidate evaluations. Defaults to
+                               ``n_iter``. A cap below ``n_iter`` binds first.
+``min_evals``                  Evaluations to collect before the response surface is
+                               used. The default is the number of monomials of degree
+                               ``deg`` in the search dimension, ``C(d + deg, d)``; an
+                               explicit value is honoured as given and reported in
+                               ``surrogate_info_["min_evals"]`` together with
+                               ``min_evals_source`` (``default`` or ``user``).
+``time_limit``                 Wall-clock seconds; checked between evaluations.
+``max_itr_no_prog``            Consecutive rounds without a new best candidate before
+                               stopping.
+=============================  ======================================================
+
+Precedence when several constraints fire at the same boundary:
+``time_limit`` → ``max_evals`` → ``n_iter`` → ``max_itr_no_prog``.
+
+Termination vocabulary
+----------------------
+
+==========================  ===========================================================
+``termination_reason``      Condition
+==========================  ===========================================================
+``time_limit``              Wall-clock budget exhausted between evaluations.
+``max_evals``               ``n_evaluations`` reached ``max_evals``.
+``n_iter``                  ``n_evaluations`` reached ``n_iter``: normal completion.
+                            ``completed`` is accepted as a legacy alias meaning the
+                            same thing.
+``max_iter_no_progress``    ``max_itr_no_prog`` consecutive rounds without a strictly
+                            better best value.
+``stopped``                 A caller-requested stop (``stop_check``, or a control-plane
+                            pause/cancel) landed on an evaluation boundary. The search
+                            stops cleanly; the exception is raised only after the
+                            counters and reason are recorded.
+==========================  ===========================================================
+
+``termination_reason`` is reported per stage and per run: ``SurrogateRandomCV`` in
+``termination_reason`` and ``summary_``, ``AML`` in ``termination_reason`` and
+``to_audit_dict()``.
+
+Randomness
+----------
+
+``random_state`` accepts ``int``, ``None``, ``numpy.random.Generator`` or
+``numpy.random.RandomState``. It seeds two independent streams derived from one
+:class:`numpy.random.SeedSequence`:
+
+* ``init_candidate`` — the starting point inside the encoded search box;
+* ``sampling`` — every subsequent sample (``CompactSample`` / ``BoxSample`` /
+  ``SphereSample``) and the contraction jitter.
+
+Guarantee: with the same ``random_state``, the same data, ``cv``, ``n_iter``,
+``min_evals``, ``scipy_solver`` and the same library versions, two fits produce the
+same candidate sequence and the same scores — in one process and across processes.
+Fitting never reads or writes the global ``random`` / ``numpy.random`` state.
+
+Not guaranteed, by design:
+
+* the **estimator's** own randomness — pass ``estimator__random_state`` (or set it on
+  the estimator) if the estimator is stochastic; the search does not seed it;
+* ordering of per-fold work under ``n_jobs != 1`` (scores are order-independent, only
+  timing and log interleaving differ);
+* reproducibility across scikit-learn / NumPy versions.
+
+Post-conditions on the fitted search
+------------------------------------
+
+``SurrogateRandomCV.fit`` returns ``self`` with, at minimum:
+
+``best_params_``, ``best_estimator_`` (when ``refit`` is not ``False``),
+``best_score_``, ``best_index_``, ``cv_results_``, ``evaluation_history_``,
+``surrogate_info_``, ``surrogate_fit_history_``, ``summary_``, ``termination_reason``,
+``n_evaluations_``, ``n_rounds_``, ``failure_summary_``, plus the scikit-learn search
+attributes ``scorer_`` and ``n_splits_``.
+
+The effective configuration is never implicit: ``surrogate_info_`` records the
+response-surface class and its source (``default`` / ``user``), the effective
+``min_evals`` and its source, and the fit/prediction/optimization failure counts, so
+``to_audit_dict()`` is a complete account of what the search actually did.

@@ -12,6 +12,7 @@ Welcome to SKSurrogate's documentation!
 
    intro
    surrogate
+   search-contract
    telemetry
    hilbert
    sensitivity
