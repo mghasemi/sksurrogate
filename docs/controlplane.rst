@@ -63,6 +63,44 @@ per-user API key, a browser session, or the one-shot administrator bootstrap —
 and to make a deployment with none of those refuse to start. Use
 ``--build-arg EXTRAS="..."`` to add optional packages.
 
+Artifact versions
+=================
+
+Every persisted control-plane document carries a version and is upgraded on
+read; a document written by a *newer* package is refused rather than guessed at.
+`SKSurrogate.artifacts` owns the switch:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 18 60
+
+   * - Artifact
+     - Field / version
+     - Upgrade rule
+   * - Job record
+     - ``schema_version`` 2
+     - v1 records gain explicit ``label``/``log_counts``/``compute``/``cleanup``
+       defaults and a recomputed ``resumable`` flag; unknown keys are preserved.
+   * - Serving pin
+     - ``schema_version`` 2
+     - v1 documents gain an empty ``history`` list and stable display fields; a
+       document from a newer writer is reported as unconfigured, not served.
+   * - Registry index
+     - ``schema_version`` 2
+     - v1 (unstamped) indexes load unchanged and are stamped on the next write.
+   * - Model bundle
+     - ``format_version``
+     - v1 tabular bundles load; v2 adds the temporal block and the manifest.
+   * - Experiment manifest
+     - ``schema_version`` 2
+     - v1 ``reproducibility`` records are upgraded on read; newer than v2 is
+       refused loudly.
+
+Dataset/partition rows and synchronous explanation responses are not document
+artifacts: the former live in CSV + SQLite, the latter are not persisted (a
+report result lives inside its job record). They have no version field, and
+adding a sidecar nothing reads would be worse than saying so.
+
 Serialization security
 ======================
 

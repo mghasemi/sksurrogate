@@ -28,6 +28,8 @@ Two resolution modes (see ``docs/inference.rst``):
 import json
 from datetime import datetime, timezone
 
+from SKSurrogate.artifacts import read_artifact, stamp
+
 from .config import settings
 
 #: The two ways a serving pin can name its model (see the module docstring).
@@ -51,11 +53,19 @@ def read_state(task_name):
         document = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    return document if isinstance(document, dict) else None
+    if not isinstance(document, dict):
+        return None
+    try:
+        return read_artifact("serving_pin", document)
+    except ValueError:
+        # A newer writer's document is not safer to guess about; report it as
+        # unconfigured rather than serving through fields this code cannot read.
+        return None
 
 
 def write_state(state):
     """Persist (atomically) one serving document and return it."""
+    state = stamp("serving_pin", state)
     path = settings.task_serving_path(state["task_name"])
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".json.tmp")

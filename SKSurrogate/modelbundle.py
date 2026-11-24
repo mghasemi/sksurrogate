@@ -496,12 +496,17 @@ class ModelRegistry:
         self._index_path = self.root / "registry.json"
 
     def _read_index(self):
+        from .artifacts import read_artifact, stamp
+
         if not self._index_path.exists():
-            return {"models": {}}
+            return stamp("registry_index", {"models": {}})
         with self._index_path.open(encoding="utf-8") as stream:
-            return json.load(stream)
+            return read_artifact("registry_index", json.load(stream))
 
     def _write_index(self, index):
+        from .artifacts import stamp
+
+        index = stamp("registry_index", index)
         with tempfile.NamedTemporaryFile(
             mode="w", dir=str(self.root), prefix=".registry-", delete=False, encoding="utf-8"
         ) as temporary:
