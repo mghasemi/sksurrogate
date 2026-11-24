@@ -16,8 +16,8 @@ Paired model comparison
   on paired deltas, Wilcoxon signed-rank p-values with Holm adjustment across the
   family of comparisons against one control, Cliff's ordinal effect size, a
   Pareto front over (score, parameters, cost), rank stability across folds, and
-  the "simplest model within δ of the best" query. ``benchmarks.stats``
-  re-exports the same implementation, so the study code and the product cannot
+  the "simplest model within δ of the best" query. ``benchmarks.stats`` will
+  re-export the same implementation so the study code and the product cannot
   drift apart.
 * **Changed:** a comparison does not present itself as a leaderboard. Scores are
   labelled exploratory (``score_provenance.selected_on_same_data = true``) because
