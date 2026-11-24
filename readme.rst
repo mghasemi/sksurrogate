@@ -181,8 +181,9 @@ that can share it with others; bootstrap the first administrator with
 ``SKSURROGATE_ADMIN_USERNAME``/``SKSURROGATE_ADMIN_PASSWORD`` or
 ``python -m api.auth_cli create-admin``, then create per-user API keys in
 **Settings → API keys**. Data persists in the ``sksurrogate-data`` volume. See
-the :doc:`control-plane guide <docs/controlplane>` and the
-:doc:`authentication and sharing chapter <docs/auth-and-sharing>` for details.
+the `control-plane guide <https://sksurrogate.readthedocs.io/en/latest/controlplane.html>`_
+and the `authentication and sharing chapter
+<https://sksurrogate.readthedocs.io/en/latest/auth-and-sharing.html>`_ for details.
 
 Benchmarks
 ----------
