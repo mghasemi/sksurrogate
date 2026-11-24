@@ -1,5 +1,10 @@
-0.5.0 — unreleased
-==================
+0.5.0 — never published
+=======================
+
+.. note::
+
+   Released as part of :doc:`0.8.0`; there is no ``0.5.0`` artifact on PyPI, Docker
+   Hub or GitHub. The MCP server shipped with it.
 
 MCP server for agents (new optional extra)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
