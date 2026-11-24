@@ -1,0 +1,58 @@
+name: Zenodo archive
+
+# Archive each published release under SKSurrogate's existing Zenodo concept
+# (10.5281/zenodo.23325032). This deliberately does NOT use Zenodo's GitHub
+# webhook: that integration mints a new concept record and cannot attach to a
+# manually uploaded one, which would split the citation identity mid-stream.
+#
+# Required repository secret:
+#   ZENODO_TOKEN          personal access token, scope deposit:write
+# Optional repository variable:
+#   ZENODO_CONCEPT_RECID  defaults to 23325032
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to archive (e.g. v0.8.1)"
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zenodo-archive
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for credentials
+        id: gate
+        env:
+          TOKEN: ${{ secrets.ZENODO_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::ZENODO_TOKEN is not configured — skipping the archive step."
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          fetch-depth: 0
+
+      - name: Archive the release
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          ZENODO_TOKEN: ${{ secrets.ZENODO_TOKEN }}
+          CONCEPT_RECID: ${{ vars.ZENODO_CONCEPT_RECID || '23325032' }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          python3 .github/scripts/zenodo_archive.py
