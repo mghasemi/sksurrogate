@@ -225,9 +225,38 @@ export function SynthesisCard({ project }: { project: Project }) {
             {result.draft.citations.length === 1 ? "" : "s"}). This text is model-generated and
             can be wrong; verify it against the computed facts below.
           </p>
-          <blockquote style={{ margin: "8px 0", paddingLeft: 12, borderLeft: "3px solid var(--border)" }}>
-            {result.draft.text}
-          </blockquote>
+          {result.draft.segments && result.draft.segments.length > 0 ? (
+            <div style={{ margin: "8px 0" }}>
+              {result.draft.segments.map((segment) => (
+                <p key={segment.index} style={{ margin: "6px 0" }}>
+                  <span
+                    className={`badge ${
+                      segment.label === "observed" ? "ok" : segment.label === "inferred" ? "info" : "warn"
+                    }`}
+                    style={{ marginRight: 6 }}
+                  >
+                    {segment.label}
+                  </span>
+                  {segment.text}{" "}
+                  {segment.citations.map((citation) => (
+                    <code key={citation} style={{ marginRight: 4 }}>
+                      {citation}
+                    </code>
+                  ))}
+                </p>
+              ))}
+              <p className="muted">
+                {(result.draft.label_counts?.observed ?? 0)} observed ·{" "}
+                {(result.draft.label_counts?.inferred ?? 0)} inferred ·{" "}
+                {(result.draft.label_counts?.hypothesized ?? 0)} hypothesized. Labels are the
+                provider's self-classification; causal wording is rejected before display.
+              </p>
+            </div>
+          ) : (
+            <blockquote style={{ margin: "8px 0", paddingLeft: 12, borderLeft: "3px solid var(--border)" }}>
+              {result.draft.text}
+            </blockquote>
+          )}
           <p>
             {result.draft.citations.map((citation) => (
               <span key={citation} className="badge info" style={{ marginRight: 6 }}>

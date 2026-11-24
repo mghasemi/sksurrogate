@@ -23,6 +23,7 @@ import {
   getDatasetMetadata,
   getLearningCurveMetrics,
   getLearningCurves,
+  compareBundles,
   listBundles,
   listJobs,
   registrySummary,
@@ -30,8 +31,13 @@ import {
   runBacktest,
   runNestedCV,
 } from "../api/client";
-import type { BacktestResult, BundleSummary, NestedCVJobResult } from "../api/client";
-import { Card, EmptyState, ErrorNote, Loading, Stat, Table, Tabs, fmtNum } from "../components/ui";
+import type {
+  BacktestResult,
+  BundleSummary,
+  ComparisonResult,
+  NestedCVJobResult,
+} from "../api/client";
+import { Badge, Card, EmptyState, ErrorNote, Loading, Stat, Table, Tabs, fmtNum } from "../components/ui";
 import { JobTracker } from "../components/JobTracker";
 import { useBundleLabel } from "../lib/hooks";
 import { useDefaultPartition } from "../lib/partition";
@@ -828,6 +834,208 @@ function BacktestCard({
   );
 }
 
+
+/**
+ * Paired comparison of stored bundles on one shared fold set (Stage D4).
+ *
+ * Deliberately not a "leaderboard": the delta, its interval, the Holm-adjusted
+ * p-value and the ordinal effect size are separate columns, and the payload's
+ * exploratory-selection warning is rendered rather than hidden.
+ */
+function ComparisonCard({
+  task,
+  bundles,
+  labelOf,
+  metrics,
+}: {
+  task: string;
+  bundles: BundleSummary[];
+  labelOf: (version: string) => string;
+  metrics: Array<{ value: string; label: string; higher_is_better: boolean }>;
+}) {
+  const [selected, setSelected] = useState<string[]>(
+    bundles.slice(0, Math.min(2, bundles.length)).map((bundle) => bundle.model_version),
+  );
+  // Empty until the task's metrics arrive: a hard-coded "accuracy" would be sent
+  // on a regression task (the select renders the first option while the request
+  // carries the stale value), and every fold would fail as a scorer mismatch.
+  const [scoring, setScoring] = useState("");
+  const [folds, setFolds] = useState(5);
+  const [control, setControl] = useState("");
+
+  useEffect(() => {
+    setScoring((current) =>
+      current && metrics.some((metric) => metric.value === current)
+        ? current
+        : metrics[0]?.value ?? "",
+    );
+  }, [metrics]);
+
+  useEffect(() => {
+    setSelected((current) => {
+      const valid = current.filter((version) => bundles.some((bundle) => bundle.model_version === version));
+      if (valid.length >= 2) return valid;
+      return bundles.slice(0, Math.min(2, bundles.length)).map((bundle) => bundle.model_version);
+    });
+  }, [bundles]);
+
+  const compareMut = useMutation({
+    mutationFn: () =>
+      compareBundles(task, {
+        model_versions: selected,
+        control: control || undefined,
+        scoring: scoring || undefined,
+        n_splits: folds,
+        n_resamples: 2000,
+      }),
+  });
+  const result: ComparisonResult | undefined = compareMut.data;
+  const direction = result?.higher_is_better ? "higher is better" : "lower is better";
+
+  function toggle(version: string) {
+    setSelected((current) =>
+      current.includes(version)
+        ? current.filter((item) => item !== version)
+        : [...current, version].slice(0, 8),
+    );
+    compareMut.reset();
+  }
+
+  return (
+    <Card
+      title="Paired model comparison"
+      sub="Refits every selected bundle on the same folds, so each delta is a paired statistic. Scores are exploratory: these models were selected on this data."
+      actions={
+        <button
+          className="btn primary"
+          disabled={selected.length < 2 || compareMut.isPending}
+          onClick={() => compareMut.mutate()}
+        >
+          {compareMut.isPending ? "Comparing…" : "Compare models"}
+        </button>
+      }
+    >
+      {bundles.length < 2 && (
+        <p className="muted">
+          A paired comparison needs at least two bundles for this task. Train another baseline or
+          run another experiment first.
+        </p>
+      )}
+      {bundles.length >= 2 && (
+        <>
+          <div className="row" style={{ flexWrap: "wrap", gap: 12 }}>
+            <div className="field fixed" style={{ flex: "1 1 320px" }}>
+              <label>Bundles (2–8)</label>
+              <div className="row" style={{ flexWrap: "wrap", gap: 8 }}>
+                {bundles.map((bundle) => (
+                  <label key={bundle.model_version} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <input
+                      type="checkbox"
+                      checked={selected.includes(bundle.model_version)}
+                      onChange={() => toggle(bundle.model_version)}
+                    />
+                    <span>{labelOf(bundle.model_version)}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="field fixed" style={{ flex: "0 1 190px" }}>
+              <label>Metric</label>
+              <select value={scoring} onChange={(event) => setScoring(event.target.value)}>
+                {metrics.map((metric) => (
+                  <option key={metric.value} value={metric.value}>
+                    {metric.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <NumberField label="Folds" value={folds} onChange={setFolds} min={2} max={10} />
+            <div className="field fixed" style={{ flex: "0 1 200px" }}>
+              <label>Control</label>
+              <select value={control} onChange={(event) => setControl(event.target.value)}>
+                <option value="">First selected bundle</option>
+                {selected.map((version) => (
+                  <option key={version} value={version}>
+                    {labelOf(version)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          {compareMut.isError && <ErrorNote error={compareMut.error} />}
+          {result && (
+            <>
+              <div className="grid cols-3">
+                <Stat label="Partition" value={result.partition} sub={`${fmtNum(result.rows)} rows · ${result.cv.folds} fold(s)`} />
+                <Stat label="Metric" value={result.scoring_label} sub={`${direction} · ${result.cv.splitter}`} />
+                <Stat
+                  label="Exploratory"
+                  value={<Badge tone="warn">selected on this data</Badge>}
+                  sub={`${result.n_pairs} paired fold(s)`}
+                />
+              </div>
+              <ul className="muted">
+                {result.warnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+              <h3>Models</h3>
+              <Table
+                columns={["Model", "Mean ± SD", "Folds", "Rank", "Fit (s)", "Parameters", "Size (KB)", "Calibration"]}
+                rows={result.models}
+                keyOf={(row) => row.model_version}
+                render={(row) => [
+                  labelOf(row.model_version),
+                  `${fmtNum(row.score_mean)} ± ${fmtNum(row.score_std)}`,
+                  fmtNum(row.scored_folds),
+                  row.rank
+                    ? `${row.rank.mean_rank.toFixed(2)}${row.rank.unstable ? " (unstable)" : ""}`
+                    : "—",
+                  fmtNum(row.fit_time_s),
+                  fmtNum(row.parameters),
+                  row.disk_bytes == null ? "—" : fmtNum(row.disk_bytes / 1024),
+                  row.calibration
+                    ? row.calibration.available
+                      ? `Brier ${fmtNum(row.calibration.brier_score)} · ECE ${fmtNum(row.calibration.expected_calibration_error)}`
+                      : "unavailable"
+                    : "—",
+                ]}
+              />
+              <h3>Paired tests</h3>
+              <Table
+                columns={["Treatment vs control", "Mean Δ", `CI (${Math.round((result.statistics.comparisons[0]?.confidence ?? 0.95) * 100)}%)`, "W/T/L", "Wilcoxon p (Holm)", "Cliff's δ", "Verdict"]}
+                rows={result.statistics.comparisons}
+                keyOf={(row) => `${row.treatment}-${row.control}`}
+                render={(row) => [
+                  `${labelOf(row.treatment)} vs ${labelOf(row.control)}`,
+                  fmtNum(row.mean_delta),
+                  `${fmtNum(row.ci_low)} … ${fmtNum(row.ci_high)}`,
+                  `${row.wins}/${row.ties}/${row.losses}`,
+                  fmtNum(row.p_adjusted),
+                  `${row.cliffs_delta.toFixed(2)} (${row.cliffs_magnitude})`,
+                  row.distinguishable ? <Badge tone="ok">distinguishable</Badge> : <Badge>not distinguishable</Badge>,
+                ]}
+              />
+              <h3>Score / complexity / cost</h3>
+              <p className="muted">
+                Pareto front (higher score, fewer parameters, lower fit + predict cost):{" "}
+                {result.trade_off.pareto_frontier.map((version) => labelOf(version)).join(", ") || "—"}.
+                {result.trade_off.simpler_within_tolerance.simpler && (
+                  <>
+                    {" "}
+                    Simpler model within δ = {fmtNum(result.trade_off.simpler_within_tolerance.tolerance)} of the
+                    best: <strong>{labelOf(result.trade_off.simpler_within_tolerance.simpler)}</strong>.
+                  </>
+                )}
+              </p>
+            </>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
 export default function EvaluationPage() {
   const { task } = useTask();
 
@@ -1013,6 +1221,8 @@ export default function EvaluationPage() {
               </p>
             </Card>
           ) : null}
+
+          <ComparisonCard task={task} bundles={bundles} labelOf={bundleLabelOf} metrics={lcMetrics} />
 
           <CurvesCard task={task} bundles={bundles} labelOf={bundleLabelOf} />
 
