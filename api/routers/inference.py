@@ -44,7 +44,9 @@ class PredictRequest(BaseModel):
 @router.post("/{task_name}/predict")
 def predict(task_name: str, body: PredictRequest):
     """Run predictions in-request and return them as JSON (no file written)."""
-    bundle = resolve_bundle(task_name, model_version=body.model_version, alias=body.alias)
+    bundle = resolve_bundle(
+        task_name, model_version=body.model_version, alias=body.alias, verify=True
+    )
     frame, ignored_columns = resolve_input_frame(
         task_name, bundle=bundle, rows=body.rows, partition=body.partition
     )
@@ -87,7 +89,9 @@ def forecast(task_name: str, body: ForecastRequest):
     response carries the strategy and requested horizon alongside one entry per
     forecast step (times, predictions and interval bounds).
     """
-    bundle = resolve_bundle(task_name, model_version=body.model_version, alias=body.alias)
+    bundle = resolve_bundle(
+        task_name, model_version=body.model_version, alias=body.alias, verify=True
+    )
     future_frame = (
         pd.DataFrame(body.future_exogenous) if body.future_exogenous is not None else None
     )
@@ -109,7 +113,9 @@ def forecast(task_name: str, body: ForecastRequest):
 @router.post("/{task_name}/predict-batch")
 def predict_batch_endpoint(task_name: str, body: PredictRequest):
     """Run predictions and persist them as a CSV artifact under the task's predictions folder."""
-    bundle = resolve_bundle(task_name, model_version=body.model_version, alias=body.alias)
+    bundle = resolve_bundle(
+        task_name, model_version=body.model_version, alias=body.alias, verify=True
+    )
     frame, ignored_columns = resolve_input_frame(
         task_name, bundle=bundle, rows=body.rows, partition=body.partition
     )
