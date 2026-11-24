@@ -142,6 +142,22 @@ def main():
           ("%s on %d pages" % (declared, len(all_pages)))
           if declared and not stray else ("declared %r, stray %s" % (declared, stray)))
 
+    # ---- 1d. the archive DOI is the same in the markup and in the JSON-LD ---
+    # The homepage names the archived version DOI twice — the visible dochip and
+    # the machine-readable identifier — and both were missed on the first pass of
+    # the 0.8.1 archive sync. Re-derive both from the file rather than trusting a
+    # single replacement.
+    chip_doi = re.search(
+        r'href="https://doi\.org/(10\.5281/zenodo\.\d+)"[^>]*>\s*<b>software archive</b>',
+        home_src)
+    jsonld_doi = re.search(r'"propertyID":\s*"DOI",\s*"value":\s*"(10\.5281/zenodo\.\d+)"',
+                           home_src)
+    chip_val = chip_doi.group(1) if chip_doi else ""
+    json_val = jsonld_doi.group(1) if jsonld_doi else ""
+    check("archive DOI agrees between the dochip and the JSON-LD",
+          bool(chip_val) and chip_val == json_val,
+          "chip %s / json-ld %s" % (chip_val or "missing", json_val or "missing"))
+
     # ---- 1b. landmarks (Lighthouse a11y "landmark-one-main") ------------
     no_main, multi_main = [], []
     for p in all_pages:
