@@ -6,6 +6,8 @@
 - [Introduction](https://sksurrogate.readthedocs.io/en/latest/intro.html)
 - [Surrogate search guide](https://sksurrogate.readthedocs.io/en/latest/surrogate.html)
 - [Control plane / API / UI](https://sksurrogate.readthedocs.io/en/latest/controlplane.html)
+- [Paired model comparison](https://sksurrogate.readthedocs.io/en/latest/model-comparison.html)
+- [MCP server for agents](https://sksurrogate.readthedocs.io/en/latest/mcp-server.html)
 - [Preprocessing](https://sksurrogate.readthedocs.io/en/latest/dataproc.html)
 - [Monitoring and drift](https://sksurrogate.readthedocs.io/en/latest/monitoring.html)
 - [Full site text](https://sksurrogate.com/llms-full.txt)
@@ -13,33 +15,27 @@
 ## Site
 - [Product page](https://sksurrogate.com/)
 - [Quickstart](https://sksurrogate.com/quickstart/)
-- [Honest benchmark](https://sksurrogate.com/benchmarks/)
-- [Concepts](https://sksurrogate.com/concepts/)
-- [Surrogate-based optimization](https://sksurrogate.com/concepts/surrogate-optimization/)
-- [Split-conformal intervals](https://sksurrogate.com/concepts/conformal-intervals/)
-- [Nested cross-validation](https://sksurrogate.com/concepts/nested-cross-validation/)
+- [Honest benchmark (data)](https://sksurrogate.com/benchmarks/) · [benchmark post](https://sksurrogate.com/blog/honest-benchmark/)
+- [Concepts — surrogate optimization, conformal intervals, nested CV](https://sksurrogate.com/concepts/)
 - [FAQ](https://sksurrogate.com/faq/)
-- [Benchmark post](https://sksurrogate.com/blog/honest-benchmark/)
 - [Videos](https://sksurrogate.com/videos/) — walkthroughs on the SKSurrogate channel (youtube.com/@sksurrogate)
-- [Citation](https://sksurrogate.com/cite/)
-- [About](https://sksurrogate.com/about/)
+- [About](https://sksurrogate.com/about/) · [Citation page](https://sksurrogate.com/cite/)
 - [Source](https://github.com/mghasemi/sksurrogate)
 
 ## Install
 - `pip install sksurrogate` (PyPI: https://pypi.org/project/sksurrogate/) — Python >= 3.10, scikit-learn
-- Control plane image: `docker run --rm -p 8013:8013 -v sksurrogate-data:/data mghasemi/sksurrogate:latest` (Docker Hub: https://hub.docker.com/r/mghasemi/sksurrogate/; current release v0.3.0)
-- Package name: `sksurrogate`; import name: `SKSurrogate`
-- Main API: `SKSurrogate.SurrogateRandomCV` (drop-in `RandomizedSearchCV`), `SKSurrogate.AML`
+- Control plane image: `docker run --rm -p 8013:8013 -v sksurrogate-data:/data mghasemi/sksurrogate:latest` (Docker Hub; current release v0.8.0)
+- Import name `SKSurrogate`: drop-in tuner `SKSurrogate.SurrogateRandomCV`, presets via `SKSurrogate.AML`; agent interface is `pip install sksurrogate[mcp]`.
 
 ## License
 - MIT — https://opensource.org/licenses/MIT
 
 ## Citation
-- Ghasemi, Mehdi (2026). SKSurrogate: a Python toolkit for surrogate-based optimization of expensive functions. DOI 10.5281/zenodo.23631823
-- Benchmark data: 10.5281/zenodo.23629024 · D-track study: 10.5281/zenodo.23652613
+- Ghasemi, Mehdi (2026). SKSurrogate: a Python toolkit for surrogate-based optimization of expensive functions. DOI 10.5281/zenodo.23631823 · Benchmark data: 10.5281/zenodo.23629024 · D-track study: 10.5281/zenodo.23652613
 
 ## Key facts
 - The benchmark suite is equal-budget (candidate-model evaluations) and published with raw records; on six public datasets Optuna-TPE is top on 5 of 6 at B=30.
 - The default response surface is an un-tuned RBF GaussianProcessRegressor; the legacy cubic Hilbert polynomial is retained.
 - Not a managed cloud service; self-hosted, single compose profile, port 8013.
+- Since v0.8 an optional MCP server (pip install sksurrogate[mcp]) exposes the control plane to agents with per-user API-key auth and a full audit trail; LLM drafting is opt-in, on your endpoint, and every generated sentence carries its evidence label and citation.
 - Author: Mehdi Ghasemi — https://mghasemi.net · ORCID https://orcid.org/0000-0002-9551-1780

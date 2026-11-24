@@ -52,7 +52,7 @@
         reports is traceable to a protocol, a seed and an archived record.</p>
       <p class="chiprow"><span class="chip">MIT licence</span>
         <span class="chip">Python 3 · scikit-learn</span>
-        <span class="chip">v0.3.0</span>
+        <span class="chip">v0.8.0</span>
         <span class="chip">open development</span></p>
       <div class="prose">
         <h2>What it is</h2>
@@ -73,10 +73,11 @@
           <p><strong>Not a managed cloud service.</strong> Self-hosted and single-machine by
             design — local API or one compose profile. If you need multi-node training or GPU
             fleets, that is a different category of tool.</p>
-          <p><strong>No LLM magic in the box.</strong> The shipped tooling is deterministic. A
-            bounded, opt-in cited-note synthesis (your endpoint, aggregate facts only, enforced
-            citations) already runs inside it; a conversational research assistant is roadmap, not
-            this release.</p>
+          <p><strong>No LLM magic in the box.</strong> The shipped tooling is deterministic. Where
+            the opt-in AI layer runs (your endpoint, aggregate facts only) it drafts from supplied
+            evidence alone — since v0.8 every generated sentence carries an [observed] / [inferred]
+            / [hypothesized] label with its citation, and causal wording is refused at validation
+            time; a conversational research assistant remains roadmap.</p>
           <p><strong>Not a black-box AutoML zoo.</strong> The search space is your pipeline plus
             the ranges you declare, and every evaluation is recorded — results are auditable
             artifacts, not opaque picks from a fixed model zoo.</p>
@@ -149,7 +150,7 @@
 </footer>
 <div class="subfootline">
   <span>© 2019–2026 Mehdi Ghasemi · MIT licence</span>
-  <span>sksurrogate v0.3.0 · scikit-learn-native</span>
+  <span>sksurrogate v0.8.0 · scikit-learn-native</span>
 </div>
 </body>
 </html>

@@ -43,7 +43,7 @@ def quickstart(rel):
 
         <h2>Control plane (optional)</h2>
         <pre><code>docker run --rm -p 8013:8013 -v sksurrogate-data:/data mghasemi/sksurrogate:latest</code></pre>
-        <p>The published image (<a href="https://hub.docker.com/r/mghasemi/sksurrogate" target="_blank" rel="noopener">Docker Hub ↗</a>, v0.3.0) serves the UI and API on port 8013; datasets, experiments and model bundles stay in the named volume — the image ships no user data. Prefer the latest main branch? Build from a checkout: <code>docker compose --profile prod up -d</code>.</p>
+        <p>The published image (<a href="https://hub.docker.com/r/mghasemi/sksurrogate" target="_blank" rel="noopener">Docker Hub ↗</a>, v0.8.0) serves the UI and API on port 8013; datasets, experiments and model bundles stay in the named volume — the image ships no user data. Prefer the latest main branch? Build from a checkout: <code>docker compose --profile prod up -d</code>.</p>
 
         <h2>Optimize a model</h2>
         <pre><code>from sklearn.svm import SVC
@@ -79,6 +79,10 @@ AML(preset="classification").fit(X, y)</code></pre>
             — how presets build fold-local preprocessing.</li>
           <li><a href="https://sksurrogate.readthedocs.io/en/latest/controlplane.html" target="_blank" rel="noopener">Control plane ↗</a>
             — the API, the UI and the compose profile on port 8013.</li>
+          <li><a href="https://sksurrogate.readthedocs.io/en/latest/model-comparison.html" target="_blank" rel="noopener">Paired model comparison ↗</a>
+            — refit 2–8 stored bundles on one shared fold list; bootstrap intervals, Holm-adjusted Wilcoxon tests and calibration, labelled exploratory.</li>
+          <li><a href="https://sksurrogate.readthedocs.io/en/latest/mcp-server.html" target="_blank" rel="noopener">MCP server for agents ↗</a>
+            — pip install sksurrogate[mcp]; an AI coding agent drives the same control plane (register, launch, wait, analyse, promote) with per-user key auth and a full audit trail.</li>
           <li><a href="%s">Benchmarks</a> — what the search claims, and where it does not win.</li>
           <li><a href="%s">Concepts</a> — what surrogate-based optimization is, and when it pays.</li>
         </ul>
@@ -232,7 +236,7 @@ def about(rel):
         reports is traceable to a protocol, a seed and an archived record.</p>
       <p class="chiprow"><span class="chip">MIT licence</span>
         <span class="chip">Python 3 · scikit-learn</span>
-        <span class="chip">v0.3.0</span>
+        <span class="chip">v0.8.0</span>
         <span class="chip">open development</span></p>
       <div class="prose">
         <h2>What it is</h2>
@@ -253,10 +257,11 @@ def about(rel):
           <p><strong>Not a managed cloud service.</strong> Self-hosted and single-machine by
             design — local API or one compose profile. If you need multi-node training or GPU
             fleets, that is a different category of tool.</p>
-          <p><strong>No LLM magic in the box.</strong> The shipped tooling is deterministic. A
-            bounded, opt-in cited-note synthesis (your endpoint, aggregate facts only, enforced
-            citations) already runs inside it; a conversational research assistant is roadmap, not
-            this release.</p>
+          <p><strong>No LLM magic in the box.</strong> The shipped tooling is deterministic. Where
+            the opt-in AI layer runs (your endpoint, aggregate facts only) it drafts from supplied
+            evidence alone — since v0.8 every generated sentence carries an [observed] / [inferred]
+            / [hypothesized] label with its citation, and causal wording is refused at validation
+            time; a conversational research assistant remains roadmap.</p>
           <p><strong>Not a black-box AutoML zoo.</strong> The search space is your pipeline plus
             the ranges you declare, and every evaluation is recorded — results are auditable
             artifacts, not opaque picks from a fixed model zoo.</p>
@@ -301,13 +306,20 @@ def roadmap(rel):
       <p class="lede">Dated and gated. An item says “next” or “later” — never “it does that today”
         unless it shipped.</p>
       <div class="prose">
+        <h2>Shipped since this page was written</h2>
+        <p>v0.8.0 (November 2026): an MCP server that exposes the control plane to agents, paired
+          model comparison on one shared fold list with bootstrap intervals and Holm-adjusted tests,
+          and evidence-labelled LLM drafting in which every sentence carries its label and citation
+          and causal wording is refused at validation.</p>
         <h2>Next</h2>
         <p>Quantile / conformal-interval diagnostics in the UI and API — the Python split-conformal
           protocol already ships; the calibration-data contract for serving them is the next
-          step.</p>
+          step. Alongside it: benchmark v2.0, a cost-axis comparison matrix, published only once its
+          design is final and the full suite is re-run to protocol.</p>
         <h2>Later</h2>
-        <p>LLM-assisted synthesis beyond bounded cited notes — toward a human-gated,
-          citation-enforced research assistant. Shipped only with its gates intact.</p>
+        <p>A conversational research assistant beyond single-shot evidence-labelled drafts — still
+          bound by the same citation-forcing contract: every sentence labelled and cited, causal
+          claims refused at validation. Shipped only with its gates intact.</p>
         <h2>Not on the roadmap</h2>
         <p>A managed cloud service, a fixed model zoo, or a chat assistant inside the box. See
           <a href="%s">what SKSurrogate is not</a>.</p>
@@ -794,6 +806,11 @@ FAQ_QA = [
      "Yes. It is a Python package. The control plane with its API and UI is optional and runs from a Docker "
      "Compose profile on a single port, 8013, with an optional API key; nothing in the loop calls an external "
      "service."),
+    ("Can I drive SKSurrogate from an agent or other tooling?",
+     "Yes. Since v0.8 an optional MCP server (pip install sksurrogate[mcp]) wraps a running control plane "
+     "over stdio with per-user API-key authentication, so an AI coding agent can register data, launch and "
+     "wait on experiments, analyse models, manage promotion and keep research records; every action lands in "
+     "the same audit trail as manual API calls. The core package is untouched by it."),
     ("How do I cite SKSurrogate?",
      "Cite the archived release rather than the repository URL. The software archive recorded in CITATION.cff "
      "carries a DOI, and the benchmark records and the D-track study have their own DOIs. Ready-to-paste "
@@ -801,8 +818,9 @@ FAQ_QA = [
     ("What is SKSurrogate not?",
      "Not a managed cloud service, not a fixed model zoo, and not a chat assistant. The shipped tooling is "
      "deterministic, the search space is your pipeline plus the ranges you declare, and every evaluation is "
-     "recorded. A bounded, opt-in cited-note synthesis exists; a conversational research assistant is roadmap, "
-     "not this release."),
+     "recorded. An evidence-labelled drafting mode (opt-in, your endpoint) ships since v0.8 — every sentence "
+     "labelled and cited, causal wording refused at validation; a conversational research assistant remains "
+     "roadmap."),
 ]
 
 
@@ -825,7 +843,7 @@ def faq(rel):
         "        <h2>%s</h2>\n        <p>%s</p>" % (q, a) for q, a in FAQ_QA)
     return '''%s
       <h1>SKSurrogate FAQ</h1>
-      <p class="lede">Twelve questions that decide whether the package fits your problem. Every answer
+      <p class="lede">Thirteen questions that decide whether the package fits your problem. Every answer
         restates a documented behaviour or a published result; the source is linked where the detail
         matters.</p>
       <div class="prose">
@@ -1066,7 +1084,7 @@ PAGES = [
          desc="How to reach the SKSurrogate maintainer: reproducible bug reports, usage questions, security disclosure, and corrections to published results.",
          body=contact, name="Contact"),
     dict(path="faq", title="SKSurrogate FAQ",
-         desc="Twelve questions about SKSurrogate, answered from documented behaviour and published benchmark results: scikit-learn fit, speed versus Optuna, categorical features, conformal intervals, deployment.",
+         desc="Thirteen questions about SKSurrogate, answered from documented behaviour and published benchmark results: scikit-learn fit, speed versus Optuna, categorical features, conformal intervals, deployment.",
          body=faq, name="SKSurrogate FAQ", jsonld=faq_jsonld),
     dict(path="videos", title="Videos — SKSurrogate walkthroughs",
          desc="Screen-recorded walkthroughs of SKSurrogate: how pipelines are composed, how the surrogate search moves through them, and how a candidate is evaluated before a bundle is registered.",
