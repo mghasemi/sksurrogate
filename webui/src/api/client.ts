@@ -3145,9 +3145,62 @@ export interface PdpStability {
   note?: string;
 }
 
+/** Which stored model an explanation describes (Stage D4 provenance block). */
+export interface ExplanationProvenance {
+  model_version: string | null;
+  dataset_fingerprint: string | null;
+  bundle_created_at: string | null;
+  manifest_digest: string | null;
+  git_revision: string | null;
+  method: string;
+  partition: string;
+  settings: Record<string, unknown>;
+  note: string;
+}
+
+export type ExplainedQuantity = "prediction" | "probability" | "decision_score";
+
+export interface GroupedImportance {
+  correlation_threshold: number;
+  groups: Array<{ features: string[]; max_abs_correlation: number | null; grouped: boolean }>;
+  importances: Array<{
+    features: string[];
+    grouped: boolean;
+    max_abs_correlation: number | null;
+    mean: number;
+    std: number;
+    n_repeats: number;
+    baseline_score: number;
+  }>;
+  skipped_reason: string | null;
+}
+
+export interface FoldImportanceFeature {
+  feature: string;
+  mean: number | null;
+  positive_fits: number;
+  negative_fits: number;
+  zero_fits: number;
+  n_fits: number;
+  sign_consistency: number | null;
+  unstable: boolean;
+}
+
+export interface FoldImportanceStability {
+  available: boolean;
+  n_folds: number;
+  splitter?: string;
+  refit_per_fold?: boolean;
+  features?: FoldImportanceFeature[];
+  unstable_features?: string[];
+  note?: string;
+  reason?: string;
+}
+
 export interface ExplainResult {
   model_version: string;
   partition: string;
+  feature_source?: string;
   rows: number;
   reference_sample: {
     partition: string;
@@ -3160,9 +3213,13 @@ export interface ExplainResult {
     n_repeats: number;
     top_k: number;
     stability_samples: number;
+    stability_folds?: number;
     random_state: number;
   };
   importance: Array<{ feature: string; mean: number | null; std: number | null }>;
+  grouped_importance?: GroupedImportance;
+  fold_importance_stability?: FoldImportanceStability | null;
+  provenance?: ExplanationProvenance;
   reference_sample_stability: {
     sample_count: number;
     sample_size: number;
@@ -3203,6 +3260,7 @@ export const explainBundle = (
     n_repeats?: number;
     top_k?: number;
     stability_samples?: number;
+    stability_folds?: number;
   } = {},
 ) =>
   post<ExplainResult>(
@@ -3233,6 +3291,8 @@ export interface AleCurve {
 export interface AleResult {
   model_version: string;
   partition: string;
+  explained_quantity?: ExplainedQuantity | null;
+  provenance?: ExplanationProvenance;
   response: {
     family: "Regression" | "Classification";
     output: string;
@@ -3323,6 +3383,22 @@ export interface RowExplainResult {
   };
   prediction: number | null;
   explained_prediction: number | null;
+  explained_quantity?: ExplainedQuantity | null;
+  out_of_distribution?: {
+    available: boolean;
+    row_distance?: number;
+    row_flagged?: boolean;
+    method?: string;
+    threshold?: number;
+    percentile?: number;
+    reference_rows?: number;
+    features_used?: number;
+    imputed_cells?: number;
+    threshold_note?: string;
+    note?: string;
+    reason?: string;
+  };
+  provenance?: ExplanationProvenance;
   explanation_scope: "full_row" | "subset_hybrid";
   explained_features: string[];
   settings: { orders: number; reference_max_rows: number; random_state: number };
@@ -3336,6 +3412,9 @@ export interface RowExplainResult {
     max_abs_residual: number | null;
     tolerance: number | null;
     exact_by_construction: true;
+    status?: "exact" | "unreliable";
+    reliable?: boolean;
+    note?: string;
   };
   interpretation: {
     category: "model_attribution";
@@ -3547,12 +3626,39 @@ export interface SynthesisStatus {
   instructions: Record<string, string>;
 }
 
+/** Evidence label contract for generated drafts (Stage D4). */
+export type EvidenceLabel = "observed" | "inferred" | "hypothesized";
+
+export interface EvidenceSegment {
+  index: number;
+  label: EvidenceLabel;
+  text: string;
+  citations: string[];
+}
+
+export interface EvidenceContract {
+  labels: EvidenceLabel[];
+  definitions: Record<string, string>;
+  rules: string[];
+}
+
+export interface SynthesisDraft {
+  text: string;
+  labelled_text?: string;
+  citations: string[];
+  word_count: number;
+  segments?: EvidenceSegment[];
+  label_counts?: Record<EvidenceLabel, number>;
+  evidence_contract?: EvidenceContract;
+}
+
 export interface SynthesisResult {
   project_id: string;
   task_name: string;
   model_version: string | null;
   source_job_id: string | null;
-  draft: { text: string; citations: string[]; word_count: number };
+  draft: SynthesisDraft;
+  evidence_contract?: EvidenceContract;
   sources: SynthesisSource[];
   computed_facts: SynthesisFact[];
   provider: SynthesisStatus["provider"];
@@ -4022,3 +4128,133 @@ export const fitEnsemble = (task: string, body: FitEnsembleRequest) =>
     `/api/ensembles/${encodeURIComponent(task)}/fit`,
     body,
   );
+
+
+/* ------------------------------------------------------------------ */
+/* Paired model comparison                                             */
+/* ------------------------------------------------------------------ */
+
+export interface ComparisonModelRank {
+  mean_rank: number;
+  rank_std: number;
+  best_folds: number;
+  modal_rank: number;
+  rank_consistency: number;
+  unstable: boolean;
+}
+
+export interface ComparisonCalibration {
+  available: boolean;
+  brier_score?: number | null;
+  expected_calibration_error?: number | null;
+  reason?: string;
+  note?: string;
+  labels?: string[];
+}
+
+export interface ComparisonModel {
+  model_version: string;
+  resolved_version: string | null;
+  family: string;
+  fold_scores: Array<number | null>;
+  score_mean: number | null;
+  score_std: number | null;
+  scored_folds: number;
+  fit_time_s: number | null;
+  predict_time_ms: number | null;
+  parameters: number;
+  disk_bytes: number | null;
+  integrity: { verified?: boolean; digest?: string | null; error?: string } | null;
+  calibration?: ComparisonCalibration;
+  rank?: ComparisonModelRank | null;
+}
+
+export interface ComparisonRow {
+  treatment: string;
+  control: string;
+  mean_delta: number;
+  ci_low: number;
+  ci_high: number;
+  confidence: number;
+  wins: number;
+  ties: number;
+  losses: number;
+  n_pairs: number;
+  wilcoxon_statistic: number;
+  wilcoxon_p: number;
+  p_adjusted: number;
+  cliffs_delta: number;
+  cliffs_magnitude: "negligible" | "small" | "medium" | "large";
+  distinguishable: boolean;
+}
+
+export interface ComparisonResult {
+  task_name: string;
+  partition: string;
+  feature_source: string;
+  rows: number;
+  scoring: string;
+  scoring_label: string;
+  higher_is_better: boolean;
+  family: string;
+  cv: {
+    splitter: string;
+    n_splits: number;
+    repeats: number;
+    random_state: number;
+    folds: number;
+    temporal: boolean;
+  };
+  settings: Record<string, number | null>;
+  score_provenance: {
+    basis: string;
+    exploratory: boolean;
+    selected_on_same_data: boolean;
+    note: string;
+  };
+  models: ComparisonModel[];
+  statistics: {
+    metric_direction: string;
+    control: string;
+    alpha: number;
+    n_resamples: number;
+    models: Record<string, { mean: number | null; std: number | null; min: number | null; max: number | null; n: number }>;
+    comparisons: ComparisonRow[];
+  };
+  stability: { n_folds: number; models: Record<string, ComparisonModelRank> };
+  trade_off: {
+    objectives: Record<string, string>;
+    pareto_frontier: string[];
+    dominated: Record<string, string>;
+    incomplete: string[];
+    simpler_within_tolerance: {
+      best: string | null;
+      best_score?: number | null;
+      simpler: string | null;
+      simpler_score?: number;
+      simpler_complexity?: number;
+      tolerance: number;
+    };
+  };
+  n_pairs: number;
+  warnings: string[];
+}
+
+export const compareBundles = (
+  task: string,
+  body: {
+    model_versions: string[];
+    control?: string;
+    scoring?: string;
+    partition?: string;
+    n_splits?: number;
+    repeats?: number;
+    random_state?: number;
+    max_rows?: number | null;
+    include_calibration?: boolean;
+    n_resamples?: number;
+    confidence?: number;
+    alpha?: number;
+    simpler_tolerance?: number;
+  },
+) => post<ComparisonResult>(`/api/comparison/${encodeURIComponent(task)}`, body);

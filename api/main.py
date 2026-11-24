@@ -30,7 +30,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
-from . import acl, auth, compute
+from . import acl, auth, compute, ratelimit
 from .auth import ANONYMOUS, SESSION_COOKIE, STATIC_KEY, Principal
 from .config import _flag, settings
 from .safety import UnsafeName
@@ -39,6 +39,7 @@ from .jobs import job_manager
 from .routers import (
     auth as auth_router,
     bundles,
+    comparison,
     datasets,
     design,
     synthesis,
@@ -312,6 +313,9 @@ async def _unsafe_name_handler(request, exc):
 # Middleware added first ends up innermost; CORSMiddleware is added last so it
 # stays outermost and can decorate the 401 responses with CORS headers.
 app.add_middleware(ApiKeyMiddleware)
+# Rate limiting sits outside auth so an expensive request is refused before any
+# credential lookup; it is a no-op unless SKSURROGATE_RATE_LIMIT is set.
+app.add_middleware(ratelimit.RateLimitMiddleware)
 # The UI is a separate SPA client (see dev-notes/ui-plan.md) and normally calls the API
 # *same-origin*, through the dev server's /api proxy — see webui/vite.config.ts —
 # so it needs no CORS entry at all. The regex keeps direct localhost/127.0.0.1
@@ -348,6 +352,7 @@ app.include_router(lineage.router)
 app.include_router(evaluation.router)
 app.include_router(ensembles.router)
 app.include_router(explain.router)
+app.include_router(comparison.router)
 app.include_router(reports.router)
 app.include_router(design.router)
 app.include_router(synthesis.router)

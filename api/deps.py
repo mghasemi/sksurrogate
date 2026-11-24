@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from fastapi import HTTPException, Request
 
-from SKSurrogate import ModelRegistry, load_bundle, mltrack
+from SKSurrogate import BundleIntegrityError, ModelRegistry, load_bundle, mltrack
 
 from . import acl, auth
 from .config import settings
@@ -196,7 +196,14 @@ def unprocessable(message, reason=None):
     return HTTPException(status_code=422, detail=message, headers=headers)
 
 
-def resolve_bundle(task_name, *, model_version=None, alias=None, strict_dependencies=False):
+def resolve_bundle(
+    task_name,
+    *,
+    model_version=None,
+    alias=None,
+    strict_dependencies=False,
+    verify=False,
+):
     """Load a bundle either from a lifecycle alias in the registry or an unregistered bundle file.
 
     Both the task name and the model version are caller-supplied path segments:
@@ -205,30 +212,53 @@ def resolve_bundle(task_name, *, model_version=None, alias=None, strict_dependen
     the host.
     """
     task_name = safe_segment(task_name, "task name")
-    if alias is not None:
-        try:
-            return ModelRegistry(settings.registry_dir).load(
-                task_name, alias=alias, strict_dependencies=strict_dependencies
-            )
-        except KeyError as exc:
-            raise not_found(exc_message(exc))
-    if model_version is not None:
-        bundle_path = contained_path(
-            settings.task_bundles_dir(task_name),
-            model_version,
-            ".bundle",
-            field="model version",
-        )
-        if not bundle_path.exists():
-            # Not an unregistered bundle file — it may be a user-chosen alias of
-            # a registered version (or an exact registered version id).
+    try:
+        if alias is not None:
             try:
-                return ModelRegistry(settings.registry_dir).load_version(
-                    task_name, model_version, strict_dependencies=strict_dependencies
+                return ModelRegistry(settings.registry_dir).load(
+                    task_name,
+                    alias=alias,
+                    strict_dependencies=strict_dependencies,
+                    verify=verify,
                 )
-            except KeyError:
-                raise not_found("No bundle %r found for task %r" % (model_version, task_name))
-        return load_bundle(bundle_path, strict_dependencies=strict_dependencies)
+            except KeyError as exc:
+                raise not_found(exc_message(exc))
+        if model_version is not None:
+            bundle_path = contained_path(
+                settings.task_bundles_dir(task_name),
+                model_version,
+                ".bundle",
+                field="model version",
+            )
+            if not bundle_path.exists():
+                # Not an unregistered bundle file — it may be a user-chosen alias
+                # of a registered version (or an exact registered version id).
+                try:
+                    return ModelRegistry(settings.registry_dir).load_version(
+                        task_name,
+                        model_version,
+                        strict_dependencies=strict_dependencies,
+                        verify=verify,
+                    )
+                except KeyError:
+                    raise not_found(
+                        "No bundle %r found for task %r" % (model_version, task_name)
+                    )
+            return load_bundle(
+                bundle_path, strict_dependencies=strict_dependencies, verify=verify
+            )
+    except BundleIntegrityError as exc:
+        # A tampered, truncated or unverifiable artifact is not a client mistake,
+        # but a 500 traceback would hide the remedy. 409 names the artifact and
+        # the two legitimate ways forward.
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "%s The artifact was not loaded. Re-export the bundle from a trusted "
+                "run, or set SKSURROGATE_STRICT_BUNDLES=0 to load legacy bundles "
+                "without a sidecar (a checksum mismatch is always refused)." % exc
+            ),
+        )
     raise bad_request("Either model_version or alias must be provided")
 
 

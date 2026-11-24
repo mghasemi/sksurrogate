@@ -55,7 +55,11 @@ def stub_provider():
     """Local HTTP server standing in for an OpenAI-compatible endpoint."""
     captured = []
     state = {
-        "content": "Temperature dominates the response [S1]; the bundle reports one metric [S3].",
+        "content": (
+            "[observed] Temperature has the largest mean permutation importance [S1]. "
+            "[inferred] The fitted response is most sensitive to that column [S3]. "
+            "[hypothesized] A controlled experiment would be needed to separate it from correlated inputs [S3]."
+        ),
         "status": 200,
     }
 
@@ -191,8 +195,23 @@ def test_happy_path_returns_cited_draft_and_bounded_prompt(
     result = job["result"]
 
     assert result["draft"]["citations"] == ["S1", "S3"]
-    assert result["draft"]["text"].startswith("Temperature dominates")
+    assert result["draft"]["text"].startswith("Temperature has the largest")
     assert result["draft"]["word_count"] > 0
+    assert result["draft"]["label_counts"] == {
+        "observed": 1,
+        "inferred": 1,
+        "hypothesized": 1,
+    }
+    assert [segment["label"] for segment in result["draft"]["segments"]] == [
+        "observed",
+        "inferred",
+        "hypothesized",
+    ]
+    assert result["evidence_contract"]["labels"] == [
+        "observed",
+        "inferred",
+        "hypothesized",
+    ]
     assert [source["id"] for source in result["sources"]] == ["S1", "S3", "S4"]
     assert result["computed_facts"][0]["kind"] == "dataset_profile"
     assert result["computed_facts"][0]["data"]["rows"] == 120
@@ -303,3 +322,87 @@ def test_generated_note_requires_and_persists_provenance(client, project):
     human_note = human.json()["notes"][-1]
     assert human_note["source"] == "human"
     assert "citations" not in human_note
+
+
+def test_unlabelled_sentence_fails_the_job(
+    client, monkeypatch, stub_provider, project, synthesis_task
+):
+    _configure(monkeypatch, stub_provider)
+    stub_provider["state"]["content"] = (
+        "[observed] Temperature is the most important column [S1]. "
+        "A second claim without a label [S3]."
+    )
+    response = client.post(
+        "/api/synthesis/projects/%s" % project,
+        json={"task_name": synthesis_task["task"], "model_version": synthesis_task["version"]},
+    )
+    job = _wait(client, response.json()["job_id"])
+    assert job["status"] == "failed"
+    assert "evidence label" in job["error"]
+
+
+def test_a_sentence_without_its_own_citation_fails(
+    client, monkeypatch, stub_provider, project, synthesis_task
+):
+    _configure(monkeypatch, stub_provider)
+    stub_provider["state"]["content"] = (
+        "[observed] Temperature is the most important column [S1]. "
+        "[inferred] The response is sensitive to it."
+    )
+    response = client.post(
+        "/api/synthesis/projects/%s" % project,
+        json={"task_name": synthesis_task["task"], "model_version": synthesis_task["version"]},
+    )
+    job = _wait(client, response.json()["job_id"])
+    assert job["status"] == "failed"
+    assert "cites no source" in job["error"]
+
+
+def test_a_draft_without_observed_facts_fails(
+    client, monkeypatch, stub_provider, project, synthesis_task
+):
+    _configure(monkeypatch, stub_provider)
+    stub_provider["state"]["content"] = "[inferred] The response is sensitive [S1]."
+    response = client.post(
+        "/api/synthesis/projects/%s" % project,
+        json={"task_name": synthesis_task["task"], "model_version": synthesis_task["version"]},
+    )
+    job = _wait(client, response.json()["job_id"])
+    assert job["status"] == "failed"
+    assert "no [observed] sentence" in job["error"]
+
+
+def test_causal_wording_is_refused_even_with_a_valid_citation(
+    client, monkeypatch, stub_provider, project, synthesis_task
+):
+    """A positive association must never be reported as a cause."""
+    _configure(monkeypatch, stub_provider)
+    stub_provider["state"]["content"] = (
+        "[observed] Temperature is associated with the response [S1]. "
+        "[inferred] Temperature causes the response [S3]."
+    )
+    response = client.post(
+        "/api/synthesis/projects/%s" % project,
+        json={"task_name": synthesis_task["task"], "model_version": synthesis_task["version"]},
+    )
+    job = _wait(client, response.json()["job_id"])
+    assert job["status"] == "failed"
+    assert "causal language" in job["error"]
+    assert "causes" in job["error"]
+
+
+def test_validate_draft_returns_segments_with_labels_and_citations():
+    from api.synthesis import validate_draft
+
+    sources = [{"id": "S1"}, {"id": "S2"}]
+    draft = validate_draft(
+        "[observed] Metric A is 0.91 [S1]. [hypothesized] A larger sample may change the ranking [S2].",
+        sources,
+    )
+    assert draft["text"] == (
+        "Metric A is 0.91 [S1]. A larger sample may change the ranking [S2]."
+    )
+    assert draft["label_counts"] == {"observed": 1, "inferred": 0, "hypothesized": 1}
+    assert draft["segments"][1]["label"] == "hypothesized"
+    assert draft["segments"][1]["citations"] == ["S2"]
+    assert draft["evidence_contract"]["labels"] == ["observed", "inferred", "hypothesized"]

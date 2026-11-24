@@ -26,7 +26,7 @@ import {
 } from "../api/client";
 import { JobTracker } from "../components/JobTracker";
 import { LineageRail } from "../components/LineageRail";
-import { Card, EmptyState, ErrorNote, Loading, Stat, fmtNum, fmtPct, fmtSci } from "../components/ui";
+import { Badge, Card, EmptyState, ErrorNote, Loading, Stat, fmtNum, fmtPct, fmtSci } from "../components/ui";
 import { useBundleLabel, useLiveJob } from "../lib/hooks";
 import { useTask } from "../lib/task-context";
 
@@ -84,6 +84,9 @@ export default function ExplainPage() {
         max_rows: maxRows,
         top_k: 3,
         stability_samples: stabilitySamples,
+        // Three disjoint row slices: enough to expose a flipping importance
+        // direction without turning one explanation into a CV job.
+        stability_folds: 3,
       }),
   });
   const intervalMut = useMutation({
@@ -264,6 +267,61 @@ export default function ExplainPage() {
                     </div>
                   </>
                 )}
+                {explainMut.data.fold_importance_stability?.available && (
+                  <>
+                    <h3>Importance stability across row slices</h3>
+                    <p className="muted">
+                      Permutation importance recomputed on{" "}
+                      {explainMut.data.fold_importance_stability.n_folds} disjoint row slices
+                      with the same stored estimator (no refit).{" "}
+                      {explainMut.data.fold_importance_stability.note}
+                    </p>
+                    <div className="grid cols-3">
+                      {(explainMut.data.fold_importance_stability.features ?? []).slice(0, 9).map((item) => (
+                        <Stat
+                          key={item.feature}
+                          label={item.feature}
+                          value={fmtNum(item.mean)}
+                          sub={
+                            <>
+                              sign agreement {fmtPct(item.sign_consistency)} across {item.n_fits} slices{" "}
+                              {item.unstable ? <Badge tone="warn">unstable</Badge> : <Badge tone="ok">stable</Badge>}
+                            </>
+                          }
+                        />
+                      ))}
+                    </div>
+                    {(explainMut.data.fold_importance_stability.unstable_features ?? []).length > 0 && (
+                      <p className="hint">
+                        Direction flips across slices for:{" "}
+                        {explainMut.data.fold_importance_stability.unstable_features?.join(", ")}. Treat
+                        their attribution as slice-dependent.
+                      </p>
+                    )}
+                  </>
+                )}
+                {explainMut.data.grouped_importance && !explainMut.data.grouped_importance.skipped_reason && (
+                  <>
+                    <h3>Correlated feature groups</h3>
+                    <p className="muted">
+                      Features with |r| ≥{" "}
+                      {explainMut.data.grouped_importance.correlation_threshold} are permuted together,
+                      so near-duplicates do not split the credit arbitrarily.
+                    </p>
+                    <div className="grid cols-3">
+                      {explainMut.data.grouped_importance.importances
+                        .filter((item) => item.grouped)
+                        .map((item) => (
+                          <Stat
+                            key={item.features.join("+")}
+                            label={item.features.join(" + ")}
+                            value={fmtNum(item.mean)}
+                            sub={`joint drop; max |r| ${fmtNum(item.max_abs_correlation)}`}
+                          />
+                        ))}
+                    </div>
+                  </>
+                )}
                 <ul className="muted">
                   {explainMut.data.interpretation.limitations.map((limitation) => (
                     <li key={limitation}>{limitation}</li>
@@ -389,7 +447,13 @@ export default function ExplainPage() {
                 {aleMut.data.reference_sample.sampling === "random_without_replacement"
                   ? ` (sampled without replacement; seed ${aleMut.data.settings.random_state})`
                   : " (all rows)"}
-                . Response: <code>{aleMut.data.response.output}</code>. Features:{" "}
+                . Response: <code>{aleMut.data.response.output}</code>
+                {aleMut.data.explained_quantity ? (
+                  <>
+                    {" "}(explained quantity <code>{aleMut.data.explained_quantity}</code>)
+                  </>
+                ) : null}
+                . Features:{" "}
                 {aleMut.data.feature_selection === "explicit"
                   ? "explicit selection"
                   : `top ${aleMut.data.settings.top_k} by permutation importance`}
@@ -526,7 +590,11 @@ export default function ExplainPage() {
                   {rowMut.data.partition}”; baseline {rowMut.data.baseline.mode === "row"
                     ? `is row ${rowMut.data.baseline.row_index} of “${rowMut.data.baseline.partition}”`
                     : `is the ${rowMut.data.reference_sample.used_rows}-row reference mean from “${rowMut.data.reference_sample.partition}”`}
-                  . Response: <code>{rowMut.data.response.output}</code>;{" "}
+                  . Response: <code>{rowMut.data.response.output}</code>
+                  {rowMut.data.explained_quantity ? (
+                    <> (explained quantity <code>{rowMut.data.explained_quantity}</code>)</>
+                  ) : null}
+                  ;{" "}
                   {rowMut.data.orders.count} distinct feature order
                   {rowMut.data.orders.count === 1 ? "" : "s"}.
                 </p>
@@ -541,9 +609,37 @@ export default function ExplainPage() {
                   <Stat
                     label="Reconstruction residual"
                     value={fmtSci(rowMut.data.reconstruction.max_abs_residual)}
-                    sub={`tolerance ${fmtSci(rowMut.data.reconstruction.tolerance)}; exact by construction`}
+                    sub={`tolerance ${fmtSci(rowMut.data.reconstruction.tolerance)}; status ${rowMut.data.reconstruction.status ?? "exact"}`}
+                  />
+                  <Stat
+                    label="Out-of-distribution"
+                    value={
+                      rowMut.data.out_of_distribution?.available
+                        ? rowMut.data.out_of_distribution.row_flagged
+                          ? <Badge tone="warn">outside reference</Badge>
+                          : <Badge tone="ok">within reference</Badge>
+                        : "unavailable"
+                    }
+                    sub={
+                      rowMut.data.out_of_distribution?.available
+                        ? `distance ${fmtNum(rowMut.data.out_of_distribution.row_distance)} vs threshold ${fmtNum(rowMut.data.out_of_distribution.threshold)}`
+                        : rowMut.data.out_of_distribution?.reason
+                    }
                   />
                 </div>
+                {rowMut.data.reconstruction.reliable === false && (
+                  <p className="hint">
+                    The contributions do not reproduce the prediction within tolerance, so this
+                    attribution is marked unreliable. {rowMut.data.reconstruction.note}
+                  </p>
+                )}
+                {rowMut.data.out_of_distribution?.row_flagged && (
+                  <p className="hint">
+                    This row lies outside the reference distribution, so its explanation extrapolates.
+                    {" "}
+                    {rowMut.data.out_of_distribution.note}
+                  </p>
+                )}
                 {rowMut.data.explanation_scope === "subset_hybrid" && (
                   <p className="hint">
                     Only the explained features move off the baseline; the reconstruction describes

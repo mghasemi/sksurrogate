@@ -148,7 +148,10 @@ Open **Datasets**. For each CSV partition:
 
 1. Set **Partition** to ``train``, ``validation``, or ``test`` (or another
    descriptive partition name).
-2. Drop the CSV into the upload area or click it to browse.
+2. Drop the CSV into the upload area or click it to browse. Uploads above
+   ``SKSURROGATE_MAX_UPLOAD_MB`` (default 256 MB) are refused with 413 while
+   streaming, before the file is buffered or parsed; raise the variable on the
+   API process for a larger dataset.
 3. Click **Inspect CSV**. This previews the row count, columns, inferred data
    types, possible target columns, and a bounded PII-like value-pattern and
    sensitive-column scan. The scan reports pattern counts only; it does not
@@ -754,6 +757,21 @@ than a failed computation:
      - forecasting baselines
      - pooled rolling-origin backtest over the declared horizon
 
+The **Paired model comparison** card answers a different question from the
+Bundle metrics table: rather than subtracting aggregates computed on different
+folds, it refits every selected bundle on **one shared fold list** and reports
+the paired mean delta with a percentile bootstrap interval, the Holm-adjusted
+Wilcoxon p-value, the win/tie/loss split and Cliff's ordinal effect size. Pick
+two to eight bundles, a metric, a fold count and an optional control, then click
+**Compare models**. The card also shows each model's fit time, fitted-parameter
+count, bundle size, classifier calibration (Brier / ECE) and rank stability, plus
+the Pareto front over score, parameters and cost and the simplest model within δ
+of the best. *Distinguishable* requires both an interval excluding zero and an
+adjusted p-value below 0.05; with fewer than six usable pairs the card says a
+verdict is unreachable by construction. The comparison is exploratory — the
+bundles were selected on this task's data — and the warning above the table says
+so. See :doc:`model-comparison` for the full contract.
+
 Any other bundle can be measured on demand: **Nested CV** reports the honest
 outer score (mean and interval) for the model, and — for a task that declares a
 temporal spec — the **Rolling-origin backtest** reports MAE/RMSE/bias/sMAPE/MASE
@@ -816,6 +834,22 @@ across subsamples; the UI reports per-feature sample standard deviation and
 top-rank frequency. This is not a confidence interval or a guarantee of
 robustness, and it requires more source rows than the selected row cap. With
 the default of one sample, no cross-sample stability summary is estimated.
+Each explanation is requested with three disjoint row slices, and the card
+reports **importance stability across row slices**: permutation importance is
+recomputed on each slice with the same stored estimator (no refit), and a feature
+whose score-drop direction flips in more than 25% of the slices is badged
+*unstable*. Numeric features with ``|r|`` ≥ 0.9 are also clustered and permuted
+together, so a near-duplicate pair does not split its joint credit arbitrarily;
+the joint drops appear in a **Correlated feature groups** block. Both are
+descriptive checks, not confidence statements.
+
+.. figure:: images/ui-explain-guarantees.png
+   :alt: Importance stability across row slices and correlated feature groups on the Explain page
+
+   The stability block marks ``flow`` unstable (66.67% sign agreement across three
+   slices) and the grouped block attributes the near-duplicate ``temperature`` +
+   ``flow`` pair jointly (max ``|r|`` 0.9793).
+
 The Explain page shows the reference row counts, sampling status, seed when
 sampling occurs, and permutation-repeat count. With 3 or 5 reference samples
 selected, the partial-dependence charts also gain dashed mean ± sample-standard-
@@ -878,7 +912,8 @@ observed bins, so each curve reports its bin boundaries, the reference rows per
 bin, and any excluded non-finite rows instead of averaging over feature
 combinations that never occur. The response label names the scalar being
 explained — ``predict`` for regression, the positive-class probability for
-binary classifiers — and nominal categorical features are listed as skipped
+binary classifiers — through the ``explained_quantity`` field, and nominal
+categorical features are listed as skipped
 because they have no canonical ordering. ALE still describes the fitted model,
 not a causal effect, and correlated features can make one feature's local
 differences reflect another's distribution.
@@ -890,8 +925,13 @@ is credited with the model-response change observed when it is restored from the
 baseline in that order — so their sum plus the baseline prediction reconstructs
 the explained prediction exactly; the residual and its tolerance are shown. The
 per-feature spread across orders is displayed as sample standard deviation and
-is order-dependence, not a confidence interval. A single row's contributions
-are a model attribution, not feature importance or a causal effect.
+is order-dependence, not a confidence interval. The card also shows the
+**reconstruction status** (``exact``, or ``unreliable`` with the residual when it
+does not add up) and an **out-of-distribution** badge: the row's robust
+Mahalanobis distance against the reference sample's own distance distribution. A
+flagged row means the explanation extrapolates beyond the reference rows — not
+that the prediction is wrong. A single row's contributions are a model
+attribution, not feature importance or a causal effect.
 
 .. figure:: images/ui-explain-explanations.png
    :alt: Accumulated local effects and row-level explanation cards on the Explain page

@@ -1,0 +1,94 @@
+0.8.0 — unreleased
+==================
+
+Paired model comparison
+~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Added:** ``POST /api/comparison/{task}`` compares two to eight stored bundles
+  by refitting each estimator on **one shared fold list**, so every delta is a
+  paired statistic rather than a subtraction of aggregates computed on different
+  folds. The response carries per-model fold scores, mean/SD, fit time, seeded
+  prediction latency, fitted-parameter count, bundle size and integrity, plus
+  classifier calibration (Brier score and expected calibration error on
+  out-of-fold probabilities).
+* **Added:** the comparison statistics live in the core
+  (``SKSurrogate.compare``, NumPy + SciPy only): percentile bootstrap intervals
+  on paired deltas, Wilcoxon signed-rank p-values with Holm adjustment across the
+  family of comparisons against one control, Cliff's ordinal effect size, a
+  Pareto front over (score, parameters, cost), rank stability across folds, and
+  the "simplest model within δ of the best" query. ``benchmarks.stats`` will
+  re-export the same implementation so the study code and the product cannot
+  drift apart.
+* **Changed:** a comparison does not present itself as a leaderboard. Scores are
+  labelled exploratory (``score_provenance.selected_on_same_data = true``) because
+  the bundles were selected on this task's data, and a comparison with fewer than
+  six usable pairs states that a two-sided Wilcoxon test cannot reach
+  ``p < 0.05`` by construction.
+* **Documented:** :doc:`../model-comparison` describes the request/response
+  contract, the oriented-delta convention, the calibration convention and the
+  limitations; the Evaluation page carries a **Paired model comparison** card.
+
+Evidence-grounded explanations
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Added:** ``explained_quantity`` on every scalar-response explanation
+  (``prediction``, ``probability`` or ``decision_score``), so a probability-scale
+  attribution cannot be mistaken for a logit.
+* **Added:** a checked ``reconstruction`` status for row explanations
+  (``exact``/``unreliable`` with residual and tolerance), a robust-Mahalanobis
+  ``out_of_distribution`` flag for the explained row, grouped permutation
+  importance for numeric features whose ``|r|`` reaches 0.9, and
+  ``fold_importance_stability`` — sign consistency of permutation importance
+  across disjoint row slices with the same stored estimator.
+* **Added:** a ``provenance`` block on every explanation response (model version,
+  dataset fingerprint, manifest digest, git revision, method, partition, seeded
+  settings). The Explain page renders the unstable-feature warning, the grouped
+  attributions, the reconstruction status and the out-of-distribution flag.
+
+Evidence-labelled LLM drafts
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Changed (contract):** every generated sentence must start with
+  ``[observed]``, ``[inferred]`` or ``[hypothesized]`` and cite a supplied source
+  in that sentence. A draft with no ``[observed]`` sentence is rejected.
+* **Added:** causal wording is refused at validation time (``causes``,
+  ``because of``, ``leads to``, ``drives``, ``effect of``, ``intervention``),
+  because the computed facts are associations and metrics, not interventions. The
+  job fails with a named reason instead of displaying an unsupported causal claim.
+* **Added:** the response returns ``segments`` (label, text, citations per
+  sentence), ``label_counts`` and the ``evidence_contract``; the project
+  synthesis card renders each sentence with its label badge.
+
+Platform hardening
+~~~~~~~~~~~~~~~~~~
+
+* **Added:** uploads are bounded. ``SKSURROGATE_MAX_UPLOAD_MB`` (default 256)
+  is enforced while streaming, so an oversized dataset upload answers 413 with
+  the limit and the variable to raise instead of buffering the body or being
+  killed by the OOM reaper. Applies to inspect, register and validate; the
+  Compose file forwards the variable.
+* **Added:** ``CONTRIBUTING.md`` states the review's three scope rules (no new
+  optimizer without benchmark evidence, no general-purpose MLOps expansion, no
+  LLM-first differentiation) and the evidence a change must ship with.
+* **Added (opt-in):** token-bucket rate limiting for job submissions and
+  inference. ``SKSURROGATE_RATE_LIMIT=1`` enables it;
+  ``SKSURROGATE_RATE_LIMIT_JOBS_PER_MINUTE`` (60) and
+  ``SKSURROGATE_RATE_LIMIT_INFERENCE_PER_MINUTE`` (300) set the per-client
+  rates. A refused request answers 429 with ``Retry-After`` before any work is
+  queued. Buckets are per process — a multi-worker deployment gets per-worker
+  limits and should put a real limiter in front; that limitation is documented
+  rather than implied.
+* **Added:** cancelling a job now removes its partial artifacts (checkpoint and
+  report directories) and records what was removed on the job record; a paused
+  job keeps its checkpoint so it can resume.
+* **Added:** versioned artifact documents. `SKSurrogate.artifacts` stamps job
+  records, serving pins and the registry index with ``schema_version: 2`` and
+  upgrades version-1 documents on read (unknown keys preserved, newer versions
+  refused). Model bundles and manifests keep their own version fields; dataset
+  rows and explanation responses are documented as non-document artifacts.
+* **Changed:** prediction routes verify the bundle checksum before unpickling.
+  A mismatch answers 409 and never loads the artifact;
+  ``SKSURROGATE_STRICT_BUNDLES=1`` additionally refuses a bundle whose manifest
+  sidecar is missing. ``docs/controlplane.rst`` states the pickle-based
+  trust model explicitly — bundles are executable artifacts and must come from
+  a trusted run.

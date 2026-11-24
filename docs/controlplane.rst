@@ -51,12 +51,78 @@ non-root user, exposes ``/api/health`` as its healthcheck and stores data in
 the ``sksurrogate-data`` volume (``/data``). The Compose file forwards
 ``SKSURROGATE_API_KEY``, ``SKSURROGATE_REQUIRE_AUTH``,
 ``SKSURROGATE_ADMIN_USERNAME``, ``SKSURROGATE_ADMIN_PASSWORD``,
-``SKSURROGATE_SESSION_TTL``, ``SKSURROGATE_SESSION_COOKIE_SECURE`` and
-``SKSURROGATE_API_CORS_ORIGINS`` into the container. Set the key for non-local
+``SKSURROGATE_SESSION_TTL``, ``SKSURROGATE_SESSION_COOKIE_SECURE``,
+``SKSURROGATE_API_CORS_ORIGINS``, ``SKSURROGATE_MAX_UPLOAD_MB`` (largest
+accepted upload, default 256 MB, enforced while streaming with 413),
+``SKSURROGATE_RATE_LIMIT`` (opt-in token buckets) with
+``SKSURROGATE_RATE_LIMIT_JOBS_PER_MINUTE`` and
+``SKSURROGATE_RATE_LIMIT_INFERENCE_PER_MINUTE`` into the container. Set the key
+for non-local
 use; set ``SKSURROGATE_REQUIRE_AUTH=1`` to require an identity — a shared key, a
 per-user API key, a browser session, or the one-shot administrator bootstrap —
 and to make a deployment with none of those refuse to start. Use
 ``--build-arg EXTRAS="..."`` to add optional packages.
+
+Artifact versions
+=================
+
+Every persisted control-plane document carries a version and is upgraded on
+read; a document written by a *newer* package is refused rather than guessed at.
+`SKSurrogate.artifacts` owns the switch:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 18 60
+
+   * - Artifact
+     - Field / version
+     - Upgrade rule
+   * - Job record
+     - ``schema_version`` 2
+     - v1 records gain explicit ``label``/``log_counts``/``compute``/``cleanup``
+       defaults and a recomputed ``resumable`` flag; unknown keys are preserved.
+   * - Serving pin
+     - ``schema_version`` 2
+     - v1 documents gain an empty ``history`` list and stable display fields; a
+       document from a newer writer is reported as unconfigured, not served.
+   * - Registry index
+     - ``schema_version`` 2
+     - v1 (unstamped) indexes load unchanged and are stamped on the next write.
+   * - Model bundle
+     - ``format_version``
+     - v1 tabular bundles load; v2 adds the temporal block and the manifest.
+   * - Experiment manifest
+     - ``schema_version`` 2
+     - v1 ``reproducibility`` records are upgraded on read; newer than v2 is
+       refused loudly.
+
+Dataset/partition rows and synchronous explanation responses are not document
+artifacts: the former live in CSV + SQLite, the latter are not persisted (a
+report result lives inside its job record). They have no version field, and
+adding a sidecar nothing reads would be worse than saying so.
+
+Serialization security
+======================
+
+Model bundles are ``joblib``/pickle payloads. Loading one executes code chosen by
+whoever wrote the file, so **only load bundles produced by a trusted run of this
+project** — never a bundle a user uploaded, downloaded from an untrusted source,
+or copied out of a shared directory you do not control. The same rule applies to
+the ``sksurrogate-batch-predict`` CLI and to ``ModelBundle.load``.
+
+The prediction routes (``/api/inference/...`` and ``/api/serving/...``) verify the
+bundle's SHA-256 against its ``.bundle.manifest.json`` sidecar before unpickling:
+
+* a checksum mismatch (tampered or truncated bytes) is refused with **409** and
+  the artifact is never loaded — in every mode;
+* a *missing* sidecar (a bundle written before manifests) is allowed unless
+  ``SKSURROGATE_STRICT_BUNDLES=1``, which makes the control plane fail closed;
+* the 409 detail names the artifact and both remedies: re-export from a trusted
+  run, or disable strict mode for legacy bundles.
+
+This is an integrity check, not a sandbox: it proves the bytes match the sidecar,
+not that the sidecar came from a trusted author. Keep the API home on storage
+only trusted users can write.
 
 Configuration and storage
 =========================

@@ -246,7 +246,8 @@ Submit a synthesis job with ``POST /api/synthesis/projects/{project_id}``::
            "job_id":"JOB_ID", "include_explanations":true,
            "include_drift":false}'
 
-The job returns ``draft`` (text, citations, word count), ``sources``
+The job returns ``draft`` (text, labelled text, per-sentence segments, label
+counts, citations, word count), ``evidence_contract``, ``sources``
 (id/kind/label), ``computed_facts`` (the exact aggregate payload sent to the
 provider), ``provider`` metadata, and an ``interpretation`` block labelled
 ``generated_interpretation`` with ``causal_effect: false``. ``GET
@@ -263,10 +264,26 @@ The prompt is not stored; the job result and any saved note follow the normal
 jobs/notes retention rules, and the operator owns the provider's retention
 behaviour.
 
-**Citation contract.** The system prompt requires a ``[S1]``-style citation for
-every factual sentence. A draft that is empty, longer than 6,000 characters,
-cites nothing, or cites an id that was not supplied fails the job with a named
-reason; it is never accepted silently.
+**Evidence contract.** Every generated sentence must start with exactly one
+label and cite at least one supplied source *in that sentence*:
+
+``[observed]``
+    A source states the value, count, metric or configuration directly.
+``[inferred]``
+    A reading of the observed facts that adds no new measurement.
+``[hypothesized]``
+    A candidate explanation or next test, explicitly speculative.
+
+A draft with no ``[observed]`` sentence is rejected: a note built only from
+interpretation has no evidence base. **Causal wording is refused** — the sources
+are associations and metrics, not interventions, so phrases such as "causes",
+"because of", "leads to", "drives" or "effect of" fail the job even when the
+citation is real. The same validation rejects an empty draft, one longer than
+6,000 characters, a missing label, a sentence that cites nothing, and any id
+that was not supplied. The label and the citation are the provider's
+self-classification, not an independently verified fact; the Evidence panel in
+the web UI renders them as badges and keeps the computed facts beside the
+draft.
 
 **Saving a draft.** Synthesis does not modify the project. Persisting is an
 explicit note action with provenance::

@@ -14,6 +14,10 @@ describe behaviour a user can observe; internal churn lives in
      - Date
      - Highlights
 
+   * - ``0.8.0``
+     - unreleased
+     - Paired model comparison and evidence-grounded explanations and drafts
+
    * - ``0.6.0``
      - unreleased
      - Search-engine reliability: exact evaluation budget, reproducible ``random_state``, auditable counters and the published search contract
@@ -46,6 +50,8 @@ describe behaviour a user can observe; internal churn lives in
    :maxdepth: 1
    :caption: Releases
 
+   0.8.0
+   0.6.0
    0.5.0
    0.4.0
    0.3.0

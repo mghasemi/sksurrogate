@@ -58,6 +58,15 @@ class Settings:
     - ``SKSURROGATE_SESSION_COOKIE_SECURE``: ``1``/``true``/``yes`` adds the
       ``Secure`` flag to the session cookie. Set it whenever the UI is served
       over HTTPS.
+    - ``SKSURROGATE_MAX_UPLOAD_MB``: largest accepted dataset upload in
+      megabytes (default ``256``). Enforced while streaming, so an oversized
+      body is refused with 413 before it is buffered or parsed.
+    - ``SKSURROGATE_RATE_LIMIT``: ``1``/``true``/``yes`` enables per-client token
+      buckets for job submissions and inference. Off by default. The rates are
+      ``SKSURROGATE_RATE_LIMIT_JOBS_PER_MINUTE`` (default 60) and
+      ``SKSURROGATE_RATE_LIMIT_INFERENCE_PER_MINUTE`` (default 300). Buckets are
+      per process, so a multi-worker deployment gets per-worker limits — put a
+      real limiter in front of a public deployment.
     """
 
     def __init__(self, root=None):
@@ -65,7 +74,20 @@ class Settings:
         self.api_key = os.environ.get("SKSURROGATE_API_KEY") or None
         self.require_auth = _flag(os.environ.get("SKSURROGATE_REQUIRE_AUTH"))
         self.session_ttl_seconds = _int_env("SKSURROGATE_SESSION_TTL", 7 * 24 * 3600)
-        self.session_cookie_secure = _flag(os.environ.get("SKSURROGATE_SESSION_COOKIE_SECURE"))
+        self.session_cookie_secure = _flag("SKSURROGATE_SESSION_COOKIE_SECURE")
+        #: Largest accepted upload in megabytes. Enforced while streaming, before
+        #: any parser sees the body (``api.uploads.read_upload``).
+        self.max_upload_mb = _int_env("SKSURROGATE_MAX_UPLOAD_MB", 256)
+        #: Token-bucket limiting for job submissions and inference (``api.ratelimit``).
+        #: Off by default: the shipped deployment is single-process behind a
+        #: localhost port, and a limiter there would surprise a local user.
+        self.rate_limit_enabled = _flag("SKSURROGATE_RATE_LIMIT")
+        self.rate_limit_jobs_per_minute = _int_env(
+            "SKSURROGATE_RATE_LIMIT_JOBS_PER_MINUTE", 60
+        )
+        self.rate_limit_inference_per_minute = _int_env(
+            "SKSURROGATE_RATE_LIMIT_INFERENCE_PER_MINUTE", 300
+        )
         self.cors_origins = [o.strip() for o in os.environ.get("SKSURROGATE_API_CORS_ORIGINS", "").split(",") if o.strip()]
 
     @property

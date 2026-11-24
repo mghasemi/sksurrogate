@@ -50,6 +50,7 @@ from ..eda import (
     semantic_audit,
     stability,
 )
+from ..uploads import read_upload
 from ..features import NumericFeatureError, features_from_json, numeric_train_xy
 from ..problem_type import (
     PROBLEM_TYPES,
@@ -639,7 +640,7 @@ async def inspect_dataset(task_name: str, file: UploadFile = File(...)):
     """
     if not (file.filename or "").lower().endswith(".csv"):
         raise bad_request("Only CSV uploads are supported")
-    raw_bytes = await file.read()
+    raw_bytes = await read_upload(file, label="CSV upload")
     try:
         frame = pd.read_csv(BytesIO(raw_bytes))
     except Exception as exc:
@@ -682,7 +683,7 @@ async def register_dataset(task_name: str, target: str = Form(...), partition: s
     if not (file.filename or "").lower().endswith(".csv"):
         raise bad_request("Only CSV uploads are supported")
     _validate_partition_name(partition)
-    raw_bytes = await file.read()
+    raw_bytes = await read_upload(file, label="dataset CSV")
     try:
         frame = pd.read_csv(BytesIO(raw_bytes))
     except Exception as exc:
@@ -911,7 +912,7 @@ async def validate_dataset(
     if file is not None:
         if not (file.filename or "").lower().endswith(".csv"):
             raise bad_request("Only CSV uploads are supported")
-        raw_bytes = await file.read()
+        raw_bytes = await read_upload(file, label="processed dataset CSV")
         try:
             frame = pd.read_csv(BytesIO(raw_bytes))
         except Exception as exc:

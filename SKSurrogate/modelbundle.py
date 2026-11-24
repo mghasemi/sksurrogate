@@ -417,12 +417,15 @@ def load_bundle(
 ):
     """Load a bundle and reject incompatible schema or runtime dependencies.
 
-    ``verify=True`` runs :func:`verify_bundle` first (fail-closed on a checksum
-    mismatch, and on a missing sidecar too — an explicit request for integrity
-    must not succeed without evidence).
+    ``verify=True`` runs :func:`verify_bundle` first. A checksum mismatch always
+    raises. A *missing* sidecar (a bundle written before manifests) is only a
+    failure when strict mode is on — ``verify=True`` or
+    ``SKSURROGATE_STRICT_BUNDLES=1`` — so a legacy deployment keeps loading and a
+    strict one fails closed.
     """
-    if verify:
-        verify_bundle(path, strict=True)
+    strict_verify = _strict_bundles_default()
+    if verify or strict_verify:
+        verify_bundle(path, strict=True if strict_verify else None)
     record = joblib.load(path)
     bundle = ModelBundle.from_record(record)
     if expected_schema is not None and bundle.schema != expected_schema:
@@ -493,12 +496,17 @@ class ModelRegistry:
         self._index_path = self.root / "registry.json"
 
     def _read_index(self):
+        from .artifacts import read_artifact, stamp
+
         if not self._index_path.exists():
-            return {"models": {}}
+            return stamp("registry_index", {"models": {}})
         with self._index_path.open(encoding="utf-8") as stream:
-            return json.load(stream)
+            return read_artifact("registry_index", json.load(stream))
 
     def _write_index(self, index):
+        from .artifacts import stamp
+
+        index = stamp("registry_index", index)
         with tempfile.NamedTemporaryFile(
             mode="w", dir=str(self.root), prefix=".registry-", delete=False, encoding="utf-8"
         ) as temporary:

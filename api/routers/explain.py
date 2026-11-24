@@ -31,12 +31,17 @@ from ..explanations import (
     DEFAULT_MIN_BIN_FRACTION,
     accumulated_local_effects,
     average_pdp_on_grid,
+    correlated_groups,
     descriptive_summary,
     distinct_permutations,
+    grouped_permutation_importance,
     numeric_bin_edges,
+    explained_quantity,
+    out_of_distribution,
     reference_subsets,
     response_callable,
     row_contribution_summary,
+    sign_consistency,
 )
 from ..training import get_registered_target, load_partition, problem_family
 from .evaluation import _load_bundle
@@ -53,6 +58,9 @@ class ExplainRequest(BaseModel):
     n_repeats: int = Field(default=5, ge=1, le=20)
     top_k: int = Field(default=3, ge=0, le=6)
     stability_samples: int = Field(default=1, ge=1, le=5)
+    #: Disjoint row slices on which permutation importance is recomputed with the
+    #: *same* stored estimator. 0 disables the stability block (cheap default).
+    stability_folds: int = Field(default=0, ge=0, le=5)
     random_state: int = 0
 
 
@@ -147,6 +155,87 @@ def _explain_frame(task_name, partition) -> tuple[pd.DataFrame, np.ndarray, str]
             )
         )
     return X, y, "partition_columns"
+
+
+def _provenance(bundle, *, method, partition, settings_block):
+    """Which stored model an explanation describes, and how it was produced.
+
+    Deliberately includes the manifest digest when the bundle carries one: two
+    bundles can share a version string only by accident, but the digest names
+    the exact experiment record.
+    """
+    manifest = getattr(bundle, "manifest", None) or {}
+    git = manifest.get("git") or {}
+    return {
+        "model_version": getattr(bundle, "model_version", None),
+        "dataset_fingerprint": getattr(bundle, "dataset_fingerprint", None),
+        "bundle_created_at": getattr(bundle, "created_at", None),
+        "manifest_digest": manifest.get("manifest_digest"),
+        "git_revision": git.get("revision"),
+        "method": method,
+        "partition": partition,
+        "settings": settings_block,
+        "note": "Provenance identifies the exact stored model this description came from.",
+    }
+
+
+def _fold_importance_stability(
+    estimator, values, names, y, *, folds, n_repeats, random_state, temporal
+):
+    """Permutation importance recomputed on disjoint row slices.
+
+    The stored estimator is *not* refit per fold: the slices measure how much a
+    column's score drop depends on which rows are scored. That is the honest
+    limit of this check, and the payload says so instead of calling the slices
+    "fold refits".
+    """
+    from sklearn.inspection import permutation_importance
+    from sklearn.model_selection import KFold, StratifiedKFold, TimeSeriesSplit
+
+    if folds < 2:
+        return None
+    if temporal:
+        splitter = TimeSeriesSplit(n_splits=folds)
+    elif problem_family(estimator) == "Classification":
+        splitter = StratifiedKFold(n_splits=folds, shuffle=True, random_state=random_state)
+    else:
+        splitter = KFold(n_splits=folds, shuffle=True, random_state=random_state)
+    rows = []
+    used = 0
+    for train_index, test_index in splitter.split(values, y):
+        try:
+            result = permutation_importance(
+                estimator,
+                values[test_index],
+                y[test_index],
+                n_repeats=min(3, int(n_repeats)),
+                random_state=random_state,
+            )
+        except Exception:
+            continue
+        rows.append(np.asarray(result.importances_mean, dtype=float))
+        used += 1
+    if used < 2:
+        return {
+            "available": False,
+            "n_folds": used,
+            "reason": "Fewer than two row slices produced a permutation importance.",
+        }
+    features = sign_consistency(np.vstack(rows), names)
+    return {
+        "available": True,
+        "n_folds": used,
+        "splitter": type(splitter).__name__,
+        "refit_per_fold": False,
+        "features": features,
+        "unstable_features": [entry["feature"] for entry in features if entry["unstable"]],
+        "note": (
+            "Permutation importance was recomputed on disjoint row slices with the "
+            "single stored estimator (no refit). sign_consistency is the share of "
+            "slices agreeing with the majority sign; a feature below 0.75 flips "
+            "direction across slices and is marked unstable."
+        ),
+    }
 
 
 def _json_scalar(value):
@@ -302,6 +391,43 @@ def explain_bundle(task_name: str, model_version: str, body: ExplainRequest):
         }
         for i in order
     ]
+    grouped_importance = {
+        "correlation_threshold": 0.9,
+        "groups": [],
+        "importances": [],
+        "skipped_reason": None,
+    }
+    if not all(pd.api.types.is_numeric_dtype(X[column]) for column in names):
+        grouped_importance["skipped_reason"] = "non_numeric_features"
+    else:
+        numeric_values = X.to_numpy(dtype=float)
+        groups = correlated_groups(numeric_values, names)
+        for group in groups:
+            group["indices"] = [names.index(feature) for feature in group["features"]]
+        grouped_importance["groups"] = groups
+        try:
+            grouped_importance["importances"] = grouped_permutation_importance(
+                estimator,
+                numeric_values,
+                y,
+                groups,
+                n_repeats=min(5, body.n_repeats),
+                random_state=body.random_state,
+            )
+        except Exception as exc:
+            grouped_importance["skipped_reason"] = "%s: %s" % (type(exc).__name__, exc)
+
+    fold_importance_stability = _fold_importance_stability(
+        estimator,
+        X.to_numpy(),
+        names,
+        y,
+        folds=body.stability_folds,
+        n_repeats=body.n_repeats,
+        random_state=body.random_state,
+        temporal=feature_source == "temporal_design",
+    )
+
     curves, errors = [], []
     for i in order[: body.top_k]:
         try:
@@ -383,10 +509,25 @@ def explain_bundle(task_name: str, model_version: str, body: ExplainRequest):
             "random_state": body.random_state,
         },
         "importance": importance,
+        "grouped_importance": grouped_importance,
+        "fold_importance_stability": fold_importance_stability,
         "reference_sample_stability": reference_sample_stability,
         "partial_dependence": curves,
         "partial_dependence_stability": partial_dependence_stability,
         "errors": errors,
+        "provenance": _provenance(
+            bundle,
+            method="permutation_importance",
+            partition=partition,
+            settings_block={
+                "max_rows": body.max_rows,
+                "n_repeats": body.n_repeats,
+                "top_k": body.top_k,
+                "stability_samples": body.stability_samples,
+                "stability_folds": body.stability_folds,
+                "random_state": body.random_state,
+            },
+        ),
         "interpretation": {
             "importance": {
                 "category": "model_attribution",
@@ -564,6 +705,7 @@ def accumulated_local_effects_bundle(task_name: str, model_version: str, body: A
         "partition": partition,
         "feature_source": feature_source,
         "response": response_meta,
+        "explained_quantity": explained_quantity(response_meta),
         "reference_sample": {
             "partition": partition,
             "source_rows": int(source_rows),
@@ -583,6 +725,19 @@ def accumulated_local_effects_bundle(task_name: str, model_version: str, body: A
         "curves": curves,
         "skipped": skipped,
         "errors": errors,
+        "provenance": _provenance(
+            bundle,
+            method="accumulated_local_effects",
+            partition=partition,
+            settings_block={
+                "max_rows": body.max_rows,
+                "n_bins": body.n_bins,
+                "top_k": body.top_k,
+                "features": list(body.features) if body.features is not None else None,
+                "stability_samples": body.stability_samples,
+                "random_state": body.random_state,
+            },
+        ),
         "interpretation": {
             "accumulated_local_effects": {
                 "category": "fitted_model_response_profile",
@@ -718,6 +873,35 @@ def explain_row(task_name: str, model_version: str, body: RowExplainRequest):
     ]
     contributions.sort(key=lambda item: -abs(item["mean"] or 0.0))
 
+    numeric_columns = X.select_dtypes(include=[np.number]).columns
+    try:
+        numeric_positions = [names.index(column) for column in numeric_columns]
+        ood = out_of_distribution(
+            X[numeric_columns].to_numpy(dtype=float),
+            np.asarray(row_values, dtype=float)[numeric_positions][None, :],
+        )
+        out_of_distribution_block = {
+            "available": True,
+            "row_distance": ood["distances"][0],
+            "row_flagged": ood["flagged"][0],
+            **{key: ood[key] for key in (
+                "method",
+                "threshold",
+                "percentile",
+                "reference_rows",
+                "features_used",
+                "imputed_cells",
+                "threshold_note",
+            )},
+            "note": (
+                "The flag says this row is far from the reference sample in robust "
+                "Mahalanobis distance; it does not mean the prediction is wrong, and "
+                "the threshold moves with the reference rows."
+            ),
+        }
+    except (ValueError, TypeError) as exc:
+        out_of_distribution_block = {"available": False, "reason": str(exc)}
+
     return {
         "model_version": model_version,
         "partition": partition,
@@ -725,6 +909,8 @@ def explain_row(task_name: str, model_version: str, body: RowExplainRequest):
         "row_index": body.row_index,
         "row_count": int(len(X)),
         "response": response_meta,
+        "explained_quantity": explained_quantity(response_meta),
+        "out_of_distribution": out_of_distribution_block,
         "reference_sample": {
             "partition": baseline_partition,
             "source_rows": int(source_rows),
@@ -750,6 +936,17 @@ def explain_row(task_name: str, model_version: str, body: RowExplainRequest):
             "reference_max_rows": body.reference_max_rows,
             "random_state": body.random_state,
         },
+        "provenance": _provenance(
+            bundle,
+            method="ordered_occlusion_chain",
+            partition=partition,
+            settings_block={
+                "orders": body.orders,
+                "reference_max_rows": body.reference_max_rows,
+                "random_state": body.random_state,
+                "baseline_mode": body.baseline,
+            },
+        ),
         "orders": {
             "count": len(column_orders),
             "requested": body.orders,
@@ -775,6 +972,14 @@ def explain_row(task_name: str, model_version: str, body: RowExplainRequest):
             "max_abs_residual": finite_or_none(max_abs_residual),
             "tolerance": finite_or_none(tolerance),
             "exact_by_construction": True,
+            "status": "exact" if max_abs_residual <= tolerance else "unreliable",
+            "reliable": bool(max_abs_residual <= tolerance),
+            "note": (
+                "The chain telescopes exactly for any estimator; a residual above the "
+                "tolerance means the response is not additive at numerical precision "
+                "(for example a non-deterministic model), so the attribution is marked "
+                "unreliable rather than reported as exact."
+            ),
         },
         "interpretation": {
             "category": "model_attribution",

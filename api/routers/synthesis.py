@@ -115,6 +115,7 @@ def submit_synthesis(project_id: str, body: SynthesisRequest):
             "model_version": body.model_version,
             "source_job_id": body.job_id,
             "draft": draft,
+            "evidence_contract": draft["evidence_contract"],
             "sources": [
                 {"id": fact["id"], "kind": fact["kind"], "label": fact["label"]}
                 for fact in facts
@@ -129,6 +130,7 @@ def submit_synthesis(project_id: str, body: SynthesisRequest):
                     "The draft is model-generated prose about the supplied computed facts; it is not a computed result and can be wrong or incomplete.",
                     "Only aggregated, stored facts were sent to the provider — no raw dataset rows or credentials.",
                     "Citations identify which computed source supports a sentence, not a causal relationship.",
+                    "Every sentence is labelled [observed], [inferred] or [hypothesized] by the provider; the label is a self-classification, not an independently verified fact.",
                     "Persisting the draft as a project note is an explicit user action; generated notes are labelled and keep their provenance.",
                 ],
             },

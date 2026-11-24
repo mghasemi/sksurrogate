@@ -273,8 +273,10 @@ Limitations
   ``iris``; the second registration sees the existing task instead of a private
   copy. Physical per-user directories would be a larger migration.
 * No e-mail password reset, no OAuth/SSO, no second factor.
-* Login throttling is per process and in memory; put a real rate limiter in
-  front of a public deployment (with TLS, since session cookies must not travel
-  in clear text).
+* Login throttling is per process and in memory. Opt-in token buckets
+  (``SKSURROGATE_RATE_LIMIT=1``, see :doc:`controlplane`) cover job submissions
+  and inference and are also per process. Put a real rate limiter in front of a
+  public deployment (with TLS, since session cookies must not travel in clear
+  text).
 * The ACL is metadata, not directory layout: a filesystem-level compromise of
   the API home exposes everything, exactly as it does for an open deployment.

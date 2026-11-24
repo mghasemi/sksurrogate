@@ -25,78 +25,49 @@ The four counters
 A search consumes work in four distinct ways. They are counted separately because
 conflating them is how an "equal-budget" comparison silently becomes unequal.
 
-==============================  =====================================================
-Counter                         Meaning
-==============================  =====================================================
-``n_evaluations``               Objective invocations: one candidate configuration
-                                scored by one full cross-validation. A candidate whose
-                                folds all fail, or which is rejected as forbidden/zero-
-                                feature/pruned, **still counts** — it consumed the
-                                caller's time and it is recorded in
-                                ``evaluation_history_`` with ``score=None``.
-``n_rounds``                    Sampling rounds executed by the search loop. A round
-                                normally produces one evaluation; a round whose
-                                surrogate fit or local optimization fails produces none
-                                and is recorded in ``surrogate_fit_history_``.
-``n_surrogate_fits``            Response-surface fits. Reported as
-                                ``surrogate_info_["fit_attempts"]``, with failures
-                                split into ``fit_failures`` / ``prediction_failures``.
-``n_acquisition_calls``         Local optimization problems solved (one per fitted
-                                surface). Reported as ``surrogate_info_["fit_attempts"]``
-                                minus fits that never reached the optimizer.
-==============================  =====================================================
+=========================.. list-table:: Search invariants
+   :header-rows: 1
+   :widths: 8 68 24
 
-Public accessors: ``summary_["budget"]`` reports all four for a run
-(``evaluations``, ``rounds``, ``acquisition_calls``, ``surrogate_fits``), and the fitted
-search exposes ``n_evaluations_``, ``n_rounds_`` and ``n_surrogate_fits_``.
-
-The state machine
------------------
-
-One round, in order::
-
-    sample a point (explore)  ──┐
-                                ├──> objective(x)  ──> record  ──> counters
-    guess a point (exploit)   ──┘
-
-    before MinEvals points:            every round evaluates a sampled point
-    after  MinEvals points:            fit surface on all points so far;
-                                       solve min over the surface; evaluate the
-                                       minimizer (one evaluation, phase
-                                       ``surrogate_exploit``); on failure, the round
-                                       records ``acquisition_failed`` and consumes
-                                       **no** evaluation
-
-Phases are visible per trial: ``phase ∈ {"init", "explore", "surrogate_exploit"}`` in
-the callback event (see :doc:`telemetry`), and as ``sampling_sources_`` on the search.
-
-Invariants
-----------
-
-Each row is a test in ``tests/test_search_invariants.py`` or
-``tests/test_search_determinism.py``. Before v0.6 the rows marked *was failing* did not
-hold; the "Pinned by" column names the test that now keeps them true.
-
-=====  ====================================================================  ============
-Id     Invariant                                                              Status
-=====  ====================================================================  ============
-I1     ``n_evaluations == len(evaluation_history_) == len(sampling_sources_)``  holds
-I2     Every recorded evaluation corresponds to exactly one objective call    holds
-I3     ``n_evaluations <= max_evals`` whenever ``max_evals`` is set           holds
-I4     With ``max_evals=None``, ``n_evaluations == n_iter`` exactly           fixed
-I5     A round that consumes no evaluation increments the no-progress         fixed
-       counter (so it can never outlive its budget silently)
-I6     ``termination_reason`` names the constraint that actually bound the     fixed
-       run, drawn from the documented vocabulary below
-I7     Identical ``random_state`` ⇒ identical ``(params, score)`` sequence,     fixed
-       in one process and across processes
-I8     Fitting never consumes or reseeds the global ``random``/``numpy.random``  holds
+   * - Id
+     - Invariant
+     - Status
+   * - I1
+     - ``n_evaluations == len(evaluation_history_) == len(sampling_sources_)``
+     - holds
+   * - I2
+     - Every recorded evaluation corresponds to exactly one objective call
+     - holds
+   * - I3
+     - ``n_evaluations <= max_evals`` whenever ``max_evals`` is set
+     - holds
+   * - I4
+     - With ``max_evals=None``, ``n_evaluations == n_iter`` exactly
+     - fixed
+   * - I5
+     - A round that consumes no evaluation increments the no-progress counter
+       (so it can never outlive its budget silently)
+     - fixed
+   * - I6
+     - ``termination_reason`` names the constraint that actually bound the run,
+       drawn from the documented vocabulary below
+     - fixed
+   * - I7
+     - Identical ``random_state`` ⇒ identical ``(params, score)`` sequence, in
+       one process and across processes
+     - fixed
+   * - I8
+     - Fitting never consumes or reseeds the global ``random``/``numpy.random``
        state
-I9     ``clone(search)`` before and after ``fit`` returns equal                fixed
+     - holds
+   * - I9
+     - ``clone(search)`` before and after ``fit`` returns equal
        ``get_params(deep=True)``
-I10    A surrogate fit or prediction failure degrades that round to            fixed
-       exploration; it never aborts the search
-=====  ====================================================================  ============
+     - fixed
+   * - I10
+     - A surrogate fit or prediction failure degrades that round to exploration;
+       it never aborts the search
+     - fixed
 
 The failures above were the release-blocking defect class of v0.6.0: an off-by-one
 between rounds and evaluations (``n_iter=3`` spent five and ``n_iter=5`` spent seven,
