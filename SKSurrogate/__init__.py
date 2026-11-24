@@ -142,7 +142,7 @@ from .ensembling import (
 
 from .deps import MissingOptionalDependency, require
 
-__version__ = "0.4.0"
+__version__ = "0.8.0"
 
 __all__ = [
     "AML",
