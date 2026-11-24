@@ -215,3 +215,14 @@ def test_manifest_recovers_legacy_reproducibility_record():
     manifest = ExperimentManifest.from_bundle(bundle)
     assert manifest.schema_version == 2
     assert manifest.task_name == "legacy"
+
+
+def test_stamped_digest_survives_legacy_aliases():
+    """The API adds ``transformations`` as an alias; it must not break the digest."""
+    from api.manifest import stamp_evaluation_history
+
+    record = _manifest().to_dict()
+    record["transformations"] = record["preprocessing"]
+    record["environment"]["numpy_version"] = "2.5.3"
+    stamp_evaluation_history(record, [{"pipeline": ["a"], "score": 1.0}])
+    assert ExperimentManifest.from_dict(record).digest() == record["manifest_digest"]

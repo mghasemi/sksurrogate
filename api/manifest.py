@@ -138,10 +138,14 @@ def stamp_evaluation_history(record, evaluation_history):
     """Record the digest of the evaluation history and refresh the manifest digest.
 
     The history is produced after the search finishes, so the manifest is built
-    first and stamped here rather than duplicating the manifest assembly.
+    first and stamped here rather than duplicating the manifest assembly. The
+    digest is recomputed through :class:`ExperimentManifest` so legacy aliases
+    (``transformations``) added for backward compatibility do not change it:
+    ``ExperimentManifest.from_dict(record).digest()`` must reproduce the stamped
+    value.
     """
+    from SKSurrogate.manifest import ExperimentManifest
+
     record["evaluation_history_digest"] = payload_digest(evaluation_history)
-    record["manifest_digest"] = payload_digest(
-        {key: value for key, value in record.items() if key != "manifest_digest"}
-    )
+    record["manifest_digest"] = ExperimentManifest.from_dict(record).digest()
     return record
