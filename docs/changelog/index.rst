@@ -14,6 +14,10 @@ describe behaviour a user can observe; internal churn lives in
      - Date
      - Highlights
 
+   * - ``0.5.0``
+     - unreleased
+     - MCP server for agents: 30 curated tools over a running control plane, plus an ``api_request`` escape hatch
+
    * - ``0.4.0``
      - 2026-11-23
      - Optional extras: base install down to seven packages (39 s/633 MB → 7 s/250 MB)
@@ -38,6 +42,7 @@ describe behaviour a user can observe; internal churn lives in
    :maxdepth: 1
    :caption: Releases
 
+   0.5.0
    0.4.0
    0.3.0
    0.2.0

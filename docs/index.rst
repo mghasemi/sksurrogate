@@ -29,6 +29,7 @@ Welcome to SKSurrogate's documentation!
    monitoring
    controlplane
    auth-and-sharing
+   mcp-server
    ui-manual
    walkthrough
    release

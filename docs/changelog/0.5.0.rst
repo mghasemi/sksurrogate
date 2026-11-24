@@ -1,0 +1,23 @@
+0.5.0 — unreleased
+==================
+
+MCP server for agents (new optional extra)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Added:** an opt-in MCP (Model Context Protocol) server in the new
+  ``sksurrogate_mcp`` package, exposed via the ``[mcp]`` extra
+  (``pip install sksurrogate[mcp]``; console script ``sksurrogate-mcp``). It wraps a
+  running control plane over stdio with **zero changes to ``SKSurrogate/`` or ``api/``**
+  and authenticates with a per-user key (``SKSURROGATE_API_URL`` +
+  ``SKSURROGATE_API_KEY`` → ``X-API-Key``), so agent actions land in the audit trail under
+  the key owner. Twenty-nine curated tools grouped by workflow stage — discovery, data
+  registration/preprocessing, experiments and job control (``job_wait`` runs a bounded
+  in-server poll loop and emits MCP progress notifications with trial count/phase/best
+  score; submit tools refuse duplicate live jobs), analysis
+  (sensitivity/top features/ALE explanations/metrics/nested CV), registry–promotion
+  lifecycle (summary, quality gate, promote, predict/predict_batch) and research-record
+  projects — plus an ``api_request`` escape hatch validated against the embedded OpenAPI
+  snapshot so the full control plane stays reachable without tool sprawl. Expected API
+  failures return structured ``{"error", "status_code"}`` payloads instead of raising; row-level
+  data export remains absent per the D2 contract. Documented in ``docs/mcp-server.rst``;
+  tested by ``tests/test_mcp_server.py`` (unit + real-MCP-client stdio round-trips).

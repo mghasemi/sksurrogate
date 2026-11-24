@@ -1,4 +1,5 @@
-"""Phase 1 tests for the sksurrogate_mcp package (core loop tools).
+"""Tests for the sksurrogate_mcp package (Phases 0-2: core loop, analysis,
+lifecycle, research records).
 
 The control plane is a local stateful HTTP stub (``ThreadingHTTPServer``,
 same fake-provider pattern as ``tests/test_api_synthesis.py``): no network,
@@ -48,6 +49,10 @@ class _StubState:
         }
         self.requests: list[dict] = []
         self.last_multipart_body = b""
+        # Phase 2 state: registry bundles per task + project records / notes.
+        self.registry_bundles: dict[str, list[dict]] = {}
+        self.projects: dict[str, dict] = {}
+        self.project_notes: dict[str, list[dict]] = {}
 
     def seed_job(
         self,
@@ -93,12 +98,14 @@ class _StubHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _record(self, method: str, parsed) -> dict:
+    def _record(self, method: str, parsed, json_body=None) -> dict:
         entry = {
             "method": method,
             "path": parsed.path,
             "query": {k: v[-1] for k, v in urllib.parse.parse_qs(parsed.query).items()},
         }
+        if json_body is not None:
+            entry["json_body"] = json_body
         self.state.requests.append(entry)
         return entry
 
@@ -247,6 +254,155 @@ class _StubHandler(BaseHTTPRequestHandler):
                 {"task_name": task_name, "ignored_columns": columns, "effective_features": max(features, 0)}
             )
 
+        # -- Phase 2 routes ----------------------------------------------------
+        if method == "GET" and len(path_parts) == 4 and path_parts[:2] == ["api", "sensitivity"] and path_parts[3] == "top-features":
+            task_name = path_parts[2]
+            self._record(method, parsed, json_body)
+            meta = state.datasets.get(task_name)
+            if meta is None:
+                return self._send_json({"detail": f"no dataset registered for task {task_name!r}"}, 404)
+            num = int((urllib.parse.parse_qs(parsed.query).get("num") or ["10"])[0])
+            features = [{"name": "x", "weight": 0.9}] * min(num, 3)
+            return self._send_json(
+                {"available": True, "method": "sobol", "num_requested": num, "features": features}
+            )
+        if method == "GET" and len(path_parts) == 4 and path_parts[:2] == ["api", "evaluation"] and path_parts[3] == "metrics":
+            task_name = path_parts[2]
+            self._record(method, parsed, json_body)
+            meta = state.datasets.get(task_name)
+            if meta is None:
+                return self._send_json({"detail": f"no dataset registered for task {task_name!r}"}, 404)
+            model_version = (urllib.parse.parse_qs(parsed.query).get("model_version") or [None])[0]
+            return self._send_json(
+                {
+                    "task_name": task_name,
+                    "problem_type": meta.get("problem_type"),
+                    "model_version": model_version,
+                    "metric_options": ["neg_mean_absolute_error", "neg_root_mean_squared_error"],
+                    "default_metric": "neg_mean_absolute_error",
+                }
+            )
+        if method == "GET" and len(path_parts) == 4 and path_parts[:2] == ["api", "registry"] and path_parts[3] == "summary":
+            task_name = path_parts[2]
+            self._record(method, parsed, json_body)
+            meta = state.datasets.get(task_name)
+            if meta is None:
+                return self._send_json({"detail": f"no dataset registered for task {task_name!r}"}, 404)
+            bundles = list(state.registry_bundles.get(task_name, []))
+            return self._send_json({"task_name": task_name, "bundles": bundles})
+        if method == "GET" and len(path_parts) == 3 and path_parts[:2] == ["api", "projects"]:
+            project_id = path_parts[2]
+            self._record(method, parsed, json_body)
+            record = state.projects.get(project_id)
+            if record is None:
+                return self._send_json({"detail": f"no project with id {project_id!r}"}, 404)
+            return self._send_json(dict(record))
+
+        if method == "POST" and len(path_parts) == 4 and path_parts[:2] == ["api", "sensitivity"] and path_parts[3] == "run":
+            task_name = path_parts[2]
+            self._record(method, parsed, json_body)
+            return self._send_json(
+                {"job_id": f"stub-sens-{task_name}", "status": "queued", "echo_body": json_body or {}}, 202
+            )
+        if method == "POST" and len(path_parts) == 4 and path_parts[:2] == ["api", "evaluation"] and path_parts[3] == "nested-cv":
+            task_name = path_parts[2]
+            self._record(method, parsed, json_body)
+            return self._send_json(
+                {"job_id": f"stub-nested-{task_name}", "status": "queued", "echo_body": json_body or {}}, 202
+            )
+        if method == "POST" and len(path_parts) == 5 and path_parts[:2] == ["api", "evaluation"] and path_parts[4] == "explain":
+            model_version = path_parts[3]
+            self._record(method, parsed, json_body)
+            return self._send_json({"model_version": model_version, "echo_body": json_body or {}})
+        if method == "POST" and len(path_parts) == 6 and path_parts[:2] == ["api", "evaluation"] and path_parts[4:6] == ["explain", "row"]:
+            model_version = path_parts[3]
+            self._record(method, parsed, json_body)
+            return self._send_json({"model_version": model_version, "echo_body": json_body or {}})
+        if method == "POST" and len(path_parts) == 4 and path_parts[:2] == ["api", "registry"] and path_parts[3] == "promote":
+            self._record(method, parsed, json_body)
+            body = json_body or {}
+            return self._send_json(
+                {
+                    "model_version": body.get("model_version"),
+                    "state": body.get("state"),
+                    "approvers": body.get("approvers", []),
+                    "required_approvals": body.get("required_approvals", 1),
+                }
+            )
+        if method == "POST" and len(path_parts) == 5 and path_parts[:2] == ["api", "quality-gates"] and path_parts[4] == "check":
+            model_version = path_parts[3]
+            self._record(method, parsed, json_body)
+            body = json_body or {}
+            return self._send_json({"passed": True, "checks": [], "model_version": model_version, "echo_body": body})
+        if method == "POST" and len(path_parts) == 4 and path_parts[:2] == ["api", "inference"]:
+            task_name, action = path_parts[2], path_parts[3]
+            self._record(method, parsed, json_body)
+            body = json_body or {}
+            if action == "predict":
+                rows = body.get("rows")
+                if not isinstance(rows, list):
+                    return self._send_json({"detail": "rows must be a list of objects"}, 400)
+                return self._send_json(
+                    {
+                        "count": len(rows),
+                        "predictions": [1.5] * len(rows),
+                        "alias": body.get("alias"),
+                        "model_version": body.get("model_version"),
+                    }
+                )
+            if action == "predict-batch":
+                return self._send_json(
+                    {
+                        "status": "ok",
+                        "partition": body.get("partition"),
+                        "alias": body.get("alias"),
+                        "model_version": body.get("model_version"),
+                    }
+                )
+        if method == "POST" and path_parts == ["api", "projects"]:
+            self._record(method, parsed, json_body)
+            body = json_body or {}
+            name = body.get("name")
+            for existing in state.projects.values():
+                if existing.get("name") == name:
+                    return self._send_json({"detail": f"project named {name!r} already exists"}, 409)
+            project_id = "%032x" % (len(state.projects) + 1)
+            new_record: dict[str, object] = {"project_id": project_id}
+            for key in ("name", "description"):
+                if body.get(key) is not None:
+                    new_record[key] = body[key]
+            new_record["research_questions"] = list(body.get("research_questions") or [])
+            new_record["artifacts"] = list(body.get("artifacts") or [])
+            state.projects[project_id] = new_record
+            return self._send_json(new_record)
+        if method == "POST" and len(path_parts) == 4 and path_parts[:2] == ["api", "projects"] and path_parts[3] == "notes":
+            project_id = path_parts[2]
+            self._record(method, parsed, json_body)
+            record = state.projects.get(project_id)
+            if record is None:
+                return self._send_json({"detail": f"no project with id {project_id!r}"}, 404)
+            body = json_body or {}
+            note: dict[str, object] = {"note_id": "n%032d" % (len(state.project_notes.get(project_id, [])) + 1)}
+            note.update(body)
+            state.project_notes.setdefault(project_id, []).append(note)
+            return self._send_json({"project_id": project_id, **note})
+
+        if method == "PUT" and len(path_parts) == 3 and path_parts[:2] == ["api", "projects"]:
+            project_id = path_parts[2]
+            self._record(method, parsed, json_body)
+            record = state.projects.get(project_id)
+            if record is None:
+                return self._send_json({"detail": f"no project with id {project_id!r}"}, 404)
+            body = json_body or {}
+            for key in ("name", "description"):
+                if body.get(key) is not None:
+                    record[key] = body[key]
+            if body.get("research_questions") is not None:
+                record["research_questions"] = list(body["research_questions"])
+            if body.get("artifacts") is not None:
+                record["artifacts"] = list(body["artifacts"])
+            return self._send_json(dict(record))
+
         # -- fallback: faithful to FastAPI's unknown-route behaviour ----------
         self._record(method, parsed)
         self._send_json({"detail": f"stub has no route for {method} {parsed.path}"}, 404)
@@ -300,9 +456,11 @@ def client(stub):
 
 
 EXPECTED_TOOL_NAMES = {
+    # Phase 0 — discovery
     "health",
     "list_tasks",
     "task_overview",
+    # Phase 1 — core loop
     "experiment_options",
     "register_dataset",
     "dataset_preflight",
@@ -315,6 +473,24 @@ EXPECTED_TOOL_NAMES = {
     "job_diagnose",
     "stop_job",
     "resume_job",
+    # Phase 2 — analysis
+    "sensitivity_analysis",
+    "top_features",
+    "explain_model",
+    "explain_row",
+    "evaluation_metrics",
+    "nested_cv",
+    # Phase 2 — lifecycle
+    "registry_summary",
+    "promote_model",
+    "quality_gate_check",
+    "predict",
+    "predict_batch",
+    # Phase 2 — research records
+    "project_create",
+    "project_update",
+    "project_note",
+    # Escape hatch (Phase 1)
     "api_request",
 }
 
@@ -534,31 +710,36 @@ def test_run_experiment_refuses_duplicate_live_job(client, stub):
 
 
 def test_job_wait_transitions_to_completed(client, stub):
+    import asyncio
+
     from sksurrogate_mcp.server import job_wait
 
     stub.state.seed_job("job-done", ["queued", "running", "completed"])
-    payload = job_wait(client, "job-done", timeout_s=10, poll_interval_s=0.2)
+    payload = asyncio.run(job_wait(client, "job-done", timeout_s=10, poll_interval_s=0.2))
     assert payload.get("status") == "completed" and not payload.get("timed_out"), payload
     assert payload.get("result") == {"best_score": -12.5}, payload
 
 
 def test_job_wait_times_out_on_nonterminal_status(client, stub):
+    import asyncio
     import time
 
     from sksurrogate_mcp.server import job_wait
 
     stub.state.seed_job("job-slow", ["queued", "running"])  # never terminal
     started = time.monotonic()
-    payload = job_wait(client, "job-slow", timeout_s=1.0, poll_interval_s=0.3)
+    payload = asyncio.run(job_wait(client, "job-slow", timeout_s=1.0, poll_interval_s=0.3))
     elapsed = time.monotonic() - started
     assert payload.get("timed_out") is True and payload.get("status") == "running", payload
     assert 0.8 <= elapsed < 5.0, f"wait loop must respect its budget; took {elapsed:.2f}s"
 
 
 def test_job_wait_unknown_job_returns_404_payload(client):
+    import asyncio
+
     from sksurrogate_mcp.server import job_wait
 
-    payload = job_wait(client, "nope", timeout_s=1)
+    payload = asyncio.run(job_wait(client, "nope", timeout_s=1))
     assert "error" in payload and "404" in payload["error"], payload
     assert payload.get("status_code") == 404, payload
 
@@ -635,6 +816,329 @@ def test_api_request_passes_json_bodies_through(client):
 
 
 # ---------------------------------------------------------------------------
+# Phase 2 — analysis tools (server-side bound clamps + G4 duplicate guards)
+# ---------------------------------------------------------------------------
+
+
+def test_sensitivity_analysis_validates_method_and_clamps(client, stub):
+    from sksurrogate_mcp.server import sensitivity_analysis
+
+    bad = sensitivity_analysis(client, "demo", method="fourier")
+    assert "error" in bad and "method must be one of" in bad["error"], bad
+    assert not [r for r in stub.state.requests if "/run" in r["path"]], (
+        "an invalid method must be refused before any request goes out"
+    )
+
+    ok = sensitivity_analysis(client, "demo", n_features_to_select=0)  # clamped up to the floor of 1
+    assert ok.get("job_id") == "stub-sens-demo" and ok.get("status") == "queued", ok
+    assert ok["echo_body"] == {"method": "sobol", "n_features_to_select": 1}, ok
+
+    with_partition = sensitivity_analysis(
+        client, "demo", method="morris", train_partition="train_imputed"
+    )
+    assert with_partition["echo_body"]["train_partition"] == "train_imputed", with_partition
+
+
+def test_sensitivity_analysis_refuses_duplicate_live_job(client, stub):
+    from sksurrogate_mcp.server import sensitivity_analysis
+
+    stub.state.active.append(
+        {
+            "job_id": "live-sens",
+            "kind": "sensitivity",
+            "status": "running",
+            "task_name": "demo",
+            "progress_message": None,
+            "error": None,
+        }
+    )
+    refused = sensitivity_analysis(client, "demo")
+    assert refused.get("duplicate_job_id") == "live-sens" and "A live sensitivity job already exists" in refused["error"], (
+        refused
+    )
+
+
+def test_top_features_clamps_num_and_passes_through(client):
+    from sksurrogate_mcp.server import top_features
+
+    result = top_features(client, "demo", num=0)  # clamped up to the floor of 1
+    assert result.get("available") is True and result["num_requested"] == 1, result
+
+
+def test_top_features_404_becomes_error_payload(client):
+    from sksurrogate_mcp.server import top_features
+
+    err = top_features(client, "ghost-task")
+    assert err["status_code"] == 404 and "error" in err and "is_error" not in err, err
+
+
+def test_explain_model_clamps_to_server_bounds(client):
+    from sksurrogate_mcp.server import explain_model
+
+    result = explain_model(
+        client, "demo", "v1", max_rows=1, n_repeats=999, top_k=7, partition="train"
+    )
+    assert result["echo_body"] == {
+        "max_rows": 20,      # server-side floor (min 20)
+        "n_repeats": 20,     # server-side ceiling (max 20)
+        "top_k": 6,          # server-side ceiling (max 6)
+        "partition": "train",
+    }, result
+
+
+def test_explain_row_validates_baseline_and_clamps(client):
+    from sksurrogate_mcp.server import explain_row
+
+    bad = explain_row(client, "demo", "v1", baseline="median")
+    assert "error" in bad and "baseline must be one of" in bad["error"], bad
+
+    ok = explain_row(
+        client,
+        "demo",
+        "v1",
+        row_index=-3,  # negative index clamped into range -> 0 (row_count stubbed to 5)
+        features=["x"],
+        baseline="row",
+        partition="train",
+        baseline_row_index=4,
+        orders=99,  # server-side ceiling (max 10)
+    )
+    assert ok["echo_body"] == {
+        "row_index": 0,
+        "features": ["x"],
+        "baseline": "row",
+        "partition": "train",
+        "baseline_row_index": 4,
+        "orders": 10,
+    }, ok
+
+
+def test_evaluation_metrics_query_param_optional(client):
+    from sksurrogate_mcp.server import evaluation_metrics
+
+    with_mv = evaluation_metrics(client, "demo", model_version="v1")
+    assert with_mv.get("model_version") == "v1" and "metric_options" in with_mv, with_mv
+
+    without_mv = evaluation_metrics(client, "demo")
+    assert without_mv.get("model_version") is None, without_mv
+
+
+def test_evaluation_metrics_404_for_unknown_task(client):
+    from sksurrogate_mcp.server import evaluation_metrics
+
+    err = evaluation_metrics(client, "ghost-task")
+    assert err["status_code"] == 404 and "error" in err, err
+
+
+def test_nested_cv_requires_exactly_one_model_selector(client):
+    from sksurrogate_mcp.server import nested_cv
+
+    both = nested_cv(client, "demo", alias="staging", model_version="v1")
+    assert "error" in both and "exactly one of" in both["error"], both
+
+    neither = nested_cv(client, "demo")
+    assert "error" in neither and "exactly one of" in neither["error"], neither
+
+
+def test_nested_cv_clamps_folds_and_returns_job_handle(client):
+    from sksurrogate_mcp.server import nested_cv
+
+    ok = nested_cv(client, "demo", alias="staging", inner_cv=99, outer_cv=1, repeats=99)
+    assert ok.get("job_id") == "stub-nested-demo" and ok.get("status") == "queued", ok
+    assert ok["echo_body"] == {
+        "inner_cv": 10,   # server-side bounds: min 2, max 10
+        "outer_cv": 2,    # server-side bounds: min 2, max 5
+        "repeats": 5,     # server-side bounds: min 1, max 5
+        "alias": "staging",
+    }, ok
+
+
+def test_nested_cv_refuses_duplicate_live_job(client, stub):
+    from sksurrogate_mcp.server import nested_cv
+
+    # The job store labels this kind with a hyphen — the guard must match it exactly.
+    stub.state.active.append(
+        {
+            "job_id": "live-nested",
+            "kind": "nested-cv",
+            "status": "running",
+            "task_name": "demo",
+            "progress_message": None,
+            "error": None,
+        }
+    )
+    refused = nested_cv(client, "demo", alias="staging")
+    assert refused.get("duplicate_job_id") == "live-nested" and "A live nested_cv job already exists" in refused["error"], (
+        refused
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — lifecycle (registry / promotion / quality gate / inference)
+# ---------------------------------------------------------------------------
+
+
+def test_registry_summary_lists_bundles_and_404s_unknown_tasks(client, stub):
+    from sksurrogate_mcp.server import registry_summary
+
+    stub.state.registry_bundles["demo"] = [{"model_version": "v1", "state": "candidate"}]
+
+    summary = registry_summary(client, "demo")
+    assert [b["model_version"] for b in summary["bundles"]] == ["v1"], summary
+
+    err = registry_summary(client, "ghost-task")
+    assert err["status_code"] == 404 and "error" in err, err
+
+
+def test_promote_model_validates_state_and_forwards_fields(client):
+    from sksurrogate_mcp.server import promote_model
+
+    bad = promote_model(client, "demo", "v1", state="release")
+    assert "error" in bad and "state must be one of" in bad["error"], bad
+
+    ok = promote_model(client, "demo", "v1", state="staging", approvers=["mehdi"])
+    assert ok == {
+        "model_version": "v1",
+        "state": "staging",
+        "approvers": ["mehdi"],
+        "required_approvals": 1,
+    }, ok
+
+
+def test_quality_gate_check_forwards_optional_thresholds(client):
+    from sksurrogate_mcp.server import quality_gate_check
+
+    minimal = quality_gate_check(client, "demo", "v1")
+    assert minimal["passed"] is True and minimal["echo_body"] == {}, minimal
+
+    with_gates = quality_gate_check(
+        client,
+        "demo",
+        "v1",
+        metric_thresholds={"neg_mean_absolute_error": -0.5},
+        max_bundle_size_bytes=1_000_000,
+    )
+    assert with_gates["echo_body"] == {
+        "metric_thresholds": {"neg_mean_absolute_error": -0.5},
+        "max_bundle_size_bytes": 1_000_000,
+    }, with_gates
+
+
+def test_predict_requires_exactly_one_model_selector_and_passes_rows(client):
+    from sksurrogate_mcp.server import predict
+
+    both = predict(client, "demo", rows=[{"x": 1.0}], alias="staging", model_version="v1")
+    assert "error" in both and "exactly one of" in both["error"], both
+
+    ok = predict(client, "demo", rows=[{"x": 1.0}, {"x": 2.0}], alias="staging")
+    assert ok.get("count") == 2 and ok.get("alias") == "staging" and len(ok["predictions"]) == 2, ok
+
+
+def test_predict_batch_forwards_partition_and_selector(client):
+    from sksurrogate_mcp.server import predict_batch
+
+    ok = predict_batch(client, "demo", partition="test", model_version="v1")
+    assert (
+        ok.get("status") == "ok" and ok.get("partition") == "test" and ok.get("model_version") == "v1"
+    ), ok
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — research records (append-only, human-review semantics kept)
+# ---------------------------------------------------------------------------
+
+
+def test_project_create_sends_full_record(client):
+    from sksurrogate_mcp.server import project_create
+
+    ok = project_create(
+        client,
+        name="Sobol audit",
+        description="why does x dominate?",
+        research_questions=["Q1"],
+        artifacts=[{"artifact_id": "a1"}],
+    )
+    assert isinstance(ok.get("project_id"), str) and len(ok["project_id"]) == 32, ok
+    assert ok["name"] == "Sobol audit" and ok["artifacts"] == [{"artifact_id": "a1"}], ok
+
+
+def test_project_create_409_on_duplicate_name_is_an_error_payload(client):
+    from sksurrogate_mcp.server import project_create
+
+    first = project_create(client, name="Only one")
+    assert "error" not in first
+    dup = project_create(client, name="Only one")
+    assert dup["status_code"] == 409 and "already exists" in dup["error"], dup
+
+
+def test_project_update_preserves_untouched_fields_via_read_modify_write(client, stub):
+    from sksurrogate_mcp.server import project_create, project_update
+
+    created = project_create(
+        client, name="Sobol audit", description="old description", research_questions=["Q1"]
+    )
+    project_id = created["project_id"]
+
+    updated = project_update(client, project_id, description="new description")
+    assert "error" not in updated, updated
+    # The PUT body must carry the untouched fields back (read-modify-write).
+    put_requests = [r for r in stub.state.requests if r["method"] == "PUT"]
+    assert len(put_requests) == 1, put_requests
+    sent = put_requests[0]["json_body"]
+    assert sent == {
+        "name": "Sobol audit",            # preserved by read-modify-write
+        "description": "new description",
+        "research_questions": ["Q1"],     # preserved
+        "artifacts": [],                  # preserved (empty list)
+    }, sent
+
+
+def test_project_update_404s_for_unknown_project(client):
+    from sksurrogate_mcp.server import project_update
+
+    err = project_update(client, "%032x" % 999, description="nope")
+    assert err["status_code"] == 404 and "error" in err, err
+
+
+def test_project_note_posts_full_record_and_rejects_bad_source(client, stub):
+    from sksurrogate_mcp.server import project_create, project_note
+
+    created = project_create(client, name="Sobol audit")
+    project_id = created["project_id"]
+
+    bad = project_note(client, project_id, text="t", source="invented-source")
+    assert "error" in bad and "source must be one of" in bad["error"], bad
+    assert not [r for r in stub.state.requests if r["path"].endswith("/notes")]
+
+    ok = project_note(
+        client,
+        project_id,
+        text="x dominates (Sobol S1=0.9)",
+        source="generated",
+        model="gpt-x",
+        citations=["f1"],
+        computed_facts=[{"id": "f1", "value": 0.9}],
+    )
+    assert ok.get("note_id") and ok["project_id"] == project_id, ok
+    note_requests = [r for r in stub.state.requests if r["path"].endswith("/notes")]
+    sent = note_requests[0]["json_body"]
+    assert sent == {
+        "text": "x dominates (Sobol S1=0.9)",
+        "source": "generated",
+        "model": "gpt-x",
+        "citations": ["f1"],
+        "computed_facts": [{"id": "f1", "value": 0.9}],
+    }, sent
+
+
+def test_project_note_404s_for_unknown_project(client):
+    from sksurrogate_mcp.server import project_note
+
+    err = project_note(client, "%032x" % 999, text="t", source="human")
+    assert err["status_code"] == 404 and "error" in err, err
+
+
+# ---------------------------------------------------------------------------
 # SDK-backed checks (optional extra; skipped when the [mcp] extra is absent)
 # ---------------------------------------------------------------------------
 
@@ -704,3 +1208,32 @@ def test_stdio_roundtrip_with_real_client(stub):
 
 def _text(result) -> str:
     return "".join(block.text for block in result.content if getattr(block, "type", "") == "text")
+
+
+def test_progress_summary_distills_trials_phases_and_best_scores():
+    """job_wait's G2 rollup: newest-first entries; bools are not trials; non-finite scores ignored."""
+    from sksurrogate_mcp.server import _progress_summary
+
+    payload = {
+        "entries": [
+            {"level": "INFO", "message": "plain text lines carry no structure"},
+            {"trial": 7, "phase": "refit", "score": -138.2},
+            {"trial": 6, "phase": "search", "score": -140.9},
+            "a scalar entry is ignored",
+            {"message": "no structure here"},
+        ]
+    }
+    assert _progress_summary(payload) == {
+        "max_trial": 7,
+        "best_score": -138.2,
+        "phase": "refit",
+    }
+
+    # bools are not trials and non-finite scores never win best_score
+    tricky = {"entries": [{"trial": True, "score": float("inf")}, {"message": "x"}]}
+    assert _progress_summary(tricky) == {}
+
+    # malformed payloads degrade to no progress rather than raising
+    assert _progress_summary(None) == {}
+    assert _progress_summary("not a dict") == {}
+    assert _progress_summary({"entries": []}) == {}

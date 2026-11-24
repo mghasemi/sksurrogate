@@ -32,7 +32,9 @@ exceptions mark the MCP result itself as an error.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import math
 import os
 import sys
 import time
@@ -71,6 +73,20 @@ DEFAULT_POLL_INTERVAL_S = 5.0
 DIAGNOSE_ERROR_TAIL_CHARS = 4000
 DIAGNOSE_LOG_MAX = 200
 
+#: Phase-2 analysis methods accepted by POST /api/sensitivity/{task}/run —
+#: mirrors api/routers/sensitivity.py (pre-validation only; the API re-checks).
+SENSITIVITY_METHODS = ("sobol", "morris", "delta-mmnt")
+
+#: Registry lifecycle states in promotion order — mirrors REGISTRY_STATES from
+#: SKSurrogate/modelbundle.py (pre-validation only; the gate re-checks).
+REGISTRY_STATES = ("candidate", "validated", "staging", "production", "archived")
+
+#: Log entries sampled per job_wait poll to derive progress notifications (G2).
+PROGRESS_LOG_LIMIT = 100
+
+#: Tools whose bound wrapper exposes an injected MCP Context for progress reporting.
+_CONTEXT_TOOLS = frozenset({"job_wait"})
+
 ALLOWED_API_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 
 #: Curated-tool → control-plane endpoint templates. Consumed by the spec-drift
@@ -101,13 +117,46 @@ TOOL_ENDPOINTS: dict[str, tuple[tuple[str, str], ...]] = {
         ("GET", "/api/jobs/active"),
         ("POST", "/api/experiments/{task_name}/optimize-pipeline"),
     ),
-    "job_wait": (("GET", "/api/jobs/{job_id}"),),
+    "job_wait": (
+        ("GET", "/api/jobs/{job_id}"),
+        ("GET", "/api/logs/{job_id}"),
+    ),
     "job_diagnose": (
         ("GET", "/api/jobs/{job_id}"),
         ("GET", "/api/logs/{job_id}"),
     ),
     "stop_job": (("POST", "/api/jobs/{job_id}/stop"),),
     "resume_job": (("POST", "/api/jobs/{job_id}/resume"),),
+    # Phase 2 — analysis
+    "sensitivity_analysis": (
+        ("GET", "/api/jobs/active"),
+        ("POST", "/api/sensitivity/{task_name}/run"),
+    ),
+    "top_features": (("GET", "/api/sensitivity/{task_name}/top-features"),),
+    "explain_model": (("POST", "/api/evaluation/{task_name}/{model_version}/explain"),),
+    "explain_row": (
+        ("POST", "/api/evaluation/{task_name}/{model_version}/explain/row"),
+    ),
+    "evaluation_metrics": (("GET", "/api/evaluation/{task_name}/metrics"),),
+    "nested_cv": (
+        ("GET", "/api/jobs/active"),
+        ("POST", "/api/evaluation/{task_name}/nested-cv"),
+    ),
+    # Phase 2 — lifecycle
+    "registry_summary": (("GET", "/api/registry/{task_name}/summary"),),
+    "promote_model": (("POST", "/api/registry/{task_name}/promote"),),
+    "quality_gate_check": (
+        ("POST", "/api/quality-gates/{task_name}/{model_version}/check"),
+    ),
+    "predict": (("POST", "/api/inference/{task_name}/predict"),),
+    "predict_batch": (("POST", "/api/inference/{task_name}/predict-batch"),),
+    # Phase 2 — research record (append-only semantics live in the API)
+    "project_create": (("POST", "/api/projects"),),
+    "project_update": (
+        ("GET", "/api/projects/{project_id}"),
+        ("PUT", "/api/projects/{project_id}"),
+    ),
+    "project_note": (("POST", "/api/projects/{project_id}/notes"),),
 }
 
 _SNAPSHOT_PATH = Path(__file__).resolve().parent / "openapi_ops.json"
@@ -647,8 +696,81 @@ def optimize_pipeline(
     return _call(client, "POST", f"/api/experiments/{task_name}/optimize-pipeline", json_body=body)
 
 
-def job_wait(
-    client: ControlPlaneClient, job_id: str, timeout_s: float = JOB_WAIT_DEFAULT_TIMEOUT_S, poll_interval_s: float = DEFAULT_POLL_INTERVAL_S
+def _progress_summary(logs_payload: Any) -> dict[str, Any]:
+    """Distill trial progress from a GET /api/logs/{job_id} payload (G2).
+
+    Trial entries carry structured fields — ``trial`` (int), ``phase`` (str) and
+    ``score`` (float in the scorer's own units; api/logs.py flips the search
+    loss back before storing, so higher is better by construction). Plain-text
+    lines are ignored. Entries arrive newest first, so the latest phase is the
+    first one carrying a value. Returns {} when nothing structured was found.
+    """
+    entries = logs_payload.get("entries") if isinstance(logs_payload, dict) else None
+    if not isinstance(entries, list):
+        return {}
+    max_trial = 0
+    best_score: Optional[float] = None
+    phase: Optional[str] = None
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        trial = entry.get("trial")
+        if isinstance(trial, int) and not isinstance(trial, bool) and trial > max_trial:
+            max_trial = trial
+        score = entry.get("score")
+        if (
+            isinstance(score, (int, float))
+            and not isinstance(score, bool)
+            and math.isfinite(float(score))
+            and (best_score is None or float(score) > best_score)
+        ):
+            best_score = float(score)
+        if phase is None:
+            candidate_phase = entry.get("phase")
+            if isinstance(candidate_phase, str) and candidate_phase:
+                phase = candidate_phase
+    summary: dict[str, Any] = {}
+    if max_trial:
+        summary["max_trial"] = max_trial
+    if best_score is not None:
+        summary["best_score"] = best_score
+    if phase:
+        summary["phase"] = phase
+    return summary
+
+
+async def _report_wait_progress(
+    ctx, client: ControlPlaneClient, job_id: str, status: Optional[str], elapsed_s: float, budget_s: float
+) -> None:
+    """Emit one MCP progress notification for a live job (G2). Never raises.
+
+    ``ctx`` is the SDK-injected Context under a real MCP request and None when
+    a tool function is called directly (unit tests); any failure while sampling
+    logs or reporting is swallowed so progress can never break the wait loop.
+    """
+    if ctx is None:
+        return
+    try:
+        logs = _call(client, "GET", f"/api/logs/{job_id}", params={"limit": PROGRESS_LOG_LIMIT})
+        summary = _progress_summary(logs)
+        parts = [f"{status} after {elapsed_s:.0f}s" if status else f"after {elapsed_s:.0f}s"]
+        if "max_trial" in summary:
+            parts.append(f"trial {summary['max_trial']}")
+        if "phase" in summary:
+            parts.append(f"phase {summary['phase']}")
+        if "best_score" in summary:
+            parts.append(f"best score {summary['best_score']:.4g}")
+        await ctx.report_progress(progress=elapsed_s, total=budget_s, message=" · ".join(parts))
+    except Exception:  # progress is best-effort; the wait loop must survive it
+        pass
+
+
+async def job_wait(
+    client: ControlPlaneClient,
+    job_id: str,
+    timeout_s: float = JOB_WAIT_DEFAULT_TIMEOUT_S,
+    poll_interval_s: float = DEFAULT_POLL_INTERVAL_S,
+    ctx=None,
 ) -> dict:
     """Wait (bounded) until a job reaches a terminal status, then return its record.
 
@@ -656,10 +778,13 @@ def job_wait(
     ``timeout_s`` seconds (default cap 120 s; hard ceiling 900 s). Terminal =
     completed, failed, paused or interrupted: the full job record is returned,
     including ``result`` on success and the traceback in ``error`` on failure.
-    If the deadline passes first, a {"job_id", "status", "timed_out": true, ...}
-    payload comes back instead — call again to keep waiting or inspect with
-    ``job_diagnose``; an agent never has to hand-poll. On API-level failures
-    (unknown job, unreachable host) returns an {"error": ...} payload.
+    While the job is live, each poll samples its log feed and emits an MCP
+    progress notification (trial count, phase, best score in scorer units) so a
+    client can show live status without per-turn polling (G2). If the deadline
+    passes first, a {"job_id", "status", "timed_out": true, ...} payload comes
+    back instead — call again to keep waiting or inspect with ``job_diagnose``;
+    an agent never has to hand-poll. On API-level failures (unknown job,
+    unreachable host) returns an {"error": ...} payload.
 
     Args:
         job_id: Job id from a submit tool's response.
@@ -691,7 +816,8 @@ def job_wait(
                     "Call job_wait again to keep waiting, or inspect it with job_diagnose."
                 ),
             }
-        time.sleep(min(remaining, interval))
+        await _report_wait_progress(ctx, client, job_id, status, time.monotonic() - start, bounded_timeout)
+        await asyncio.sleep(min(remaining, interval))
 
 
 def job_diagnose(client: ControlPlaneClient, job_id: str, log_limit: int = 50) -> dict:
@@ -779,6 +905,502 @@ def resume_job(client: ControlPlaneClient, job_id: str) -> dict:
         job_id: Job id to resume.
     """
     return _call(client, "POST", f"/api/jobs/{job_id}/resume")
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — analysis / lifecycle / research record
+# ---------------------------------------------------------------------------
+
+
+def sensitivity_analysis(
+    client: ControlPlaneClient,
+    task_name: str,
+    method: str = "sobol",
+    n_features_to_select: int = 5,
+    train_partition: Optional[str] = None,
+) -> dict:
+    """Submit a global sensitivity-analysis job (returns immediately).
+
+    Mutating: queues a long-running feature-importance analysis with the chosen
+    method — "sobol" (default), "morris" or "delta-mmnt". The response is a job
+    handle {"job_id", ...} — wait on it with ``job_wait``; afterwards read the
+    ranked importances with ``top_features``. Duplicate guard (G4): refused
+    while a live sensitivity job runs for this task. On failure returns an
+    {"error": ...} payload.
+
+    Args:
+        task_name: Registered task name (needs stored data, no fitted model).
+        method: "sobol" (default), "morris" or "delta-mmnt".
+        n_features_to_select: Top-k features the analysis focuses on (default 5; min 1).
+        train_partition: Partition to analyse (default: the registered one).
+    """
+    if method not in SENSITIVITY_METHODS:
+        return {"error": f"method must be one of {', '.join(SENSITIVITY_METHODS)}"}
+    existing = _find_live_job(client, task_name, "sensitivity")
+    if existing is not None:
+        return {
+            "error": (
+                "A live sensitivity job already exists for task %r: %s (status %s). "
+                "Wait on it with job_wait or stop it with stop_job before submitting a duplicate."
+                % (task_name, existing.get("job_id"), existing.get("status"))
+            ),
+            "duplicate_job_id": existing.get("job_id"),
+        }
+    body: dict[str, Any] = {
+        "method": method,
+        "n_features_to_select": max(1, int(n_features_to_select)),
+    }
+    if train_partition:
+        body["train_partition"] = train_partition
+    return _call(client, "POST", f"/api/sensitivity/{task_name}/run", json_body=body)
+
+
+def top_features(client: ControlPlaneClient, task_name: str, num: int = 10) -> dict:
+    """Consensus top features across the stored sensitivity weightings (read-only).
+
+    Ranks features by how often they appear in the top ``num`` of every stored
+    weighting column for the task — populated only after a sensitivity run has
+    persisted its weights. When nothing is stored yet, returns {"available":
+    false, "hint": ...} rather than an error: submit one with
+    ``sensitivity_analysis`` first. On failure returns an {"error": ...} payload
+    (404 when no dataset is registered for the task).
+
+    Args:
+        task_name: Registered task name.
+        num: Top-k window per weighting column (default 10; min 1).
+    """
+    return _call(
+        client, "GET", f"/api/sensitivity/{task_name}/top-features", params={"num": max(1, int(num))}
+    )
+
+
+def explain_model(
+    client: ControlPlaneClient,
+    task_name: str,
+    model_version: str,
+    partition: Optional[str] = None,
+    max_rows: int = 500,
+    n_repeats: int = 5,
+    top_k: int = 3,
+) -> dict:
+    """Row-stable global explanation of one stored bundle (permutation importance + PDP).
+
+    Read-only but computationally heavier than a preview: shuffles each feature
+    to measure its score drop and draws partial-dependence curves for the most
+    important ones. Use ``registry_summary`` first to find valid model versions.
+    On failure returns an {"error": ...} payload (404 unknown bundle, 422 when
+    the partition cannot support the requested reference sample).
+
+    Args:
+        task_name: Registered task name.
+        model_version: Stored bundle version id (see registry_summary or a job result).
+        partition: Reference-data partition (default: the registered one).
+        max_rows: Reference-sample size, clamped to 20..1000 (default 500).
+        n_repeats: Permutation repeats per feature, clamped to 1..20 (default 5).
+        top_k: PDP curves for the top-k features, clamped to 0..6 (default 3; 0 = none).
+    """
+    body: dict[str, Any] = {
+        "max_rows": max(20, min(int(max_rows), 1000)),
+        "n_repeats": max(1, min(int(n_repeats), 20)),
+        "top_k": max(0, min(int(top_k), 6)),
+    }
+    if partition:
+        body["partition"] = partition
+    return _call(client, "POST", f"/api/evaluation/{task_name}/{model_version}/explain", json_body=body)
+
+
+def explain_row(
+    client: ControlPlaneClient,
+    task_name: str,
+    model_version: str,
+    row_index: int = 0,
+    features: Optional[list[str]] = None,
+    baseline: str = "reference_mean",
+    partition: Optional[str] = None,
+    baseline_row_index: Optional[int] = None,
+    orders: int = 1,
+) -> dict:
+    """Local explanation for ONE input row against a reference baseline (read-only).
+
+    Decomposes the model's output difference between one specific row and the
+    baseline into per-feature contributions — with ``orders=2`` also pairwise
+    interactions. The row is addressed by position in the resolved partition;
+    use ``dataset_preview`` to check which rows that is. On failure returns an
+    {"error": ...} payload (404 unknown bundle, 400 when a feature is missing
+    from the partition or the baseline cannot be built).
+
+    Args:
+        task_name: Registered task name.
+        model_version: Stored bundle version id.
+        row_index: Position of the explained row in the partition (default 0; min 0).
+        features: Restrict to these feature names (default: all features).
+        baseline: "reference_mean" (finite mean / mode per column) or "row".
+        partition: Partition holding the explained row (default: the registered one).
+        baseline_row_index: Required when ``baseline`` is "row" — position of the reference row.
+        orders: Interaction order, clamped to 1..10 (default 1 = main effects only).
+    """
+    if baseline not in ("reference_mean", "row"):
+        return {"error": "baseline must be one of reference_mean, row"}
+    body: dict[str, Any] = {
+        "row_index": max(0, int(row_index)),
+        "baseline": baseline,
+        "orders": max(1, min(int(orders), 10)),
+    }
+    if features is not None:
+        body["features"] = list(features)
+    if partition:
+        body["partition"] = partition
+    if baseline_row_index is not None:
+        body["baseline_row_index"] = max(0, int(baseline_row_index))
+    return _call(client, "POST", f"/api/evaluation/{task_name}/{model_version}/explain/row", json_body=body)
+
+
+def evaluation_metrics(
+    client: ControlPlaneClient, task_name: str, model_version: Optional[str] = None
+) -> dict:
+    """Metric options relevant to a task's problem family (read-only).
+
+    Returns the metrics available for the task plus their default — probe one
+    bundle via ``model_version`` or let the API scan the task's stored bundles.
+    Use before choosing ``scoring`` for experiments. On failure returns an
+    {"error": ...} payload (404 when no dataset is registered).
+
+    Args:
+        task_name: Registered task name.
+        model_version: Optional bundle version to probe instead of scanning all.
+    """
+    params: dict[str, Any] = {}
+    if model_version:
+        params["model_version"] = model_version
+    return _call(client, "GET", f"/api/evaluation/{task_name}/metrics", params=params)
+
+
+def nested_cv(
+    client: ControlPlaneClient,
+    task_name: str,
+    alias: Optional[str] = None,
+    model_version: Optional[str] = None,
+    inner_cv: int = 2,
+    outer_cv: int = 2,
+    scoring: Optional[str] = None,
+    repeats: int = 1,
+    train_partition: Optional[str] = None,
+) -> dict:
+    """Submit a nested cross-validation evaluation job (returns immediately).
+
+    Mutating: queues a long-running outer/inner CV evaluation of one stored
+    bundle — give ``alias`` or ``model_version``, exactly one (both or neither
+    is refused here before any request goes out). The response is a job handle;
+    wait on it with ``job_wait`` and the completed record carries the metric
+    distributions. Duplicate guard (G4): refused while a live nested_cv job
+    runs for this task. On failure returns an {"error": ...} payload.
+
+    Args:
+        task_name: Registered task name.
+        alias: Registry state alias of the bundle to evaluate, e.g. "staging".
+        model_version: Stored bundle version id (mutually exclusive with ``alias``).
+        inner_cv: Inner CV folds, clamped to 2..10 (default 2).
+        outer_cv: Outer CV folds, clamped to 2..10 (default 2).
+        scoring: Metric name override (default: the task's declared metric).
+        repeats: Repeat the full evaluation this many times, clamped to 1..5 (default 1).
+        train_partition: Partition to evaluate on (default: the registered one).
+    """
+    if bool(alias) == bool(model_version):
+        return {"error": "exactly one of alias or model_version is required"}
+    existing = _find_live_job(client, task_name, "nested-cv")
+    if existing is not None:
+        return {
+            "error": (
+                "A live nested_cv job already exists for task %r: %s (status %s). "
+                "Wait on it with job_wait or stop it with stop_job before submitting a duplicate."
+                % (task_name, existing.get("job_id"), existing.get("status"))
+            ),
+            "duplicate_job_id": existing.get("job_id"),
+        }
+    body: dict[str, Any] = {
+        "inner_cv": max(2, min(int(inner_cv), 10)),
+        "outer_cv": max(2, min(int(outer_cv), 10)),
+        "repeats": max(1, min(int(repeats), 5)),
+    }
+    if alias:
+        body["alias"] = alias
+    else:
+        body["model_version"] = model_version
+    if scoring:
+        body["scoring"] = scoring
+    if train_partition:
+        body["train_partition"] = train_partition
+    return _call(client, "POST", f"/api/evaluation/{task_name}/nested-cv", json_body=body)
+
+
+def registry_summary(client: ControlPlaneClient, task_name: str) -> dict:
+    """Model-registry summary for a task (read-only).
+
+    Lists the stored bundles with their state aliases (candidate / staging /
+    production), sizes and registered quality reports — where to look before
+    promoting or predicting. On failure returns an {"error": ...} payload (404
+    when no dataset is registered for the task).
+
+    Args:
+        task_name: Registered task name.
+    """
+    return _call(client, "GET", f"/api/registry/{task_name}/summary")
+
+
+def promote_model(
+    client: ControlPlaneClient,
+    task_name: str,
+    model_version: str,
+    state: str,
+    approvers: Optional[list[str]] = None,
+    quality_report: Optional[dict] = None,
+    required_approvals: int = 1,
+) -> dict:
+    """Move a stored bundle to another registry lifecycle state. Mutating.
+
+    States in promotion order: candidate → validated → staging → production
+    (plus "archived"). The control plane enforces the promotion rules — e.g.
+    moving into "production" requires an attached passing quality report and
+    enough recorded approvers, so check one first with ``quality_gate_check``.
+    Returns the updated bundle record; on failure returns an {"error": ...}
+    payload (422 when a rule is violated, 404 for unknown task/bundle).
+
+    Args:
+        task_name: Registered task name.
+        model_version: Stored bundle version id to move.
+        state: Target state — "candidate", "validated", "staging", "production" or "archived".
+        approvers: Approver identifiers recorded with the transition (default: none).
+        quality_report: Quality report object to attach if one is not yet on the bundle.
+        required_approvals: Distinct approvers the gate counts (min 1; default 1).
+    """
+    if state not in REGISTRY_STATES:
+        return {"error": f"state must be one of {', '.join(REGISTRY_STATES)}"}
+    body: dict[str, Any] = {
+        "model_version": model_version,
+        "state": state,
+        "approvers": list(approvers or ()),
+        "required_approvals": max(1, int(required_approvals)),
+    }
+    if quality_report is not None:
+        body["quality_report"] = quality_report
+    return _call(client, "POST", f"/api/registry/{task_name}/promote", json_body=body)
+
+
+def quality_gate_check(
+    client: ControlPlaneClient,
+    task_name: str,
+    model_version: str,
+    metric_thresholds: Optional[dict] = None,
+    max_bundle_size_bytes: Optional[int] = None,
+) -> dict:
+    """Run the deployment's quality gate against one stored bundle (read-only).
+
+    Re-fits nothing: evaluates the stored bundle against ``metric_thresholds``
+    (e.g. {"accuracy": 0.8}) and an optional size cap, returning a report with
+    ``passed`` plus per-check detail. A passing report is what promotes into
+    "production" — run this before calling ``promote_model`` there. On failure
+    returns an {"error": ...} payload (404 unknown bundle).
+
+    Args:
+        task_name: Registered task name.
+        model_version: Stored bundle version id to check.
+        metric_thresholds: {metric: minimum value} pairs; defaults to the gate's own thresholds when omitted.
+        max_bundle_size_bytes: Optional upper bound on serialized bundle size (bytes).
+    """
+    body: dict[str, Any] = {}
+    if metric_thresholds is not None:
+        body["metric_thresholds"] = dict(metric_thresholds)
+    if max_bundle_size_bytes is not None:
+        body["max_bundle_size_bytes"] = int(max_bundle_size_bytes)
+    return _call(
+        client, "POST", f"/api/quality-gates/{task_name}/{model_version}/check", json_body=body
+    )
+
+
+def predict(
+    client: ControlPlaneClient,
+    task_name: str,
+    rows: list[dict],
+    alias: Optional[str] = None,
+    model_version: Optional[str] = None,
+) -> dict:
+    """Predict on in-memory rows with one stored bundle (read-only; nothing persisted).
+
+    Give ``alias`` or ``model_version``, exactly one — the alias form resolves
+    through the registry state at call time ("staging", "production", ...), so
+    predictions follow promotions automatically. Rows are dicts keyed by feature
+    column name; they pass through untouched, so each row must carry exactly the
+    bundle's schema columns (check them with ``dataset_preview`` first) — missing
+    or unknown columns fail strict validation. Returns per-row predictions plus
+    class probabilities when the bundle is a classifier. On failure returns an
+    {"error": ...} payload (404 unknown bundle/alias, 422 on schema mismatch).
+
+    Args:
+        task_name: Registered task name.
+        rows: One dict per row — {column: value}, columns matching the bundle's schema.
+        alias: Registry state alias to resolve (e.g. "staging").
+        model_version: Stored bundle version id (mutually exclusive with ``alias``).
+    """
+    if bool(alias) == bool(model_version):
+        return {"error": "exactly one of alias or model_version is required"}
+    body: dict[str, Any] = {"rows": list(rows)}
+    if alias:
+        body["alias"] = alias
+    else:
+        body["model_version"] = model_version
+    return _call(client, "POST", f"/api/inference/{task_name}/predict", json_body=body)
+
+
+def predict_batch(
+    client: ControlPlaneClient,
+    task_name: str,
+    partition: str,
+    alias: Optional[str] = None,
+    model_version: Optional[str] = None,
+) -> dict:
+    """Score an ENTIRE stored partition with one bundle (read-only; result persisted).
+
+    Give ``alias`` or ``model_version``, exactly one. Predicts every row of the
+    named partition and stores a per-row prediction file in the task's
+    inference folder — use for offline evaluation on held-out partitions; for
+    ad-hoc rows use ``predict`` instead (it persists nothing). On failure
+    returns an {"error": ...} payload (404 unknown bundle/partition/alias, 422
+    when a column cannot be decoded by the stored preprocessing).
+
+    Args:
+        task_name: Registered task name.
+        partition: Stored partition to score in full.
+        alias: Registry state alias to resolve (e.g. "staging").
+        model_version: Stored bundle version id (mutually exclusive with ``alias``).
+    """
+    if bool(alias) == bool(model_version):
+        return {"error": "exactly one of alias or model_version is required"}
+    body: dict[str, Any] = {"partition": partition}
+    if alias:
+        body["alias"] = alias
+    else:
+        body["model_version"] = model_version
+    return _call(client, "POST", f"/api/inference/{task_name}/predict-batch", json_body=body)
+
+
+def project_create(
+    client: ControlPlaneClient,
+    name: str,
+    description: Optional[str] = None,
+    research_questions: Optional[list[str]] = None,
+    artifacts: Optional[list[dict]] = None,
+) -> dict:
+    """Create a research-project record (the benchmark-record loop). Mutating.
+
+    Projects are append-only evidence records: created here with an optional
+    description, open research questions and initial artifact references, then
+    extended via ``project_update`` / ``project_note`` — the API never deletes
+    evidence artifacts once linked. Returns the stored record including its
+    ``project_id`` (use it in every later call). On failure returns an {"error":
+    ...} payload (409 when a project with this name already exists).
+
+    Args:
+        name: Unique project name.
+        description: Free-text context for what the project studies.
+        research_questions: Open questions to track (each 1..1000 non-whitespace chars).
+        artifacts: Initial evidence artifact references (see docs/research-projects.rst shapes).
+    """
+    body: dict[str, Any] = {"name": name}
+    if description is not None:
+        body["description"] = description
+    if research_questions is not None:
+        body["research_questions"] = list(research_questions)
+    if artifacts is not None:
+        body["artifacts"] = list(artifacts)
+    return _call(client, "POST", "/api/projects", json_body=body)
+
+
+def project_update(
+    client: ControlPlaneClient,
+    project_id: str,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    research_questions: Optional[list[str]] = None,
+    artifacts: Optional[list[dict]] = None,
+) -> dict:
+    """Update one project record with read-modify-write semantics. Mutating.
+
+    Fetches the current record, applies only the provided fields, and writes it
+    back — omitted fields are preserved untouched (the API itself also refuses
+    to let artifacts used as research evidence be unlinked). ``research_questions``
+    is a flat list of question strings; structured progress — records with
+    hypothesis statuses (proposed / under_investigation / supported /
+    contradicted / inconclusive), findings and conclusions — lives on separate
+    project endpoints, reachable via ``api_request``. Returns the updated
+    record; on failure returns an {"error": ...} payload (404 unknown project,
+    422 invalid field shapes).
+
+    Args:
+        project_id: Project's ``project_id`` from its create/get response (32-char hex string).
+        name: New unique name (rename), 1..200 chars.
+        description: Replace the free-text context (max 4000 chars).
+        research_questions: Replacement list of open questions, each 1..1000 non-whitespace chars.
+        artifacts: Artifact references to add / re-snapshot (shape per docs/research-projects.rst).
+    """
+    current = _call(client, "GET", f"/api/projects/{project_id}")
+    if isinstance(current, dict) and "error" in current:
+        return {**current, "note": "Could not fetch the project record; nothing was written."}
+    body: dict[str, Any] = {"name": str(current.get("name") or "")}
+    if name is not None:
+        body["name"] = name
+    if description is not None:
+        body["description"] = description
+    elif current.get("description") is not None:
+        body["description"] = current.get("description")
+    questions = research_questions if research_questions is not None else (current.get("research_questions") or [])
+    body["research_questions"] = list(questions)
+    artifacts_out = artifacts if artifacts is not None else (current.get("artifacts") or [])
+    body["artifacts"] = list(artifacts_out)
+    return _call(client, "PUT", f"/api/projects/{project_id}", json_body=body)
+
+
+def project_note(
+    client: ControlPlaneClient,
+    project_id: str,
+    text: str,
+    source: str = "human",
+    model: Optional[str] = None,
+    citations: Optional[list[str]] = None,
+    sources: Optional[list[dict]] = None,
+    computed_facts: Optional[list[dict]] = None,
+) -> dict:
+    """Append a note to one project record (append-only). Mutating.
+
+    Notes are never edited or deleted afterwards; ``source`` marks who wrote it —
+    "human" (default) keeps the human-review semantics. Generated notes carry
+    explicit provenance and the API enforces it: set ``model``, provide at least
+    one citation, and every citation must match an ``id`` of a fact in
+    ``computed_facts`` (facts are structured values attached to the note; total
+    JSON budget 30k chars). Returns the created note record; on failure returns
+    an {"error": ...} payload (404 unknown project, 422 blank text or broken
+    provenance chain).
+
+    Args:
+        project_id: Project's ``project_id`` from its create/get response (32-char hex string).
+        text: Note body — non-blank after stripping, max 10000 characters.
+        source: "human" (default) or "generated".
+        model: Model name; required by the API when ``source`` is "generated".
+        citations: Ids of computed facts cited by this note (max 40).
+        sources: Free-form source records attached to the note (list of dicts, max 20).
+        computed_facts: Structured facts {id, ...} that citations may point at (max 12).
+    """
+    if source not in ("human", "generated"):
+        return {"error": "source must be one of human, generated"}
+    body: dict[str, Any] = {"text": text, "source": source}
+    if model is not None:
+        body["model"] = model
+    if citations is not None:
+        body["citations"] = list(citations)
+    if sources is not None:
+        body["sources"] = list(sources)
+    if computed_facts is not None:
+        body["computed_facts"] = list(computed_facts)
+    return _call(client, "POST", f"/api/projects/{project_id}/notes", json_body=body)
 
 
 def api_request(
@@ -874,8 +1496,10 @@ def _path_in_snapshot(operations: list[dict], method: str, path_value: str) -> b
 # MCP server assembly
 # ---------------------------------------------------------------------------
 
-#: Tool functions exposed by the Phase 1 server, in presentation order. The
-#: registry test asserts on this list without importing the optional SDK.
+#: Tool functions exposed by the server, in presentation order (grouped by
+#: process stage: discovery, data, experiment, jobs, analysis, lifecycle,
+#: research record; the escape hatch last). The registry test asserts on this
+#: list without importing the optional SDK.
 TOOLS: tuple = (
     health,
     list_tasks,
@@ -892,6 +1516,20 @@ TOOLS: tuple = (
     job_diagnose,
     stop_job,
     resume_job,
+    sensitivity_analysis,
+    top_features,
+    explain_model,
+    explain_row,
+    evaluation_metrics,
+    nested_cv,
+    registry_summary,
+    promote_model,
+    quality_gate_check,
+    predict,
+    predict_batch,
+    project_create,
+    project_update,
+    project_note,
     api_request,
 )
 
@@ -906,6 +1544,9 @@ def create_server(client: ControlPlaneClient):
     MCP Python SDK 2.x, where FastMCP was renamed to MCPServer.
     """
     from mcp.server.mcpserver import MCPServer
+    # Re-exported for _bind only: the SDK's context-injection detection matches
+    # parameters annotated with this exact class (find_context_parameter).
+    from mcp.server.mcpserver.context import Context as MCPContext
 
     server = MCPServer(
         name="sksurrogate",
@@ -924,7 +1565,11 @@ def create_server(client: ControlPlaneClient):
         appear in the exposed input schema: pydantic builds schemas from the
         inspected signature and annotations, so we reproduce them without
         ``client`` — deliberately NOT via functools.wraps, whose ``__wrapped__``
-        attribute would leak ``client`` back into inspect.
+        attribute would leak ``client`` back into inspect. For tools listed in
+        ``_CONTEXT_TOOLS`` (G2 progress reporting) an extra trailing ``ctx``
+        parameter is injected from the SDK's Context under a real request; it is
+        excluded from the schema too, and direct calls without one simply see
+        no progress notifications.
         """
         import inspect as _inspect
 
@@ -933,8 +1578,12 @@ def create_server(client: ControlPlaneClient):
         # parameter annotations are *strings*; resolve them against this module's
         # globals before rebuilding the exposed signature.
         hints = _get_type_hints(tool_fn)
+        wants_context = tool_fn.__name__ in _CONTEXT_TOOLS
+        skip = {"client"} | ({"ctx"} if wants_context else set())
         params_new: list[_inspect.Parameter] = []
-        for p in list(sig.parameters.values())[1:]:  # drop the bound client
+        for p in sig.parameters.values():
+            if p.name in skip:  # drop the bound client / injected ctx
+                continue
             if p.annotation is _inspect.Parameter.empty:
                 params_new.append(p)
             else:
@@ -944,8 +1593,23 @@ def create_server(client: ControlPlaneClient):
                 )
         new_sig = sig.replace(parameters=params_new)
 
-        def wrapper(*args: Any, **kwargs: Any):
-            return tool_fn(client, *args, **kwargs)
+        if wants_context and _inspect.iscoroutinefunction(tool_fn):
+
+            async def ctx_wrapper(*args: Any, ctx=None, **kwargs: Any):
+                # The SDK injects a live mcp.server.mcpserver.context.Context as
+                # the "ctx" kwarg when this tool runs under an MCP request (see
+                # FunctionTool / find_context_parameter); it is excluded from the
+                # input schema by _bind and passed through unchanged. Direct calls
+                # without one simply see no progress notifications.
+                return await tool_fn(client, *args, **kwargs, ctx=ctx)
+
+            wrapper = ctx_wrapper
+        else:
+
+            def plain_wrapper(*args: Any, **kwargs: Any):
+                return tool_fn(client, *args, **kwargs)
+
+            wrapper = plain_wrapper
 
         wrapper.__name__ = tool_fn.__name__
         wrapper.__qualname__ = f"create_server.<locals>.{tool_fn.__name__}"
@@ -953,6 +1617,11 @@ def create_server(client: ControlPlaneClient):
         annotations = {p.name: p.annotation for p in params_new if p.annotation is not _inspect.Parameter.empty}
         if sig.return_annotation is not _inspect.Parameter.empty:
             annotations["return"] = hints.get("return", Any)
+        if wants_context:
+            # find_context_parameter matches this annotation on the registered
+            # function, which keeps "ctx" out of the tool's input schema and
+            # makes the SDK inject a live Context at call time.
+            annotations["ctx"] = MCPContext
         wrapper.__annotations__ = annotations
         # inspect.signature() honours an explicit __signature__; FunctionType has no
         # typed slot for it, so route the assignment through object.
