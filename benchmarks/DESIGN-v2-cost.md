@@ -81,10 +81,21 @@ Wall-clock scales with the number of parallel workers; this table is serial CPU 
 
 **No full matrix runs until the owner records a go/no-go decision here.**
 
-Decision: **pilot only — no-go for the full v2.0 matrix in this cycle** (owner, 2026-11-24).
-The pinned pilot is complete (below); the matrix remains unapproved. Revisit after the pilot is
-reviewed and v0.6.1 ships. This file is the record; no claim in `docs/benchmarks-v2.md` depends on
-an unrun matrix.
+Decision: **full v2.0 matrix deferred; a reduced matrix is approved** (owner, 2026-11-24).
+The pinned pilot is complete (below). The 38.32 serial CPU-hour matrix is **not** approved for this
+cycle: with 7 seeds per cell no per-dataset paired test has useful power, so the spend would buy a
+claim the study cannot then make. Approved instead:
+
+- the **synthetic suite at full seeds** (`benchmarks/synth.py`: Branin, Hartmann-3, Hartmann-6,
+  Ackley, Rosenbrock, Levy with deterministic noisy variants and regret) — known optima, so
+  "better optimizer" is a well-posed claim measured by regret rather than CV on a real dataset;
+- the **H5 overhead cells** at d = 20 and d = 30 on the two pilot datasets — the only hypothesis the
+  pilot left unsupported, and search overhead is measurable without the rest of the model matrix;
+- `optdigits` x HistGB (4.91 s/eval, the cell that dominates the cost model) stays deferred until the
+  synthetic evidence motivates it.
+
+Revisit the full matrix after the reduced run reports. `v0.8.0` ships with no competitive claim
+beyond v1.9. This file is the record; no claim in `docs/benchmarks-v2.md` depends on an unrun matrix.
 
 ## Notes
 
