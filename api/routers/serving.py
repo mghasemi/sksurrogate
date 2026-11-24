@@ -55,8 +55,8 @@ def _resolve_pin(task_name, state):
     time, so a later promotion cannot change what is being served.
     """
     if state["resolve_mode"] == "alias":
-        return resolve_bundle(task_name, alias=state["requested"])
-    return resolve_bundle(task_name, model_version=state["model_version"])
+        return resolve_bundle(task_name, alias=state["requested"], verify=True)
+    return resolve_bundle(task_name, model_version=state["model_version"], verify=True)
 
 
 def _view(task_name, state):
@@ -142,7 +142,9 @@ def start_serving(task_name: str, body: StartRequest):
         resolve_mode, identifier = "version", body.model_version
     else:
         resolve_mode, identifier = "alias", body.alias
-    bundle = resolve_bundle(task_name, model_version=body.model_version, alias=body.alias)
+    bundle = resolve_bundle(
+        task_name, model_version=body.model_version, alias=body.alias, verify=True
+    )
     state = serving.start_serving(
         task_name,
         resolve_mode=resolve_mode,

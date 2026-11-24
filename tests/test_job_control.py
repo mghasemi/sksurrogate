@@ -259,6 +259,29 @@ def test_cancel_marks_the_job_cancelled_and_blocks_resume(client):
     assert client.post("/api/jobs/%s/resume" % job_id).status_code == 409
 
 
+def test_cancel_removes_partial_artifacts_and_records_them(client):
+    """A cancelled job leaves no checkpoint or half-written report behind."""
+    job_id = job_manager.submit(
+        "cleanup-task", "experiment", _stoppable(), metadata_factory=_resume_metadata
+    )
+    _wait_live(job_id)
+    checkpoint = settings.task_checkpoint_dir("cleanup-task", job_id)
+    checkpoint.mkdir(parents=True)
+    (checkpoint / "search.eoa").write_bytes(b"checkpoint")
+    report = settings.task_report_dir("cleanup-task", job_id)
+    report.mkdir(parents=True)
+    (report / "report.json").write_text("{}", encoding="utf-8")
+
+    response = client.post("/api/jobs/%s/stop" % job_id, json={"mode": "cancel"})
+    assert response.status_code == 200, response.text
+    record = _wait(job_id)
+    assert record["status"] == "cancelled"
+    assert not checkpoint.exists()
+    assert not report.exists()
+    assert set(record["cleanup"]["removed"]) == {str(checkpoint), str(report)}
+    assert record["cleanup"]["at"]
+
+
 def test_pause_is_rejected_without_resume_metadata(client):
     job_id = job_manager.submit("plain-task", "sensitivity", _stoppable(seconds=5))
     _wait_live(job_id)

@@ -9,6 +9,7 @@ this intentionally stays file-based rather than pulling in Celery/Redis.
 
 import importlib
 import json
+import shutil
 import threading
 import time
 import traceback
@@ -389,8 +390,49 @@ class JobManager:
         else:
             record["status"] = "cancelled"
             record["cancelled_at"] = stopped_at
-            logs.log_event("INFO", "Job cancelled by request (kind=%s)" % kind)
+            removed = self._cleanup_partial_artifacts(record)
+            logs.log_event(
+                "INFO",
+                "Job cancelled by request (kind=%s)" % kind
+                + (
+                    "; removed %d partial artifact path(s)" % len(removed)
+                    if removed
+                    else ""
+                ),
+            )
         return record
+
+    @staticmethod
+    def _cleanup_partial_artifacts(record):
+        """Delete the directories a cancelled job left behind.
+
+        A cancelled job will never resume, so its search checkpoint and any
+        half-written report are dead weight. A *paused* job keeps its
+        checkpoint (that is what ``resume`` reads), and completed bundles are
+        never touched: a registered artifact is a side effect of finished work,
+        not a partial file.
+        """
+        task = record.get("task_name")
+        job_id = record.get("job_id")
+        removed = []
+        for attribute in ("task_checkpoint_dir", "task_report_dir"):
+            builder = getattr(settings, attribute, None)
+            if builder is None:
+                continue
+            try:
+                directory = builder(task, job_id)
+            except Exception:  # a malformed record must not block the status write
+                continue
+            try:
+                if not directory.exists():
+                    continue
+                shutil.rmtree(directory, ignore_errors=True)
+                if not directory.exists():
+                    removed.append(str(directory))
+            except OSError:
+                continue
+        record["cleanup"] = {"removed": removed, "at": _now()}
+        return removed
 
     @staticmethod
     def _merge_control_state(record, control_obj):
