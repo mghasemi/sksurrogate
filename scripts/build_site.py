@@ -14,6 +14,7 @@ Copy rules (HANDOFF-website-seo.md):
 
 Run:  python scripts/build_site.py
 """
+import hashlib
 import os
 import re
 
@@ -82,7 +83,7 @@ HEADER_TPL = """<!doctype html>
 <meta name="twitter:image" content="{site}/assets/og-card.png">
 <link rel="icon" href="{rel}assets/mark.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="{rel}icons/icon-180.png">
-<link rel="stylesheet" href="{rel}assets/site.css">
+<link rel="stylesheet" href="{rel}assets/site.css?v={cssv}">
 {jsonld}</head>
 <body class="sub">
 
@@ -142,6 +143,17 @@ def rel_for(path):
     return "../" * depth
 
 
+def css_version():
+    """Content hash for cache-busting the stylesheet.
+
+    site.css is served with cache-control: max-age=14400 and sits behind a
+    Cloudflare zone, so an unversioned href keeps serving the old file for
+    hours after a deploy. The hash changes whenever the file does.
+    """
+    with open(os.path.join(ROOT, "assets", "site.css"), "rb") as fh:
+        return hashlib.md5(fh.read()).hexdigest()[:8]
+
+
 def write_page(path, title, desc, body_fn, ogtype="article", jsonld="",
                noindex=False, scripts=""):
     rel = rel_for(path)
@@ -149,7 +161,7 @@ def write_page(path, title, desc, body_fn, ogtype="article", jsonld="",
         title=title, desc=desc, site=SITE, path=path, rel=rel, ogtype=ogtype,
         robots=('<meta name="robots" content="noindex">\n' if noindex else ""),
         jsonld=jsonld, nav=nav_html(rel), footer=footer_html(rel),
-        body=body_fn(rel), scripts=scripts)
+        body=body_fn(rel), scripts=scripts, cssv=css_version())
     out_dir = os.path.join(ROOT, path.strip("/"))
     os.makedirs(out_dir, exist_ok=True)
     target = os.path.join(out_dir, "index.html")

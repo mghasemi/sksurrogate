@@ -181,7 +181,7 @@ def main():
                 # serves at arbitrary depths; they carry the project path prefix
                 prefix = urllib.parse.urlparse(SITE).path.rstrip("/") + "/"
                 rel = href[len(prefix):] if href.startswith(prefix) else href[1:]
-                path = rel.split("#")[0]
+                path = rel.split("#")[0].split("?")[0]
                 target = os.path.join(ROOT, path)
                 ok = (os.path.isfile(os.path.join(target, "index.html"))
                       if path.endswith("/") else os.path.exists(target))
@@ -330,6 +330,19 @@ def main():
     check("no Google Fonts requests", not font_hits, ", ".join(font_hits))
     fc = len(re.findall(r"@font-face", css))
     check("site.css declares @font-face for self-hosted fonts", fc >= 3, "%d faces" % fc)
+
+    # ---- 9b. stylesheet href is cache-busted ---------------------------
+    # The CDN caches site.css for hours (max-age=14400), so a stale ?v=
+    # keeps every visitor on the old stylesheet long after a deploy.
+    with open(os.path.join(ROOT, "assets", "site.css"), "rb") as fh:
+        cssv = hashlib.md5(fh.read()).hexdigest()[:8]
+    stale = []
+    for p in all_pages:
+        m = re.search(r'href="[^"]*assets/site\.css(?:\?v=([^"]+))?"', open(p).read())
+        if not m or m.group(1) != cssv:
+            stale.append(url_path(p))
+    check("site.css link carries the current ?v=", not stale,
+          "stale: %s (current %s)" % (", ".join(stale), cssv) if stale else "v=%s" % cssv)
 
     # ---- 10. FAQ JSON-LD must equal the visible answers ---------------
     faq_page = os.path.join(ROOT, "faq", "index.html")
