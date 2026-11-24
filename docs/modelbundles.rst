@@ -250,6 +250,68 @@ Older or manually-created bundles may lack a provenance snapshot. Their export s
 works, but explicitly reports the missing fields; it cannot reconstruct settings that
 were not persisted when the model was trained.
 
+Experiment manifests and artifact checksums
+===========================================
+
+Every bundle written by ``save_bundle`` is now accompanied by a schema-v2
+**experiment manifest** sidecar, ``<name>.bundle.manifest.json``. The manifest is
+the single object that answers *what exactly produced this artifact*:
+
+* dataset partition, its fingerprint and row count;
+* preprocessing/transformation steps;
+* estimator and optimizer configuration, plus the search-space definition;
+* random seeds **and their provenance** — the ``init_candidate`` and ``sampling``
+  child streams derived from one ``SeedSequence``;
+* a digest of the evaluation history;
+* interpreter and pinned dependency versions, optional backends when installed;
+* hardware (platform, CPU count, BLAS/LAPACK build) and the git revision with a
+  dirty flag;
+* scoring/validation protocol, artifact fingerprints and the known gaps;
+* the leakage-warnings block described below.
+
+The bundle record also carries the manifest additively under ``manifest``; the
+legacy ``metadata["reproducibility"]`` record remains readable and is upgraded
+in place when read through :class:`SKSurrogate.manifest.ExperimentManifest`.
+Version-1 records (the flat ``schema_version: 1`` dict) still load: readers must
+tolerate missing v2 fields rather than refuse an archived artifact.
+
+The sidecar records the SHA-256 of the exact bundle bytes. Verify it before
+loading an artifact received from elsewhere:
+
+.. code-block:: python
+
+    from SKSurrogate import load_bundle, verify_bundle
+
+    verdict = verify_bundle("models/churn.bundle")
+    assert verdict["verified"], verdict
+    bundle = load_bundle("models/churn.bundle", verify=True)
+
+``verify_bundle`` raises :class:`SKSurrogate.BundleIntegrityError` when one byte
+differs from the recorded checksum. A bundle written before manifests existed has
+no sidecar: it is reported as ``verified: False`` (not an integrity failure), and
+``load_bundle(..., verify=True)`` or ``SKSURROGATE_STRICT_BUNDLES=1`` makes the
+absence fail closed.
+
+Leakage checks
+==============
+
+The experiment result payload (and the manifest stored with its bundle) includes
+an advisory ``leakage_warnings`` block:
+
+* **duplicate rows across train/validation** — identical rounded feature vectors
+  appearing on both sides, counted with their fraction of the validation split;
+* **single-column target-leakage candidates** — a feature whose AUC against the
+  majority class exceeds 0.98 (either direction) or, for a regression target,
+  whose absolute Pearson correlation exceeds 0.995;
+* **temporal-split suspicion** — monotone datetime columns, which make a random
+  split score the model outside its training period.
+
+These are heuristics, not proof. The block says so next to the finding, and it
+never removes a row or a column: the split and the columns remain the analyst's
+decision. The Experiments page renders the same block as a **Leakage checks**
+card, and the run report carries the exploratory-versus-unbiased distinction so a
+tuned score is not presented as an out-of-sample estimate.
+
 Compatibility metadata
 ======================
 

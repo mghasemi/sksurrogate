@@ -40,6 +40,8 @@ from SKSurrogate.DataProcess import FoldLocalDataPreprocessor, frame_tolerant
 from . import compute, control, logs
 from .columns import coerce_declared_datetimes, drop_ignored, read_ignored_columns
 from .config import settings
+from .leakage import detect_leakage_warnings
+from .manifest import build_run_manifest, registered_environment, stamp_evaluation_history
 from .problem_type import declared_problem_type
 from .safety import safe_segment
 from .deps import bad_request, finite_or_none, not_found, open_tracker, resolve_bundle
@@ -636,6 +638,41 @@ def get_stored_cv(task_name):
         raise bad_request("Stored CV splitter %r for task %r could not be rebuilt" % (spec, task_name))
 
 
+def _validation_partition_for(metadata, train_partition):
+    """Name a held-out partition worth checking for cross-split duplicates.
+
+    Tasks may register a validation or test partition; a duplicate row across
+    either boundary makes the reported score optimistic. Nothing is loaded when
+    no such partition exists.
+    """
+    history = metadata.get("dataset_partition_history") or {}
+    if not isinstance(history, dict):
+        return None
+    for name in ("validation", "valid", "test"):
+        if name != train_partition and name in history:
+            return name
+    return None
+
+
+def _leakage_block(task_name, metadata, frame, target, train_partition):
+    """Run the cheap leakage diagnostics for this split, never failing the fit."""
+    validation_name = _validation_partition_for(metadata, train_partition)
+    validation_frame = None
+    if validation_name is not None:
+        try:
+            validation_frame = load_partition(task_name, validation_name)
+        except Exception:
+            validation_frame = None
+            validation_name = None
+    return detect_leakage_warnings(
+        frame,
+        validation_frame,
+        target=target,
+        train_partition=train_partition,
+        validation_partition=validation_name,
+    )
+
+
 def _reproducibility_record(
     task_name,
     metadata,
@@ -646,44 +683,78 @@ def _reproducibility_record(
     configuration,
     evaluation_protocol,
     transformations,
+    evaluation_history=None,
+    leakage_warnings=None,
 ):
+    """Build the schema-v2 manifest for one fit, with v1 keys preserved.
+
+    The legacy top-level keys (``data``, ``configuration``, ``transformations``,
+    ``evaluation_protocol``, ``environment``, ``known_gaps``) are still emitted
+    verbatim because stored readers and tests consume them. The v2 additions —
+    seeds and their stream provenance, search space, evaluation-history digest,
+    artifact fingerprints, hardware, git revision and the leakage block — are
+    additive.
+    """
     partitions = metadata.get("dataset_partition_history", {})
     train_data = partitions.get(train_partition, {})
     environment_keys = (
         "python_version",
         "numpy_version",
         "pandas_version",
+        "scipy_version",
         "scikit_learn_version",
+        "xgboost_version",
+        "lightgbm_version",
         "sksurrogate_version",
+        "git_revision",
+        "git_dirty",
     )
-    return {
-        "schema_version": 1,
-        "task_name": task_name,
-        "data": {
-            "train_partition": train_partition,
-            "train_fingerprint": train_data.get("fingerprint"),
-            "rows_used": int(len(frame)),
-            "features": [column for column in frame.columns if column != target],
-            "target": {
-                "column": target,
-                "construction": "not recorded; target is used as registered",
-            },
-            "excluded_observations": {
-                "explicit_api_exclusions": 0,
-                "upstream_exclusions": "not recorded",
-            },
+    data = {
+        "train_partition": train_partition,
+        "train_fingerprint": train_data.get("fingerprint"),
+        "rows_used": int(len(frame)),
+        "features": [column for column in frame.columns if column != target],
+        "target": {
+            "column": target,
+            "construction": "not recorded; target is used as registered",
         },
-        "configuration": configuration,
-        "transformations": transformations,
-        "evaluation_protocol": evaluation_protocol,
-        "environment": {
-            key: metadata[key] for key in environment_keys if key in metadata
+        "excluded_observations": {
+            "explicit_api_exclusions": 0,
+            "upstream_exclusions": "not recorded",
         },
-        "known_gaps": [
-            "Target construction and upstream row exclusions are not recorded.",
-            "Metrics without a repeated-CV evaluation have no uncertainty estimate.",
-        ],
     }
+    if leakage_warnings is None:
+        leakage_warnings = _leakage_block(
+            task_name, metadata, frame, target, train_partition
+        )
+    known_gaps = [
+        "Target construction and upstream row exclusions are not recorded.",
+        "Metrics without a repeated-CV evaluation have no uncertainty estimate.",
+        "Dependency and hardware versions are recorded, not enforced: a re-run "
+        "against a different environment is not guaranteed to reproduce "
+        "floating-point-identical results.",
+    ]
+    manifest = build_run_manifest(
+        task_name=task_name,
+        metadata=metadata,
+        data=data,
+        configuration=configuration,
+        transformations=transformations,
+        evaluation_protocol=evaluation_protocol,
+        evaluation_history=evaluation_history,
+        leakage_warnings=leakage_warnings,
+        known_gaps=known_gaps,
+    )
+    record = manifest.to_dict()
+    # Legacy aliases stay in place: stored readers (and the v1 contract) ask for
+    # ``transformations`` while the v2 manifest calls the same list
+    # ``preprocessing``. Both point at the identical data.
+    record["transformations"] = record["preprocessing"]
+    # Flat legacy environment keys stay at the top level of ``environment`` so a
+    # reader written against v1 keeps finding ``environment["numpy_version"]``.
+    for key, value in registered_environment(metadata).items():
+        record["environment"].setdefault(key, value)
+    return record
 
 
 def _baseline_needs_preprocessing(frame):
@@ -863,6 +934,7 @@ def _temporal_baseline_bundle(
         dependencies={},
         owner=owner,
         run_id=run_id,
+        manifest=run_record,
     )
     bundle.record_audit_event(
         "training",
@@ -1026,6 +1098,7 @@ def _new_bundle(model, metrics, task_name, schema, run_record, owner, run_id, la
         dataset_fingerprint=run_record["data"]["train_fingerprint"],
         owner=owner,
         run_id=run_id,
+        manifest=run_record,
     )
 
 
@@ -1506,6 +1579,7 @@ def fit_experiment_bundle(
             temporal=serve_state.to_dict(),
             owner=owner,
             run_id=run_id,
+            manifest=run_record,
         )
     else:
         bundle = _new_bundle(best_estimator, {"train_score": train_score}, task_name, schema, run_record, owner, run_id, label=label)
@@ -1534,6 +1608,10 @@ def fit_experiment_bundle(
         if entry.get("duration") is not None:
             row["duration"] = round(float(entry["duration"]), 4)
         evaluation_history.append(row)
+    # The manifest was assembled before the search history existed; stamp its
+    # digest now and keep the bundle's manifest block in sync with the record.
+    stamp_evaluation_history(run_record, evaluation_history)
+    bundle.manifest = run_record
     top_pipelines = [
         {"pipeline": list(seq), "score": finite_or_none(-float(score))} for seq, (_, score) in aml.get_top(5).items()
     ]
@@ -1764,6 +1842,7 @@ def fit_pipeline_bundle(
             temporal=serve_state.to_dict(),
             owner=owner,
             run_id=run_id,
+            manifest=run_record,
         )
     else:
         bundle = _new_bundle(
@@ -2282,6 +2361,7 @@ def fit_ensemble_bundle(
             temporal=serving_state.to_dict(),
             owner=owner,
             run_id=run_id,
+            manifest=run_record,
         )
     else:
         bundle = _new_bundle(

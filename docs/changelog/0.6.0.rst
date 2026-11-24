@@ -70,3 +70,38 @@ guarantees, and each guarantee is pinned by a test.
 * **Changed:** the benchmark harness passes ``max_iter=budget`` directly. Published
   v1.9 numbers were produced with the old workaround and remain frozen; they are not
   comparable with runs from this harness (see ``benchmarks/DESIGN.md``).
+
+Provenance, artifact integrity and leakage honesty
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Added: a schema-v2 experiment manifest.** ``SKSurrogate.manifest`` and
+  ``ExperimentManifest`` record the dataset fingerprint and partition, preprocessing,
+  estimator/optimizer configuration, the search-space definition, seeds with their
+  generator-stream provenance, evaluation-history digest, dependency versions,
+  hardware (CPU count, platform, BLAS build), git revision plus dirty flag, artifact
+  fingerprints and known gaps. Bundles carry it additively under ``manifest``, and
+  version-1 ``reproducibility`` records are upgraded on read instead of rejected.
+* **Added: bundle checksums.** ``save_bundle`` writes a
+  ``<name>.bundle.manifest.json`` sidecar with the SHA-256 of the exact bundle bytes;
+  ``verify_bundle`` fails loudly on a mismatch (``BundleIntegrityError``) and
+  ``load_bundle(..., verify=True)`` (or ``SKSURROGATE_STRICT_BUNDLES=1``) makes a
+  missing sidecar fail closed. Bundles written before this release still load and are
+  reported as unverified rather than corrupt.
+* **Added: leakage diagnostics.** The experiment result and the run manifest carry a
+  ``leakage_warnings`` block: duplicate rows across train/validation, single-column
+  target-leakage candidates (AUC > 0.98 or |r| > 0.995) and monotone datetime
+  columns suggesting a temporal split. The block is advisory and never removes data;
+  the Experiments page renders it as a **Leakage checks** card.
+* **Changed: reports state the selection scope.** The run report and the
+  explainability report headers distinguish an exploratory (tuned-on-this-data) score
+  from the unbiased nested-CV estimate, and the run report names the manifest digest
+  and the artifact-integrity verdict.
+* **Added: environment metadata.** ``mltrace`` now records ``scipy`` and optional
+  ``xgboost``/``lightgbm`` versions, the git revision and dirty flag, and the hardware
+  snapshot, alongside the existing flat ``*_version`` keys (readers tolerate both).
+* **Added: layer-boundary enforcement.** ``tests/test_layer_boundaries.py`` fails when
+  ``SKSurrogate/`` imports ``api``, ``webui`` or ``sksurrogate_mcp``, when ``api/``
+  imports a client, or when the core imports FastAPI/Starlette; ``docs/architecture.rst``
+  documents the three layers and the deferred packaging split.
+* **Added: CI jobs** for the scikit-learn version matrix, the bounded property-based
+  search contract, and the import-direction lint.

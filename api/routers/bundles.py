@@ -23,7 +23,7 @@ from pydantic import BaseModel
 from sklearn.base import is_classifier
 from starlette.responses import FileResponse, Response
 
-from SKSurrogate import ModelBundle, export_mlflow, load_bundle, save_bundle
+from SKSurrogate import ModelBundle, export_mlflow, load_bundle, save_bundle, verify_bundle
 
 from ..config import settings
 from ..safety import safe_segment
@@ -449,6 +449,11 @@ def run_configuration(task_name: str, model_version: str):
     evaluations = bundle_metadata.get("evaluations", [])
     if not isinstance(evaluations, list):
         evaluations = []
+    # The schema-v2 manifest is the additive location; the legacy
+    # ``metadata["reproducibility"]`` record remains the fallback for bundles
+    # written before manifests existed.
+    manifest_record = bundle.manifest if isinstance(bundle.manifest, dict) else None
+    integrity = verify_bundle(_bundle_file(task_name, model_version))
     return {
         "schema": "sksurrogate.run-configuration.v1",
         "task_name": task_name,
@@ -462,6 +467,8 @@ def run_configuration(task_name: str, model_version: str):
             ),
         },
         "run": reproducibility,
+        "manifest": manifest_record or reproducibility,
+        "integrity": integrity,
         "metrics": bundle.metrics,
         "evaluations": evaluations,
         "dependencies": bundle.dependencies,
@@ -512,6 +519,18 @@ def export_run_report(task_name: str, model_version: str):
         "- Evaluation protocol: %s" % inline(protocol),
         "- Configuration: %s" % inline(run.get("configuration", {})),
         "- Transformations: %s" % inline(run.get("transformations", [])),
+        "- Manifest digest: %s" % inline(run.get("manifest_digest")),
+        "- Artifact integrity: %s"
+        % ("verified" if record.get("integrity", {}).get("verified") else "no checksum recorded"),
+        "",
+        "## Selection scope",
+        "",
+        "- Search scores are cross-validated estimates of the *search* objective and are "
+        "optimistic when the same data was used to select the configuration.",
+        "- Only a nested cross-validation evaluation re-selects inside every outer fold; "
+        "that number is the unbiased estimate and is reported as such on the Evaluation page.",
+        "- A stored bundle metric is an exploratory score unless the run record names a "
+        "repeated outer-CV protocol for it.",
         "",
         "## Assumptions and scope",
         "",

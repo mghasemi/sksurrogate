@@ -4,9 +4,13 @@ Records written by this version of the library are **format v2**: they carry an
 optional ``temporal`` block (see :mod:`SKSurrogate.temporal`) describing the
 design behind a forecasting bundle — its spec, target column, feature
 configuration and serving strategy — so a saved temporal model can be served as
-a multi-step forecast after a reload. Records written by earlier releases are
-**format v1**; both remain loadable (v1 records simply have no ``temporal``
-block). See plan phase P6 in ``TIME_SERIES_PLAN.md`` for the design.
+a multi-step forecast after a reload, and an optional ``manifest`` block (see
+:mod:`SKSurrogate.manifest`) carrying the schema-v2 experiment manifest. Records
+written by earlier releases are **format v1**; both remain loadable (v1 records
+simply have no ``temporal``/``manifest`` block). :func:`save_bundle` additionally
+writes a ``<name>.bundle.manifest.json`` sidecar with the SHA-256 of the exact
+bundle bytes; :func:`verify_bundle` refuses a mismatched artifact.
+See plan phase P6 in ``TIME_SERIES_PLAN.md`` for the temporal design.
 """
 
 import importlib.metadata
@@ -21,6 +25,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import joblib
+
+from .manifest import MANIFEST_SCHEMA_VERSION, sha256_file
 
 
 BUNDLE_FORMAT_VERSION = 2
@@ -100,6 +106,7 @@ class ModelBundle:
         audit_events=None,
         interval_calibration=None,
         temporal=None,
+        manifest=None,
     ):
         self.model = model
         self.task_name = task_name
@@ -135,6 +142,15 @@ class ModelBundle:
                 ) from None
         else:
             self.temporal = None
+        #: Schema-v2 experiment manifest (see :mod:`SKSurrogate.manifest`). Older
+        #: callers keep storing the v1 record under ``metadata["reproducibility"]``;
+        #: this attribute is the additive v2 location. ``None`` means the bundle
+        #: predates manifests or was built by a minimal caller.
+        if manifest is not None and not isinstance(manifest, dict):
+            raise TypeError(
+                "manifest must be a mapping (e.g. ExperimentManifest.to_dict())"
+            )
+        self.manifest = dict(manifest) if manifest is not None else None
         self.created_at = datetime.now(timezone.utc).isoformat()
 
     def record_audit_event(self, event_type, **details):
@@ -169,6 +185,10 @@ class ModelBundle:
             # v2: the temporal design block (None for tabular bundles). Kept at
             # the end so records stay readable by hand and diffs stay stable.
             "temporal": self.temporal,
+            # Additive in the v2 format: a schema-v2 experiment manifest. Readers
+            # that predate it ignore the key; new readers prefer it over the
+            # legacy ``metadata["reproducibility"]`` record.
+            "manifest": self.manifest,
         }
 
     def save(self, path):
@@ -207,6 +227,7 @@ class ModelBundle:
             audit_events=record.get("audit_events", []),
             interval_calibration=record.get("interval_calibration"),
             temporal=temporal,
+            manifest=record.get("manifest"),
         )
         bundle.created_at = record.get("created_at", bundle.created_at)
         return bundle
@@ -253,8 +274,60 @@ class ModelBundle:
         )
 
 
+def _manifest_sidecar_path(path):
+    """The sidecar written beside a bundle: ``model.bundle.manifest.json``."""
+    return Path(path).with_name(Path(path).name + ".manifest.json")
+
+
+def _strict_bundles_default():
+    return (os.environ.get("SKSURROGATE_STRICT_BUNDLES") or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+class BundleIntegrityError(ValueError):
+    """Raised when a bundle's bytes do not match the checksum recorded beside it."""
+
+
+def _sidecar_manifest_payload(bundle, destination, checksum, size):
+    """The envelope written to the sidecar: artifact identity plus the manifest.
+
+    The checksum lives in the envelope, never inside the payload it hashes — a
+    record cannot contain its own digest. The manifest block itself is the
+    schema-v2 record (or a minimal honest placeholder for legacy callers).
+    """
+    manifest = dict(bundle.manifest) if isinstance(bundle.manifest, dict) else None
+    if manifest is None:
+        legacy = (bundle.metadata or {}).get("reproducibility")
+        manifest = dict(legacy) if isinstance(legacy, dict) else {
+            "schema_version": MANIFEST_SCHEMA_VERSION,
+            "task_name": bundle.task_name,
+            "data": {"dataset_fingerprint": bundle.dataset_fingerprint},
+            "known_gaps": ["no reproducibility record was stored with this bundle"],
+        }
+    return {
+        "schema_version": MANIFEST_SCHEMA_VERSION,
+        "kind": "model_bundle",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "artifact": {
+            "path": destination.name,
+            "bytes": int(size),
+            "sha256": checksum,
+        },
+        "manifest": manifest,
+    }
+
+
 def save_bundle(bundle, path):
-    """Atomically write a :class:`ModelBundle` and return its path."""
+    """Atomically write a :class:`ModelBundle` and its manifest sidecar.
+
+    Two files land beside each other: ``<name>.bundle`` (the joblib payload) and
+    ``<name>.bundle.manifest.json`` (the SHA-256 of those exact bytes plus the
+    schema-v2 experiment manifest). The sidecar is written after the payload is
+    atomically in place, so :func:`verify_bundle` can always trust the pair.
+    """
     if not isinstance(bundle, ModelBundle):
         raise TypeError("bundle must be a ModelBundle")
     destination = Path(path)
@@ -271,11 +344,85 @@ def save_bundle(bundle, path):
     except Exception:
         temporary_path.unlink(missing_ok=True)
         raise
+    checksum = sha256_file(destination)
+    sidecar = _manifest_sidecar_path(destination)
+    payload = _sidecar_manifest_payload(
+        bundle, destination, checksum, destination.stat().st_size
+    )
+    sidecar_tmp = sidecar.with_name(sidecar.name + ".tmp")
+    sidecar_tmp.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, default=str) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(str(sidecar_tmp), str(sidecar))
     return destination
 
 
-def load_bundle(path, *, expected_schema=None, strict_dependencies=True):
-    """Load a bundle and reject incompatible schema or runtime dependencies."""
+def verify_bundle(path, *, strict=None):
+    """Verify a bundle against the checksum recorded in its manifest sidecar.
+
+    Returns a dict describing the verdict. When the checksum does **not** match,
+    :class:`BundleIntegrityError` is raised — a tampered or truncated artifact
+    must never be loaded silently.
+
+    A missing sidecar is *not* an integrity failure for bundles written before
+    manifests existed. It is reported as ``verified: False`` unless ``strict``
+    (or ``SKSURROGATE_STRICT_BUNDLES=1``) asks for fail-closed behaviour.
+    """
+    destination = Path(path)
+    if strict is None:
+        strict = _strict_bundles_default()
+    sidecar = _manifest_sidecar_path(destination)
+    if not destination.exists():
+        raise FileNotFoundError("model bundle not found: %s" % destination)
+    if not sidecar.exists():
+        if strict:
+            raise BundleIntegrityError(
+                "refusing to load %s: no manifest sidecar at %s (strict mode)"
+                % (destination, sidecar)
+            )
+        return {
+            "verified": False,
+            "reason": "manifest sidecar missing (bundle predates checksums)",
+            "path": str(destination),
+        }
+    with sidecar.open(encoding="utf-8") as stream:
+        payload = json.load(stream)
+    recorded = (payload.get("artifact") or {}).get("sha256")
+    if not recorded:
+        raise BundleIntegrityError(
+            "manifest sidecar %s records no artifact checksum" % sidecar
+        )
+    actual = sha256_file(destination)
+    if actual != recorded:
+        raise BundleIntegrityError(
+            "bundle checksum mismatch for %s: manifest records %s, file hashes to %s"
+            % (destination, recorded, actual)
+        )
+    return {
+        "verified": True,
+        "sha256": actual,
+        "path": str(destination),
+        "manifest": payload.get("manifest"),
+        "sidecar": str(sidecar),
+    }
+
+
+def load_bundle(
+    path,
+    *,
+    expected_schema=None,
+    strict_dependencies=True,
+    verify=False,
+):
+    """Load a bundle and reject incompatible schema or runtime dependencies.
+
+    ``verify=True`` runs :func:`verify_bundle` first (fail-closed on a checksum
+    mismatch, and on a missing sidecar too — an explicit request for integrity
+    must not succeed without evidence).
+    """
+    if verify:
+        verify_bundle(path, strict=True)
     record = joblib.load(path)
     bundle = ModelBundle.from_record(record)
     if expected_schema is not None and bundle.schema != expected_schema:

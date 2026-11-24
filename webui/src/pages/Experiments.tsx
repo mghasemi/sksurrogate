@@ -855,6 +855,59 @@ export default function ExperimentsPage() {
 
       {result && (
         <>
+          {result.leakage_warnings && (
+            <Card
+              title="Leakage checks"
+              sub={
+                result.leakage_warnings.checked
+                  ? "Advisory diagnostics for this split — findings qualify the score, they do not invalidate the fit."
+                  : `Leakage diagnostics unavailable: ${result.leakage_warnings.reason ?? "unknown reason"}`
+              }
+            >
+              {result.leakage_warnings.checked && (() => {
+                const warnings = result.leakage_warnings!;
+                const duplicates = warnings.duplicate_rows?.duplicate_rows ?? 0;
+                const leakyColumns = warnings.target_leakage?.candidates ?? [];
+                const temporalColumns = warnings.temporal_split?.columns ?? [];
+                const findings = (duplicates > 0 ? 1 : 0) + leakyColumns.length + temporalColumns.length;
+                return (
+                  <>
+                    <p className={findings > 0 ? "warn" : "muted"}>
+                      {findings > 0
+                        ? `${findings} advisory finding(s) — inspect them before treating the score as evidence.`
+                        : "No duplicate rows across partitions, single-column target leaks or monotone-datetime splits were found."}
+                    </p>
+                    <ul className="muted">
+                      <li>
+                        {warnings.duplicate_rows?.checked
+                          ? `Duplicate rows across train/validation: ${duplicates} of ${warnings.duplicate_rows.validation_rows ?? "?"} validation rows.`
+                          : "Cross-split duplicates: not checked (no validation partition is registered)."}
+                      </li>
+                      {leakyColumns.length > 0 && (
+                        <li>
+                          Target-leakage candidates:{" "}
+                          {leakyColumns
+                            .map((c) => `${c.column} (${c.statistic} ${c.value})`)
+                            .join(", ")}
+                          .
+                        </li>
+                      )}
+                      {temporalColumns.length > 0 && (
+                        <li>
+                          Monotone datetime column(s): {temporalColumns.join(", ")} — a random split
+                          scores the model on observations outside its training period.
+                        </li>
+                      )}
+                    </ul>
+                    {warnings.caveats && warnings.caveats.length > 0 && (
+                      <p className="muted">{warnings.caveats[0]}</p>
+                    )}
+                  </>
+                );
+              })()}
+            </Card>
+          )}
+
           <Card title="Top pipelines" sub="Best stored pipeline structures from this search — optimize any one of them in place.">
             <Table
               columns={["Pipeline", scoreHeader, ""]}
