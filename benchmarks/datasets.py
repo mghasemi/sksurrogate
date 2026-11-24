@@ -45,6 +45,33 @@ def dataset_names() -> list[str]:
     return [name for name in ["ionosphere", "credit-g", "arrhythmia", "spambase", "optdigits", "galaxy3"] if name in openml_names + local_names]
 
 
+def restore_openml_api_key(openml_module=None) -> bool:
+    """Restore an env-supplied OpenML key that openml 0.15 replaced with a mask.
+
+    openml 0.15 stores a 10-character display token when the key arrives through
+    ``OPENML_API_KEY`` and then sends the token, so the server answers
+    ``code 103: Authentication failed - None``. Re-assigning the real environment
+    value is what ``tests/conftest.py`` does for pytest; the benchmark runner needs
+    the same. The key stays in the process environment and is never written to disk.
+
+    Returns ``True`` when the key was restored, ``False`` when there was nothing to
+    restore (no env key, or the client already holds the full value).
+    """
+    environment_key = os.environ.get("OPENML_API_KEY")
+    if not environment_key:
+        return False
+    if openml_module is None:  # pragma: no cover - exercised through the downloader
+        import openml as openml_module
+    config = getattr(openml_module, "config", None)
+    if config is None:
+        # A stub/older client without a config object: nothing to restore.
+        return False
+    if len(getattr(config, "apikey", "") or "") < len(environment_key):
+        config.apikey = environment_key
+        return True
+    return False
+
+
 def _download_openml(name: str, did: int) -> pd.DataFrame:
     """Fetch an OpenML dataset by id and cache it as CSV (target = last column).
 
@@ -72,6 +99,13 @@ def _download_openml(name: str, did: int) -> pd.DataFrame:
             f"openml is required to download '{name}' (did={did}). "
             "Install it with `pip install sksurrogate[benchmark]`."
         ) from exc
+
+    # openml 0.15 masks a key supplied through ``OPENML_API_KEY`` to a short
+    # display token and then sends the mask, so the server answers
+    # ``code 103: Authentication failed - None``. Restore the real value from the
+    # environment (tests/conftest.py does the same for the pytest run). The key is
+    # never written to disk here.
+    restore_openml_api_key(openml)
 
     dataset = openml.datasets.get_dataset(did)
     features, target, _ignore_flags, _names = dataset.get_data(

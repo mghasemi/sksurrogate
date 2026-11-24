@@ -31,7 +31,7 @@ from .datasets import dataset_names, load_dataset
 from .methods import METHODS, RECORD_SCHEMA_VERSION, RunRecord
 
 #: CI smoke subset (DESIGN.md section 8): must finish in well under 3 minutes.
-SMOKE = {"datasets": ["ionosphere"], "budget": 8, "seeds": 2, "n_estimators": 10}
+SMOKE = {"datasets": ["galaxy3"], "budget": 8, "seeds": 2, "n_estimators": 10}
 
 
 def _parse_datasets(raw: str) -> list[str]:
@@ -221,7 +221,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--budget", type=int, default=30, help="model evaluations per search (default 30)")
     parser.add_argument("--seeds", type=int, default=7, help="number of seeds, fixed 0..N-1 (default 7)")
     parser.add_argument("--n-estimators", type=int, default=50, help="RF trees per candidate (default 50)")
-    parser.add_argument("--smoke", action="store_true", help="CI smoke subset: ionosphere only, budget 8, 2 seeds, RF n_estimators=10")
+    parser.add_argument("--smoke", action="store_true", help="CI smoke subset: bundled galaxy3 only (no OpenML dependency), budget 8, 2 seeds, RF n_estimators=10")
     args = parser.parse_args(argv)
 
     if args.smoke:

@@ -27,6 +27,7 @@ import numpy as np
 import pandas as pd
 
 from .plot import _load_records, evals_to_target
+from .stats import holm_correction, paired_report_row
 
 
 def load_merged(dirs: list[Path], budget: int) -> list[dict]:
@@ -88,6 +89,97 @@ def win_loss(table: pd.DataFrame, method_new: str, method_ref: str) -> dict[str,
     }
 
 
+def wall_best(record: dict, wall_budget: float):
+    """Best CV score reached within ``wall_budget`` seconds of candidate time.
+
+    Uses the sum of per-evaluation ``wall_s`` (the search's own candidate time,
+    excluding the final held-out evaluation). Returns ``None`` when the record has
+    no per-evaluation timing (e.g. the archived skopt arm), because inventing a
+    wall-clock position would be worse than reporting the arm as unavailable.
+    """
+    cumulative = 0.0
+    best = None
+    for entry in record.get("records") or []:
+        seconds = entry.get("wall_s")
+        if seconds is None:
+            return None
+        cumulative += float(seconds)
+        if cumulative > wall_budget:
+            break
+        score = entry.get("cv_score")
+        if score is not None:
+            best = float(score) if best is None else max(best, float(score))
+    return best
+
+
+def build_wall_table(records: list[dict], wall_budget: float) -> pd.DataFrame:
+    rows = []
+    for record in records:
+        rows.append(
+            {
+                "dataset": record["dataset"],
+                "seed": record["seed"],
+                "method": record["method"],
+                "wall_best_cv": wall_best(record, wall_budget),
+                "total_wall_s": record.get("total_wall_s"),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def paired_stats(table: pd.DataFrame, value_column: str, baseline: str) -> pd.DataFrame:
+    """Paired per-dataset and aggregate rows for every method against ``baseline``.
+
+    Each row is one method's paired comparison on the shared (dataset, seed)
+    pairs: mean delta, 95% percentile bootstrap CI, W/T/L, Wilcoxon p, Cliff's
+    delta, and a descriptive ``distinguishable`` flag. The aggregate row pools
+    every dataset pair; it is the interpretable quantity (see DESIGN §16.3), and
+    the Holm correction is applied across methods on the aggregate p-values.
+    """
+    if baseline not in set(table["method"]):
+        return pd.DataFrame()
+    pivot = table.pivot_table(
+        index=["dataset", "seed"], columns="method", values=value_column
+    )
+    if baseline not in pivot.columns:
+        return pd.DataFrame()
+    rows = []
+    aggregate_pairs: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    for method in pivot.columns:
+        if method == baseline:
+            continue
+        pair = pivot[[baseline, method]].dropna()
+        if len(pair) < 2:
+            continue
+        for dataset, block in pair.groupby(level=0):
+            row = paired_report_row(
+                method,
+                block[method].to_numpy(),
+                block[baseline].to_numpy(),
+            )
+            rows.append({"scope": dataset, "method": method, **row})
+        aggregate_pairs[method] = (pair[method].to_numpy(), pair[baseline].to_numpy())
+    # Aggregate: every (dataset, seed) pair pooled; Cliff's delta and the
+    # bootstrap CI are computed on the raw paired scores, not on the deltas.
+    for method, (treatment, control) in aggregate_pairs.items():
+        if len(treatment) < 2:
+            continue
+        row = paired_report_row(method, treatment, control)
+        rows.append({"scope": "aggregate", "method": method, **row})
+    frame = pd.DataFrame(rows)
+    if frame.empty:
+        return frame
+    aggregate = frame[frame["scope"] == "aggregate"]
+    if not aggregate.empty:
+        holm = holm_correction(list(aggregate["wilcoxon_p"]))
+        indexed = aggregate.set_index("method")
+        indexed["p_holm"] = holm["adjusted"]
+        indexed["reject_holm"] = holm["reject"]
+        frame.loc[frame["scope"] == "aggregate", "p_holm"] = indexed["p_holm"].to_numpy()
+        frame.loc[frame["scope"] == "aggregate", "reject_holm"] = indexed["reject_holm"].to_numpy()
+    return frame
+
+
 def plot_curves(records: list[dict], out_dir: Path, methods: list[str]) -> None:
     """Seed-averaged best-so-far curves for the requested methods (DESIGN v1.8 figure)."""
     from .plot import _best_sofar_curve
@@ -142,6 +234,28 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--budget", type=int, default=30)
     parser.add_argument("--abs-gap", type=float, default=0.01)
     parser.add_argument("--out", default=None, help="output CSV path (default: <first dir>/surrogate_comparison.csv)")
+    parser.add_argument(
+        "--currency",
+        choices=("evals", "wall"),
+        default="evals",
+        help="primary table currency: evaluation budget (default) or wall-clock budget",
+    )
+    parser.add_argument(
+        "--wall-budget",
+        type=float,
+        default=60.0,
+        help="candidate-time budget in seconds for --currency wall (default 60)",
+    )
+    parser.add_argument(
+        "--baseline",
+        default="sksurrogate-gp",
+        help="method every paired comparison is against (default sksurrogate-gp)",
+    )
+    parser.add_argument(
+        "--paired-out",
+        default=None,
+        help="paired-statistics CSV path (default: <last dir>/paired_<currency>_B<budget>.csv)",
+    )
     args = parser.parse_args(argv)
 
     dirs = [Path(d) for d in args.dirs]
@@ -167,8 +281,47 @@ def main(argv: list[str] | None = None) -> int:
         print(show[metric].round(4).to_string())
 
     gap = agg.pivot_table(index="dataset", columns="method", values="median_evals_to_target")
-    print("\n-- median evals within abs-gap of own final best (primary, DESIGN sec. 6) --")
+    print("\n-- median evals within abs-gap of own final best (secondary, self-referential; DESIGN sec. 6) --")
     print(gap.round(1).to_string())
+
+    if args.currency == "wall":
+        wall_table = build_wall_table(records, args.wall_budget)
+        print(
+            f"\n=== wall-clock budget {args.wall_budget:g}s of candidate time | "
+            "best CV reached within the budget ==="
+        )
+        wall_summary = wall_table.groupby(["dataset", "method"]).agg(
+            mean_wall_best=("wall_best_cv", "mean"),
+            median_wall_best=("wall_best_cv", "median"),
+            mean_total_wall_s=("total_wall_s", "mean"),
+        )
+        print(wall_summary.round(4).to_string())
+        paired_input = wall_table.rename(columns={"wall_best_cv": "final_cv_best"})
+        currency = "wall"
+    else:
+        paired_input = table
+        currency = "evals"
+
+    paired = paired_stats(paired_input, "final_cv_best", args.baseline)
+    if not paired.empty:
+        print(f"\n=== paired vs {args.baseline} ({currency}) — aggregate is the interpretable row ===")
+        display_columns = [
+            column
+            for column in (
+                "scope", "method", "n_pairs", "mean_delta", "ci_low", "ci_high",
+                "wins", "ties", "losses", "wilcoxon_p", "cliffs_delta",
+                "distinguishable", "p_holm", "reject_holm",
+            )
+            if column in paired.columns
+        ]
+        print(paired[display_columns].to_string(index=False))
+        paired_path = (
+            Path(args.paired_out)
+            if args.paired_out
+            else out_base / f"paired_{currency}_B{args.budget}.csv"
+        )
+        paired.to_csv(paired_path, index=False)
+        print(f"\npaired CSV: {paired_path}")
 
     print("\n=== seed-level vs Hilbert arm (final CV) ===")
     ref = "sksurrogate"

@@ -105,3 +105,25 @@ def test_unknown_dataset_name_still_rejected(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError, match="Unknown benchmark dataset"):
         ds.load_dataset("does-not-exist")
+
+
+def test_restore_openml_api_key_replaces_the_masked_token(monkeypatch):
+    """openml 0.15 masks an env key; the downloader must re-assign the real value.
+
+    This is the exact failure that blocked the v2.0 pinned pilot: a 10-character
+    display token was sent and the server answered ``code 103``. The key stays in
+    the process environment and is never written to disk.
+    """
+    from types import SimpleNamespace
+
+    from benchmarks.datasets import restore_openml_api_key
+
+    real_key = "a" * 32
+    monkeypatch.setenv("OPENML_API_KEY", real_key)
+    fake = SimpleNamespace(config=SimpleNamespace(apikey="2dc6...b902b"))
+    assert restore_openml_api_key(fake) is True
+    assert fake.config.apikey == real_key
+    # Nothing left to restore once the client already holds the full key.
+    assert restore_openml_api_key(fake) is False
+    monkeypatch.delenv("OPENML_API_KEY")
+    assert restore_openml_api_key(fake) is False

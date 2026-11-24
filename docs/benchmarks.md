@@ -1,5 +1,10 @@
 # SKSurrogate Benchmarks
 
+> **Archive status: v1.9, frozen (2026-10-24).** These numbers were produced with the
+> pre-v0.6 evaluation-count convention and are **not poolable** with v2.0 runs (the v0.6
+> search contract redefined the currency). Cite this page as *v1.9*. The v2.0 protocol is
+> pre-registered in [benchmarks-v2.md](benchmarks-v2.md); no v2.0 numbers exist yet.
+
 Head-to-head comparison of SKSurrogate's surrogate-guided search (`SurrogateRandomCV`, SRS) against
 standard AutoML/HPO baselines — uniform random sampling and Optuna-TPE — under **equal evaluation
 budgets**, plus a decisive ablation isolating the value of the surrogate component itself. This page is
@@ -36,7 +41,7 @@ All methods optimize the **same estimator over the same space with the same budg
 
 | Method | What it is |
 |---|---|
-| `sksurrogate` | SRS with its default response surface: cubic Hilbert polynomial (`HilbertRegressor(deg=3)`). Primary method. |
+| `sksurrogate` | SRS with a cubic Hilbert polynomial surface supplied explicitly (`regressor=HilbertRegressor(deg=3)`). The *library* default since v0.2 is the RBF-GP arm below; this arm exists to test the historical surface. |
 | `srs-no-surrogate` (ablation Arm A) | Identical SRS outer loop, surrogate never engages (`min_evals = B`) — search degenerates to random sampling through one code path. Isolates the surrogate's contribution exactly. |
 | `random` | Uniform sampling over the shared discrete space (≡ `RandomizedSearchCV` on categorical list spaces). |
 | `optuna-tpe` | `OptunaStudy(TPESampler(seed=s))`, one trial = one model evaluation, counted exactly. |
@@ -52,7 +57,7 @@ surface quality, not a tuned-kernel contest.
 Canonical run `benchmarks/results/20261018T003121Z` (210 records: 6 datasets × 5 methods × 7 seeds),
 merged with the v1.8 surface arms (`20261024T224454Z`). Mean final CV accuracy over 7 seeds — best per row in bold:
 
-| dataset | SRS + Hilbert³ (default) | SRS + GP | SRS + KRR | SRS, no surrogate (Arm A) | random | Optuna-TPE |
+| dataset | SRS + Hilbert³ | SRS + GP | SRS + KRR | SRS, no surrogate (Arm A) | random | Optuna-TPE |
 |---|---:|---:|---:|---:|---:|---:|
 | arrhythmia | 0.6985 | 0.7020 | 0.6910 | 0.6910 | 0.6941 | **0.7036** |
 | credit-g | 0.7400 | 0.7423 | 0.7384 | 0.7391 | 0.7405 | **0.7436** |
@@ -99,7 +104,7 @@ At B = 60 each SRS run receives ~40 surrogate-guided evaluations instead of 10, 
 window to work. Canonical SRS-arm directory `benchmarks/results/20261018T051214Z` (fixed runner) merged with the
 surface arms (`20261024T224524Z`; 84/84 cells, all terminated by the evaluation budget). Mean final CV accuracy:
 
-| dataset | SRS + Hilbert³ (default) | SRS + GP | SRS + KRR | SRS, no surrogate (Arm A) |
+| dataset | SRS + Hilbert³ | SRS + GP | SRS + KRR | SRS, no surrogate (Arm A) |
 |---|---:|---:|---:|---:|
 | arrhythmia | 0.7000 | **0.7056** | 0.6933 | 0.7004 |
 | credit-g | 0.7412 | **0.7446** | 0.7384 | 0.7430 |
@@ -141,17 +146,17 @@ Response-surface comparison at B = 60 (three surfaces):
 
 ## Findings
 
-1. **RBF-GP is a consistent, significant upgrade over the default cubic Hilbert surface** — top mean CV on all six
+1. **RBF-GP is a consistent, significant upgrade over the cubic Hilbert surface** — top mean CV on all six
    datasets at both budgets; seed-level vs the Hilbert arm 20W/17T/5L at B=30 and 25W/13T/4L at B=60 (two-sided exact
    binomial $p \approx 4\times10^{-3}$ and $p \approx 1\times10^{-4}$ respectively). The advantage *grows* with the
-   guidance window — evidence of a real effect, not seed luck. Recommendation: RBF-GP as SKSurrogate's recommended
-   default surface (v0.2 candidate; available today via the public `regressor=` kwarg).
+   guidance window — evidence of a real effect, not seed luck. The library default has been the RBF-GP surface
+   since v0.2; this result is why.
 2. **Stock KernelRidge is worse than doing nothing once the window opens** — it never wins a seed against Hilbert
    (B=60: 0W/23T/19L, all decisive seeds lost) and sits below the no-surrogate arm on mean CV in all six datasets at
    B=60. An un-tuned RBF-KRR fits noise as readily as signal at these budgets; do not ship it.
-3. **The default cubic Hilbert polynomial is the weak link**: at B=60 the no-surrogate arm matches or beats it on mean
+3. **The cubic Hilbert polynomial is the weak link**: at B=60 the no-surrogate arm matches or beats it on mean
    CV in five of six datasets (margins ≤ 0.2 pt, within seed noise but uniformly directional). A surrogate helps only
-   when its surface quality exceeds a random draw; with the default surface that is not always true, while RBF-GP
+   when its surface quality exceeds a random draw; with that surface it is not always true, while RBF-GP
    matches/beats no-surrogate on all six datasets at B=60.
 4. **Positioning vs AutoML baselines (honest version)**: at B=30 Optuna-TPE remains top in 5/6 datasets and every
    method stays within ~0.5 pt — the near-optimum RF(50) landscape is flat enough that "how fast" does not separate
