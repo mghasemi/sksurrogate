@@ -162,7 +162,7 @@ def cite(rel):
         for the release you actually used, and add the dataset DOIs when your claim depends on the
         benchmark numbers.</p>
       <p class="chiprow"><span class="chip">MIT licence</span>
-        <span class="chip">DOI 10.5281/zenodo.23631823</span>
+        <span class="chip">DOI 10.5281/zenodo.24517178</span>
         <span class="chip">ORCID 0000-0002-9551-1780</span></p>
       <div class="prose">
         <p style="color:var(--faint);font-size:13px">The authoritative record is
@@ -176,8 +176,8 @@ def cite(rel):
   title   = {SKSurrogate: a Python toolkit for surrogate-based optimization
              of expensive functions},
   year    = {2026},
-  version = {0.2.0},
-  doi     = {10.5281/zenodo.23631823},
+  version = {0.8.1},
+  doi     = {10.5281/zenodo.24517178},
   url     = {https://github.com/mghasemi/sksurrogate},
   note    = {MIT licence}
 }</code></pre>
@@ -193,8 +193,8 @@ def cite(rel):
                   of expensive functions},
   year         = {2026},
   howpublished = {Zenodo software archive},
-  version      = {0.2.0},
-  doi          = {10.5281/zenodo.23631823},
+  version      = {0.8.1},
+  doi          = {10.5281/zenodo.24517178},
   url          = {https://github.com/mghasemi/sksurrogate},
   note         = {MIT licence}
 }</code></pre>
@@ -206,7 +206,7 @@ def cite(rel):
           <tbody>
             <tr><td>Equal-budget HPO suite</td><td>Raw B=30 / B=60 records, protocol DESIGN v1.9</td><td><a href="https://doi.org/10.5281/zenodo.23629024" target="_blank" rel="noopener">10.5281/zenodo.23629024</a></td></tr>
             <tr><td>D-track regime map</td><td>Controlled synthetic study — raw data and report</td><td><a href="https://doi.org/10.5281/zenodo.23652613" target="_blank" rel="noopener">10.5281/zenodo.23652613</a></td></tr>
-            <tr><td>Software archive</td><td>Source release cited above</td><td><a href="https://doi.org/10.5281/zenodo.23631823" target="_blank" rel="noopener">10.5281/zenodo.23631823</a></td></tr>
+            <tr><td>Software archive</td><td>Source release cited above</td><td><a href="https://doi.org/10.5281/zenodo.24517178" target="_blank" rel="noopener">10.5281/zenodo.24517178</a></td></tr>
           </tbody>
         </table>
 

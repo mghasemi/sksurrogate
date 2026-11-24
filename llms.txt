@@ -31,7 +31,7 @@
 - MIT — https://opensource.org/licenses/MIT
 
 ## Citation
-- Ghasemi, Mehdi (2026). SKSurrogate: a Python toolkit for surrogate-based optimization of expensive functions. DOI 10.5281/zenodo.23631823 · Benchmark data: 10.5281/zenodo.23629024 · D-track study: 10.5281/zenodo.23652613
+- Ghasemi, Mehdi (2026). SKSurrogate: a Python toolkit for surrogate-based optimization of expensive functions. DOI 10.5281/zenodo.24517178 · Benchmark data: 10.5281/zenodo.23629024 · D-track study: 10.5281/zenodo.23652613
 
 ## Key facts
 - The benchmark suite is equal-budget (candidate-model evaluations) and published with raw records; on six public datasets Optuna-TPE is top on 5 of 6 at B=30.
