@@ -511,6 +511,18 @@ def test_tool_registry_is_complete_and_unique():
         assert entries, f"TOOL_ENDPOINTS missing entry for {name}"
 
 
+def test_package_version_tracks_the_core_release():
+    """One distribution, one version: sksurrogate_mcp ships inside sksurrogate.
+
+    The value is resolved from the installed distribution metadata (with a
+    source-tree fallback), so it can never drift as a hardcoded literal.
+    """
+    import sksurrogate_mcp
+    from SKSurrogate import __version__
+
+    assert sksurrogate_mcp.__version__ == __version__
+
+
 def test_snapshot_covers_every_curated_endpoint():
     """The embedded OpenAPI snapshot must contain each curated tool's route."""
     from sksurrogate_mcp.server import TOOL_ENDPOINTS, _load_openapi_snapshot

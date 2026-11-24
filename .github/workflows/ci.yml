@@ -67,6 +67,18 @@ jobs:
           python -m venv smoke-venv
           ./smoke-venv/bin/pip install --quiet dist/*.whl
           ./smoke-venv/bin/python -c "import SKSurrogate; assert SKSurrogate.__version__; print('OK', SKSurrogate.__version__)"
+      - name: "Install smoke: MCP route snapshot ships inside the wheel"
+        # ``api_request`` validates against sksurrogate_mcp/openapi_ops.json; a
+        # wheel without it installs cleanly yet breaks the escape hatch, so the
+        # data file is asserted explicitly (no httpx/mcp needed to read it).
+        run: |
+          ./smoke-venv/bin/python -c "
+          import json
+          from importlib.resources import files
+          payload = json.loads((files('sksurrogate_mcp') / 'openapi_ops.json').read_text())
+          assert payload['operation_count'] == len(payload['operations']), payload
+          print('MCP snapshot OK:', payload['operation_count'], 'ops, core', payload['generated_from_version'])
+          "
       # The base wheel must stay small: optional backends are extras, so none of
       # them may be pulled in by install_requires. If this step fails, something
       # reintroduced a heavy dependency into the core install.
@@ -143,11 +155,21 @@ jobs:
           pip install --upgrade pip
           # mcp>=2.3 exercises the optional [mcp] extra's tools end-to-end
           # (tests/test_mcp_server.py); httpx is its transport dependency.
-          pip install -r requirements.txt pytest pygments "httpx>=0.27" "mcp>=2.3"
+          # The <3 bound matches setup.py: the server imports the 2.x
+          # mcp.server.mcpserver.MCPServer API.
+          pip install -r requirements.txt pytest pygments "httpx>=0.27" "mcp>=2.3,<3"
           pip install .
+      - name: "Drift guard: MCP OpenAPI snapshot vs live spec"
+        # Fails when a control-plane route was added, renamed or removed without
+        # regenerating sksurrogate_mcp/openapi_ops.json (see docs/mcp-server.rst).
+        run: python scripts/generate_mcp_openapi_snapshot.py --check
       - name: Run test suite
         # `python -m pytest` (not bare `pytest`) so the repo root is on
         # sys.path and the `api.*` package is importable.
+        env:
+          # In CI the drift check must run, never skip (it skips only when the
+          # API tree is unimportable, e.g. a wheel-only install).
+          SKSURROGATE_MCP_REQUIRE_DRIFT_CHECK: "1"
         run: python -m pytest tests/ -q
       - name: "Smoke: bounded AML end-to-end (airfoil subset)"
         timeout-minutes: 10
