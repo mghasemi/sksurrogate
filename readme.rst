@@ -295,6 +295,11 @@ component whose backend is absent raises an error that names the extra::
    * - ``[all]``
      - every extra above
      - CI, Docker, "just make everything work" (~938 MB)
+   * - ``[mcp]``
+     - httpx, the MCP Python SDK
+     - the agent-facing MCP server (console script ``sksurrogate-mcp``). Kept
+       out of ``[all]`` so container images stay SDK-free; see the
+       `MCP chapter <https://sksurrogate.readthedocs.io/en/latest/mcp-server.html>`_
 
 ``[automl]`` (AutoGluon + PyTorch) is kept separate on purpose: it is multi-GB
 and only used by the benchmark studies.
