@@ -148,7 +148,10 @@ Open **Datasets**. For each CSV partition:
 
 1. Set **Partition** to ``train``, ``validation``, or ``test`` (or another
    descriptive partition name).
-2. Drop the CSV into the upload area or click it to browse.
+2. Drop the CSV into the upload area or click it to browse. Uploads above
+   ``SKSURROGATE_MAX_UPLOAD_MB`` (default 256 MB) are refused with 413 while
+   streaming, before the file is buffered or parsed; raise the variable on the
+   API process for a larger dataset.
 3. Click **Inspect CSV**. This previews the row count, columns, inferred data
    types, possible target columns, and a bounded PII-like value-pattern and
    sensitive-column scan. The scan reports pattern counts only; it does not

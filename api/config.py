@@ -58,6 +58,9 @@ class Settings:
     - ``SKSURROGATE_SESSION_COOKIE_SECURE``: ``1``/``true``/``yes`` adds the
       ``Secure`` flag to the session cookie. Set it whenever the UI is served
       over HTTPS.
+    - ``SKSURROGATE_MAX_UPLOAD_MB``: largest accepted dataset upload in
+      megabytes (default ``256``). Enforced while streaming, so an oversized
+      body is refused with 413 before it is buffered or parsed.
     """
 
     def __init__(self, root=None):
@@ -65,7 +68,10 @@ class Settings:
         self.api_key = os.environ.get("SKSURROGATE_API_KEY") or None
         self.require_auth = _flag(os.environ.get("SKSURROGATE_REQUIRE_AUTH"))
         self.session_ttl_seconds = _int_env("SKSURROGATE_SESSION_TTL", 7 * 24 * 3600)
-        self.session_cookie_secure = _flag(os.environ.get("SKSURROGATE_SESSION_COOKIE_SECURE"))
+        self.session_cookie_secure = _flag("SKSURROGATE_SESSION_COOKIE_SECURE")
+        #: Largest accepted upload in megabytes. Enforced while streaming, before
+        #: any parser sees the body (``api.uploads.read_upload``).
+        self.max_upload_mb = _int_env("SKSURROGATE_MAX_UPLOAD_MB", 256)
         self.cors_origins = [o.strip() for o in os.environ.get("SKSURROGATE_API_CORS_ORIGINS", "").split(",") if o.strip()]
 
     @property
