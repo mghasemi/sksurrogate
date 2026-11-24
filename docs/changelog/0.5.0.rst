@@ -36,3 +36,8 @@ MCP server for agents (new optional extra)
   ``sksurrogate_mcp.__version__`` now resolves the distribution version instead of a
   stale ``0.0.1`` literal, and the ``[mcp]`` extra bounds the SDK at
   ``mcp>=2.3,<3`` because the server imports the 2.x ``MCPServer`` API.
+* **Fixed:** the Docker images stopped building once ``sksurrogate_mcp`` entered
+  ``setup.py``: ``pip install --no-deps .`` aborted with ``package directory
+  'sksurrogate_mcp' does not exist`` because neither stage copied the package. Both
+  stages now ``COPY sksurrogate_mcp/``; the images stay SDK-free because the server's
+  runtime dependencies remain the opt-in ``[mcp]`` extra.
