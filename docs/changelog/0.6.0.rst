@@ -89,7 +89,7 @@ Provenance, artifact integrity and leakage honesty
   reported as unverified rather than corrupt.
 * **Added: leakage diagnostics.** The experiment result and the run manifest carry a
   ``leakage_warnings`` block: duplicate rows across train/validation, single-column
-  target-leakage candidates (AUC > 0.98 or |r| > 0.995) and monotone datetime
+  target-leakage candidates (AUC > 0.98 or ``|r|`` > 0.995) and monotone datetime
   columns suggesting a temporal split. The block is advisory and never removes data;
   the Experiments page renders it as a **Leakage checks** card.
 * **Changed: reports state the selection scope.** The run report and the

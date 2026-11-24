@@ -656,6 +656,51 @@ The stage contract — method alternatives, baseline semantics, error surface,
 and test plan — is recorded in ``dev-notes/AI_LAYER02_D3_ROW_LEVEL_CONTRACT.md`` at the
 repository root.
 
+Explanation guarantees
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Every explanation response carries the checks below. They exist because a
+number that *looks* like an attribution can be wrong in ways the curve itself
+cannot reveal.
+
+* **Explained quantity.** Scalar-response endpoints report
+  ``explained_quantity`` — ``prediction``, ``probability`` or
+  ``decision_score``. A row explanation is never returned without it, so a
+  probability-scale contribution cannot be read as a logit.
+* **Checked reconstruction.** The ordered-occlusion chain telescopes exactly for
+  a deterministic estimator. The response compares the summed contributions with
+  the observed response change and reports ``reconstruction.status`` (``exact``
+  or ``unreliable``) with the residual and tolerance. A non-deterministic model
+  or numerical drift marks the attribution unreliable instead of implying the
+  numbers add up when they do not.
+* **Out-of-distribution flag.** ``out_of_distribution`` computes the explained
+  row's robust Mahalanobis distance — median centring, IQR scaling, covariance
+  shrunk by :math:`10^{-4}` of its mean variance — and compares it with the
+  reference sample's own distance distribution at the 99th percentile
+  (``row_flagged``). The threshold is relative to the reference rows and moves
+  with them. Fewer than two usable numeric columns degrade to the maximum robust
+  z-score and the payload names that statistic. A flag means "unlike these
+  reference rows", never "wrong prediction".
+* **Grouped importance.** Permutation importance splits credit between
+  near-duplicate columns arbitrarily. ``grouped_importance`` clusters numeric
+  columns whose absolute pairwise correlation reaches 0.9 and permutes each
+  group's columns **together**, so the reported drop is the joint signal. The
+  block is skipped with ``skipped_reason = "non_numeric_features"`` when the
+  frame is not all numeric, because the encoding then belongs to the pipeline
+  rather than the frame.
+* **Importance stability across row slices.** ``fold_importance_stability``
+  recomputes permutation importance on two to five disjoint row slices with the
+  **same stored estimator** (no refit; the payload says
+  ``refit_per_fold: false``). For each feature it reports how many slices agree
+  with the majority sign of the score drop, ``sign_consistency``, and marks the
+  feature ``unstable`` below 0.75. A negative mean importance is meaningful —
+  shuffling the column improves the score — so a sign flip is a real warning
+  that the direction depends on which rows are scored.
+* **Provenance.** Every response carries a ``provenance`` block: the bundle's
+  model version, dataset fingerprint, creation time, manifest digest and git
+  revision when present, plus the method, the partition and the seeded settings
+  that produced the numbers.
+
 ``plot_roc_curve`` supports multiclass classifiers with one-vs-rest curves for
 each class and a micro-average curve. ``plot_calibration_curve`` similarly
 reports one-vs-rest curves and probability distributions for each class; both

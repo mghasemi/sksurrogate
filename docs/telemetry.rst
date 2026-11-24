@@ -276,6 +276,32 @@ and other values that are not JSON-native are reduced to their string form —
 the same conversion rules as version 1. The method is also usable before
 ``fit``; the candidate list is then empty.
 
+Correlating a log line with a job
+=================================
+
+The core does not know that a control plane exists, so it cannot stamp a
+``job_id`` on its own records. The correlation is added by the API's handler at
+capture time, and reading it needs no tracing system:
+
+* ``<API home>/logs/<job_id>.jsonl`` holds one JSON object per line with
+  ``seq``, ``ts``, ``level``, ``logger``, ``message``, ``job_id``,
+  ``task_name`` and ``kind``; per-trial lines add ``trial``, ``phase``,
+  ``status``, ``score`` and ``params``.
+* ``GET /api/jobs/{job_id}`` and ``GET /api/jobs?task=<task>`` return the job
+  record the lines belong to (request, status, result, error).
+* The artifact a successful job produced is reachable from its result
+  (``model_version``), and the bundle carries ``run_id`` — the same value the
+  experiment recorded — plus a manifest whose ``evaluation_history_digest``
+  identifies the exact search history. A log line, a job record and a stored
+  bundle therefore share three independent keys: ``job_id``, ``run_id`` and the
+  manifest digest.
+
+Field names are fixed by the handler's copy list, so a new structured key must
+be added there as well as at the emission site; otherwise the message text
+carries it while the stored entry does not. Full distributed tracing, sampling
+and metrics export remain out of scope: this is the cheap slice that makes one
+run auditable.
+
 What stays out of the core
 ==========================
 
