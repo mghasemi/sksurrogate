@@ -1,6 +1,6 @@
 {
   "generated_from_version": "0.4.0",
-  "operation_count": 151,
+  "operation_count": 152,
   "operations": [
     {
       "method": "POST",
@@ -171,6 +171,11 @@
       "method": "GET",
       "path": "/api/bundles/{task_name}/{model_version}/run-config",
       "summary": "Export Run Configuration"
+    },
+    {
+      "method": "POST",
+      "path": "/api/comparison/{task_name}",
+      "summary": "Compare Bundles"
     },
     {
       "method": "GET",
