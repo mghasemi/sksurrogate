@@ -81,6 +81,11 @@ Platform hardening
 * **Added:** cancelling a job now removes its partial artifacts (checkpoint and
   report directories) and records what was removed on the job record; a paused
   job keeps its checkpoint so it can resume.
+* **Added:** versioned artifact documents. `SKSurrogate.artifacts` stamps job
+  records, serving pins and the registry index with ``schema_version: 2`` and
+  upgrades version-1 documents on read (unknown keys preserved, newer versions
+  refused). Model bundles and manifests keep their own version fields; dataset
+  rows and explanation responses are documented as non-document artifacts.
 * **Changed:** prediction routes verify the bundle checksum before unpickling.
   A mismatch answers 409 and never loads the artifact;
   ``SKSURROGATE_STRICT_BUNDLES=1`` additionally refuses a bundle whose manifest

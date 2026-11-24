@@ -16,6 +16,8 @@ import traceback
 import uuid
 from datetime import datetime, timezone
 
+from SKSurrogate.artifacts import read_artifact, stamp
+
 from . import compute, control, logs
 from .config import settings
 from .safety import normalize_label
@@ -175,6 +177,7 @@ class JobManager:
         return corrected
 
     def _write(self, record):
+        record = stamp("job", record)
         path = settings.job_record_path(record["job_id"])
         path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = path.with_suffix(".json.tmp")
@@ -186,11 +189,15 @@ class JobManager:
         path = settings.job_record_path(job_id)
         if not path.exists():
             return None
-        return public_record(json.loads(path.read_text(encoding="utf-8")))
+        return public_record(
+            read_artifact("job", json.loads(path.read_text(encoding="utf-8")))
+        )
 
     def list(self, task_name=None):
         records = [
-            public_record(json.loads(path.read_text(encoding="utf-8")))
+            public_record(
+                read_artifact("job", json.loads(path.read_text(encoding="utf-8")))
+            )
             for path in settings.jobs_dir.glob("*.json")
         ]
         if task_name is not None:
