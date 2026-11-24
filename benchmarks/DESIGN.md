@@ -1,6 +1,8 @@
 # SKSurrogate Benchmark Suite — Design (B1)
 
-Status: **v1.18** (2026-11-08; §15 adds the Stage D4 acquisition-readiness harness — analysis-only, no production design code; fixed-dataset contract unchanged). Datasets and baselines are pinned below; this doc is the
+Status: **v2.0** (2026-11-24; §16 pre-registers the pilot-gated v2.0 protocol — evaluation
+currency changed by the v0.6 search contract, so v1.x archives are frozen and never pooled with
+v2.0). Datasets and baselines are pinned below; this doc is the
 contract for B2 (runner), B3 (ablation), B4 (publication). Changes after B2 starts require a
 version bump here.
 
@@ -251,6 +253,20 @@ v1.17 additions (2026-11-08):
 
 v1.18 additions (2026-11-08):
 - §15 added: Stage D4 acquisition-readiness harness (`benchmarks/design_readiness.py`, report schema `sksurrogate.design-readiness.v1`). It is an **analysis-only** comparison of the shipped GP-LCB policy against EI, PI, and a fixed-length-scale noise-aware GP on the existing synthetic DOE objectives; it ships no production acquisition code, makes no significance claim, and does not satisfy D4's real-user exit criterion.
+
+v2.0 (2026-11-24; benchmark protocol v2.0 — pre-registered, pilot-gated; §16):
+- **Currency changed by the v0.6 search contract.** `n_iter`/`max_iter` now counts candidate
+  evaluations exactly, so v2.0 runs are **not poolable** with any v1.x archive (including v1.9,
+  which used the `max_iter = 4 * budget` workaround). v1.9 numbers stay published and frozen in
+  `docs/benchmarks.md`; they may be cited as v1.9 only.
+- **Protocol first.** §16 pre-registers H1–H5 with explicit falsifiers, the v2.0 matrix, the two
+  reporting currencies (evaluations and wall clock, never pooled), the paired-statistics rules
+  (percentile bootstrap, Wilcoxon/Holm, Cliff's δ), and the pilot gate. No README competitive
+  claim may be edited until the pilot cost table is reviewed and the full run is signed off.
+- **Analysis code.** `benchmarks/stats.py` owns the paired toolkit; `benchmarks/synth.py` owns the
+  synthetic functions with known optima; `benchmarks/analyze_surrogates.py` gains
+  `--currency {evals,wall}`. The self-target `evals_to_target` metric is retained only as a
+  secondary diagnostic, labelled as self-referential.
 
 ## 1. Goal
 
@@ -686,3 +702,86 @@ noise-aware 0.0537 / 0.0567; random 0.1106). The read: acquisitions are
 second-order on this evidence; EI is the only plausible direction under noise
 and remains unproven at five seeds; the fixed-length-scale noise-aware model is a
 regression. No extension is recommended for shipping yet.
+
+## 16. Protocol v2.0 — pre-registered, pilot-gated
+
+**Status:** protocol frozen 2026-11-24 before any v2.0 run. v1.9 numbers in
+`docs/benchmarks.md` (and the Zenodo v1.9 archive) are **frozen**; they are never pooled with v2.0
+because the v0.6 search contract redefined the evaluation currency (`n_iter`/`max_iter` now counts
+candidate evaluations exactly).
+
+### 16.1 Pre-registered hypotheses and falsifiers
+
+| # | Claim | Refuted if |
+|---|---|---|
+| **H1** | Under an **evaluation** budget, SRS-GP's mean final CV is at least TPE's on ≥ 50% of datasets, with the aggregate paired bootstrap 95% CI excluding 0. | The aggregate CI straddles 0, or GP wins < 50% of datasets. |
+| **H2** | Under a **wall-clock** budget, SRS-GP is not worse than TPE by more than 10% of mean final CV. | TPE beats GP by > 10% on ≥ half of the datasets. |
+| **H3** | The surrogate contributes: SRS-GP beats SRS-no-surrogate on paired seeds. | Paired sign test p > 0.05, or the direction reverses at B=60. |
+| **H4** | On synthetic functions with known optima, SRS-GP's median simple regret at B=50 is no worse than TPE's. | Regret is worse than TPE on ≥ 50% of the six functions. |
+| **H5** | At d ≥ 20 the cost is dominated by surrogate fitting, not candidate evaluation. | Surrogate-fit time < 25% of total wall time at d=20. |
+
+`simple_regret(x) = f(x) - f*` in the function's own units; it is the only metric in this suite
+where "better optimizer" is a meaningful absolute claim. Synthetic functions are evaluated through
+`benchmarks/synth.py` (Branin, Hartmann-3, Hartmann-6, Ackley, Rosenbrock, Levy, plus deterministic
+noisy variants at 2% relative σ).
+
+### 16.2 Matrix
+
+| Dimension | v1.9 | v2.0 |
+|---|---|---|
+| Estimators | `RF(50)` only | `SVC(rbf)`, `HistGradientBoostingClassifier`, `LogisticRegression`/`Ridge`, plus `RF(50)` as the anchor |
+| Spaces | 3 categorical params, 224 configs | (a) mixed categorical/continuous; (b) **conditional** (a param active only under a flag); (c) d = 10 and d = 30 continuous |
+| Objectives | accuracy | + regression (RMSE / R²), + imbalanced (balanced accuracy), + a 2%-of-signal noisy objective |
+| Baselines | random, Optuna-TPE, skopt (archived) | + `RandomizedSearchCV` (true sklearn arm), SMAC3 if it installs under the current interpreter, FLAML (already an extra) |
+| Functions | — | six synthetic functions with known optima + noisy variants |
+| Cost regime | — | one deliberately expensive arm (≥ 1 s/eval, e.g. SVC on 20k rows) to demonstrate where surrogates pay |
+
+Baseline policy: an arm that cannot import under the current interpreter records
+`skipped_archived` (data, not an error). The suite’s exit code ignores skipped arms.
+
+### 16.3 Currency and statistics
+
+Two separate tables, **never pooled**:
+
+1. **Evaluation budget** — primary. Every arm spends exactly B candidate-model evaluations; the
+   final held-out refit is excluded from the search budget and reported separately.
+2. **Wall-clock budget** — secondary, machine-scoped. Each run records `total_wall_s`, the summed
+   per-candidate `wall_s`, and the surrogate overhead (`total_wall_s - Σ wall_s`). Wall-clock
+   comparisons are only reported alongside the `run_manifest.json` machine description.
+
+Paired analysis (same dataset × seed × budget), implemented in `benchmarks/stats.py`:
+
+* percentile bootstrap CI of the mean paired delta (10,000 resamples, seed 0);
+* Wilcoxon signed-rank with Holm correction across methods;
+* Cliff's δ with magnitude bands (negligible < 0.147, small < 0.33, medium < 0.474);
+* per-dataset rows plus an aggregate; the aggregate is the interpretable quantity.
+
+**Power caveat (must appear next to every table):** 7 seeds × 6 datasets gives a per-dataset
+paired test little power. Only the aggregate across datasets/functions is interpretable, and the
+synthetic functions are the only place where "better optimizer" is an absolute claim.
+
+### 16.4 Pilot gate (D3)
+
+Before the full matrix:
+
+* 2 datasets (`ionosphere`, `credit-g`) × 3 seeds (0–2) × {B=30, B=60} × 6 arms
+  (`sksurrogate-gp`, `sksurrogate`, `sksurrogate-krr`, `srs-no-surrogate`, `random`, `optuna-tpe`),
+  timed;
+* a per-evaluation cost sweep for every v2.0 estimator family and space dimension on the same two
+  datasets (`benchmarks/cost_model.py`);
+* a written cost table `benchmarks/DESIGN-v2-cost.md` with the measured per-cell cost, the
+  extrapolated full-matrix wall time, and a **go/no-go checkpoint with the owner**.
+
+The full matrix is ≈ 4 datasets × 7 seeds × 3 budgets × 9 arms, plus the synthetic-function matrix
+(6 functions × 3 seeds × 2 budgets × 6 arms). It does not start until the checkpoint is recorded in
+`DESIGN-v2-cost.md`.
+
+### 16.5 Artifacts and non-goals
+
+* Runner output: `benchmarks/results/<UTC>/` (JSONL + per-run JSON + `summary.csv` +
+  `run_manifest.json`), never a hand-edited aggregate.
+* Analysis output: `benchmarks/analysis/v2_<stamp>/` with the eval-budget table, the wall-clock
+  table, and the paired-statistics CSV; figures promoted to `docs/` only after review.
+* Non-goals: no new optimizer, no platform/MLOps expansion, no LLM-first differentiation. The
+  benchmark does not patch library code to win a cell; a library defect is reported as data and
+  fixed upstream with its own test.
