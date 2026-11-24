@@ -129,6 +129,22 @@ def test_detects_the_known_paired_improvement(client, regression_task):
         assert record["parameters"] is not None
 
 
+def test_subsampling_the_comparison_rows_still_measures_latency(client, regression_task):
+    """A capped ``max_rows`` samples rows; the latency probe must not treat the
+    positional index as column labels (a live 500 that a full-frame test missed)."""
+    response = _compare(
+        client,
+        regression_task,
+        model_versions=["linear", "mean"],
+        scoring="r2",
+        max_rows=150,
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["rows"] == 150
+    assert all(record["predict_time_ms"] is not None for record in body["models"])
+
+
 def test_identical_models_are_not_distinguishable(client, regression_task):
     response = _compare(
         client,
@@ -216,3 +232,18 @@ def test_an_unknown_metric_is_a_400(client, regression_task):
         scoring="not_a_metric",
     )
     assert response.status_code == 400
+
+
+def test_repeated_folds_skip_calibration_with_a_reason(client, classification_task):
+    response = _compare(
+        client,
+        classification_task,
+        model_versions=["prior", "logit"],
+        scoring="accuracy",
+        repeats=2,
+    )
+    assert response.status_code == 200, response.text
+    models = {record["model_version"]: record for record in response.json()["models"]}
+    calibration = models["logit"]["calibration"]
+    assert calibration["available"] is False
+    assert calibration["reason"] == "repeated_folds_not_supported"

@@ -142,7 +142,13 @@ def _predict_latency_ms(estimator, values, *, random_state: int) -> float | None
         return None
     rng = np.random.RandomState(random_state)
     take = min(len(values), 200)
-    rows = values if take == len(values) else values[rng.choice(len(values), take, replace=False)]
+    if take == len(values):
+        rows = values
+    else:
+        index = rng.choice(len(values), take, replace=False)
+        # ``frame`` may be a DataFrame here: positional indexing would be read
+        # as column labels, so go through ``iloc`` when it is available.
+        rows = values.iloc[index] if hasattr(values, "iloc") else values[index]
     try:
         started = time.perf_counter()
         estimator.predict(rows)
@@ -299,7 +305,16 @@ def compare_bundles(task_name: str, body: ComparisonRequest):
             "integrity": integrities.get(version),
         }
         if body.include_calibration and family == "Classification":
-            records[version]["calibration"] = _calibration(estimator, frame, y, splits)
+            if len(splits) == body.n_splits:
+                records[version]["calibration"] = _calibration(estimator, frame, y, splits)
+            else:
+                # Out-of-fold probabilities need every row predicted exactly once;
+                # repeated folds predict the same row several times.
+                records[version]["calibration"] = {
+                    "available": False,
+                    "reason": "repeated_folds_not_supported",
+                    "note": "Set repeats=1 to obtain out-of-fold calibration.",
+                }
 
     available = [version for version in body.model_versions if records[version]["scored_folds"]]
     if len(available) < 2:
@@ -345,7 +360,8 @@ def compare_bundles(task_name: str, body: ComparisonRequest):
     for record in records.values():
         record["rank"] = stability["models"].get(record["model_version"])
 
-    n_pairs = int(np.sum(~np.isnan(list(scores_by_model[available[0]]))))
+    paired_matrix = np.vstack([scores_by_model[version] for version in available])
+    n_pairs = int(np.sum(~np.isnan(paired_matrix).any(axis=0)))
     if n_pairs < 6:
         warnings.append(
             "Only %d usable fold(s) are paired; a two-sided Wilcoxon signed-rank test "
