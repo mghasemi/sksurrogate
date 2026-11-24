@@ -39,6 +39,7 @@ from .jobs import job_manager
 from .routers import (
     auth as auth_router,
     bundles,
+    comparison,
     datasets,
     design,
     synthesis,
@@ -348,6 +349,7 @@ app.include_router(lineage.router)
 app.include_router(evaluation.router)
 app.include_router(ensembles.router)
 app.include_router(explain.router)
+app.include_router(comparison.router)
 app.include_router(reports.router)
 app.include_router(design.router)
 app.include_router(synthesis.router)
