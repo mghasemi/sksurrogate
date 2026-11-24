@@ -1,4 +1,4 @@
-sksurrogate v0.8.0 · MIT licence · Python ≥ 3.10 · scikit-learn-native
+sksurrogate v0.8.1 · MIT licence · Python ≥ 3.10 · scikit-learn-native
 
 Scientific MLOps · open source
 
@@ -14,7 +14,7 @@ $ docker compose --profile prod up -d
 
 Get started Read the docs ↗
 
-MIT licence BaseSearchCV drop-in scikit-learn 1.x v0.8.0
+MIT licence BaseSearchCV drop-in scikit-learn 1.x v0.8.1
 
 posterior mean acquisition · converged contraction 0.90 search budget B = 30
 
@@ -171,7 +171,7 @@ raw benchmark records · 462 runs ↗ D-track raw data + report ↗ software arc
 
 $
  pip install sksurrogate
-# current release: 0.8.0 (PyPI)
+# current release: 0.8.1 (PyPI)
 
 $
  python -m benchmarks.run --dataset all --budget 30
@@ -254,7 +254,7 @@ search.best_params_, search.best_score_
 
 $
  docker run --rm -p 8013:8013 -v sksurrogate-data:/data mghasemi/sksurrogate:latest
-# published image (v0.8.0) — UI + API on http://localhost:8013; data stays in the named volume
+# published image (v0.8.1) — UI + API on http://localhost:8013; data stays in the named volume
 
 $
  docker compose --profile prod up -d
@@ -272,4 +272,4 @@ MIT-licensed, scikit-learn-native, and built so the evaluation record travels wi
 
 Get started GitHub ↗
 
-© 2019–2026 Mehdi Ghasemi · MIT licence sksurrogate v0.8.0 · scikit-learn-native
+© 2019–2026 Mehdi Ghasemi · MIT licence sksurrogate v0.8.1 · scikit-learn-native

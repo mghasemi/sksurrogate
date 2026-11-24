@@ -124,6 +124,24 @@ def main():
           not (missing["og:image:width"] or missing["og:image:height"] or missing["og:image:alt"]),
           ", ".join(missing["og:image:width"] + missing["og:image:height"] + missing["og:image:alt"]))
 
+    # ---- 1c. one version across every surface ---------------------------
+    # The homepage is hand-maintained and carries four version surfaces (strip,
+    # hero .meta, code comment, footer) plus the JSON-LD; the subpages get theirs
+    # from build_site/site_pages. They drift independently unless something
+    # compares them, so the JSON-LD softwareVersion is the reference.
+    home_src = open(os.path.join(ROOT, "index.html")).read()
+    m_version = re.search(r'"softwareVersion":\s*"([0-9]+\.[0-9]+\.[0-9]+)"', home_src)
+    declared = m_version.group(1) if m_version else ""
+    stray = {}
+    for p in all_pages:
+        for v in set(re.findall(r"sksurrogate v([0-9]+\.[0-9]+\.[0-9]+)", open(p).read())):
+            if v != declared:
+                stray.setdefault(v, []).append(url_path(p))
+    check("one site version in every footer and the JSON-LD",
+          bool(declared) and not stray,
+          ("%s on %d pages" % (declared, len(all_pages)))
+          if declared and not stray else ("declared %r, stray %s" % (declared, stray)))
+
     # ---- 1b. landmarks (Lighthouse a11y "landmark-one-main") ------------
     no_main, multi_main = [], []
     for p in all_pages:
