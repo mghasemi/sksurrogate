@@ -16,6 +16,16 @@ Before publishing a release:
 * Exercise registry promotion, approval, rollback, and artifact deletion.
 * Check that SQLite databases and EOA checkpoints from the previous release
   remain readable, or publish migration instructions for any incompatibility.
+* Regenerate the MCP route snapshot and verify it, then commit
+  ``sksurrogate_mcp/openapi_ops.json``::
+
+      SKSURROGATE_API_HOME=$(mktemp -d) \
+          .venv/bin/python scripts/generate_mcp_openapi_snapshot.py
+      .venv/bin/python scripts/generate_mcp_openapi_snapshot.py --check
+
+  The file records the core version it was generated from, and
+  ``tests/test_mcp_snapshot_drift.py`` fails when it is stale or when any route
+  was added, renamed or removed (see ``docs/mcp-server.rst``).
 * Review sensitive metadata, audit records, dependency versions, and changelog
   entries before tagging the release.
 

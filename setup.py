@@ -69,7 +69,11 @@ setup(
     version=_read_version(),
     author="Mehdi Ghasemi",
     author_email="mehdi.ghasemi@gmail.com",
-    packages=["SKSurrogate"],
+    packages=["SKSurrogate", "sksurrogate_mcp"],
+    # The MCP server validates ``api_request`` against this generated snapshot;
+    # without it in the wheel the escape hatch degrades to an error payload.
+    # Pinned by the install-smoke CI job (reads it via importlib.resources).
+    package_data={"sksurrogate_mcp": ["openapi_ops.json"]},
     url="https://github.com/mghasemi/sksurrogate",
     license="MIT",
     # Ship the single authoritative licence file explicitly (setuptools also
@@ -136,6 +140,14 @@ setup(
         # home without changing what the base install pulls in. `import sksurrogate`
         # works identically with and without it.
         "forecasting": [],
+        # ---- agent integration ---------------------------------------------
+        # Agent-facing MCP server (sksurrogate_mcp): an external wrapper over
+        # the HTTP control plane — zero core dependencies, stdio transport.
+        # Verified against MCP Python SDK 2.x (FastMCP was renamed MCPServer in
+        # 2.0; the floor keeps a single import path). The <3 bound is
+        # deliberate: the server imports mcp.server.mcpserver.MCPServer, so a
+        # future major rename would need a code change, not a silent upgrade.
+        "mcp": ["httpx>=0.27", "mcp>=2.3,<3"],
         # ---- developer / CI ----------------------------------------------
         "test": ["pytest", "pygments"],
         # Everything CI and the Docker image run, minus the deliberately
@@ -166,6 +178,8 @@ setup(
     entry_points={
         "console_scripts": [
             "sksurrogate-batch-predict=SKSurrogate.inference:main",
+            # MCP server for agents (stdio transport); needs the "mcp" extra.
+            "sksurrogate-mcp=sksurrogate_mcp.server:main",
         ],
     },
 )

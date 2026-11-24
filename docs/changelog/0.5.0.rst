@@ -1,0 +1,43 @@
+0.5.0 — unreleased
+==================
+
+MCP server for agents (new optional extra)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+* **Added:** an opt-in MCP (Model Context Protocol) server in the new
+  ``sksurrogate_mcp`` package, exposed via the ``[mcp]`` extra
+  (``pip install sksurrogate[mcp]``; console script ``sksurrogate-mcp``). It wraps a
+  running control plane over stdio with **zero changes to ``SKSurrogate/`` or ``api/``**
+  and authenticates with a per-user key (``SKSURROGATE_API_URL`` +
+  ``SKSURROGATE_API_KEY`` → ``X-API-Key``), so agent actions land in the audit trail under
+  the key owner. Twenty-nine curated tools grouped by workflow stage — discovery, data
+  registration/preprocessing, experiments and job control (``job_wait`` runs a bounded
+  in-server poll loop and emits MCP progress notifications with trial count/phase/best
+  score; submit tools refuse duplicate live jobs), analysis
+  (sensitivity/top features/ALE explanations/metrics/nested CV), registry–promotion
+  lifecycle (summary, quality gate, promote, predict/predict_batch) and research-record
+  projects — plus an ``api_request`` escape hatch validated against the embedded OpenAPI
+  snapshot so the full control plane stays reachable without tool sprawl. Expected API
+  failures return structured ``{"error", "status_code"}`` payloads instead of raising; row-level
+  data export remains absent per the D2 contract. Documented in ``docs/mcp-server.rst``;
+  tested by ``tests/test_mcp_server.py`` (unit + real-MCP-client stdio round-trips).
+* **Added:** packaging and release hygiene for the MCP extra. The embedded route
+  snapshot is now CI-guarded from both sides — ``scripts/generate_mcp_openapi_snapshot.py
+  --check`` runs as its own step and ``tests/test_mcp_snapshot_drift.py`` rebuilds the
+  spec from the live ``api.main:app`` and fails on any added, renamed or removed route
+  or on a core-version mismatch (a *rename* keeps the operation count identical, so the
+  comparison is on the method/path set) — and ``docs/release.rst`` gains the
+  regenerate-on-release step. ``docs/mcp-server.rst`` now ships concrete client
+  configurations for Hermes (``mcp_servers`` in ``config.yaml``, filtered environment,
+  raised per-tool timeout so ``job_wait`` is not cut off) and Claude Desktop
+  (``mcpServers`` in ``claude_desktop_config.json``), a security note (per-user key,
+  audit ownership, least-privilege roles, plaintext-config handling, revocation via
+  ``DELETE /api/auth/keys/{key_id}``) and the version-pinning policy:
+  ``sksurrogate_mcp.__version__`` now resolves the distribution version instead of a
+  stale ``0.0.1`` literal, and the ``[mcp]`` extra bounds the SDK at
+  ``mcp>=2.3,<3`` because the server imports the 2.x ``MCPServer`` API.
+* **Fixed:** the Docker images stopped building once ``sksurrogate_mcp`` entered
+  ``setup.py``: ``pip install --no-deps .`` aborted with ``package directory
+  'sksurrogate_mcp' does not exist`` because neither stage copied the package. Both
+  stages now ``COPY sksurrogate_mcp/``; the images stay SDK-free because the server's
+  runtime dependencies remain the opt-in ``[mcp]`` extra.

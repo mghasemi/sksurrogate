@@ -59,6 +59,7 @@ RUN apt-get update \
 # Baked-in copies are only placeholders; the bind mount is the source of truth.
 COPY api/ ./api/
 COPY SKSurrogate/ ./SKSurrogate/
+COPY sksurrogate_mcp/ ./sksurrogate_mcp/
 COPY webui/ ./webui/
 # mltrace reads its version via importlib.metadata, so distribution metadata must
 # exist; --no-deps because requirements.txt already installed the dependencies.
@@ -79,6 +80,9 @@ RUN apt-get update \
     && useradd --create-home --uid 1000 sksurrogate
 COPY api/ ./api/
 COPY SKSurrogate/ ./SKSurrogate/
+# setup.py lists sksurrogate_mcp as a package, so `pip install .` below fails
+# without it. Its runtime dependencies stay optional ([mcp] extra).
+COPY sksurrogate_mcp/ ./sksurrogate_mcp/
 COPY setup.py readme.rst LICENSE ./
 RUN pip install --no-cache-dir --no-deps .
 COPY --from=webbuild /build/webui/dist ./webui/dist
