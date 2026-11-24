@@ -46,6 +46,33 @@ implementation only supports what that contract states:
   curve on the same grid), and only descriptive cross-sample summaries (mean,
   sample SD, min, max) are reported. They are not confidence intervals, not
   significance tests, and not guarantees of generalization.
+
+Additional guarantees (Stage D4)
+--------------------------------
+* **Grouped importance for correlated features.** Permutation importance splits
+  credit between near-duplicate columns in an arbitrary order. Columns whose
+  absolute pairwise correlation reaches 0.9 are clustered and permuted
+  *together*, so the reported drop is the joint signal rather than a coin flip
+  between duplicates. Non-numeric columns are never grouped (their encoding is
+  the pipeline's, not the frame's) and the block is skipped with a reason.
+* **One labelled response per explanation.** Every scalar-response explanation
+  carries ``explained_quantity``: ``prediction``, ``probability`` or
+  ``decision_score``. A row-level explanation is never returned without it, so
+  a probability-scale attribution cannot be mistaken for a logit.
+* **Reconstruction is checked, not assumed.** The ordered-occlusion chain
+  telescopes exactly for a deterministic estimator. The residual between the
+  sum of contributions and the observed response change is compared with a
+  tolerance; a residual above it marks the attribution ``unreliable`` instead of
+  reporting a number that does not add up.
+* **Out-of-distribution flags are relative.** A row's robust Mahalanobis
+  distance (median/IQR scaling, shrunk covariance) is compared with the
+  reference sample's own distance distribution at the 99th percentile. The flag
+  says "unlike these reference rows", never "wrong prediction".
+* **Sign stability across row slices.** Recomputed permutation importance on
+  disjoint slices of the stored partition (with the single stored estimator, no
+  refit) reports the share of slices agreeing with the majority sign. A feature
+  below 0.75 is marked unstable — its direction depends on which rows are
+  scored.
 """
 
 from __future__ import annotations
@@ -115,6 +142,24 @@ def response_callable(model, family):
         "Classifier exposes neither predict_proba nor decision_function, so no "
         "single scalar response is available for accumulated local effects"
     )
+
+
+def explained_quantity(response_meta):
+    """The labelled scalar an explanation describes.
+
+    ``prediction`` (regression), ``probability`` (classifier probabilities) or
+    ``decision_score`` (a classifier's signed margin). Kept out of the
+    ``response`` mapping itself so that documented payload shape stays additive
+    only at the top level.
+    """
+    output = str((response_meta or {}).get("output") or "")
+    if output.startswith("predict_proba"):
+        return "probability"
+    if output.startswith("decision_function"):
+        return "decision_score"
+    if output.startswith("predict"):
+        return "prediction"
+    return None
 
 
 def reference_subsets(rng, n_rows, size, count, excluded=()):
@@ -353,3 +398,268 @@ def row_contribution_summary(response, row_values, baseline_values, orders, feat
         "order_totals": order_totals,
         "matrix": matrix,
     }
+
+
+# ---------------------------------------------------------------------------
+# Explanation guarantees (Stage D4): grouped importance, OOD flags, stability
+# ---------------------------------------------------------------------------
+
+def correlated_groups(values, names, *, threshold=0.9, min_finite_rows=20):
+    """Cluster numeric features whose absolute pairwise correlation is high.
+
+    Permutation importance splits credit between correlated columns in an
+    order-dependent way, so a single column's score drop understates a signal
+    that two near-duplicates carry jointly. Grouping them and permuting the
+    group together gives an attribution that does not depend on which duplicate
+    the estimator happened to use.
+
+    ``values`` is the reference matrix and ``names`` its columns. Only columns
+    with at least ``min_finite_rows`` finite, non-constant entries can be
+    grouped; every other column forms its own singleton group (it is still
+    reported, so the caller never has to merge two group lists). Returns a list
+    of ``{"features": [...], "max_abs_correlation": float | None,
+    "grouped": bool}`` in input order, preserving the first appearance of each
+    group.
+    """
+    matrix = np.asarray(values, dtype=float)
+    if matrix.ndim != 2:
+        raise ValueError("values must be a 2-D reference matrix")
+    if len(names) != matrix.shape[1]:
+        raise ValueError("names must have one entry per matrix column")
+
+    usable = []
+    for index in range(matrix.shape[1]):
+        column = matrix[:, index]
+        finite = column[np.isfinite(column)]
+        if finite.size >= int(min_finite_rows) and np.ptp(finite) > 0:
+            usable.append(index)
+    if len(usable) >= 2:
+        correlation = np.corrcoef(matrix[:, usable], rowvar=False)
+        correlation = np.nan_to_num(np.abs(correlation), nan=0.0)
+    else:
+        correlation = np.zeros((len(usable), len(usable)))
+
+    position = {column: offset for offset, column in enumerate(usable)}
+    parent = list(range(matrix.shape[1]))
+
+    def find(index):
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    strongest = {}
+    for left_offset, left in enumerate(usable):
+        for right_offset, right in enumerate(usable):
+            if right <= left:
+                continue
+            value = float(correlation[left_offset, right_offset])
+            if value >= float(threshold):
+                root_left, root_right = find(left), find(right)
+                if root_left != root_right:
+                    parent[root_right] = root_left
+                strongest[(left, right)] = value
+
+    members = {}
+    for index in range(matrix.shape[1]):
+        members.setdefault(find(index), []).append(index)
+
+    groups = []
+    for root in sorted(members, key=members.get):
+        indices = members[root]
+        peak = None
+        if len(indices) > 1:
+            peaks = [
+                strongest.get((min(a, b), max(a, b)))
+                for a in indices
+                for b in indices
+                if a < b and (min(a, b), max(a, b)) in strongest
+            ]
+            peaks = [value for value in peaks if value is not None]
+            peak = max(peaks) if peaks else None
+        groups.append(
+            {
+                "features": [str(names[index]) for index in indices],
+                "max_abs_correlation": None if peak is None else float(peak),
+                "grouped": len(indices) > 1,
+            }
+        )
+    return groups
+
+
+def grouped_permutation_importance(
+    estimator, values, y, groups, *, n_repeats=5, random_state=0
+):
+    """Permutation score drop for whole feature groups.
+
+    Each group's columns are shuffled together with one shared row permutation,
+    so the joint signal is destroyed while the marginals of every column are
+    preserved. Returns one entry per group in the order supplied. The score is
+    ``estimator.score`` on the supplied rows; like every permutation importance
+    this is a model attribution on these rows, not a causal effect.
+    """
+    matrix = np.asarray(values, dtype=float)
+    target = np.asarray(y)
+    if matrix.ndim != 2:
+        raise ValueError("values must be a 2-D matrix")
+    if len(target) != matrix.shape[0]:
+        raise ValueError("y must have one entry per row of values")
+    if int(n_repeats) < 1:
+        raise ValueError("n_repeats must be positive")
+
+    rng = np.random.RandomState(random_state)
+    baseline = float(estimator.score(matrix, target))
+    results = []
+    for group in groups:
+        features = list(group.get("features") or [])
+        if not features:
+            continue
+        # ``groups`` carries names; the caller aligns them to matrix positions
+        # through ``group["indices"]`` when the names are not column labels.
+        indices = group.get("indices")
+        if indices is None:
+            raise ValueError("each group must carry its column indices")
+        indices = list(indices)
+        drops = np.empty(int(n_repeats), dtype=float)
+        for repeat in range(int(n_repeats)):
+            shuffled = matrix.copy()
+            order = rng.permutation(matrix.shape[0])
+            shuffled[:, indices] = matrix[order][:, indices]
+            drops[repeat] = baseline - float(estimator.score(shuffled, target))
+        results.append(
+            {
+                "features": features,
+                "grouped": bool(group.get("grouped", len(features) > 1)),
+                "max_abs_correlation": group.get("max_abs_correlation"),
+                "mean": float(drops.mean()),
+                "std": float(drops.std(ddof=1)) if drops.size > 1 else 0.0,
+                "n_repeats": int(n_repeats),
+                "baseline_score": baseline,
+            }
+        )
+    return results
+
+
+def out_of_distribution(reference, query, *, percentile=99.0, max_features=200):
+    """Flag rows whose feature vector lies outside the reference distribution.
+
+    Robust Mahalanobis distance: median centring, IQR-based scaling (falling
+    back to the standard deviation and then to 1 for constant columns), and a
+    covariance shrunk towards its diagonal by ``1e-4`` of the mean variance so a
+    rank-deficient reference does not produce infinite distances. The threshold
+    is the ``percentile`` of the reference rows' own distances, i.e. the flag is
+    relative to this reference sample.
+
+    Non-finite cells are imputed with the reference median before the distance
+    is computed and counted in ``imputed_cells``. Fewer than two usable numeric
+    columns degrade to the maximum absolute robust z-score, which is weaker but
+    honest; ``method`` names which statistic was used.
+
+    This is a distributional flag for one fitted model's input space, not a
+    guarantee that a prediction is wrong.
+    """
+    ref = np.asarray(reference, dtype=float)
+    qry = np.asarray(query, dtype=float)
+    if ref.ndim != 2 or qry.ndim != 2:
+        raise ValueError("reference and query must be 2-D matrices")
+    if ref.shape[1] != qry.shape[1]:
+        raise ValueError("reference and query must have the same number of columns")
+    if ref.shape[0] < 10:
+        raise ValueError("at least 10 reference rows are needed for an OOD flag")
+
+    width = min(ref.shape[1], int(max_features))
+    usable = []
+    for index in range(width):
+        column = ref[:, index]
+        finite = column[np.isfinite(column)]
+        if finite.size >= 10 and np.ptp(finite) > 0:
+            usable.append(index)
+    if not usable:
+        raise ValueError("no numeric, non-constant reference column is usable")
+
+    reference = ref[:, usable]
+    query_matrix = qry[:, usable]
+    center = np.nanmedian(reference, axis=0)
+    q75, q25 = np.nanpercentile(reference, [75, 25], axis=0)
+    iqr_scale = (q75 - q25) / 1.349
+    std_scale = np.nanstd(reference, axis=0, ddof=1)
+    scale = np.where(iqr_scale > 0, iqr_scale, np.where(std_scale > 0, std_scale, 1.0))
+
+    imputed = int(np.sum(~np.isfinite(reference))) + int(np.sum(~np.isfinite(query_matrix)))
+    reference = np.where(np.isfinite(reference), reference, center)
+    query_matrix = np.where(np.isfinite(query_matrix), query_matrix, center)
+    z_reference = (reference - center) / scale
+    z_query = (query_matrix - center) / scale
+
+    if z_reference.shape[1] >= 2:
+        covariance = np.cov(z_reference, rowvar=False)
+        shrinkage = 1e-4 * float(np.mean(np.diag(covariance))) + 1e-12
+        covariance = covariance + shrinkage * np.eye(covariance.shape[0])
+        inverse = np.linalg.pinv(covariance)
+        ref_distance = np.sqrt(np.einsum("ij,jk,ik->i", z_reference, inverse, z_reference))
+        query_distance = np.sqrt(np.einsum("ij,jk,ik->i", z_query, inverse, z_query))
+        threshold = float(np.percentile(ref_distance, float(percentile)))
+        method = "robust_mahalanobis"
+    else:
+        ref_distance = np.abs(z_reference[:, 0])
+        query_distance = np.abs(z_query[:, 0])
+        threshold = float(np.percentile(ref_distance, float(percentile)))
+        method = "robust_max_abs_z"
+
+    return {
+        "method": method,
+        "threshold": threshold,
+        "percentile": float(percentile),
+        "reference_rows": int(reference.shape[0]),
+        "features_used": len(usable),
+        "imputed_cells": imputed,
+        "distances": [float(value) for value in query_distance],
+        "flagged": [bool(value > threshold) for value in query_distance],
+        "threshold_note": (
+            "The threshold is the %gth percentile of the reference rows' own "
+            "distance, so it is relative to this reference sample and moves with it."
+            % float(percentile)
+        ),
+    }
+
+
+def sign_consistency(samples, names, *, stable_fraction=0.75):
+    """Sign stability of per-fit importances for each feature.
+
+    ``samples`` is a ``(n_fits, n_features)`` array of mean importances from
+    independent fits (CV folds or seeds). Permutation importance can be negative
+    (shuffling a column improves the score), so its *sign* is meaningful: a
+    feature that flips between positive and negative across fits has no stable
+    direction on this data. ``sign_consistency`` is the share of fits agreeing
+    with the majority sign; ``unstable`` is true below ``stable_fraction``.
+    Ties at exactly zero count against neither sign and are reported separately.
+    """
+    matrix = np.asarray(samples, dtype=float)
+    if matrix.ndim != 2:
+        raise ValueError("samples must be a 2-D (n_fits, n_features) array")
+    if matrix.shape[1] != len(names):
+        raise ValueError("names must have one entry per column of samples")
+    report = []
+    for index, name in enumerate(names):
+        column = matrix[:, index]
+        positive = int(np.sum(column > 0))
+        negative = int(np.sum(column < 0))
+        zero = int(np.sum(column == 0))
+        decided = positive + negative
+        if decided == 0:
+            consistency = None
+        else:
+            consistency = max(positive, negative) / decided
+        report.append(
+            {
+                "feature": str(name),
+                "mean": float(np.nanmean(column)) if np.isfinite(column).any() else None,
+                "positive_fits": positive,
+                "negative_fits": negative,
+                "zero_fits": zero,
+                "n_fits": int(column.size),
+                "sign_consistency": consistency,
+                "unstable": bool(consistency is None or consistency < stable_fraction),
+            }
+        )
+    return report
