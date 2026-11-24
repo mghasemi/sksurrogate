@@ -40,7 +40,7 @@ The surrogate layer explores pipeline structure and hyperparameter ranges jointl
 
 ## One workspace, four stages.
 
-The control plane's sidebar has exactly these areas — the tour mirrors the product one-to-one, CSV in to monitored model out. (Content-plan S5; stage cells per docs/walkthrough.rst steps 1–13.)
+The control plane's sidebar has exactly these areas — the tour mirrors the product one-to-one, CSV in to monitored model out.
 
 01
 
@@ -206,7 +206,7 @@ Benchmark inputs and outputs carry DOIs — what you cite is exactly what we ran
 
 ## What SKSurrogate is not.
 
-Scope kept deliberately narrow. The roadmap below is dated and gated — claims are only allowed to say "coming" with a link, never "it does that today". (LAUNCH_PLAN §9 / risk register; AI_LAYER_ROADMAP D2.)
+Scope kept deliberately narrow. The roadmap below is dated and gated — claims are only allowed to say "coming" with a link, never "it does that today".
 
 Not a managed cloud service. Self-hosted and single-machine by design — local API or one compose profile. If you need multi-node training or GPU fleets, that is a different category of tool. launch plan · positioning
 
