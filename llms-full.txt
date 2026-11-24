@@ -206,7 +206,7 @@ Benchmark inputs and outputs carry DOIs — what you cite is exactly what we ran
 
 ## What SKSurrogate is not.
 
-Scope kept deliberately narrow. The roadmap below is dated and gated — claims are only allowed to say "coming" with a link, never "it does that today".
+Scope kept deliberately narrow: what follows is either shipped — linked to its docs or code — or marked coming.
 
 Not a managed cloud service. Self-hosted and single-machine by design — local API or one compose profile. If you need multi-node training or GPU fleets, that is a different category of tool. launch plan · positioning
 
