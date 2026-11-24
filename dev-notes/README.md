@@ -40,6 +40,7 @@ it, it belongs in `docs/`, not here.
 | `AI_LAYER02_D3_ROW_LEVEL_CONTRACT.md` | Stage D3 row-level explanation contract |
 | `AI_LAYER02_D4_READINESS_ASSESSMENT.md` | Stage D4 readiness assessment (acquisition extensions) |
 | `HANDOFF-explainability-visibility.md` | Handoff: explainability surfacing in the UI |
+| `release-cut.md` | The release procedure: version sources, wheel check, tag order, media to update |
 
 ## Referenced but intentionally local-only
 

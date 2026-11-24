@@ -1,5 +1,12 @@
-0.6.0 — unreleased
-==================
+0.6.0 — shipped in 0.8.0
+========================
+
+.. note::
+
+   The reliability contract below ships as part of :doc:`0.8.0`. It was never
+   released on its own: there is no ``0.6.0`` artifact on PyPI, Docker Hub or
+   GitHub. It is kept as its own page because :doc:`../search-contract` and the
+   test suite cite it.
 
 Reliability of the search engine: one reproducible, correctly budgeted run
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

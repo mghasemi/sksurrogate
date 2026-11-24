@@ -6,6 +6,11 @@ file grows without bound and a release stays readable on its own. Entries
 describe behaviour a user can observe; internal churn lives in
 ``dev-notes/`` instead.
 
+A row marked **not published** describes work that was drafted as its own
+version but never shipped under that number. Those pages are kept because
+docstrings, the test suite and commit messages cite them; the content appears
+in the release named in the highlights.
+
 .. list-table::
    :header-rows: 1
    :widths: 12 14 74
@@ -15,24 +20,24 @@ describe behaviour a user can observe; internal churn lives in
      - Highlights
 
    * - ``0.8.0``
-     - unreleased
-     - Paired model comparison and evidence-grounded explanations and drafts
+     - 2026-11-24
+     - Cumulative: auditable search engine and provenance, paired model comparison, evidence-grounded explanations and drafts, platform hardening. Folds in the extras restructuring (0.4.0), the MCP server (0.5.0) and the reliability contract (0.6.0)
 
    * - ``0.6.0``
-     - unreleased
-     - Search-engine reliability: exact evaluation budget, reproducible ``random_state``, auditable counters and the published search contract
+     - not published
+     - Search-engine reliability: exact evaluation budget, reproducible ``random_state``, auditable counters and the published search contract — shipped in 0.8.0
 
    * - ``0.5.0``
-     - unreleased
-     - MCP server for agents: 30 curated tools over a running control plane, plus an ``api_request`` escape hatch
+     - not published
+     - MCP server for agents: curated tools over a running control plane, plus an ``api_request`` escape hatch — shipped in 0.8.0
 
    * - ``0.4.0``
-     - 2026-11-23
-     - Optional extras: base install down to seven packages (39 s/633 MB → 7 s/250 MB)
+     - not published
+     - Optional extras: base install down to seven packages (39 s/633 MB → 7 s/250 MB) — shipped in 0.8.0
 
    * - ``0.3.1``
      - 2026-11-23
-     - Partition defaults, temporal experiments and the Advanced scorer — 169 entries, five pages
+     - Partition defaults, temporal experiments and the Advanced scorer — 169 entries, five pages. Container image only; never uploaded to PyPI
 
    * - ``0.3.0``
      - 2026-11-08

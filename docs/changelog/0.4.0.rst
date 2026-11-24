@@ -1,5 +1,11 @@
-0.4.0 — 2026-11-23
-==================
+0.4.0 — drafted 2026-11-23, never published
+===========================================
+
+.. note::
+
+   This version was never tagged, never uploaded to PyPI, and never shipped as a
+   container. Its content is part of :doc:`0.8.0`, which is the first release after
+   ``0.3.0``. The page is kept because commit history and docstrings cite it.
 
 Optional extras: the base install is now seven packages
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
