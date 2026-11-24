@@ -283,6 +283,22 @@ def main():
     # and the raw capture would 4xx against the host.
     llms_urls = [u.rstrip(".,;:") for u in re.findall(r"https?://[^\s\)]+", llms)]
 
+    # ---- 6b. no internal editorial refs in visible copy -----------------
+    # Captions written as production notes (content-plan S5, LAUNCH_PLAN §9,
+    # AI_LAYER_ROADMAP D2, docs/walkthrough.rst steps) must keep their
+    # provenance in HTML comments; rendered text is for visitors only.
+    internal = re.compile(r"content-plan S\d|LAUNCH_PLAN|AI_LAYER_ROADMAP|"
+                          r"walkthrough\.rst|risk register|§\s*\d")
+    leaks = []
+    for p in all_pages:
+        s = re.sub(r"<!--.*?-->", "", open(p).read(), flags=re.S)
+        s = re.sub(r"<(script|style)\b.*?</\1>", "", s, flags=re.S)
+        visible = re.sub(r"<[^>]+>", " ", s)
+        found = internal.findall(visible)
+        if found:
+            leaks.append("%s (%s)" % (url_path(p), ", ".join(sorted(set(found)))))
+    check("no internal doc refs in visible copy", not leaks, "; ".join(leaks))
+
     # ---- 7. images ----------------------------------------------------
     img_tags = re.findall(r"<img\b[^>]*>", open(os.path.join(ROOT, "index.html")).read())
     no_dims = [t for t in img_tags if 'width="' not in t or 'height="' not in t]
