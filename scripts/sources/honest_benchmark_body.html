@@ -178,7 +178,7 @@
     </ul>
 
     <h2>How to reproduce all of this</h2>
-    <pre><code>pip install sksurrogate          # v0.2.0, PyPI
+    <pre><code>pip install "sksurrogate==0.2.0"  # the release these numbers were measured on
 python -m benchmarks.run --dataset all --budget 30      # full five-method suite (~1–3 h laptop-scale)
 python -m benchmarks.dtrack.d2_compare                  # the regime-map study</code></pre>
     <ul>
