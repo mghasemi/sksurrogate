@@ -46,8 +46,9 @@ Counter                         Meaning
                                 minus fits that never reached the optimizer.
 ==============================  =====================================================
 
-Public accessors: ``summary_["budget"]`` (per-run) and the fitted attributes
-``n_evaluations_`` / ``n_rounds_``.
+Public accessors: ``summary_["budget"]`` reports all four for a run
+(``evaluations``, ``rounds``, ``acquisition_calls``, ``surrogate_fits``), and the fitted
+search exposes ``n_evaluations_``, ``n_rounds_`` and ``n_surrogate_fits_``.
 
 The state machine
 -----------------
@@ -72,32 +73,39 @@ the callback event (see :doc:`telemetry`), and as ``sampling_sources_`` on the s
 Invariants
 ----------
 
-Each row is a test. "Failing" means the current implementation does not satisfy it and
-the test is therefore marked ``xfail`` until the corresponding fix lands.
+Each row is a test in ``tests/test_search_invariants.py`` or
+``tests/test_search_determinism.py``. Before v0.6 the rows marked *was failing* did not
+hold; the "Pinned by" column names the test that now keeps them true.
 
-=====  ====================================================================  =========
+=====  ====================================================================  ============
 Id     Invariant                                                              Status
-=====  ====================================================================  =========
+=====  ====================================================================  ============
 I1     ``n_evaluations == len(evaluation_history_) == len(sampling_sources_)``  holds
 I2     Every recorded evaluation corresponds to exactly one objective call    holds
 I3     ``n_evaluations <= max_evals`` whenever ``max_evals`` is set           holds
-I4     With ``max_evals=None``, ``n_evaluations == n_iter`` exactly           failing
-I5     A round that consumes no evaluation increments the no-progress         failing
+I4     With ``max_evals=None``, ``n_evaluations == n_iter`` exactly           fixed
+I5     A round that consumes no evaluation increments the no-progress         fixed
        counter (so it can never outlive its budget silently)
-I6     ``termination_reason`` names the constraint that actually bound the     failing
+I6     ``termination_reason`` names the constraint that actually bound the     fixed
        run, drawn from the documented vocabulary below
-I7     Identical ``random_state`` ⇒ identical ``(params, score)`` sequence,     failing
+I7     Identical ``random_state`` ⇒ identical ``(params, score)`` sequence,     fixed
        in one process and across processes
 I8     Fitting never consumes or reseeds the global ``random``/``numpy.random``  holds
        state
-I9     ``clone(search)`` before and after ``fit`` returns equal                failing
+I9     ``clone(search)`` before and after ``fit`` returns equal                fixed
        ``get_params(deep=True)``
-I10    A surrogate fit or prediction failure degrades that round to            failing
+I10    A surrogate fit or prediction failure degrades that round to            fixed
        exploration; it never aborts the search
-=====  ====================================================================  =========
+=====  ====================================================================  ============
 
-I4, I5, I6, I7, I9 and I10 are the release-blocking fixes tracked as Phase 1 of
-``.hermes/plans/2026-11-24_031000-review-remediation-plan.md``.
+The failures above were the release-blocking defect class of v0.6.0: an off-by-one
+between rounds and evaluations (``n_iter=3`` spent five and ``n_iter=5`` spent seven,
+because the initial candidate was evaluated in the constructor *and* the loop ran
+``MaxIter + 1`` rounds), an initial candidate drawn from Python's global ``random``
+so a fixed ``random_state`` did not reproduce a run, failed rounds that consumed
+iterations without evaluating or charging the no-progress counter, and a fit failure
+that aborted a whole search. A library user can restore the old abort behaviour with
+``surrogate_fit_error="raise"``.
 
 Budget semantics
 ----------------
@@ -109,8 +117,10 @@ Parameter                      Meaning
                                names are aliases (``n_iter`` is scikit-learn's
                                spelling); giving both with different values is an
                                error. The initial candidate counts toward it.
-``max_evals``                  Hard cap on candidate evaluations. Defaults to
-                               ``n_iter``. A cap below ``n_iter`` binds first.
+``max_evals``                  Hard cap on candidate evaluations. The effective budget
+                               is ``min(n_iter, max_evals)``: a cap below ``n_iter``
+                               binds first, a cap above it does not silently extend the
+                               run.
 ``min_evals``                  Evaluations to collect before the response surface is
                                used. The default is the number of monomials of degree
                                ``deg`` in the search dimension, ``C(d + deg, d)``; an

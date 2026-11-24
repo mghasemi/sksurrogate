@@ -1,0 +1,72 @@
+0.6.0 — unreleased
+==================
+
+Reliability of the search engine: one reproducible, correctly budgeted run
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The optimizer is the foundation of everything else, so this release is defined by a
+contract rather than by a feature: :doc:`../search-contract` states what a search
+guarantees, and each guarantee is pinned by a test.
+
+* **Fixed (breaking): the evaluation budget is now exact.** ``n_iter``/``max_iter``
+  counts candidate evaluations and the initial candidate is included, so
+  ``n_iter=30`` records exactly 30 evaluations (``max_evals`` caps them, effective
+  budget ``min(n_iter, max_evals)``). Before this release an ``n_iter=3`` search spent
+  five evaluations and ``n_iter=5`` spent seven: the starting point was evaluated in
+  the constructor *and* the loop ran ``MaxIter + 1`` rounds. Code that compensated by
+  passing a smaller ``n_iter`` will now search less than intended; the benchmark
+  harness carried exactly such a workaround (``max_iter=4 * budget`` plus a pinned
+  ``max_evals``), which is removed.
+* **Fixed: a fixed ``random_state`` reproduces a run.** The initial candidate came
+  from Python's *global* ``random``, so two searches with ``random_state=0``
+  produced different candidate sequences and no benchmark cell or bug report could
+  be reproduced. ``random_state`` now seeds two independent
+  ``numpy.random.Generator`` streams derived from one ``SeedSequence`` — the starting
+  point and the sampling path — and fitting neither reads nor writes the global
+  ``random``/``numpy.random`` state. ``random_state`` accepts ``int``, ``None``,
+  ``Generator`` or ``RandomState``. Verified in one process and across processes.
+  The estimator's own randomness is still the caller's to seed
+  (``estimator__random_state``).
+* **Fixed: a failed round is always accounted for.** A round whose local optimization
+  failed used to consume an iteration without evaluating anything *and* without
+  charging the no-progress counter, so a struggling response surface could burn the
+  budget silently. Such rounds are now charged to the no-progress counter and, if
+  they never resolve, the run terminates with ``termination_reason =
+  "acquisition_failed"`` after a documented round ceiling.
+* **Changed (breaking): a surrogate failure no longer aborts the search.** A failed
+  fit or prediction records the failure, warns once, falls back to exploration for
+  that round and keeps going, so a complete search is not lost to one bad surface.
+  ``surrogate_fit_error="raise"`` restores the pre-0.6 behaviour.
+* **Fixed: ``min_evals`` is honoured exactly.** An explicitly requested ``min_evals``
+  used to be silently raised to the degree-3 binomial floor; the floor now applies
+  only to the default. ``surrogate_info_`` reports ``min_evals`` and
+  ``min_evals_source`` (``default`` or ``user``), and a ``min_evals`` above the budget
+  warns that the surface can never fire instead of leaving it to be discovered.
+* **Added: four separate counters.** ``summary_["budget"]`` reports ``evaluations``,
+  ``rounds``, ``acquisition_calls`` and ``surrogate_fits``; the fitted search exposes
+  ``n_evaluations_``, ``n_rounds_`` and ``n_surrogate_fits_``. ``termination_reason``
+  names the constraint that actually bound the run
+  (``time_limit`` / ``max_evals`` / ``n_iter`` / ``max_iter_no_progress`` /
+  ``acquisition_failed`` / ``stopped``); ``completed`` is still accepted as the
+  legacy spelling of ``n_iter``.
+* **Fixed: checkpoints no longer appear in the working directory.** A search wrote
+  ``<task_name>.pkl`` into the current directory after every round, non-atomically
+  (the source of the stray ``optim_task.pkl`` in the repository root). Persistence is
+  now opt-in via ``task_name`` (+ optional ``checkpoint_dir``), written atomically
+  through a ``.tmp`` sibling and ``os.replace``.
+* **Fixed: scikit-learn search contracts.** ``fit`` no longer mutates constructor
+  parameters (``scoring``, ``radius`` were overwritten), so ``clone`` is stable;
+  ``cv_results_`` carries ``param_*``, ``mean_test_score``, ``std_test_score``,
+  ``split<i>_test_score``, ``rank_test_score`` and ``mean_fit_time``; callable
+  ``refit`` is invoked with ``cv_results_`` and its return value stored;
+  ``refit=False`` exposes no ``best_estimator_``; multi-metric scoring and bare
+  callables are refused with guidance; a ``scipy.stats`` distribution in the search
+  space is refused with a message naming the supported alternatives; ``fit``'s
+  keyword arguments (``sample_weight`` and friends) are routed to the folds and the
+  refit instead of being dropped.
+* **Added:** ``tests/test_search_invariants.py`` (property-based, ``hypothesis``) and
+  ``tests/test_search_determinism.py`` pin the contract; ``tests/test_sklearn_compat.py``
+  pins the scikit-learn compatibility surface.
+* **Changed:** the benchmark harness passes ``max_iter=budget`` directly. Published
+  v1.9 numbers were produced with the old workaround and remain frozen; they are not
+  comparable with runs from this harness (see ``benchmarks/DESIGN.md``).

@@ -290,6 +290,18 @@ includes parameters, score, status, duration, and any captured error. Use
 ``pareto_frontier()`` to inspect completed trials that trade validation score
 against evaluation duration.
 
+``n_iter``/``max_iter`` counts **candidate evaluations**, not loop rounds: the
+initial candidate is included, so ``n_iter=30`` records exactly 30 evaluations and
+``max_evals`` (when set) caps them. A round whose response surface fails to fit or
+whose local optimization fails spends no evaluation and is charged to the
+no-progress counter instead; the counts are reported in ``summary_["budget"]`` and
+as ``n_evaluations_`` / ``n_rounds_``. ``random_state`` seeds two independent streams
+(starting point and sampling), so the same seed reproduces the same candidate
+sequence — in one process and across processes — and fitting never touches the
+global ``random``/``numpy.random`` state. A surrogate failure degrades that round to
+exploration; pass ``surrogate_fit_error="raise"`` to abort instead. The full
+contract, including the termination-reason vocabulary, is :doc:`search-contract`.
+
 Use ``continue_`` to resume from a previous search checkpoint. The legacy
 ``Continue`` spelling remains accepted; if a non-default ``Continue`` value
 conflicts with ``continue_``, construction raises ``ValueError``. No removal

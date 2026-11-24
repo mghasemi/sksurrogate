@@ -2889,7 +2889,9 @@ class TestOptimizedPaths(unittest.TestCase):
 
         values = [item["params"]["C"] for item in search.evaluation_history_]
         self.assertTrue(all(1.0e-3 <= value <= 1.0e3 for value in values))
-        self.assertGreater(search.best_estimator_.get_params()["C"], 0.0)
+        # refit=False: the fitted estimator does not exist, so assert the decoded
+        # parameter (which is the same value the search would refit with).
+        self.assertGreater(search.best_params_["C"], 0.0)
 
     def test_surrogate_cv_clamps_optimizer_category_coordinates(self):
         search = SurrogateRandomCV(
@@ -2905,7 +2907,9 @@ class TestOptimizedPaths(unittest.TestCase):
 
         search.fit([[0.0], [1.0], [2.0], [3.0]], [0, 1, 0, 1])
 
-        self.assertIn(search.best_estimator_.get_params()["solver"], {"lbfgs", "liblinear"})
+        # refit=False exposes no fitted estimator (scikit-learn convention), so the
+        # decoded coordinate is asserted on best_params_.
+        self.assertIn(search.best_params_["solver"], {"lbfgs", "liblinear"})
 
     def test_surrogate_cv_rejects_invalid_log_scaled_bounds(self):
         search = SurrogateRandomCV(

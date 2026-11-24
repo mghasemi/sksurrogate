@@ -1566,7 +1566,11 @@ class AML(BaseEstimator):
                 scipy_solver=srgt[3],
                 task_name=task_name,
                 continue_=self.resume,
-                warm_start=True,
+                # Documented contract: without ``resume`` every fit starts fresh and
+                # only overwrites the checkpoint. ``warm_start=True`` here used to
+                # restore a previous fit's evaluations, so a second fit on different
+                # data spent its whole budget replaying stale candidates.
+                warm_start=self.resume,
                 n_jobs=self.n_jobs,
                 time_limit=self.time_limit,
                 max_evals=self.max_evals,
