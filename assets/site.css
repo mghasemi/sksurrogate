@@ -87,7 +87,7 @@ h1 em{font-style:normal;color:var(--ultra)}
 .sechead{display:flex;justify-content:space-between;align-items:flex-end;padding:96px 56px 40px;gap:60px}
 h2{font-family:"Inter Display","Inter",sans-serif;font-weight:300;font-size:38px;line-height:1.15;letter-spacing:-.02em}
 h2 em{font-style:normal;color:var(--ultra)}
-.sechead .side{color:var(--dim);font-size:14px;max-width:36ch;text-align:right;padding-bottom:6px}
+.sechead .side{font-family:"Fira Mono","SF Mono",Menlo,monospace;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);max-width:38ch;text-align:right;padding-bottom:6px;line-height:1.85}
 
 /* two-layer loop */
 .loop{display:grid;grid-template-columns:minmax(0,520px) 1fr;gap:70px;padding:0 56px 20px;align-items:center}
