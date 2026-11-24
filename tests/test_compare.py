@@ -213,3 +213,24 @@ def test_simpler_within_tolerance_returns_none_when_best_is_simplest():
         tolerance=0.01,
     )
     assert result["simpler"] is None
+
+
+def test_compare_scores_accepts_a_control_that_is_not_first():
+    # The Holm-adjusted index must follow the treatment order, not the model order.
+    report = compare_scores(
+        {
+            "better": [0.9, 0.92, 0.91, 0.93, 0.90, 0.92],
+            "control": [0.7, 0.72, 0.71, 0.73, 0.70, 0.72],
+            "worse": [0.5, 0.52, 0.51, 0.53, 0.50, 0.52],
+        },
+        control="control",
+    )
+    rows = {row["treatment"]: row for row in report["comparisons"]}
+    assert set(rows) == {"better", "worse"}
+    assert rows["better"]["mean_delta"] > 0
+    assert rows["worse"]["mean_delta"] < 0
+    for row in rows.values():
+        assert row["p_adjusted"] >= row["wilcoxon_p"]
+    # Two equal raw p-values with m=2 adjust to the same 0.0625.
+    assert rows["better"]["p_adjusted"] == pytest.approx(0.0625)
+    assert rows["worse"]["p_adjusted"] == pytest.approx(0.0625)
