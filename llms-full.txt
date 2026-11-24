@@ -40,7 +40,7 @@ The surrogate layer explores pipeline structure and hyperparameter ranges jointl
 
 ## One workspace, four stages.
 
-The control plane's sidebar has exactly these areas — the tour mirrors the product one-to-one, CSV in to monitored model out.
+The control plane's own sidebar, not a mockup: data, model, release and operate — CSV in to monitored model out.
 
 01
 
