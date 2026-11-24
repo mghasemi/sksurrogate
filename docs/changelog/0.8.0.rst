@@ -58,3 +58,15 @@ Evidence-labelled LLM drafts
 * **Added:** the response returns ``segments`` (label, text, citations per
   sentence), ``label_counts`` and the ``evidence_contract``; the project
   synthesis card renders each sentence with its label badge.
+
+Platform hardening
+~~~~~~~~~~~~~~~~~~
+
+* **Added:** uploads are bounded. ``SKSURROGATE_MAX_UPLOAD_MB`` (default 256)
+  is enforced while streaming, so an oversized dataset upload answers 413 with
+  the limit and the variable to raise instead of buffering the body or being
+  killed by the OOM reaper. Applies to inspect, register and validate; the
+  Compose file forwards the variable.
+* **Added:** ``CONTRIBUTING.md`` states the review's three scope rules (no new
+  optimizer without benchmark evidence, no general-purpose MLOps expansion, no
+  LLM-first differentiation) and the evidence a change must ship with.

@@ -51,8 +51,10 @@ non-root user, exposes ``/api/health`` as its healthcheck and stores data in
 the ``sksurrogate-data`` volume (``/data``). The Compose file forwards
 ``SKSURROGATE_API_KEY``, ``SKSURROGATE_REQUIRE_AUTH``,
 ``SKSURROGATE_ADMIN_USERNAME``, ``SKSURROGATE_ADMIN_PASSWORD``,
-``SKSURROGATE_SESSION_TTL``, ``SKSURROGATE_SESSION_COOKIE_SECURE`` and
-``SKSURROGATE_API_CORS_ORIGINS`` into the container. Set the key for non-local
+``SKSURROGATE_SESSION_TTL``, ``SKSURROGATE_SESSION_COOKIE_SECURE``,
+``SKSURROGATE_API_CORS_ORIGINS`` and ``SKSURROGATE_MAX_UPLOAD_MB`` (largest
+accepted upload, default 256 MB, enforced while streaming with 413) into the
+container. Set the key for non-local
 use; set ``SKSURROGATE_REQUIRE_AUTH=1`` to require an identity — a shared key, a
 per-user API key, a browser session, or the one-shot administrator bootstrap —
 and to make a deployment with none of those refuse to start. Use
