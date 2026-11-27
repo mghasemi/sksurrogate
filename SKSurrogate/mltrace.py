@@ -2042,11 +2042,17 @@ class mltrack(object):
             predictions = {}
             for method in baseline_methods:
                 try:
-                    predictions[method] = baseline_prediction(
+                    prediction = baseline_prediction(
                         insample, method, horizon, seasonality
                     )
                 except ValueError:
-                    predictions[method] = None
+                    prediction = None
+                # A gap in the history makes the naive family undefined at that
+                # origin (its "last observation" is a missing value). Record it as
+                # unavailable instead of carrying a NaN into the pooled metrics.
+                if prediction is not None and not np.isfinite(prediction):
+                    prediction = None
+                predictions[method] = prediction
             record["baselines"] = predictions
 
         def _metrics(records, predicted_values=None):
@@ -2064,8 +2070,32 @@ class mltrack(object):
                 predicted = np.asarray([record["y_pred"] for record in records], dtype=float)
             else:
                 predicted = np.asarray(predicted_values, dtype=float)
+            usable = np.isfinite(actual) & np.isfinite(predicted)
+            if not usable.all():
+                # Baselines (and, in principle, a model) can be undefined on rows
+                # whose history is incomplete. Score what is defined and say how
+                # much was dropped rather than raising or silently averaging NaN.
+                dropped = int(actual.size - usable.sum())
+                if not usable.any():
+                    return {
+                        "rows": 0,
+                        "dropped_rows": dropped,
+                        "mae": None,
+                        "rmse": None,
+                        "bias": None,
+                        "smape": None,
+                        "mase": None,
+                    }
+                actual = actual[usable]
+                predicted = predicted[usable]
+                records = [
+                    record
+                    for record, keep in zip(records, usable)
+                    if keep
+                ]
             block = {
                 "rows": int(actual.size),
+                "dropped_rows": int(len(usable) - actual.size) if not usable.all() else 0,
                 "mae": float(mean_absolute_error(actual, predicted)),
                 "rmse": float(np.sqrt(mean_squared_error(actual, predicted))),
                 "bias": float(np.mean(predicted - actual)),
