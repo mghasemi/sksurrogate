@@ -1,8 +1,8 @@
 sksurrogate v0.8.2 · MIT licence · Python ≥ 3.10 · scikit-learn-native
 
-Scientific MLOps · open source
+Surrogate optimization · open source
 
-# From raw dataset to deployed, drift‑monitored model — in one scikit‑learn‑native environment.
+# A scikit‑learn tuner you can drop in — with the evidence attached.
 
 Learn the surface before you spend another experiment. SKSurrogate searches hyperparameters and pipeline structure with a surrogate response surface — then proves the result: nested cross-validation, conformal intervals, Sobol and Morris sensitivity. From dataset registration to monitored deployment, every run keeps its data identity and evaluation record. Drive it from the UI, the API, or any MCP client — the audit trail is identical either way.
 
