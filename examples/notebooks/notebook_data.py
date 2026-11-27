@@ -184,6 +184,77 @@ def _classification_synthetic(n_samples: int, seed: int) -> Dataset:
 # --------------------------------------------------------------------------- #
 
 
+def _regression_signal(
+    insulation,
+    glazing,
+    age_z,
+    floor_area,
+    occupants,
+    degree_days,
+    thermal_mass,
+    setpoint,
+    system_offset,
+):
+    """The noiseless response surface, in physical units.
+
+    Kept as a named function so ``regression_signal`` can expose it: a notebook that
+    compares what a model learned against what the generator put there needs one
+    definition, not two that drift apart.
+    """
+    return (
+        58.0
+        + 9.0 * np.sin(np.pi * insulation * glazing)
+        + 18.0 * (age_z - 0.4) ** 2
+        + 6.5 * thermal_mass
+        + 4.0 * occupants / 2.4
+        + 3.2 * degree_days
+        + 2.5 * insulation * degree_days  # interaction: insulation pays off in cold years
+        + 1.9 * (setpoint - 21.0)
+        - 0.35 * floor_area / 180.0
+        + system_offset
+    )
+
+
+def regression_signal(frame: pd.DataFrame, reference: pd.DataFrame | None = None) -> pd.Series:
+    """The synthetic building target *before* its multiplicative noise.
+
+    Verification aid: it answers "what did the generator put there, at these feature
+    values?" so a partial-dependence surface can be compared with the truth instead of
+    being eyeballed. ``reference`` supplies the age standardisation and the column fills
+    for missing cells (pass the full frame when scoring a subset); the coefficients match
+    ``_regression_synthetic`` exactly.
+
+    Rows whose ``heating_system`` is missing are treated as ``heat_pump`` (the default
+    branch of ``np.select``); score complete cases when the distinction matters.
+    """
+    ref = frame if reference is None else reference
+    age_mean = float(ref["building_age_years"].mean())
+    # ddof=0 to match the generator's numpy standardisation.
+    age_std = float(ref["building_age_years"].std(ddof=0))
+    fills = {
+        column: float(ref[column].mean())
+        for column in ("thermal_mass", "occupants", "degree_days_z", "setpoint_c")
+    }
+    work = frame.fillna(fills)
+    system_offset = np.select(
+        [work["heating_system"] == "gas", work["heating_system"] == "electric"],
+        [0.0, 7.0],
+        default=-4.0,
+    )
+    values = _regression_signal(
+        work["insulation_score"].to_numpy(dtype=float),
+        work["glazing_score"].to_numpy(dtype=float),
+        (work["building_age_years"].to_numpy(dtype=float) - age_mean) / age_std,
+        work["floor_area_m2"].to_numpy(dtype=float),
+        work["occupants"].to_numpy(dtype=float),
+        work["degree_days_z"].to_numpy(dtype=float),
+        work["thermal_mass"].to_numpy(dtype=float),
+        work["setpoint_c"].to_numpy(dtype=float),
+        system_offset,
+    )
+    return pd.Series(values, index=frame.index, name="energy_kwh_m2_signal")
+
+
 def _regression_synthetic(n_samples: int, seed: int) -> Dataset:
     """Specific energy demand of a building stock, in kWh per m² and year.
 
@@ -225,19 +296,13 @@ def _regression_synthetic(n_samples: int, seed: int) -> Dataset:
         [0.0, 7.0],
         default=-4.0,
     )
-    energy = (
-        58.0
-        + 9.0 * np.sin(np.pi * insulation * glazing)
-        + 18.0 * (age_z - 0.4) ** 2
-        + 6.5 * thermal_mass
-        + 4.0 * occupants / 2.4
-        + 3.2 * degree_days
-        + 2.5 * insulation * degree_days  # interaction: insulation pays off in cold years
-        + 1.9 * (setpoint - 21.0)
-        - 0.35 * floor_area / 180.0
-        + system_offset
+    energy = _regression_signal(
+        insulation, glazing, age_z, floor_area, occupants, degree_days, thermal_mass,
+        setpoint, system_offset,
     )
-    # Multiplicative noise: the spread grows with the level.
+    # Multiplicative noise: the spread grows with the level. The noise is drawn from the
+    # signal's level, so the heteroscedasticity is a property of the building, not of the
+    # drawing order.
     noise = rng.normal(0.0, 1.0, n_samples) * (2.2 + 0.16 * np.maximum(energy - 40.0, 0.0))
     energy = energy + noise
 
@@ -433,8 +498,13 @@ def classification_data(source: str | None = None, n_samples: int = 900, seed: i
     return _classification_synthetic(n_samples=n_samples, seed=seed)
 
 
-def regression_data(source: str | None = None, n_samples: int = 800, seed: int = SEED) -> Dataset:
-    """The regression notebook's frame (see module docstring for source rules)."""
+def regression_data(source: str | None = None, n_samples: int = 1000, seed: int = SEED) -> Dataset:
+    """The regression notebook's frame (see module docstring for source rules).
+
+    1000 rows rather than 800: the ensemble needs enough rows to afford the depth that a
+    smooth two-feature interaction requires, and the notebook measures how much of it the
+    model recovers (``regression_signal`` gives the surface it is measured against).
+    """
     chosen = (source or SOURCE).lower()
     if chosen == "openml":
         return openml_frame("regression", seed=seed)
