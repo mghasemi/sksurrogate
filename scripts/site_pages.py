@@ -332,9 +332,19 @@ def roadmap(rel):
 def blog(rel):
     return '''%s
       <h1>Notes and benchmarks</h1>
-      <p class="lede">Write-ups of the studies behind the product page: the protocol, the seeds, the
-        results that supported the hypothesis, and the ones that refuted it.</p>
+      <p class="lede">Write-ups of the methods the product rests on and the studies behind it: how the
+        search spends a budget, the protocol, the seeds, the results that supported the hypothesis,
+        and the ones that refuted it.</p>
       <ul class="postlist">
+        <li>
+          <a href="%s">
+            <div class="date">27 November 2026 · methods</div>
+            <h2>Surrogate optimization, and when the surface pays for itself</h2>
+            <p>A surrogate turns an evaluation budget into a surface and spends each new evaluation
+              at its minimum. The loop in four steps, the flat 25-evaluation warm-up that decides
+              whether it can help you at all, and the cases where you should not fit a surface.</p>
+          </a>
+        </li>
         <li>
           <a href="%s">
             <div class="date">26 October 2026 · benchmarks</div>
@@ -345,7 +355,8 @@ def blog(rel):
               encoding was silently masking the surrogate's advantage.</p>
           </a>
         </li>
-      </ul>''' % (crumb(rel, "blog"), L(rel, "/blog/honest-benchmark/"))
+      </ul>''' % (crumb(rel, "blog"), L(rel, "/blog/surrogate-optimization/"),
+                  L(rel, "/blog/honest-benchmark/"))
 
 
 # ------------------------------------------------------------------- contact
@@ -878,6 +889,15 @@ EOA_UPLOADED = "2026-11-13T02:40:16Z"
 EOA_DURATION = "PT6M20S"
 EOA_LENGTH_TEXT = "6 min 20 s"
 
+SURG_ID = "H3HjP2jJxoE"
+SURG_URL = "https://www.youtube.com/watch?v=" + SURG_ID
+SURG_EMBED = "https://www.youtube-nocookie.com/embed/" + SURG_ID
+SURG_THUMB = "https://i.ytimg.com/vi/" + SURG_ID + "/maxresdefault.jpg"
+SURG_TITLE = "Surrogate optimization: when the surface pays for itself"
+SURG_UPLOADED = "2026-11-27T18:12:55Z"
+SURG_DURATION = "PT7M11S"
+SURG_LENGTH_TEXT = "7 min 11 s"
+
 CHANNEL_URL = "https://www.youtube.com/channel/UC3ymiGRojwNJygRZC-212WA"
 CHANNEL_SUBSCRIBE = CHANNEL_URL + "?sub_confirmation=1"
 
@@ -893,6 +913,14 @@ EOA_DESC = ("A focused explainer on the search itself: why exhaustive enumeratio
             "crossover between two parent structures, mutation under stagnation, convergence and "
             "ranking — walks it instead.")
 
+SURG_DESC = ("A methods explainer on the surface itself: what a surrogate model is for, what the "
+             "default twenty-five-point warm-up actually buys at three, four and eight parameters, "
+             "how the trust region contracts and why an infeasible solver is refused at "
+             "construction, which six surfaces ship and why tree ensembles stay out of the loop, "
+             "and the honest equal-budget benchmark where Optuna-TPE leads five of six datasets.")
+
+SURG_WRITEUP = SITE_ROOT + "/blog/surrogate-optimization/"
+
 
 def videos_jsonld():
     import json as _json
@@ -901,7 +929,9 @@ def videos_jsonld():
             (VIDEO_TITLE, VIDEO_DESC, VIDEO_THUMB, VIDEO_UPLOADED, VIDEO_DURATION,
              VIDEO_EMBED, VIDEO_URL),
             (EOA_TITLE, EOA_DESC, EOA_THUMB, EOA_UPLOADED, EOA_DURATION,
-             EOA_EMBED, EOA_URL)):
+             EOA_EMBED, EOA_URL),
+            (SURG_TITLE, SURG_DESC, SURG_THUMB, SURG_UPLOADED, SURG_DURATION,
+             SURG_EMBED, SURG_URL)):
         data = {
             "@context": "https://schema.org",
             "@type": "VideoObject",
@@ -925,7 +955,7 @@ def videos_jsonld():
 def videos(rel):
     return '''%s
       <h1>Videos</h1>
-      <p class="lede">Screen-recorded walkthroughs of the package: how the pipeline pieces are
+      <p class="lede">Walkthroughs and drawn explainers of the package: how the pipeline pieces are
         composed, how the search decides what to try next, and how a candidate earns its place in a
         registered bundle. Longer than a changelog entry, shorter than a paper.</p>
 
@@ -949,6 +979,18 @@ def videos(rel):
         </a>
         <p class="video-meta">13 November 2026 · %s ·
           <a href="%s" target="_blank" rel="noopener">watch on YouTube ↗</a></p>
+      </div>
+
+      <h2 class="video-title">%s</h2>
+      <div class="videofacade-wrap">
+        <a class="videofacade" href="%s" data-vid="%s" data-title="%s">
+          <img src="%s" alt="Title frame of the %s explainer" width="1280" height="720" loading="lazy">
+          <span class="video-play">Play</span>
+          <span class="video-len">7:11</span>
+        </a>
+        <p class="video-meta">27 November 2026 · %s ·
+          <a href="%s" target="_blank" rel="noopener">watch on YouTube ↗</a> ·
+          <a href="%s">the write-up</a></p>
       </div>
 
       <div class="prose">
@@ -980,6 +1022,18 @@ def videos(rel):
           population of assembled pipelines, evaluation and culling, elitism, crossover between two
           parent structures, mutation when the population stagnates — until convergence along a
           performance gradient, then termination and ranking of what survived.</p>
+
+        <h2>The surrogate explainer</h2>
+        <p>The third video goes one level down, to the surface the other two assume. It opens on the
+          arithmetic that makes the search expensive — every candidate costs a full cross-validation —
+          then asks the question that decides whether a surrogate reaches you at all: how many
+          evaluations does the warm-up consume before a surface is fitted? <code>min_evals</code>
+          defaults to a flat twenty-five, while a full cubic in n parameters has C(n+3, n) terms, so
+          a thirty-evaluation run hands the surface five proposals and a run under twenty-five hands
+          it none. From there it covers the contracting trust region, the solvers that are refused
+          because they silently drop constraints, the six smooth surfaces and why tree ensembles stay
+          out of the loop, and the equal-budget table where Optuna-TPE leads five of six — including
+          the cells where the surrogate loses.</p>
 
         <h2>What it is not</h2>
         <p>A benchmark result. The numbers that decide whether this beats a given baseline live on
@@ -1024,6 +1078,8 @@ def videos(rel):
                       VIDEO_LENGTH_TEXT, VIDEO_URL,
                       EOA_TITLE, EOA_URL, EOA_ID, EOA_TITLE, EOA_THUMB, EOA_TITLE,
                       EOA_LENGTH_TEXT, EOA_URL,
+                      SURG_TITLE, SURG_URL, SURG_ID, SURG_TITLE, SURG_THUMB, SURG_TITLE,
+                      SURG_LENGTH_TEXT, SURG_URL, L(rel, "/blog/surrogate-optimization/"),
                       L(rel, "/benchmarks/"), L(rel, "/quickstart/"), L(rel, "/concepts/"),
                       CHANNEL_URL, CHANNEL_SUBSCRIBE)
 

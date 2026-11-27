@@ -240,6 +240,11 @@ def main():
         written.append(("/blog/honest-benchmark/", target, False))
         print("wrote", os.path.relpath(target, ROOT))
 
+    # Hand-authored post: this generator does not write it, but the sitemap is built
+    # from `written`, so an unlisted post silently drops out of the sitemap on rebuild.
+    written.append(("/blog/surrogate-optimization/",
+                    os.path.join(ROOT, "blog/surrogate-optimization/index.html"), False))
+
     # sitemap: only indexable pages, with lastmod from each file's own last change.
     # A single HEAD date for every URL tells Google nothing about what actually moved,
     # and an over-reported lastmod is how a sitemap teaches crawlers to ignore the field.
