@@ -46,6 +46,33 @@ def _cell(value, digits: int) -> str:
     return str(value).replace("|", r"\|").replace("\n", " ")
 
 
+_ACRONYMS = {
+    "mase", "mae", "rmse", "smape", "r2", "psi", "sd", "ci", "vif", "auc", "ap",
+    "ice", "pdp", "id", "aml", "oos", "cv", "knn", "mcar", "mar", "mnar",
+}
+_STOPWORDS = {"of", "the", "in", "per", "vs", "and", "by", "to"}
+
+
+def human_header(name: str) -> str:
+    """Readable table header: ``mae_pct_of_prediction`` -> ``MAE pct of prediction``.
+
+    Column names are the machine-readable identifier (they also head the CSV
+    artifacts); the report is prose, so headers are humanised once, in one place,
+    rather than by renaming columns at every call site.
+    """
+    words = []
+    for part in str(name).replace("-", " ").split("_"):
+        lowered = part.lower()
+        if lowered in _ACRONYMS:
+            words.append(part.upper())
+        elif lowered in _STOPWORDS:
+            words.append(lowered)
+        else:
+            words.append(part.capitalize())
+    text = " ".join(word for word in words if word)
+    return text[:1].upper() + text[1:] if text else text
+
+
 def markdown_table(frame, columns=None, digits: int = 3, max_rows: int = 25) -> str:
     """Render a DataFrame (or list of dicts) as a Markdown pipe table.
 
@@ -64,7 +91,7 @@ def markdown_table(frame, columns=None, digits: int = 3, max_rows: int = 25) -> 
         data = [list(row) for row in data]
     if not headers:
         return "_(no rows)_"
-    lines = ["| " + " | ".join(str(header) for header in headers) + " |"]
+    lines = ["| " + " | ".join(human_header(header) for header in headers) + " |"]
     lines.append("| " + " | ".join("---" for _ in headers) + " |")
     for row in data[:max_rows]:
         lines.append("| " + " | ".join(_cell(value, digits) for value in row) + " |")
