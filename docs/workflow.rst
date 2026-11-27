@@ -67,7 +67,55 @@ not see it.
        batch/scored prediction artifacts
      - ``POST /api/serving/{task}``, ``POST /api/serving/{task}/predict``,
        ``POST /api/inference/{task}/predict-batch``; the
-       ``sksurrogate-batch-predict`` CLI and ``ModelBundle.predict_batch``
+       ``sksurrogate-batch-predict`` CLI and the ``predict_batch`` helper
+       (``SKSurrogate.predict_batch``).
+
+Where the stages live in the web UI
+===================================
+
+The sidebar groups these stages into four numbered phases — **1. Data → 2. Model
+→ 3. Release → 4. Operate** — so the same pipeline is shown at two granularities.
+The stage rows above are the *control-plane* view; the table below maps them to
+the UI navigation:
+
+.. list-table:: Stage ↔ UI group
+   :header-rows: 1
+   :widths: 14 26 60
+
+   * - Stage
+     - UI group
+     - UI pages
+   * - Dataset
+     - 1. Data
+     - Datasets
+   * - Diagnose
+     - 1. Data
+     - Data Preprocessing, Feature Analysis
+   * - Design
+     - 1. Data
+     - Experiment Design
+   * - Optimize
+     - 2. Model
+     - Experiments, Ensembles
+   * - Compare
+     - 2. Model
+     - Evaluation
+   * - Explain
+     - 2. Model
+     - Explain
+   * - Validate
+     - 3. Release
+     - Quality Gates
+   * - Deploy
+     - 3. Release · 4. Operate
+     - Registry & Deployment, Inference
+   * - (ongoing)
+     - 4. Operate
+     - Monitoring, Retraining
+
+Validation and deployment deliberately overlap the **3. Release · 4. Operate**
+boundary: a model is *released* through Quality Gates and the Registry, then
+*operated* through Inference, Monitoring and Retraining.
 
 Where the artifacts live
 ========================

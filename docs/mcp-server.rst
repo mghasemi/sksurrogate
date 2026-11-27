@@ -232,9 +232,9 @@ Version compatibility and pinning
 **One release, one version.** The MCP server ships inside the ``sksurrogate``
 distribution, so its version *is* the core version:
 ``sksurrogate_mcp.__version__`` resolves the installed distribution metadata, and there is
-no separate MCP release to keep in sync. Pin and upgrade them together::
-
-    pip install "sksurrogate[mcp]==0.3.*"
+no separate MCP release to keep in sync. Pin and upgrade them together: ``pip install
+sksurrogate[mcp]`` installs the latest release; to match a specific deployment, pin it to
+the same version as the core package, e.g. ``pip install "sksurrogate[mcp]==<core-version>"``.
 
 The ``[mcp]`` extra declares the runtime floors: ``httpx>=0.27`` and ``mcp>=2.3,<3``. The
 SDK upper bound is deliberate — the server imports the 2.x
