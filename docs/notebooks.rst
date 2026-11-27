@@ -89,6 +89,15 @@ opt-in via ``SKSURROGATE_NOTEBOOK_DATA=openml``) and ``notebook_report.py``
 (figure export, Markdown tables, and ``compile_pdf``, which reports a missing
 LaTeX installation instead of failing the run).
 
+The same three notebooks also ship inside the ``sksurrogate-lab`` image, where the
+container entrypoint seeds them into the Jupyter root as ``examples/`` on first
+boot. The image already carries LuaLaTeX for the API's branded reports, so
+``report.pdf`` builds there as well, and the samples are copied out of this
+checkout at image-build time rather than vendored in the lab repository, so they
+cannot drift from the library the kernel imports. Seeding never overwrites an
+existing file: an operator's edits and the generated report directories survive an
+image upgrade.
+
 Jupyter and ``ipykernel`` are optional user-side tools; they are not added as
 package dependencies. All five notebooks store source code rather than rendered
 screenshots or generated outputs, so they remain portable and reviewable.

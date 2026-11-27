@@ -19,8 +19,10 @@ jupyter lab examples/notebooks/01_classification_end_to_end.ipynb
 
 Requirements beyond the library: `jupyterlab`/`ipykernel` (dev tooling, not a runtime
 dependency), `matplotlib`, plus `lightgbm` for the boosted-tree candidate in notebooks 2
-and 3. LaTeX (`lualatex`) is optional: without it the report Markdown, CSVs, JSON and PNGs
-are still written and the PDF step reports why it was skipped.
+and 3. Nothing else — the ACF/PACF panel in notebook 3 is computed in the notebook with
+numpy (and checked against `statsmodels` in the surrounding prose), so a stats package is
+not needed to run it. LaTeX (`lualatex`) is optional: without it the report Markdown, CSVs,
+JSON and PNGs are still written and the PDF step reports why it was skipped.
 
 Each notebook writes `examples/notebooks/<task>-report/` (gitignored) containing:
 
