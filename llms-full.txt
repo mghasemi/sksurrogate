@@ -167,7 +167,7 @@ Contour of mean CV accuracy over the joint (max_depth × min_samples_leaf) space
 
 Reproducibility
 
-raw benchmark records · 462 runs ↗ D-track raw data + report ↗ software archive · 0.8.1 ↗
+raw benchmark records · 462 runs ↗ D-track raw data + report ↗ software archive · 0.8.2 ↗
 
 $
  pip install sksurrogate
