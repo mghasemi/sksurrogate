@@ -99,3 +99,9 @@ LaTeXDocker.md
 # never affects files already in the index, so this only shields future
 # untracked files under .github/.
 .github/
+
+# Example notebooks write their report artifacts here (regenerate by running them).
+/examples/notebooks/*-report/
+/classification-report/
+/regression-report/
+/forecasting-report/

@@ -108,7 +108,14 @@ def mase_denominator(y_insample, seasonality: int = 1) -> float:
     diffs = np.abs(values[seasonality:] - values[:-seasonality])
     if diffs.size == 0:
         raise ValueError("no in-sample differences to scale MASE by")
-    scale = float(np.mean(diffs))
+    # A gap in the history makes some differences undefined; the scale is then
+    # estimated from the observed pairs. Ignoring them would silently return nan
+    # and disable MASE for the whole series, which is the usual situation for
+    # real telemetry with missing days.
+    observed = diffs[np.isfinite(diffs)]
+    if observed.size == 0:
+        raise ValueError("no finite in-sample differences to scale MASE by")
+    scale = float(np.mean(observed))
     if scale == 0.0:
         return float("nan")
     return scale
@@ -330,16 +337,24 @@ def baseline_prediction(history, method: str, horizon: int, seasonality: int = 1
       cross-series mean to distinguish (plan phase P4.2 vocabulary).
 
     :param history: ordered observations available *at the forecast origin*.
+        Missing values are allowed: every method is defined from the values that
+        were actually observed (``naive`` is the most recent observed value).
     """
     values = np.asarray(history, dtype="float64").ravel()
     if values.size == 0:
         raise ValueError("baseline_prediction needs a non-empty history")
+    # History with gaps: a baseline is defined from the observations that exist.
+    # ``naive`` means "the most recent *observed* value", not "the most recent
+    # slot", and the mean family averages observed values only.
+    observed = values[np.isfinite(values)]
     horizon = int(horizon)
     if horizon < 1:
         raise ValueError("horizon must be >= 1")
     method = str(method)
     if method == "naive":
-        return float(values[-1])
+        if observed.size == 0:
+            raise ValueError("naive needs at least one observed value")
+        return float(observed[-1])
     if method == "seasonal_naive":
         seasonality = int(seasonality)
         if seasonality < 1:
@@ -353,14 +368,23 @@ def baseline_prediction(history, method: str, horizon: int, seasonality: int = 1
         # season earlier: y[T + h - m*ceil(h/m)]. For h == m that is the last
         # observation, which is what makes it the canonical seasonal baseline.
         steps_back = seasonality - ((horizon - 1) % seasonality)
-        return float(values[-steps_back])
+        if steps_back > observed.size:
+            raise ValueError(
+                "seasonal_naive needs %d observed value(s); got %d"
+                % (steps_back, observed.size)
+            )
+        return float(observed[-steps_back])
     if method in ("mean", "historical_mean_by_series"):
-        return float(np.mean(values))
+        if observed.size == 0:
+            raise ValueError("the mean baseline needs at least one observed value")
+        return float(np.mean(observed))
     if method == "drift":
-        if values.size < 2:
-            return float(values[-1])
-        slope = (values[-1] - values[0]) / float(values.size - 1)
-        return float(values[-1] + slope * horizon)
+        if observed.size < 2:
+            if observed.size == 0:
+                raise ValueError("the drift baseline needs observed values")
+            return float(observed[-1])
+        slope = (observed[-1] - observed[0]) / float(observed.size - 1)
+        return float(observed[-1] + slope * horizon)
     raise ValueError(
         "unknown baseline method %r; expected one of %s"
         % (method, ", ".join(BASELINE_METHODS))

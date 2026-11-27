@@ -2042,11 +2042,17 @@ class mltrack(object):
             predictions = {}
             for method in baseline_methods:
                 try:
-                    predictions[method] = baseline_prediction(
+                    prediction = baseline_prediction(
                         insample, method, horizon, seasonality
                     )
                 except ValueError:
-                    predictions[method] = None
+                    prediction = None
+                # A gap in the history makes the naive family undefined at that
+                # origin (its "last observation" is a missing value). Record it as
+                # unavailable instead of carrying a NaN into the pooled metrics.
+                if prediction is not None and not np.isfinite(prediction):
+                    prediction = None
+                predictions[method] = prediction
             record["baselines"] = predictions
 
         def _metrics(records, predicted_values=None):
@@ -2064,8 +2070,32 @@ class mltrack(object):
                 predicted = np.asarray([record["y_pred"] for record in records], dtype=float)
             else:
                 predicted = np.asarray(predicted_values, dtype=float)
+            usable = np.isfinite(actual) & np.isfinite(predicted)
+            if not usable.all():
+                # Baselines (and, in principle, a model) can be undefined on rows
+                # whose history is incomplete. Score what is defined and say how
+                # much was dropped rather than raising or silently averaging NaN.
+                dropped = int(actual.size - usable.sum())
+                if not usable.any():
+                    return {
+                        "rows": 0,
+                        "dropped_rows": dropped,
+                        "mae": None,
+                        "rmse": None,
+                        "bias": None,
+                        "smape": None,
+                        "mase": None,
+                    }
+                actual = actual[usable]
+                predicted = predicted[usable]
+                records = [
+                    record
+                    for record, keep in zip(records, usable)
+                    if keep
+                ]
             block = {
                 "rows": int(actual.size),
+                "dropped_rows": int(len(usable) - actual.size) if not usable.all() else 0,
                 "mae": float(mean_absolute_error(actual, predicted)),
                 "rmse": float(np.sqrt(mean_squared_error(actual, predicted))),
                 "bias": float(np.mean(predicted - actual)),
@@ -3094,8 +3124,11 @@ class mltrack(object):
             An object of that type which is cloned for each validation.
         :param title: string;
             Title for the chart.
-        :param measure: string, a performance measure; must be one of hte followings:
-            `accuracy`, `f1`, `precision`, `recall`, `roc_auc`
+        :param measure: string, a performance measure. For a classification target one of
+            `accuracy`, `f1`, `precision`, `recall`, `roc_auc` (default `accuracy`); for a
+            regression target one of `r2`, `neg_root_mean_squared_error`,
+            `neg_mean_absolute_error` (default `r2`). A measure that does not belong to the
+            target type raises ``ValueError``.
         :param ylim: tuple, shape (ymin, ymax), optional;
             Defines minimum and maximum yvalues plotted.
         :param cv: int, cross-validation generator or an iterable, optional;
@@ -3135,17 +3168,35 @@ class mltrack(object):
             mdl = self.LogModel(mdl)
         mdl_id = mdl.mltrack_id
 
-        meas = kwargs.get("measure", "accuracy")
-        if meas not in ["accuracy", "f1", "precision", "recall", "roc_auc"]:
-            meas = "accuracy"
+        # The task decides which measures exist. A regression target scored with
+        # ``accuracy`` raises inside scikit-learn (continuous targets are unsupported),
+        # which the earlier fallback to "accuracy" turned into an all-NaN chart; an
+        # incompatible measure is now an error instead of a silently empty plot.
+        classification_measures = ["accuracy", "f1", "precision", "recall", "roc_auc"]
+        regression_measures = ["r2", "neg_root_mean_squared_error", "neg_mean_absolute_error"]
+        y_array = np.asarray(y_data)
+        is_regression = np.issubdtype(y_array.dtype, np.floating) and (
+            np.unique(y_array).size > max(20, int(0.05 * y_array.size))
+        )
+        allowed = regression_measures if is_regression else classification_measures
+        meas = kwargs.get("measure")
+        if meas is None:
+            meas = "r2" if is_regression else "accuracy"
+        if meas not in allowed:
+            raise ValueError(
+                f"measure {meas!r} is not available for a "
+                f"{'regression' if is_regression else 'classification'} target; "
+                f"choose one of {allowed}"
+            )
         if train_sizes is None:
             train_sizes = np.linspace(0.1, 1.0, 5)
         fig = plt.figure()
         plt.subplot(111)
         plt.title(title)
-        if ylim is None:
+        if ylim is None and not is_regression:
             ylim = (-0.05, 1.05)
-        plt.ylim(*ylim)
+        if ylim is not None:
+            plt.ylim(*ylim)
         plt.xlabel("Training size")
         plt.ylabel("Score (%s)" % (meas))
         learning_result = learning_curve(
