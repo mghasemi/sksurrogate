@@ -69,6 +69,31 @@ def test_effect_sizes_refuse_numeric_target_and_singleton_groups():
     assert report["reason"] == "fewer_than_two_eligible_groups"
 
 
+def test_effect_sizes_tolerate_missing_group_labels():
+    """Rows with no group label are excluded, not fatal.
+
+    The grouping column is cast to pandas ``string`` (nullable), so comparing it to a
+    label yields ``<NA>`` where the label is missing. A plain ``.to_numpy()`` on that
+    mask produces an object array, and using it to index a float array raises
+    ``IndexError`` — the crash this test pins down.
+    """
+    rng = np.random.default_rng(3)
+    n = 200
+    frame = pd.DataFrame(
+        {
+            "x": np.concatenate([rng.normal(size=n), rng.normal(loc=1.0, size=n), rng.normal(size=40)]),
+            "group": ["a"] * n + ["b"] * n + [None] * 40,
+        }
+    )
+    report = effect_sizes(frame, target="group", bootstrap=80)
+    assert report["excluded"]["missing_group_rows"] == 40
+    assert report["comparisons"], "labelled groups must still be compared"
+    coverage = sum(entry["n_a"] + entry["n_b"] for entry in report["comparisons"])
+    assert coverage <= 2 * n
+    for entry in report["comparisons"]:
+        assert entry["n_a"] >= 10 and entry["n_b"] >= 10
+
+
 def test_cliffs_delta_is_extreme_under_complete_separation():
     frame = pd.DataFrame(
         {"x": [1.0, 2.0, 3.0, 10.0, 11.0, 12.0], "g": ["a"] * 3 + ["b"] * 3}

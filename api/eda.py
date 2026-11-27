@@ -909,6 +909,10 @@ def effect_sizes(
         }
     sample, sampled = _sample(frame, max_rows, random_state)
     labels = sample[grouping].astype("string")
+    # Rows without a group label carry no group, so they are excluded from every
+    # comparison. The count is reported rather than dropped silently: a large
+    # number here usually means the grouping column is itself incomplete.
+    missing_group_rows = int(labels.isna().sum())
     counts = labels.dropna().value_counts()
     retained = [
         (label, int(count))
@@ -938,8 +942,14 @@ def effect_sizes(
         values = pd.to_numeric(sample[column], errors="coerce").to_numpy(dtype=float)
         for left_index, (left_label, left_rows) in enumerate(retained):
             for right_label, right_rows in retained[left_index + 1:]:
-                left_values = values[(labels == left_label).to_numpy()]
-                right_values = values[(labels == right_label).to_numpy()]
+                # ``astype("string")`` yields pandas nullable booleans: under a
+                # missing label they become ``<NA>`` and a plain ``.to_numpy()``
+                # would hand an object array to a numpy fancy index, raising
+                # instead of selecting rows.
+                left_mask = (labels == left_label).fillna(False).to_numpy(dtype=bool)
+                right_mask = (labels == right_label).fillna(False).to_numpy(dtype=bool)
+                left_values = values[left_mask]
+                right_values = values[right_mask]
                 left_values = left_values[np.isfinite(left_values)]
                 right_values = right_values[np.isfinite(right_values)]
                 if len(left_values) < min_group_rows or len(right_values) < min_group_rows:
@@ -980,7 +990,11 @@ def effect_sizes(
         "bootstrap": int(bootstrap),
         "subsample": int(subsample),
         "comparisons": comparisons,
-        "scope": "sampled rows; numeric features; per-comparison intervals",
+        "excluded": {"missing_group_rows": missing_group_rows},
+        "scope": (
+            "sampled rows; numeric features; rows with a missing group label excluded; "
+            "per-comparison intervals"
+        ),
         "interpretation": (
             "Cohen's d is a standardized mean difference (0.2 small, 0.5 medium, "
             "0.8 large, in the conventional reading); Cliff's delta is the "
