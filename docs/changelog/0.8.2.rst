@@ -1,0 +1,72 @@
+0.8.2 — 2026-11-27
+==================
+
+A correctness release: three user-facing fixes, one reproducibility fix in the
+search loop, and the three end-to-end example notebooks that the site and the
+readme advertise.
+
+Reproducibility
+~~~~~~~~~~~~~~~
+
+* **Fixed:** ``SurrogateRandomCV`` is now reproducible at a fixed
+  ``random_state``. Two independent sources of run-to-run variation were
+  removed: the search start point was drawn from the *global* ``random.uniform``
+  (so every run started elsewhere), and candidate estimators carried grid
+  hyperparameters but no ``random_state`` (so an unseeded forest scored
+  differently on each run and the selection flipped). The start point now comes
+  from ``random.Random(random_state)``, and every unseeded ``random_state`` in a
+  candidate — and in the refitted winner — is filled from it. Parameters the
+  candidate set sets explicitly are left untouched. Measured on the regression
+  notebook search: identical trials and identical scores across processes, where
+  the same seed previously gave RMSE 18.9 vs 20.3 for the same candidate.
+
+Fixes
+~~~~~
+
+* **Fixed:** EDA ``effect_sizes`` no longer raises ``IndexError`` when a
+  grouping column has missing labels. Rows without a group label are excluded
+  from every comparison and the count is reported under ``excluded``, so a
+  mostly-unlabelled grouping column is visible in the response instead of
+  silently shrinking the comparison.
+* **Fixed:** ``plot_learning_curve`` scores continuous targets with a regression
+  measure. Any measure outside the classification list used to be replaced by
+  ``accuracy``, which produced scikit-learn's "continuous is not supported"
+  warning and an all-NaN curve. The measure list now follows the target type
+  (``r2`` by default, ``neg_root_mean_squared_error`` and
+  ``neg_mean_absolute_error`` selectable), an incompatible measure raises
+  ``ValueError``, and the 0–1 y-limit is applied to classification only.
+* **Fixed:** forecast metrics stay defined when the history has gaps. The MASE
+  scale now averages the finite seasonal differences instead of turning NaN; the
+  mean and naïve baselines read only observed values (naïve = most recent
+  observed value); and the backtest records a baseline as unavailable at origins
+  where it cannot be evaluated and reports ``dropped_rows``, instead of
+  propagating NaN into the pooled leaderboard.
+
+Added
+~~~~~
+
+* **Added:** three end-to-end example notebooks —
+  ``examples/notebooks/01_classification_end_to_end.ipynb``,
+  ``02_regression_end_to_end.ipynb`` and ``03_time_series_end_to_end.ipynb`` —
+  with an ``examples/README``. Each pins its seeds and treats the evaluation
+  budget as the binding constraint, so a reader can reproduce the reported
+  numbers. The notebooks ship in the repository and in the
+  ``mghasemi/sksurrogate-lab`` image; they are not part of the wheel.
+
+Documentation
+~~~~~~~~~~~~~
+
+* **Changed:** the readme surfaces the three example notebooks next to the
+  quickstart, and the MCP server page uses evergreen install wording rather than
+  a pinned release number.
+* **Fixed:** the workflow walkthrough references ``predict_batch`` (not the old
+  helper name) and maps each stage to the corresponding control-plane sidebar
+  group.
+
+Upgrading
+~~~~~~~~~
+
+No API change. The one consequence worth acting on: if you reported a search
+result from an unseeded start point, its selection may not reproduce under 0.8.2
+and should be re-run with an explicit ``random_state``. Nothing else changes for
+existing pipelines.

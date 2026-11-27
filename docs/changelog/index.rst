@@ -19,6 +19,10 @@ in the release named in the highlights.
      - Date
      - Highlights
 
+   * - ``0.8.2``
+     - 2026-11-27
+     - Reproducibility release: seeded search start point and candidate estimators, plus fixes to EDA effect sizes with missing labels, learning curves for regression targets and forecast metrics under gaps. Adds the three end-to-end example notebooks
+
    * - ``0.8.1``
      - 2026-11-24
      - Documentation and packaging-claim release: ``[api]``/``[ui]`` described as dependencies for a source checkout, a guard test against the claim returning, and the C-space study added to the benchmark toctree. No behaviour change
@@ -59,6 +63,7 @@ in the release named in the highlights.
    :maxdepth: 1
    :caption: Releases
 
+   0.8.2
    0.8.1
    0.8.0
    0.6.0
