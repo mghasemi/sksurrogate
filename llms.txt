@@ -8,6 +8,7 @@
 - [Control plane / API / UI](https://sksurrogate.readthedocs.io/en/latest/controlplane.html)
 - [Paired model comparison](https://sksurrogate.readthedocs.io/en/latest/model-comparison.html)
 - [MCP server for agents](https://sksurrogate.readthedocs.io/en/latest/mcp-server.html)
+- [End-to-end example notebooks](https://sksurrogate.readthedocs.io/en/latest/notebooks.html) — three executable walkthroughs (classification, regression, time series); also in the `sksurrogate-lab` image
 - [Preprocessing](https://sksurrogate.readthedocs.io/en/latest/dataproc.html)
 - [Monitoring and drift](https://sksurrogate.readthedocs.io/en/latest/monitoring.html)
 - [Full site text](https://sksurrogate.com/llms-full.txt)

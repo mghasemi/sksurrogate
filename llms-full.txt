@@ -260,9 +260,7 @@ $
  docker compose --profile prod up -d
 # or from a source checkout — control-plane UI + API on http://localhost:8013, API key optional
 
-Colab notebook at launch
-
-2-minute demo video at launch
+3 end-to-end example notebooks classification · regression · time series ↗ 2-minute demo video at launch
 
 Read the docs ↗ Manual ↗
 
