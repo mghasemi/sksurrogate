@@ -3094,8 +3094,11 @@ class mltrack(object):
             An object of that type which is cloned for each validation.
         :param title: string;
             Title for the chart.
-        :param measure: string, a performance measure; must be one of hte followings:
-            `accuracy`, `f1`, `precision`, `recall`, `roc_auc`
+        :param measure: string, a performance measure. For a classification target one of
+            `accuracy`, `f1`, `precision`, `recall`, `roc_auc` (default `accuracy`); for a
+            regression target one of `r2`, `neg_root_mean_squared_error`,
+            `neg_mean_absolute_error` (default `r2`). A measure that does not belong to the
+            target type raises ``ValueError``.
         :param ylim: tuple, shape (ymin, ymax), optional;
             Defines minimum and maximum yvalues plotted.
         :param cv: int, cross-validation generator or an iterable, optional;
@@ -3135,17 +3138,35 @@ class mltrack(object):
             mdl = self.LogModel(mdl)
         mdl_id = mdl.mltrack_id
 
-        meas = kwargs.get("measure", "accuracy")
-        if meas not in ["accuracy", "f1", "precision", "recall", "roc_auc"]:
-            meas = "accuracy"
+        # The task decides which measures exist. A regression target scored with
+        # ``accuracy`` raises inside scikit-learn (continuous targets are unsupported),
+        # which the earlier fallback to "accuracy" turned into an all-NaN chart; an
+        # incompatible measure is now an error instead of a silently empty plot.
+        classification_measures = ["accuracy", "f1", "precision", "recall", "roc_auc"]
+        regression_measures = ["r2", "neg_root_mean_squared_error", "neg_mean_absolute_error"]
+        y_array = np.asarray(y_data)
+        is_regression = np.issubdtype(y_array.dtype, np.floating) and (
+            np.unique(y_array).size > max(20, int(0.05 * y_array.size))
+        )
+        allowed = regression_measures if is_regression else classification_measures
+        meas = kwargs.get("measure")
+        if meas is None:
+            meas = "r2" if is_regression else "accuracy"
+        if meas not in allowed:
+            raise ValueError(
+                f"measure {meas!r} is not available for a "
+                f"{'regression' if is_regression else 'classification'} target; "
+                f"choose one of {allowed}"
+            )
         if train_sizes is None:
             train_sizes = np.linspace(0.1, 1.0, 5)
         fig = plt.figure()
         plt.subplot(111)
         plt.title(title)
-        if ylim is None:
+        if ylim is None and not is_regression:
             ylim = (-0.05, 1.05)
-        plt.ylim(*ylim)
+        if ylim is not None:
+            plt.ylim(*ylim)
         plt.xlabel("Training size")
         plt.ylabel("Score (%s)" % (meas))
         learning_result = learning_curve(
