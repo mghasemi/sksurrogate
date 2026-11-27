@@ -368,5 +368,68 @@ class TestBacktestIntegration(unittest.TestCase):
         self.assertIn("ranking", payload)
 
 
+class TestGappyHistory(unittest.TestCase):
+    """Missing observations in history must not disable the metrics.
+
+    Real series have gaps; a NaN that reaches ``np.mean`` turns MASE into ``nan`` for
+    the whole series, and a NaN baseline prediction used to raise inside scikit-learn
+    while pooling the backtest.
+    """
+
+    def test_mase_denominator_uses_observed_pairs(self):
+        history = np.array([1.0, np.nan, 3.0, 4.0, np.nan, 6.0])
+        # Differences are taken between adjacent *slots*, as the metric defines them;
+        # the only pair with two observed ends is |4 - 3| = 1.
+        self.assertAlmostEqual(mase_denominator(history, 1), 1.0)
+        # Two-step differences: |5-1| = 4 and |6-2| = 4, so the seasonal scale is 4.
+        self.assertAlmostEqual(mase_denominator(np.array([1.0, 2.0, 5.0, 6.0]), 2), 4.0)
+        # Every pair undefined -> no scale to estimate.
+        with self.assertRaises(ValueError):
+            mase_denominator(np.array([np.nan, np.nan, np.nan]), 1)
+
+    def test_baseline_prediction_ignores_gaps(self):
+        history = np.array([10.0, 12.0, np.nan])
+        self.assertEqual(baseline_prediction(history, "naive", 3), 12.0)
+        self.assertEqual(baseline_prediction(history, "mean", 3), 11.0)
+        # Seasonal naive reads the observed value one season back, not a slot.
+        seasonal = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, np.nan])
+        self.assertEqual(baseline_prediction(seasonal, "seasonal_naive", 1, 7), 1.0)
+
+    def test_backtest_scores_baselines_across_a_gap(self):
+        """A gap at an origin must not poison the pooled baseline metrics."""
+        rng = np.random.default_rng(4)
+        n = 120
+        dates = pd.date_range("2023-01-01", periods=n, freq="D")
+        values = 20.0 + 5.0 * np.sin(np.arange(n) * 2 * np.pi / 7) + rng.normal(0, 0.4, n)
+        values[60:70] = np.nan  # ten-day hole in the middle
+        frame = pd.DataFrame({"date": dates, "y": values})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tracker = mltrack("gap-backtest", db_name=str(Path(tmp) / "mltrace.db"))
+            try:
+                tracker.RegisterData(frame, "y", partition="train")
+                tracker.SetTemporalSpec(
+                    {"time_column": "date", "horizon": 7}, partitions=["train"]
+                )
+                result = tracker.backtest(
+                    LinearRegression(),
+                    horizon=7,
+                    n_splits=4,
+                    seasonality=7,
+                    baselines=("naive", "seasonal_naive", "mean"),
+                )
+            finally:
+                tracker.close()
+
+        self.assertTrue(result["intervals"]["available"])
+        pooled = result["pooled"]
+        self.assertIsNotNone(pooled["mase"], "MASE must survive a gappy history")
+        self.assertTrue(np.isfinite(pooled["mase"]))
+        for method, metrics in result["baselines"].items():
+            if metrics.get("rows"):
+                self.assertIsNotNone(metrics["mase"], method)
+                self.assertFalse(np.isnan(metrics["mase"]), method)
+
+
 if __name__ == "__main__":
     unittest.main()
