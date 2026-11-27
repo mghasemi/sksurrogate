@@ -2,7 +2,7 @@
 Notebook workflows
 ==============================
 
-The repository includes two executable notebooks under
+The repository includes five executable notebooks under
 ``examples/notebooks/``. They use seeded synthetic data and bounded evaluation
 settings; exact search/model results can still vary across runs or environments.
 No notebook server or widget service is part of the SKSurrogate runtime.
@@ -53,6 +53,40 @@ can select a task name; otherwise each run creates a timestamped one. Uploaded
 data, jobs, and bundles persist in the API's configured storage root. Use only
 disposable tasks and non-sensitive data when trying the example.
 
+End-to-end task workflows
+=========================
+
+Three notebooks take one task each from a raw frame to a shipped model:
+
+``01_classification_end_to_end.ipynb``
+    Rare-event classification (about 12 % positive): profiling, MAR diagnostics,
+    Little's test, a measured imputation bake-off, a leakage demonstration, an
+    ``AML`` search, repeated nested cross-validation, threshold and lift analysis,
+    drift and subgroup reports, bundle quality gate, and serving through
+    ``predict_batch``.
+
+``02_regression_end_to_end.ipynb``
+    Continuous target in physical units with multiplicative noise: the same
+    skeleton plus bootstrap intervals on the metrics, residual and
+    heteroscedasticity diagnostics, split-conformal prediction intervals with a
+    coverage-by-decile check, and one- and two-dimensional partial dependence.
+
+``03_time_series_end_to_end.ipynb``
+    Daily demand with weekly and annual seasonality: ``TemporalSpec`` and
+    validation, the refused shuffled split, ``ForecastFeatureBuilder``,
+    ``make_supervised`` and ``assert_no_leakage``, a rolling-origin ``backtest``
+    against the naive baselines, interval calibration from backtest residuals, a
+    horizon sweep at fixed evaluation length, window-mode ``drift_report``, and
+    roll-forward ``serve_forecast`` from the saved bundle.
+
+Each writes ``examples/notebooks/<task>-report/`` with ``report.md``, a branded
+``report.pdf`` (LuaLaTeX optional), every table as CSV, ``analysis-metadata.json``
+and the figures. Those directories are gitignored: run the notebook to regenerate
+them. The shared helpers are ``notebook_data.py`` (the generators plus an OpenML
+opt-in via ``SKSURROGATE_NOTEBOOK_DATA=openml``) and ``notebook_report.py``
+(figure export, Markdown tables, and ``compile_pdf``, which reports a missing
+LaTeX installation instead of failing the run).
+
 Jupyter and ``ipykernel`` are optional user-side tools; they are not added as
-package dependencies. Both notebooks store source code rather than rendered
+package dependencies. All five notebooks store source code rather than rendered
 screenshots or generated outputs, so they remain portable and reviewable.
