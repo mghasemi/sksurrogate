@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Surrogate optimization, and when the surface pays for itself — SKSurrogate</title>
+<meta name="description" content="A surrogate turns an evaluation budget into a surface and spends each new evaluation at its minimum. What the loop does, why a three-parameter search never gets to use it, and when not to fit one.">
+<link rel="canonical" href="https://sksurrogate.com/blog/surrogate-optimization/">
+<meta property="og:site_name" content="SKSurrogate">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://sksurrogate.com/blog/surrogate-optimization/">
+<meta property="og:title" content="Surrogate optimization, and when the surface pays for itself — SKSurrogate">
+<meta property="og:description" content="A surrogate turns an evaluation budget into a surface and spends each new evaluation at its minimum. What the loop does, why a three-parameter search never gets to use it, and when not to fit one.">
+<meta property="og:image" content="https://sksurrogate.com/assets/og-card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="SKSurrogate — from raw dataset to deployed, drift-monitored model. MIT, pip install sksurrogate.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://sksurrogate.com/assets/og-card.png">
+<link rel="icon" href="../../assets/mark.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../../icons/icon-180.png">
+<link rel="stylesheet" href="../../assets/site.css?v=fe4d8d60">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","mainEntityOfPage":"https://sksurrogate.com/blog/surrogate-optimization/","headline":"Surrogate optimization, and when the surface pays for itself","description":"A surrogate turns an evaluation budget into a surface and spends each new evaluation at its minimum. What the loop does, why a three-parameter search never gets to use it, and when not to fit one.","datePublished":"2026-11-27","author":{"@type":"Person","name":"Mehdi Ghasemi","url":"https://mghasemi.net"}}
+</script>
+</head>
+<body class="sub">
+
+<header class="topbar">
+  <a class="brand" href="../../"><img src="../../assets/mark.svg" alt="">SKSurrogate</a>
+  <nav>
+    <a href="../../">Product</a>
+    <a href="../../benchmarks/">Benchmarks</a>
+    <a href="../../concepts/">Concepts</a>
+    <a href="../../quickstart/">Quickstart</a>
+    <a href="../../blog/">Blog</a>
+    <a href="../../videos/">Videos</a>
+    <a href="../../faq/">FAQ</a>
+    <a href="../../cite/">Cite</a>
+    <a href="../../about/">About</a>
+    <a href="https://sksurrogate.readthedocs.io/en/latest/intro.html" target="_blank" rel="noopener">Docs ↗</a>
+    <a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a>
+  </nav>
+</header>
+
+<main class="wrap">
+<h1>Surrogate optimization, and when the surface pays for itself</h1>
+  <p class="lede">Fit a cheap model to the evaluations you have already paid for, then spend the next
+    one at that model's minimum. The idea is one paragraph long. The arithmetic that decides whether
+    you can afford it is the part people skip.</p>
+  <div class="byline">Mehdi Ghasemi · 27 November 2026 · methods</div>
+
+  <div class="prose">
+    <blockquote>
+      <p><strong>TL;DR</strong></p>
+      <ul>
+        <li>A surrogate replaces <em>try something, measure it</em> with <em>model what you have
+          measured, then choose</em>. You stop paying for directions the surface already says are
+          bad.</li>
+        <li>The warm-up does not scale with your search. <code>min_evals</code> defaults to a flat
+          <strong>25</strong>, while a full cubic surface in <code>n</code> parameters has
+          <strong>C(n+3, n)</strong> terms: 20 at three parameters, 56 at five, 165 at eight. At the
+          defaults, a thirty-evaluation run hands the surface <strong>five</strong> of its thirty
+          evaluations.</li>
+        <li>On the six-dataset equal-budget suite this search is <strong>at parity with
+          Optuna-TPE at 30 evaluations</strong>. At 60 the better surface matches or beats every other
+          arm on all six datasets — but the 60-evaluation extension <strong>never ran TPE</strong>, so
+          that gap is unmeasured rather than won. On a 1,220-pipeline space the search reaches within
+          1 % of its own final best in a <strong>median of 6 evaluations</strong>. If one evaluation
+          costs seconds rather than minutes, none of that matters — use TPE.</li>
+      </ul>
+    </blockquote>
+
+    <h2>What the loop does</h2>
+    <p>Hyperparameter optimization is expensive for a boring reason: every candidate you try costs a
+      full cross-validation. Grid search and random search pay that cost at every attempt and keep
+      nothing between attempts. The thousandth candidate is chosen exactly as blindly as the first.</p>
+    <p>A surrogate changes what you keep. After a warm-up of random evaluations you fit a regression
+      model to the pairs (parameters, score), and that model becomes a stand-in for the expensive
+      function. Minimizing the stand-in is cheap, so you can do it thousands of times per second and
+      see where it wants you to go. You then evaluate the real objective at that one point, add the
+      result, refit, and go again.</p>
+    <p>In SKSurrogate the whole loop is a <code>BaseSearchCV</code> subclass, so the call shape is
+      the one you already know:</p>
+    <pre><code>from SKSurrogate import SurrogateRandomCV
+
+search = SurrogateRandomCV(
+    estimator,
+    param_distributions={
+        'C': (1e-3, 10.0),                    # numeric range: a tuple
+        'kernel': ['poly', 'rbf'],            # categorical: a list
+    },
+    n_iter=30,          # candidates actually evaluated with cross-validation
+    min_evals=25,       # random evaluations before the sampler hands over
+    random_state=0,
+).fit(X, y)</code></pre>
+    <p>Four steps, in the order the code runs them.</p>
+    <ol>
+      <li><strong>Sample.</strong> Draw a point from the feasible set. For the first
+        <code>min_evals</code> evaluations this is random; this is the only part of the budget that
+        is not chosen. Three samplers ship: a point in the whole feasible set, a cube around the
+        incumbent, and a sphere around it.</li>
+      <li><strong>Fit.</strong> Once there are enough points, fit the response surface. The default
+        is a stock, un-tuned RBF <code>GaussianProcessRegressor</code>; any scikit-learn regressor
+        can be passed as <code>regressor=</code>.</li>
+      <li><strong>Minimize.</strong> Find the minimum of the surface with
+        <code>scipy.optimize.minimize</code>. This is where the search decides what to do next, and
+        where constraints and the trust region are applied.</li>
+      <li><strong>Evaluate and update.</strong> Score the real objective at the proposed point, add
+        it to the set, refit. Repeat until the budget is spent.</li>
+    </ol>
+
+    <h2>The warm-up is dimension-blind</h2>
+    <p>Whether any of this reaches you is decided before the first model is fitted. The code sizes
+      its warm-up from the surface it was built around: a full cubic in <code>n</code> variables has
+      <code>C(n + 3, n)</code> coefficients, so that is the count it treats as "enough points to
+      fit".</p>
+    <p><code>min_evals</code>, the knob that actually controls the handover, does not vary with your
+      search. It defaults to <strong>25</strong>. So the default is generous for a three-parameter
+      space (25 points for a 20-term surface) and short from four parameters on (25 points for 35):</p>
+    <table>
+      <thead>
+        <tr><th>parameters searched</th><th class="num">terms in a cubic surface</th><th class="num">default warm-up</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>1</td><td class="num">4</td><td class="num">25</td></tr>
+        <tr><td>3</td><td class="num">20</td><td class="num">25</td></tr>
+        <tr><td>4</td><td class="num">35</td><td class="num">25</td></tr>
+        <tr><td>5</td><td class="num">56</td><td class="num">25</td></tr>
+        <tr><td>8</td><td class="num">165</td><td class="num">25</td></tr>
+      </tbody>
+    </table>
+    <p>I measured what that does at the defaults instead of quoting the table. A three-parameter
+      search with a thirty-evaluation budget finishes with <strong>twenty-five samples and five
+      surrogate proposals</strong> — the surface gets one evaluation in six. Under twenty-five
+      evaluations it gets none at all: a ten-evaluation run is a random search that writes a longer
+      log.</p>
+    <p>Now read the benchmark table with that in mind. The B = 30 suite engages its surface at the
+      twentieth record, so two-thirds of the budget is spent sampling before a single proposal exists.
+      Parity with Optuna-TPE at B = 30 is not a disappointment, it is the arithmetic. That twentieth
+      record is worth knowing about too: the runner asked for six evaluations and the constructor of
+      the day raised it to 20, because a cubic in three variables has 20 terms. Since 0.8.1 an
+      explicit <code>min_evals</code> is honoured verbatim and only the default is floored, so the
+      same request today would fire the surface after six. "Surrogate optimization didn't help on my
+      three-knob grid search" is, by contrast, a true statement that says nothing about the
+      method.</p>
+    <p>At B = 60 the surface finally has a window, and SRS with the Gaussian-process surface matches or
+      beats every other arm on all six datasets. That extension did not include a TPE arm, so "the
+      surrogate beats TPE at sixty evaluations" is a sentence the published data does not support and
+      this post does not claim it.</p>
+
+    <h2>Two things sampling cannot do</h2>
+    <p>Two mechanisms in the loop are worth knowing about because neither has a random-search
+      equivalent.</p>
+    <p><strong>A trust region that contracts.</strong> With <code>search_sphere=True</code> the
+      proposal is confined to a ball around the incumbent, and the radius shrinks by a factor you set
+      (0.95 by default on <code>SurrogateRandomCV</code>) for every two failed local optimizations.
+      In a high-dimensional space this is what stops the search from spending expensive evaluations
+      on distant, flat regions once it has found something worth refining. Repeated sampling inside a
+      box or sphere tightens the same way.</p>
+    <p><strong>Constraints the solver actually honours.</strong> You can pass
+      <code>ineq=[...]</code>, a list of callables whose positivity region is the feasible set. These
+      are handed to SciPy as real inequality constraints, not as penalty terms or rejection
+      sampling. The detail I care about is the guard around it. SciPy's
+      <code>optimize.minimize</code> accepts a <code>constraints=</code> argument for
+      <code>L-BFGS-B</code>, <code>TNC</code>, <code>BFGS</code>, <code>Powell</code> and a few
+      others and then ignores it after emitting a warning, so the point it returns need not be
+      feasible at all. SKSurrogate refuses that combination at construction time:</p>
+    <pre><code>ValueError: SurrogateRandomCV(scipy_solver=...)('L-BFGS-B') cannot handle inequality
+constraints: scipy.optimize.minimize accepts the constraints argument for this method
+and then ignores it, so the returned point need not be feasible.
+Use one of COBYLA, COBYQA, SLSQP, trust-constr, or remove the constraints.</code></pre>
+    <p>Four solvers honour nonlinear constraints; <code>SLSQP</code> is the default. A silent
+      infeasible answer is worse than an error, and this is the cheapest possible place to catch
+      it.</p>
+
+    <h2>What the surface is allowed to be</h2>
+    <p>Six named surfaces ship with the package: a Gaussian process (response-normalized, over a
+      Matérn × white-noise kernel grid), kernel ridge, support-vector regression, a GP with an ARD
+      kernel sized to the data, a degree-3 polynomial ridge, and Bayesian ridge for the cheapest
+      smooth linear-Gaussian fit. All six are smooth point predictors, and that is not a stylistic
+      preference. The local step hands the surface to <code>scipy.optimize.minimize</code>, which
+      differentiates by finite differences, so a piecewise-constant surface — a random forest, a
+      gradient-boosted ensemble — would stall the subproblem it is supposed to be guiding.</p>
+    <p>This matters because a superficially reasonable idea is therefore excluded. The regime study
+      behind the benchmark runs found that a random forest is the robust generalist across objective
+      families, winning on rational and trigonometric shapes where the smooth surfaces lose. That is
+      a statement about surfaces as <em>predictors</em>. It is not a licence to plug a random forest
+      into this loop, where it will not move. In SKSurrogate, tree ensembles are available for
+      candidate-pool ranking at design time and are deliberately kept out of the surrogate loop.</p>
+
+    <h2>The receipts</h2>
+    <p>Every search can hand back its own record, and the record is JSON-safe without a custom
+      encoder: <code>json.dumps(search.to_audit_dict())</code>. The bundle carries the estimator and
+      its parameters, <em>the search space as it was actually encoded</em>, the scoring and CV
+      summary, the budget, the termination state, one record per evaluated candidate carrying a
+      zero-based <code>trial</code> index, a surrogate block with fit and failure counters, and a
+      separate list recording how each proposal originated (<code>init</code>,
+      <code>explore</code>, <code>surrogate_exploit</code>).</p>
+    <p>The encoded search space is the part I would not want to reconstruct by hand:</p>
+    <pre><code>"search_space": {
+  "alpha":  {"type": "real", "bounds": [0.0001, 100.0], "scale": "linear"},
+  "solver": {"type": "categorical", "items": ["auto", "lsqr", "saga"]}
+}
+
+"evaluations": [
+  {"trial": 0, "status": "complete", "score": -0.9437761069340015,
+   "params": {"alpha": 94.29376099453265, "solver": "auto"}}, ...]
+
+"surrogate": {
+  "regressor": "sklearn.gaussian_process._gpr.GaussianProcessRegressor",
+  "source": "default", "min_evals": 25, "fit_attempts": 5,
+  "fit_failures": 0, "prediction_failures": 0, "local_optimization_failures": 0
+}
+
+"termination": {"termination_reason": "n_iter", "status": "completed"}</code></pre>
+    <p>Two things to read carefully in that excerpt. <code>score</code> is stored in the search's
+      minimization frame, so a 0.9438 accuracy appears as −0.9438. And
+      <code>surrogate.min_evals</code> is the warm-up the run actually used — 25 here, the default —
+      which is the number to compare against when a run reports that the surrogate never engaged,
+      not the budget you thought you had.</p>
+
+    <h2>When not to fit a surface</h2>
+    <ul>
+      <li><strong>Small, flat spaces on a laptop.</strong> Three parameters, seconds per evaluation,
+        accuracy differences of about a point at most. Use TPE or plain random search; the response
+        surface cannot earn back its warm-up here, and the benchmark table says so in its own
+        numbers.</li>
+      <li><strong>Budgets below the warm-up.</strong> Under 25 evaluations, the default, nothing in
+        the run is surrogate-guided at all: you pay the bookkeeping and get the sampling. Worth
+        knowing before you interpret a null result.</li>
+      <li><strong>When you cannot afford to trust the record.</strong> The surface is an
+        approximation of what you have observed, not a certificate: it can be confidently wrong
+        between samples, and no coverage guarantee is claimed for the search itself. It does not
+        replace a held-out evaluation, and it does not make a flat objective steep.</li>
+      <li><strong>When categorical features are encoded ordinally.</strong> The most actionable
+        finding from the benchmark study was a defect in my own pipeline: encoding unordered
+        categories as ordered integers gave the surface an adjacency structure the categories do not
+        have, and it silently masked the surrogate's advantage. If your space has categorical
+        parameters, look at the encoding before you look at the search.</li>
+    </ul>
+    <p>Where it does pay: evaluations measured in minutes, a space with enough dimension that the
+      warm-up is a small share of the budget, and a question about final quality rather than
+      wall-clock. On the 1,220-pipeline space the search reached within 1 % of its own final best in
+      a median of 6 evaluations, against 11–17 for every other arm at identical accuracy. It also
+      lost that advantage on wall-clock — the Gaussian-process fit grows as O(n³), per-fit cost rose
+      from 3 ms to 174 ms across a run, and 49 % of a 120 s budget went to search overhead. Both
+      numbers are in the benchmark write-up, and they belong together.</p>
+
+    <h2>Reproduce it</h2>
+    <pre><code>pip install sksurrogate
+</code></pre>
+    <ul>
+      <li>The short version of this post, in the terms the documentation uses:
+        <a href="../../concepts/surrogate-optimization/">concepts → surrogate-based optimization</a>.</li>
+      <li>The loop, the samplers, the constraint guard and the audit bundle: module
+        <code>SKSurrogate/structsearch.py</code> in
+        <a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">github.com/mghasemi/sksurrogate</a>.</li>
+      <li>The search guide, with the same loop written as pseudocode:
+        <a href="https://sksurrogate.readthedocs.io/en/latest/surrogate.html" target="_blank" rel="noopener">docs → surrogate-based optimization</a>.</li>
+      <li>Equal-budget benchmark tables, including the cells where the surrogate loses:
+        <a href="../../benchmarks/">benchmarks</a>, raw records at
+        <a href="https://doi.org/10.5281/zenodo.23629024" target="_blank" rel="noopener">doi.org/10.5281/zenodo.23629024</a>.</li>
+      <li>The defect story in full:
+        <a href="../../blog/honest-benchmark/">An Honest Benchmark of My Own AutoML Package</a>.</li>
+    </ul>
+
+    <h2>Caveats I'm not hiding</h2>
+    <p>The warm-up arithmetic is a property of this implementation, not of surrogate optimization in
+      general; a different system with a different basis or an informed prior could start guiding
+      earlier. The benchmark numbers come from seven seeds, budgets of 30 and 60 evaluations, and
+      datasets small enough to run on a laptop, with a response surface that is un-tuned on purpose.
+      The 60-evaluation extension covers the search arms only, so its comparison is against the other
+      SRS variants rather than against TPE. The wall-clock arm uses a different currency and is not
+      comparable to the evaluation-count tables. The warm-up count <code>C(n + 3, n)</code> is the
+      term count of the polynomial surface the search was originally built around; once the default
+      surface became a Gaussian process that number stopped being an exact requirement, and it is a
+      guide to the order of magnitude rather than a theorem. The audit excerpt above comes from a real
+      run on scikit-learn's bundled breast-cancer dataset with three-fold CV instead of the default
+      five, so the score is not meaningful — the point is the shape of the record, not the number in
+      it.</p>
+
+    <hr>
+    <p style="font-size:13px;color:var(--faint)">Every code path described here was executed against
+      SKSurrogate 0.8.1 before publication, and the numbers quoted are the ones the code returned. If
+      something in it does not match the version you have installed, that is a bug report worth
+      sending.</p>
+  </div>
+</main>
+
+<footer class="subfooter">
+  <div>
+    <h5>Project</h5>
+    <ul>
+      <li><a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a></li>
+      <li><a href="https://pypi.org/project/sksurrogate/" target="_blank" rel="noopener">PyPI ↗</a></li>
+      <li><a href="https://sksurrogate.readthedocs.io/en/latest/" target="_blank" rel="noopener">Documentation ↗</a></li>
+      <li><a href="https://github.com/mghasemi/sksurrogate/blob/master/CHANGELOG.rst" target="_blank" rel="noopener">Changelog ↗</a></li>
+    </ul>
+  </div>
+  <div>
+    <h5>Site</h5>
+    <ul>
+      <li><a href="../../quickstart/">Quickstart</a></li>
+      <li><a href="../../benchmarks/">Benchmarks</a></li>
+      <li><a href="../../concepts/">Concepts</a></li>
+      <li><a href="../../blog/">Blog</a></li>
+      <li><a href="../../videos/">Videos</a></li>
+      <li><a href="../../faq/">FAQ</a></li>
+      <li><a href="../../cite/">Citation</a></li>
+      <li><a href="../../about/">About</a></li>
+      <li><a href="../../roadmap/">Roadmap</a></li>
+      <li><a href="../../contact/">Contact</a></li>
+    </ul>
+  </div>
+  <div>
+    <h5>Maintainer</h5>
+    <ul>
+      <li><a href="https://mghasemi.net" target="_blank" rel="noopener">mghasemi.net ↗</a></li>
+      <li><a href="mailto:mehdi.ghasemi@gmail.com">mehdi.ghasemi@gmail.com</a></li>
+      <li><a href="https://orcid.org/0000-0002-9551-1780" target="_blank" rel="noopener">ORCID ↗</a></li>
+    </ul>
+  </div>
+</footer>
+<div class="subfootline">
+  <span>© 2019–2026 Mehdi Ghasemi · MIT licence</span>
+  <span>sksurrogate v0.8.1 · scikit-learn-native</span>
+</div>
+</body>
+</html>
