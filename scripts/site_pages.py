@@ -338,6 +338,15 @@ def blog(rel):
       <ul class="postlist">
         <li>
           <a href="%s">
+            <div class="date">27 November 2026 · release</div>
+            <h2>SKSurrogate 0.8.2: what ships, what it does not, and how to check</h2>
+            <p>Reproducible search seeding, three end-to-end notebooks, and three fixes that came
+              out of writing them. The honest limit table — where it loses to Optuna, FLAML and
+              random search — and the commands that verify every claim without trusting the post.</p>
+          </a>
+        </li>
+        <li>
+          <a href="%s">
             <div class="date">27 November 2026 · methods</div>
             <h2>Surrogate optimization, and when the surface pays for itself</h2>
             <p>A surrogate turns an evaluation budget into a surface and spends each new evaluation
@@ -355,7 +364,8 @@ def blog(rel):
               encoding was silently masking the surrogate's advantage.</p>
           </a>
         </li>
-      </ul>''' % (crumb(rel, "blog"), L(rel, "/blog/surrogate-optimization/"),
+      </ul>''' % (crumb(rel, "blog"), L(rel, "/blog/release-0-8-2/"),
+                  L(rel, "/blog/surrogate-optimization/"),
                   L(rel, "/blog/honest-benchmark/"))
 
 

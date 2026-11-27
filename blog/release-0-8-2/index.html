@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SKSurrogate 0.8.2: what ships, what it does not, and how to check — SKSurrogate</title>
+<meta name="description" content="Version 0.8.2 is out: reproducible search seeding, three end-to-end notebooks, and fixes to effect sizes, learning curves and forecast metrics. Here is the honest limit table, and the four commands that verify every claim.">
+<link rel="canonical" href="https://sksurrogate.com/blog/release-0-8-2/">
+<meta property="og:site_name" content="SKSurrogate">
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://sksurrogate.com/blog/release-0-8-2/">
+<meta property="og:title" content="SKSurrogate 0.8.2: what ships, what it does not, and how to check — SKSurrogate">
+<meta property="og:description" content="Reproducible search seeding, three end-to-end notebooks, and fixes to effect sizes, learning curves and forecast metrics. The honest limit table, and the commands that verify every claim.">
+<meta property="og:image" content="https://sksurrogate.com/assets/og-card.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="SKSurrogate — a scikit-learn tuner with the evidence attached. MIT, pip install sksurrogate.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://sksurrogate.com/assets/og-card.png">
+<link rel="icon" href="../../assets/mark.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="../../icons/icon-180.png">
+<link rel="stylesheet" href="../../assets/site.css?v=fe4d8d60">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","mainEntityOfPage":"https://sksurrogate.com/blog/release-0-8-2/","headline":"SKSurrogate 0.8.2: what ships, what it does not, and how to check","description":"Reproducible search seeding, three end-to-end notebooks, and fixes to effect sizes, learning curves and forecast metrics. The honest limit table, and the commands that verify every claim.","datePublished":"2026-11-27","author":{"@type":"Person","name":"Mehdi Ghasemi","url":"https://mghasemi.net"}}
+</script>
+</head>
+<body class="sub">
+
+<header class="topbar">
+  <a class="brand" href="../../"><img src="../../assets/mark.svg" alt="">SKSurrogate</a>
+  <nav>
+    <a href="../../">Product</a>
+    <a href="../../benchmarks/">Benchmarks</a>
+    <a href="../../concepts/">Concepts</a>
+    <a href="../../quickstart/">Quickstart</a>
+    <a href="../../blog/">Blog</a>
+    <a href="../../videos/">Videos</a>
+    <a href="../../faq/">FAQ</a>
+    <a href="../../cite/">Cite</a>
+    <a href="../../about/">About</a>
+    <a href="https://sksurrogate.readthedocs.io/en/latest/intro.html" target="_blank" rel="noopener">Docs ↗</a>
+    <a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a>
+  </nav>
+</header>
+
+<main class="wrap">
+<h1>SKSurrogate 0.8.2: what ships, what it does not, and how to check</h1>
+  <p class="lede">Version 0.8.2 is on PyPI, on Docker Hub and in the Zenodo archive. It is a
+    correctness release rather than a feature release, which makes it the right moment to state
+    plainly what the thing does, what it loses, and how you can verify all of it without trusting
+    me.</p>
+  <div class="byline">Mehdi Ghasemi · 27 November 2026 · release</div>
+
+  <div class="prose">
+    <p>SKSurrogate is a surrogate-optimization toolkit built on scikit-learn. The tuner is a
+      <code>BaseSearchCV</code> subclass, so it drops into existing code with the same
+      <code>fit</code>/<code>predict</code> contract as <code>GridSearchCV</code> and
+      <code>RandomizedSearchCV</code>, and it replaces <code>BayesSearchCV</code> — whose upstream,
+      scikit-optimize, is archived and no longer imports against current scikit-learn. Everything
+      else in the project exists to make the result checkable: a dataset fingerprint, the protocol,
+      the seeds, and the evaluation record travel with every number.</p>
+
+    <h2>What is in this release</h2>
+    <p>The search loop is now reproducible at a fixed <code>random_state</code>. Two things used to
+      break that: the start point was drawn from the global <code>random.uniform</code>, so every run
+      began elsewhere, and candidate estimators carried grid hyperparameters but no
+      <code>random_state</code>, so an unseeded forest scored differently each time and the selection
+      flipped. On the regression notebook search, the same seed previously gave RMSE 18.9 and 20.3 for
+      the same candidate. Both sources are now derived from the seed you pass.</p>
+    <p>Three fixes came out of writing the example notebooks, which is the useful part of the story:
+      data diagnostics no longer crash on a grouping column with unlabelled rows (they are excluded
+      and counted instead); regression learning curves are scored with a regression measure rather
+      than being silently replaced by accuracy, which had produced all-NaN curves; and forecast
+      metrics survive gaps in the history instead of turning an entire series' MASE into NaN.</p>
+    <p>The three end-to-end notebooks — classification, regression, time series — pin their seeds and
+      treat the evaluation budget as the binding constraint, so their numbers are reproducible rather
+      than illustrative. They ship in the repository and in the
+      <code>sksurrogate-lab</code> image; they are not in the wheel. Full notes:
+      <a href="https://sksurrogate.readthedocs.io/en/latest/changelog/0.8.2.html" target="_blank" rel="noopener">changelog 0.8.2</a>.</p>
+
+    <h2>What it does not do</h2>
+    <p>This table is the reason to read the post. Every entry is measured in the project's own
+      published studies, and the raw runs are archived with a DOI.</p>
+    <table>
+      <thead><tr><th>Claim you might expect</th><th>What the evidence says</th></tr></thead>
+      <tbody>
+        <tr><td>Beats Optuna-TPE on accuracy</td><td>No. At an equal evaluation budget TPE is top on
+          5 of 6 datasets, and the methods sit within about half a point of each other.</td></tr>
+        <tr><td>Beats portfolio AutoML</td><td>No. FLAML is ahead on 5 of 6 datasets at an equal
+          wall-clock cap, AutoGluon on 3 of 6. The dataset means differ by 0.40 pt, which the study
+          calls within its own noise floor.</td></tr>
+        <tr><td>Is cheap to run</td><td>It is not. At a 120-second cap, 49 % of the budget is search
+          overhead — 22 % fitting the surface, 27 % in the acquisition optimiser — and per-fit cost
+          grows from 3 ms to 174 ms as the surface fills.</td></tr>
+        <tr><td>Reaches a target faster</td><td>Not reliably. Uniform random search is fastest to a
+          1 % gap on four of six datasets at this budget.</td></tr>
+        <tr><td>Wins at a larger budget</td><td>Not tested. The B=60 extension compares response
+          surfaces against each other; there is no Optuna arm at B=60.</td></tr>
+        <tr><td>Ships a web UI in <code>pip install</code></td><td>No. The wheel contains
+          <code>SKSurrogate</code> and <code>sksurrogate_mcp</code>; the control plane is a
+          container.</td></tr>
+      </tbody>
+    </table>
+
+    <h2>What is real</h2>
+    <p>Final quality under an equal <em>evaluation</em> budget, and fewer evaluations to get there:
+      median 21.5 evaluations to a 1 % gap versus 55.0 for random search on the same 1,220-pipeline
+      space, buying a median 281 candidates against 553. The response surface is what carries it — the
+      default RBF-GP beat the older cubic Hilbert surface on all six datasets at both budgets
+      (20W/17T/5L at B=30, p ≈ 4×10⁻³), and an untuned KernelRidge surface is worse than fitting
+      nothing once the guidance window opens. One of the study's findings is a defect in this
+      project's own encoding: the ordinal surface was masking the advantage, and replacing it with a
+      mixed-categorical one lifted best-CV by at least 0.3 pt in four of six datasets.</p>
+    <p>That is the case for the tool: not faster, not more accurate, but evaluation-efficient and
+      honest about where it is neither. If you want plain hyperparameter tuning and nothing else, use
+      Optuna.</p>
+
+    <h2>How to check it in five minutes</h2>
+    <p>Nothing below requires trusting this page.</p>
+    <pre><code>pip install sksurrogate==0.8.2
+
+# a seeded search: same random_state, same trials, same winner
+python -c "import SKSurrogate; print(SKSurrogate.__version__)"
+
+# reproduce the benchmark tables from the archived raw runs
+python -m benchmarks.run --dataset all --budget 30</code></pre>
+    <ul>
+      <li>The release archive: <a href="https://doi.org/10.5281/zenodo.24602786" target="_blank" rel="noopener">10.5281/zenodo.24602786</a>
+        (concept DOI <a href="https://doi.org/10.5281/zenodo.23325032" target="_blank" rel="noopener">10.5281/zenodo.23325032</a>).</li>
+      <li>Raw benchmark runs: <a href="https://doi.org/10.5281/zenodo.23629024" target="_blank" rel="noopener">10.5281/zenodo.23629024</a>.</li>
+      <li>Protocols and every table quoted above: <a href="../../benchmarks/">the benchmark page</a>.</li>
+      <li>Notebooks: <a href="https://sksurrogate.readthedocs.io/en/latest/notebooks.html" target="_blank" rel="noopener">three executable walkthroughs</a>.</li>
+    </ul>
+
+    <h2>What I want from you</h2>
+    <p>Most of the useful changes in this release came from running the thing on real data and
+      finding that a column with missing labels crashed a diagnostic. The same will be true of
+      whatever you run it on.</p>
+    <p>So the ask is specific: run one notebook, and tell me where it breaks — or where a number
+      disagrees with the published table. The issue forms now require the fields that make a report
+      actionable: the version, the <code>random_state</code>, and for a benchmark disagreement the
+      budget currency, the exact command and a link to your raw output. A reproducible disagreement
+      is a contribution, not an argument.</p>
+    <p><a href="https://github.com/mghasemi/sksurrogate/issues/new/choose" target="_blank" rel="noopener">Open an issue ↗</a></p>
+  </div>
+
+<footer class="subfooter">
+  <div>
+    <h5>Project</h5>
+    <ul>
+      <li><a href="https://github.com/mghasemi/sksurrogate" target="_blank" rel="noopener">GitHub ↗</a></li>
+      <li><a href="https://pypi.org/project/sksurrogate/" target="_blank" rel="noopener">PyPI ↗</a></li>
+      <li><a href="https://sksurrogate.readthedocs.io/en/latest/" target="_blank" rel="noopener">Documentation ↗</a></li>
+      <li><a href="https://github.com/mghasemi/sksurrogate/blob/master/CHANGELOG.rst" target="_blank" rel="noopener">Changelog ↗</a></li>
+    </ul>
+  </div>
+  <div>
+    <h5>Site</h5>
+    <ul>
+      <li><a href="../../quickstart/">Quickstart</a></li>
+      <li><a href="../../benchmarks/">Benchmarks</a></li>
+      <li><a href="../../concepts/">Concepts</a></li>
+      <li><a href="../../blog/">Blog</a></li>
+      <li><a href="../../videos/">Videos</a></li>
+      <li><a href="../../faq/">FAQ</a></li>
+      <li><a href="../../cite/">Citation</a></li>
+      <li><a href="../../about/">About</a></li>
+      <li><a href="../../roadmap/">Roadmap</a></li>
+      <li><a href="../../contact/">Contact</a></li>
+    </ul>
+  </div>
+  <div>
+    <h5>Maintainer</h5>
+    <ul>
+      <li><a href="https://mghasemi.net" target="_blank" rel="noopener">mghasemi.net ↗</a></li>
+      <li><a href="mailto:mehdi.ghasemi@gmail.com">mehdi.ghasemi@gmail.com</a></li>
+      <li><a href="https://orcid.org/0000-0002-9551-1780" target="_blank" rel="noopener">ORCID ↗</a></li>
+    </ul>
+  </div>
+</footer>
+<div class="subfootline">
+  <span>© 2019–2026 Mehdi Ghasemi · MIT licence</span>
+  <span>sksurrogate v0.8.2 · scikit-learn-native</span>
+</div>
+</body>
+</html>

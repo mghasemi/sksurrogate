@@ -244,6 +244,8 @@ def main():
     # from `written`, so an unlisted post silently drops out of the sitemap on rebuild.
     written.append(("/blog/surrogate-optimization/",
                     os.path.join(ROOT, "blog/surrogate-optimization/index.html"), False))
+    written.append(("/blog/release-0-8-2/",
+                    os.path.join(ROOT, "blog/release-0-8-2/index.html"), False))
 
     # sitemap: only indexable pages, with lastmod from each file's own last change.
     # A single HEAD date for every URL tells Google nothing about what actually moved,

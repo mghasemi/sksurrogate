@@ -17,6 +17,7 @@
 - [Product page](https://sksurrogate.com/)
 - [Quickstart](https://sksurrogate.com/quickstart/)
 - [Honest benchmark (data)](https://sksurrogate.com/benchmarks/) · [benchmark post](https://sksurrogate.com/blog/honest-benchmark/)
+- [SKSurrogate 0.8.2: what ships, what it does not, and how to check](https://sksurrogate.com/blog/release-0-8-2/) — the honest limit table and the commands that verify it
 - [Surrogate optimization, and when the surface pays for itself](https://sksurrogate.com/blog/surrogate-optimization/)
 - [Concepts — surrogate optimization, conformal intervals, nested CV](https://sksurrogate.com/concepts/)
 - [FAQ](https://sksurrogate.com/faq/)
