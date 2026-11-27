@@ -95,9 +95,10 @@ err.log
 LaTeXDocker.md
 .hermes/preview-chip-contrast.html
 
-# GitHub: local workflow scratch/overrides. ci.yml stays tracked — .gitignore
-# never affects files already in the index, so this only shields future
-# untracked files under .github/.
+# GitHub: local workflow scratch/overrides. Files already in the index stay
+# tracked (.gitignore never affects them), so this only shields future untracked
+# files under .github/. Public artefacts — the workflows, scripts/ and
+# ISSUE_TEMPLATE/ — are added deliberately with `git add -f`.
 .github/
 
 # Example notebooks write their report artifacts here (regenerate by running them).

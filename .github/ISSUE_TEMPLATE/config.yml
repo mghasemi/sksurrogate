@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://sksurrogate.readthedocs.io/en/latest/
+    about: Quickstart, API reference, walkthroughs and the search contract.
+  - name: Benchmark methodology and raw results
+    url: https://sksurrogate.com/benchmarks/
+    about: Protocols, seed-level tables and the archived raw runs before you file a benchmark disagreement.
+  - name: Citation and archived releases
+    url: https://sksurrogate.com/cite/
+    about: Version DOIs for the release you are actually running.

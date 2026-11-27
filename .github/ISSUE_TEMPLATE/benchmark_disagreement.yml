@@ -1,0 +1,68 @@
+name: Benchmark disagreement
+description: A published number did not reproduce, or a comparison looks unfair.
+title: "[benchmark] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This project publishes its losses as well as its wins, so a disagreement is
+        a first-class contribution. The fastest way to settle one is the four
+        fields below: what the table says, what you ran, what you got, and where the
+        raw output is.
+  - type: input
+    id: claim
+    attributes:
+      label: Which claim or table?
+      description: Page and section on sksurrogate.com or in docs/benchmarks.md, or the sentence itself.
+      placeholder: "benchmarks-cspace section 9, the FLAML 5/6 sentence"
+    validations:
+      required: true
+  - type: dropdown
+    id: currency
+    attributes:
+      label: Which budget currency were you measuring?
+      description: These are three different questions and the docs usually answer only one of them at a time.
+      options:
+        - Equal number of evaluations
+        - Equal wall clock
+        - Wall clock as a cap
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Exact command or script
+      description: Including the arm, dataset, seed and budget you passed.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: numbers
+    attributes:
+      label: Your numbers vs the published numbers
+      description: Per dataset and per seed if you have them. State the metric and its direction.
+    validations:
+      required: true
+  - type: input
+    id: artifact
+    attributes:
+      label: Link to your raw output
+      description: A gist, a repository, or the archived artifact. Numbers without an artifact cannot be checked.
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Output of `pip show sksurrogate scikit-learn numpy`, CPU, and whether you ran on the same kind of machine.
+      render: shell
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before filing
+      options:
+        - label: I read the protocol for the study I am disputing, including its stated limitations.
+          required: true
+        - label: My version matches the one the table was produced with, or I say which one I used.
+          required: true

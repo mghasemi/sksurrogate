@@ -5,7 +5,7 @@
 SKSurrogate
 ==================
 **Lightweight, maintained, scikit-learn-native surrogate tuner — a drop-in replacement for
-``BayesSearchCV``.**
+``BayesSearchCV``, with the provenance and evaluation record a tuned model needs.**
 
 ``SKSurrogate`` searches expensive objectives (hyperparameters, AutoML pipelines) with a
 surrogate response surface built on ``scikit-learn``. The tuner is a ``BaseSearchCV``

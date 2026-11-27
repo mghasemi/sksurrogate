@@ -1,0 +1,70 @@
+name: Bug report
+description: Something computes the wrong thing, crashes, or breaks the scikit-learn contract.
+title: "[bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A reproducible command is worth more than a description. If the run is
+        stochastic, include the `random_state` you passed: from 0.8.2 the search
+        start point and candidate estimators are seeded from it, so the same seed
+        must give the same trials.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `python -c "import SKSurrogate; print(SKSurrogate.__version__)"`.
+      placeholder: "0.8.2"
+    validations:
+      required: true
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where does it happen?
+      options:
+        - Library (SurrogateRandomCV / AML / ensemble / forecast)
+        - Control plane API
+        - Web UI
+        - MCP server
+        - Documentation example or notebook
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect?
+      description: Quote the actual exception or the wrong number, not a summary of it.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: |
+        A snippet that runs against a public dataset. Include the search space,
+        the budget (`max_iter`), the cross-validator and the `random_state`.
+      render: python
+    validations:
+      required: true
+  - type: textarea
+    id: traceback
+    attributes:
+      label: Traceback or output
+      render: shell
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Output of `pip show sksurrogate scikit-learn numpy pandas`, your Python version, and your OS.
+      render: shell
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before filing
+      options:
+        - label: I checked that this is not already reported in an open issue.
+          required: true
+        - label: The version above is the one I actually ran (not a checkout).
+          required: true

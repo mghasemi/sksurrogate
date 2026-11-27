@@ -1,0 +1,49 @@
+name: Feature request
+description: A capability the library or the control plane does not have yet.
+title: "[feature] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Scope rules are in CONTRIBUTING.md: no new optimizer without a
+        pre-registered benchmark, no general-purpose MLOps expansion, and nothing
+        that only works with a model in the loop. A request that names the problem
+        and the evidence that would settle it travels much further than one that
+        names a solution.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What can you not do today?
+      description: Describe the workflow you are stuck in, not the API you want.
+    validations:
+      required: true
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What do you do instead right now?
+      description: If a library call plus an artifact already answers it, say so; that is a docs fix, not a feature.
+  - type: textarea
+    id: evidence
+    attributes:
+      label: What evidence would show it works?
+      description: A dataset, a metric, a protocol, and what would count as failure. "Faster" is not a criterion until it has a measurement.
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where would it live?
+      options:
+        - Library (core, dependency-light)
+        - Control plane API
+        - Web UI
+        - MCP server
+        - Documentation / example
+        - Not sure
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before filing
+      options:
+        - label: I searched the docs and existing issues for this capability.
+          required: true
