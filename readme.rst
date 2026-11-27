@@ -141,6 +141,13 @@ categorical-encoding path. ``fit(X, y, strategy="eoa")`` selects evolutionary
 search.
 
 More workflows are covered in the
+`notebook gallery <https://sksurrogate.readthedocs.io/en/latest/notebooks.html>`_,
+three end-to-end example notebooks
+(`classification <examples/notebooks/01_classification_end_to_end.ipynb>`_,
+`regression <examples/notebooks/02_regression_end_to_end.ipynb>`_, and
+`time series <examples/notebooks/03_time_series_end_to_end.ipynb>`_), each walking one
+task from a raw frame to a shipped, evaluated model; the notebooks also run inside the
+``sksurrogate-lab`` image. Further single-topic guides are the
 `surrogate-search guide <https://sksurrogate.readthedocs.io/en/latest/surrogate.html>`_,
 `preprocessing guide <https://sksurrogate.readthedocs.io/en/latest/dataproc.html>`_,
 `scientific workflow guide <https://sksurrogate.readthedocs.io/en/latest/mltrace.html>`_,
