@@ -34,8 +34,11 @@ analysis-metadata.json   metrics, intervals, seed, protocol, limitations
 ```
 
 The notebooks ship **without stored outputs** so the diffs stay readable; run one to
-regenerate them. Every one of them is executed headlessly in CI-style verification before
-release, with a fixed seed (`SEED = 7`), so the numbers in the reports are reproducible.
+regenerate them. Every one of them is executed headlessly before release, with a fixed seed
+(`SEED = 7`) that reaches the data generator, the train/validation split, the imputer, the
+search (its start point and every candidate estimator) and the CV splitters. Two runs of the
+same notebook therefore produce the same metrics and the same tables; only wall-clock fields
+and the bundle's build-time digest (`model_version`) differ.
 
 ## Data sources
 

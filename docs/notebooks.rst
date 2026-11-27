@@ -4,7 +4,9 @@ Notebook workflows
 
 The repository includes five executable notebooks under
 ``examples/notebooks/``. They use seeded synthetic data and bounded evaluation
-settings; exact search/model results can still vary across runs or environments.
+settings. Data, splits, imputation, the ``AML`` search (start point and candidate
+estimators) and the CV splitters are all seeded, so two runs of a notebook report the
+same metrics; only wall-clock fields and the model bundle's build-time digest differ.
 No notebook server or widget service is part of the SKSurrogate runtime.
 
 Offline scientific workflow
