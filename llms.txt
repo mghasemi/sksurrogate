@@ -26,7 +26,7 @@
 
 ## Install
 - `pip install sksurrogate` (PyPI: https://pypi.org/project/sksurrogate/) — Python >= 3.10, scikit-learn
-- Control plane image: `docker run --rm -p 8013:8013 -v sksurrogate-data:/data mghasemi/sksurrogate:latest` (Docker Hub; current release v0.8.1)
+- Control plane image: `docker run --rm -p 8013:8013 -v sksurrogate-data:/data mghasemi/sksurrogate:latest` (Docker Hub; current release v0.8.2)
 - Import name `SKSurrogate`: drop-in tuner `SKSurrogate.SurrogateRandomCV`, presets via `SKSurrogate.AML`; agent interface is `pip install sksurrogate[mcp]`.
 
 ## License

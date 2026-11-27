@@ -103,7 +103,7 @@ HEADER_TPL = """<!doctype html>
 </footer>
 <div class="subfootline">
   <span>© 2019–2026 Mehdi Ghasemi · MIT licence</span>
-  <span>sksurrogate v0.8.1 · scikit-learn-native</span>
+  <span>sksurrogate v0.8.2 · scikit-learn-native</span>
 </div>
 {scripts}</body>
 </html>

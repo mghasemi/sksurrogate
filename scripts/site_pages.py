@@ -43,7 +43,7 @@ def quickstart(rel):
 
         <h2>Control plane (optional)</h2>
         <pre><code>docker run --rm -p 8013:8013 -v sksurrogate-data:/data mghasemi/sksurrogate:latest</code></pre>
-        <p>The published image (<a href="https://hub.docker.com/r/mghasemi/sksurrogate" target="_blank" rel="noopener">Docker Hub ↗</a>, v0.8.1) serves the UI and API on port 8013; datasets, experiments and model bundles stay in the named volume — the image ships no user data. Prefer the latest main branch? Build from a checkout: <code>docker compose --profile prod up -d</code>.</p>
+        <p>The published image (<a href="https://hub.docker.com/r/mghasemi/sksurrogate" target="_blank" rel="noopener">Docker Hub ↗</a>, v0.8.2) serves the UI and API on port 8013; datasets, experiments and model bundles stay in the named volume — the image ships no user data. Prefer the latest main branch? Build from a checkout: <code>docker compose --profile prod up -d</code>.</p>
 
         <h2>Optimize a model</h2>
         <pre><code>from sklearn.svm import SVC
@@ -238,7 +238,7 @@ def about(rel):
         reports is traceable to a protocol, a seed and an archived record.</p>
       <p class="chiprow"><span class="chip">MIT licence</span>
         <span class="chip">Python 3 · scikit-learn</span>
-        <span class="chip">v0.8.1</span>
+        <span class="chip">v0.8.2</span>
         <span class="chip">open development</span></p>
       <div class="prose">
         <h2>What it is</h2>
