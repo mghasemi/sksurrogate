@@ -11,6 +11,7 @@ Requires: Pillow, and the Inter / Fira Mono OTFs present on this machine
     python scripts/make_og_card.py
 """
 import os
+import re
 from PIL import Image, ImageDraw, ImageFont
 
 W, H = 1200, 630
@@ -28,9 +29,8 @@ FONT_DIR_F = "/usr/share/fonts/opentype/fira"
 
 # h1 text, verbatim from index.html (U+2011 non-breaking hyphen preserved)
 HEAD = [
-    ("From raw dataset to deployed,", INK),
-    ("drift\u2011monitored model \u2014", INK),
-    ("in one scikit\u2011learn\u2011native environment.", ULTRA),
+    ("A scikit\u2011learn tuner you can drop in \u2014", INK),
+    ("with the evidence attached.", ULTRA),
 ]
 
 
@@ -58,7 +58,26 @@ def mark(draw, x, y, scale=0.52):
                   x + 60 * scale + r, y + 120 * scale + r], fill=EMBER + (255,))
 
 
+def page_h1():
+    """The h1 exactly as the page renders it, so HEAD cannot drift from it."""
+    html = open("index.html", encoding="utf-8").read()
+    m = re.search(r"<h1>(.*?)</h1>", html, re.S)
+    if not m:
+        raise SystemExit("make_og_card: no <h1> in index.html")
+    text = re.sub(r"<br\s*/?>", "\n", m.group(1))
+    return re.sub(r"<[^>]+>", "", text).strip()
+
+
 def main():
+    h1 = page_h1()
+    drawn = "\n".join(t for t, _ in HEAD)
+    if drawn != h1:
+        raise SystemExit(
+            "make_og_card: HEAD no longer matches the page's h1\n"
+            f"  page: {h1!r}\n  card: {drawn!r}\n"
+            "Update HEAD to the h1 verbatim (line breaks are presentation only)."
+        )
+
     img = Image.new("RGB", (W, H), BG)
     d = ImageDraw.Draw(img, "RGBA")
 
@@ -73,10 +92,11 @@ def main():
     # brand block
     mark(d, 72, 62)
     d.text((132, 74), "SKSurrogate", font=f_word, fill=INK)
-    tracked(d, (72, 168), "SCIENTIFIC MLOPS \u00b7 OPEN SOURCE", f_mono, FAINT, 2.6)
+    tracked(d, (72, 168), "SURROGATE OPTIMIZATION \u00b7 OPEN SOURCE", f_mono, FAINT, 2.6)
 
-    # headline (verbatim h1)
-    y = 222
+    # headline (verbatim h1); a two-line block is nudged down so the card keeps
+    # the same optical balance the three-line version had
+    y = 222 + max(0, 3 - len(HEAD)) * 31
     for text, color in HEAD:
         d.text((72, y), text, font=f_head, fill=color)
         y += 62
